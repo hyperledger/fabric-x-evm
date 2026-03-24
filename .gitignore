@@ -1,0 +1,11 @@
+bin
+node_modules
+.gomodcache
+.vscode
+testdata/*
+!testdata/configtx.yaml
+!testdata/crypto-config.yaml
+!testdata/tether_txs.json
+!testdata/alloc_tether_replay.json
+*.un~
+*.swp
