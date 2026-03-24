@@ -17,8 +17,8 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    name: Unit Tests
+  quick-tests:
+    name: Quick Tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -36,3 +36,29 @@ jobs:
 
       - name: Run unit tests
         run: make unit-tests
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Only run on workflow_dispatch OR push to main
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    needs: quick-tests
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run Ethereum tests
+        run: make eth-tests
+
+      - name: Run Fabric-X integration tests
+        run: make clean-x init-x start-x test-x stop-x
+
+      - name: Run Fabric integration tests
+        run: make integration-tests
