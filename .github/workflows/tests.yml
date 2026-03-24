@@ -35,3 +35,6 @@ jobs:
 
       - name: Run unit tests
         run: make unit-tests
+
+      - name: Run Fabric integration tests
+        run: make integration-tests
