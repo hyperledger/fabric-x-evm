@@ -1,0 +1,4 @@
+[submodule "testdata/ethereum-tests"]
+	path = testdata/ethereum-tests
+	url = https://github.com/ethereum/tests.git
+	ignore = all
