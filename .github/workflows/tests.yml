@@ -1,15 +1,10 @@
-#
-# Copyright IBM Corp. All Rights Reserved.
-#
-# SPDX-License-Identifier: Apache-2.0
-#
-
 name: Tests
 
 on:
   push:
     branches: [ "main" ]
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
     branches: [ "main" ]
   workflow_dispatch:
 
@@ -34,16 +29,18 @@ jobs:
       - name: Checks
         run: make checks
 
-      - name: Run unit tests
+      - name: Unit tests
         run: make unit-tests
 
   integration-tests:
     name: Integration Tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Only run on workflow_dispatch OR push to main
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     needs: quick-tests
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'want-integration-tests'))
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -54,11 +51,11 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Run Ethereum tests
+      - name: Ethereum tests
         run: make eth-tests
 
-      - name: Run Fabric-X integration tests
+      - name: Fabric-X integration tests
         run: make clean-x init-x start-x test-x stop-x
 
-      - name: Run Fabric integration tests
+      - name: Fabric integration tests
         run: make integration-tests
