@@ -44,11 +44,12 @@ func NewEndorser(
 		return nil, nil, fmt.Errorf("failed to initialize store: %w", err)
 	}
 
-	// Build chain configuration from network config.
-	chainCfg := common.BuildChainConfig(network.ChainID)
+	evmConfig := &endorser.EVMConfig{
+		ChainConfig: common.BuildChainConfig(network.ChainID),
+	}
 
 	// Executing transactions and signing the endorsement.
-	engine := endorser.NewEVMEngine(network.Namespace, readDB, chainCfg, false)
+	engine := endorser.NewEVMEngine(network.Namespace, readDB, evmConfig, false)
 	end, err := endorser.New(engine, efab.NewEndorsementBuilder(signer))
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create endorser: %w", err)

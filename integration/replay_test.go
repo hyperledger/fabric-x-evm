@@ -172,17 +172,40 @@ func testTetherTokenReplay(t *testing.T, th *TestHarness) {
 		t.Fatal(err)
 	}
 
-	t.Logf("Replaying deployment tx (block %s, time %d)", blockNum.String(), ct.DeploymentBlockTime)
-	processCommon(t, node1, true, decodeRawTransactionT(t, deployRaw), &utils.BlockInfo{
-		BlockNumber: blockNum,
-		BlockTime:   ct.DeploymentBlockTime,
-	})
-
+	// Get the sender address to prime balance
 	signer := types.LatestSignerForChainID(tx.ChainId())
 	from, err := types.Sender(signer, tx)
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	// Prime the balance for the transaction sender
+	// In a permissioned blockchain, we don't require pre-funded accounts
+	// Calculate required balance: gas * gasPrice + value
+	gasPrice := tx.GasPrice()
+	if gasPrice == nil {
+		gasPrice = big.NewInt(0)
+	}
+	gasCost := new(big.Int).Mul(new(big.Int).SetUint64(tx.Gas()), gasPrice)
+	requiredBalance := new(big.Int).Add(gasCost, tx.Value())
+
+	// Add some extra to be safe (e.g., 10 ETH extra)
+	extraBalance := new(big.Int).Mul(big.NewInt(10), big.NewInt(1e18))
+	totalBalance := new(big.Int).Add(requiredBalance, extraBalance)
+
+	primer, err := th.NewStatePrimer()
+	if err != nil {
+		t.Fatalf("failed to create state primer: %v", err)
+	}
+	if err := primer.SetBalance(from, totalBalance).Commit(t.Context()); err != nil {
+		t.Fatalf("failed to prime balance: %v", err)
+	}
+
+	t.Logf("Replaying deployment tx (block %s, time %d)", blockNum.String(), ct.DeploymentBlockTime)
+	processCommon(t, node1, true, decodeRawTransactionT(t, deployRaw), &utils.BlockInfo{
+		BlockNumber: blockNum,
+		BlockTime:   ct.DeploymentBlockTime,
+	})
 
 	contractAddr := crypto.CreateAddress(from, tx.Nonce())
 	client, err := NewEthClient(contracts.TetherTokenMetaData, th.ethChainConfig)

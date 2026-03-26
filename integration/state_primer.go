@@ -15,6 +15,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/tracing"
+	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/holiman/uint256"
 	pb "github.com/hyperledger/fabric-protos-go-apiv2/peer"
 
@@ -42,7 +43,7 @@ type StatePrimer struct {
 
 	// Simulation store that caches all state changes
 	sim     *state.SimulationStore
-	stateDB *endorser.SnapshotDB
+	stateDB vm.StateDB
 }
 
 // NewStatePrimer creates a new state primer builder.
@@ -82,6 +83,12 @@ func NewStatePrimer(
 }
 
 // SetNonce sets the nonce for an address immediately in the simulation store.
+func (sp *StatePrimer) CreateAccount(addr common.Address) *StatePrimer {
+	sp.stateDB.CreateAccount(addr)
+	return sp
+}
+
+// SetNonce sets the nonce for an address immediately in the simulation store.
 func (sp *StatePrimer) SetNonce(addr common.Address, nonce uint64) *StatePrimer {
 	sp.stateDB.SetNonce(addr, nonce, tracing.NonceChangeEoACall)
 	return sp
@@ -89,9 +96,8 @@ func (sp *StatePrimer) SetNonce(addr common.Address, nonce uint64) *StatePrimer 
 
 // SetCode sets the code for an address immediately in the simulation store.
 func (sp *StatePrimer) SetCode(addr common.Address, code []byte) *StatePrimer {
-	if code != nil && len(code) > 0 {
-		sp.stateDB.SetCode(addr, code, tracing.CodeChangeUnspecified)
-	}
+	sp.stateDB.SetCode(addr, code, tracing.CodeChangeUnspecified)
+
 	return sp
 }
 
@@ -117,12 +123,14 @@ func (sp *StatePrimer) SetStorage(addr common.Address, storage map[common.Hash]c
 
 // SetAccount queues setting multiple properties for an address at once.
 func (sp *StatePrimer) SetAccount(addr common.Address, nonce *uint64, code []byte, balance *big.Int, storage map[common.Hash]common.Hash) *StatePrimer {
+	sp.CreateAccount(addr)
+
 	if nonce != nil {
 		sp.SetNonce(addr, *nonce)
 	}
-	if code != nil && len(code) > 0 {
-		sp.SetCode(addr, code)
-	}
+
+	sp.SetCode(addr, code)
+
 	if balance != nil {
 		sp.SetBalance(addr, balance)
 	}

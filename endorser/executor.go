@@ -17,30 +17,54 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
-	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/holiman/uint256"
 	cmn "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/utils"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	"github.com/hyperledger/fabric-x-sdk/state"
 )
 
+// EVMConfig holds the configuration for EVM execution.
+// It allows callers to specify the BlockContext, ChainConfig, and VMConfig
+// that will be used when creating the EVM instance.
+type EVMConfig struct {
+	BlockContext *vm.BlockContext
+	ChainConfig  *params.ChainConfig
+	VMConfig     *vm.Config
+}
+
 // EVMEngine manages EVM execution and state reads for an endorser.
 // It creates isolated per-transaction snapshots for execution and reads state directly
 // for ChainStateReader calls.
 type EVMEngine struct {
 	namespace         string
-	chainCfg          *params.ChainConfig
 	monotonicVersions bool
 	db                state.ReadStore
+	evmConfig         *EVMConfig
 }
 
 // NewEVMEngine creates a new EVMEngine.
-func NewEVMEngine(namespace string, db state.ReadStore, chainCfg *params.ChainConfig, monotonicVersions bool) *EVMEngine {
-	return &EVMEngine{namespace: namespace, db: db, chainCfg: chainCfg, monotonicVersions: monotonicVersions}
+func NewEVMEngine(namespace string, db state.ReadStore, evmConfig *EVMConfig, monotonicVersions bool) *EVMEngine {
+	return &EVMEngine{
+		namespace:         namespace,
+		db:                db,
+		monotonicVersions: monotonicVersions,
+		evmConfig:         evmConfig, // Will be set if custom config is needed
+	}
+}
+
+// SetEVMConfig sets the EVM configuration (BlockContext, ChainConfig, VMConfig).
+// This allows callers to specify custom EVM execution parameters.
+// If not set, default values will be used during execution.
+func (e *EVMEngine) SetEVMConfig(config *EVMConfig) {
+	e.evmConfig = config
+}
+
+// GetEVMConfig returns the current EVM configuration.
+func (e *EVMEngine) GetEVMConfig() *EVMConfig {
+	return e.evmConfig
 }
 
 // Execute runs a state-changing transaction and returns the EVM result,
@@ -121,7 +145,7 @@ func (e *EVMEngine) newExecutor(blockInfo *utils.BlockInfo, stateBlockNum uint64
 	if err != nil {
 		return nil, err
 	}
-	return newExecutor(sim, blockInfo, e.chainCfg), nil
+	return newExecutor(sim, blockInfo, e.evmConfig), nil
 }
 
 // newSnapshotAt returns a SnapshotDB over the state at the given Fabric block height (0 = latest).
@@ -144,11 +168,13 @@ type executor struct {
 	chainID  *big.Int
 	chainCfg *params.ChainConfig
 	blockCtx vm.BlockContext
+	vmConfig vm.Config
 }
 
 // newExecutor creates an executor with the provided SimulationStore.
 // If blockInfo is not provided, the store's current version is used as the block number.
-func newExecutor(sim *state.SimulationStore, blockInfo *utils.BlockInfo, ethChainConfig *params.ChainConfig) *executor {
+// If evmConfig is provided, it overrides the default BlockContext, ChainConfig, and VMConfig.
+func newExecutor(sim *state.SimulationStore, blockInfo *utils.BlockInfo, evmConfig *EVMConfig) *executor {
 	if blockInfo == nil {
 		// Note: sim.Version() is a Fabric block number, not an Ethereum block number — these are
 		// separate namespaces. With AllEthashProtocolChanges active from block 0 this is harmless,
@@ -158,31 +184,131 @@ func newExecutor(sim *state.SimulationStore, blockInfo *utils.BlockInfo, ethChai
 			BlockTime:   1_000_000,
 		}
 	}
-	if ethChainConfig == nil {
-		ethChainConfig = params.AllEthashProtocolChanges
+
+	// Default block context
+	blockCtx := vm.BlockContext{
+		CanTransfer: core.CanTransfer,
+		Transfer:    core.Transfer,
+		GetHash:     func(uint64) common.Hash { return common.Hash{} },
+		Coinbase:    common.HexToAddress("0x0"),
+		BlockNumber: blockInfo.BlockNumber,
+		Time:        blockInfo.BlockTime,
+		Difficulty:  big.NewInt(1),
+		GasLimit:    10_000_000,
+		BaseFee:     big.NewInt(0),
 	}
+
+	// Default Chain Config
+	ethChainConfig := params.AllEthashProtocolChanges
+
+	// Default VM config
+	vmConfig := vm.Config{}
+
+	// Override with custom config if provided
+	if evmConfig != nil {
+		if evmConfig.BlockContext != nil {
+			blockCtx = *evmConfig.BlockContext
+		}
+		if evmConfig.ChainConfig != nil {
+			ethChainConfig = evmConfig.ChainConfig
+		}
+		if evmConfig.VMConfig != nil {
+			vmConfig = *evmConfig.VMConfig
+		}
+	}
+
 	return &executor{
 		state:    NewSnapshotDB(sim),
 		chainID:  cmn.ChainConfig.ChainID,
 		chainCfg: ethChainConfig,
-		blockCtx: vm.BlockContext{
-			CanTransfer: core.CanTransfer,
-			Transfer:    core.Transfer,
-			GetHash:     func(uint64) common.Hash { return common.Hash{} },
-			Coinbase:    common.HexToAddress("0x0"),
-			BlockNumber: blockInfo.BlockNumber,
-			Time:        blockInfo.BlockTime,
-			Difficulty:  big.NewInt(1),
-			GasLimit:    10_000_000,
-			BaseFee:     big.NewInt(1),
-		},
+		blockCtx: blockCtx,
+		vmConfig: vmConfig,
+	}
+}
+
+// CallMsgToMessage converts an ethereum.CallMsg into a core.Message.
+// The baseFee parameter is used to calculate the effective gas price for EIP-1559 transactions.
+// If baseFee is nil, legacy gas pricing is used.
+// skipNonceCheck and skipTxCheck control whether nonce and EOA checks should be skipped.
+func CallMsgToMessage(msg ethereum.CallMsg, baseFee *big.Int, skipNonceCheck, skipTxCheck bool) *core.Message {
+	var (
+		gasPrice  *big.Int
+		gasFeeCap *big.Int
+		gasTipCap *big.Int
+	)
+
+	if baseFee == nil {
+		// Legacy gas pricing
+		if msg.GasPrice != nil {
+			gasPrice = msg.GasPrice
+		} else {
+			gasPrice = new(big.Int)
+		}
+		gasFeeCap, gasTipCap = gasPrice, gasPrice
+	} else {
+		// EIP-1559 gas pricing
+		if msg.GasPrice != nil {
+			// Legacy gas field provided, convert to 1559 gas typing
+			gasPrice = msg.GasPrice
+			gasFeeCap, gasTipCap = gasPrice, gasPrice
+		} else {
+			// Use 1559 gas fields
+			if msg.GasFeeCap != nil {
+				gasFeeCap = msg.GasFeeCap
+			} else {
+				gasFeeCap = new(big.Int)
+			}
+			if msg.GasTipCap != nil {
+				gasTipCap = msg.GasTipCap
+			} else {
+				gasTipCap = new(big.Int)
+			}
+			// Calculate effective gas price for EVM execution
+			gasPrice = new(big.Int)
+			if gasFeeCap.BitLen() > 0 || gasTipCap.BitLen() > 0 {
+				gasPrice = new(big.Int).Add(gasTipCap, baseFee)
+				if gasPrice.Cmp(gasFeeCap) > 0 {
+					gasPrice = gasFeeCap
+				}
+			}
+		}
+	}
+
+	// Handle nil Value
+	value := msg.Value
+	if value == nil {
+		value = new(big.Int)
+	}
+
+	// Handle nil blob gas fee cap
+	blobGasFeeCap := msg.BlobGasFeeCap
+	if blobGasFeeCap == nil {
+		blobGasFeeCap = new(big.Int)
+	}
+
+	return &core.Message{
+		From:                  msg.From,
+		To:                    msg.To,
+		Value:                 value,
+		Nonce:                 0, // CallMsg doesn't have a nonce
+		GasLimit:              msg.Gas,
+		GasPrice:              gasPrice,
+		GasFeeCap:             gasFeeCap,
+		GasTipCap:             gasTipCap,
+		Data:                  msg.Data,
+		AccessList:            msg.AccessList,
+		BlobGasFeeCap:         blobGasFeeCap,
+		BlobHashes:            msg.BlobHashes,
+		SetCodeAuthorizations: msg.AuthorizationList,
+		SkipNonceChecks:       skipNonceCheck,
+		SkipTransactionChecks: skipTxCheck,
 	}
 }
 
 // call executes a read-only call (eth_call semantics).
 // An empty revert is treated as a non-error: many Ethereum tools probe contracts this way.
 func (h *executor) call(msg ethereum.CallMsg) ([]byte, error) {
-	ret, err := h.execute(msg.From, msg.To, msg.Data, msg.Gas, msg.Value)
+	ret, err := h.execute(CallMsgToMessage(msg, h.blockCtx.BaseFee, true, true))
 	if errors.Is(err, vm.ErrExecutionReverted) && len(ret) == 0 {
 		return nil, nil // empty revert on a call is not an error
 	}
@@ -191,7 +317,9 @@ func (h *executor) call(msg ethereum.CallMsg) ([]byte, error) {
 
 // send executes a state-changing transaction, increments the sender nonce and returns the result.
 func (h *executor) send(tx *types.Transaction) ([]byte, error) {
-	from, err := types.Sender(types.MakeSigner(h.chainCfg, h.blockCtx.BlockNumber, h.blockCtx.Time), tx)
+	signer := types.MakeSigner(h.chainCfg, h.blockCtx.BlockNumber, h.blockCtx.Time)
+
+	from, err := types.Sender(signer, tx)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +333,12 @@ func (h *executor) send(tx *types.Transaction) ([]byte, error) {
 		return nil, core.ErrNonceTooHigh
 	}
 
-	ret, err := h.execute(from, tx.To(), tx.Data(), tx.Gas(), tx.Value())
+	msg, err := core.TransactionToMessage(tx, signer, h.blockCtx.BaseFee)
+	if err != nil {
+		return nil, err
+	}
+
+	ret, err := h.execute(msg)
 	if err != nil {
 		return nil, formatRevert(ret, err)
 	}
@@ -213,36 +346,31 @@ func (h *executor) send(tx *types.Transaction) ([]byte, error) {
 	return ret, nil
 }
 
-// execute dispatches a call or deployment to the EVM.
-// If to is nil, evm.Create is used (contract deployment); otherwise evm.Call.
+// execute dispatches a call or deployment to the EVM using ApplyMessage.
 // A nil value defaults to 0; zero gas defaults to 5_000_000.
-func (h *executor) execute(from common.Address, to *common.Address, data []byte, gas uint64, value *big.Int) ([]byte, error) {
-	if value == nil {
-		value = big.NewInt(0)
-	}
-	if gas == 0 {
-		gas = 5_000_000
-	}
-	evm := vm.NewEVM(h.blockCtx, h.state, h.chainCfg, vm.Config{})
-	evm.SetTxContext(vm.TxContext{
-		Origin:   from,
-		GasPrice: new(big.Int),
-	})
-
-	// contract creation
-	if to == nil {
-		ret, _, _, err := evm.Create(from, data, gas, uint256.MustFromBig(value))
-		return ret, err
+func (h *executor) execute(msg *core.Message) ([]byte, error) {
+	// Default gas limit to 5_000_000 if not set
+	if msg.GasLimit == 0 {
+		msg.GasLimit = 5_000_000
 	}
 
-	// set the new nonce before the EVM execution like geth does
-	// note that we don't do it for contract creation since geth does it for us
-	h.state.SetNonce(from, h.state.GetNonce(from)+1, tracing.NonceChangeUnspecified)
+	// Create EVM instance with configured VMConfig
+	evm := vm.NewEVM(h.blockCtx, h.state, h.chainCfg, h.vmConfig)
 
-	// regular call
-	ret, _, err := evm.Call(from, *to, data, gas, uint256.MustFromBig(value))
+	// Create a GasPool with unlimited gas (we handle gas limits in the message)
+	gp := new(core.GasPool).AddGas(msg.GasLimit)
 
-	return ret, err
+	// Use ApplyMessage to execute the transaction
+	result, err := core.ApplyMessage(evm, msg, gp)
+	if err != nil {
+		return nil, err
+	}
+
+	// Return the result data and any execution error
+	if result.Err != nil {
+		return result.ReturnData, result.Err
+	}
+	return result.ReturnData, nil
 }
 
 // formatRevert enriches a revert error with the ABI-decoded reason string.

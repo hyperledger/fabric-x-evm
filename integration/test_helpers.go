@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	ethstate "github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/params"
@@ -461,7 +462,7 @@ func newEndorser(logger sdk.Logger, cfg config.Endorser, channel, namespace stri
 		panic("typ must be fabric or fabric-x")
 	}
 
-	end, err := endorser.New(endorser.NewEVMEngine(namespace, writeDB, ethChainConfig, monotonicVersions), builder)
+	end, err := endorser.New(endorser.NewEVMEngine(namespace, writeDB, &endorser.EVMConfig{ChainConfig: ethChainConfig}, monotonicVersions), builder)
 	if err != nil {
 		panic(err)
 	}
@@ -494,6 +495,7 @@ type TestHarness struct {
 	namespace         string
 	nsVersion         string
 	monotonicVersions bool
+	primedEthStateDB  *ethstate.StateDB // Stores the ethStateDB from state priming for reuse
 }
 
 type AllocEntry struct {
