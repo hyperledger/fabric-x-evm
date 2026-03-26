@@ -8,6 +8,7 @@ package integration
 
 import (
 	"fmt"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"time"
@@ -59,6 +60,8 @@ func FabricSamplesConfig(testdataDir string) config.Config {
 	}
 	orgsDir := filepath.Join(testdataDir, "fabric-samples/test-network/organizations")
 
+	x := rand.Int64()
+
 	return config.Config{
 		Network: config.Network{
 			Channel:   "mychannel",
@@ -89,7 +92,7 @@ func FabricSamplesConfig(testdataDir string) config.Config {
 				PeerTLS:   filepath.Join(orgsDir, "peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem"),
 				MspDir:    filepath.Join(orgsDir, "peerOrganizations/org1.example.com/peers/peer0.org1.example.com/msp"),
 				MspID:     "Org1MSP",
-				DbConnStr: "file:endorser1?mode=memory&cache=shared",
+				DbConnStr: fmt.Sprintf("file:endorser1%d?mode=memory&cache=shared", x),
 				// DbConnStr: "file:../testdata/endorser1.db",
 			},
 			{
@@ -98,7 +101,7 @@ func FabricSamplesConfig(testdataDir string) config.Config {
 				PeerTLS:   filepath.Join(orgsDir, "peerOrganizations/org2.example.com/tlsca/tlsca.org2.example.com-cert.pem"),
 				MspDir:    filepath.Join(orgsDir, "peerOrganizations/org2.example.com/peers/peer0.org2.example.com/msp"),
 				MspID:     "Org2MSP",
-				DbConnStr: "file:endorser2?mode=memory&cache=shared",
+				DbConnStr: fmt.Sprintf("file:endorser2%d?mode=memory&cache=shared", x),
 			},
 		},
 		Server: config.Server{

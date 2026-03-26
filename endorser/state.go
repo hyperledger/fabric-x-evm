@@ -12,6 +12,7 @@ import (
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	ethstate "github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/stateless"
 	"github.com/ethereum/go-ethereum/core/tracing"
@@ -19,6 +20,8 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/trie/utils"
+	"github.com/ethereum/go-ethereum/triedb"
+	"github.com/ethereum/go-ethereum/triedb/hashdb"
 	"github.com/holiman/uint256"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/state"
@@ -34,12 +37,40 @@ type Backend interface {
 	Logs() []state.Log
 }
 
-func NewSnapshotDB(store Backend) *SnapshotDB {
-	return &SnapshotDB{
+func NewSnapshotDB(store Backend, ethStateDB *ethstate.StateDB) *DualStateDB {
+	// Create the SnapshotDB
+	snapshotDB := &SnapshotDB{
 		store:          store,
 		ops:            make([]StateOp, 0),
 		selfDestructed: make(map[common.Address]struct{}),
 	}
+
+	// If ethStateDB is not provided, create a new in-memory one
+	if ethStateDB == nil {
+		// Create the eth StateDB following the pattern from tests/state_test_util.go
+		// Use an in-memory database
+		memDB := rawdb.NewMemoryDatabase()
+
+		// Configure the trie database with hash scheme and preimages enabled
+		tconf := &triedb.Config{
+			Preimages: true,
+			HashDB:    hashdb.Defaults,
+		}
+		trieDB := triedb.NewDatabase(memDB, tconf)
+
+		// Create the state database
+		stateDB := ethstate.NewDatabase(trieDB, nil)
+
+		// Create a new state with empty root
+		var err error
+		ethStateDB, err = ethstate.New(types.EmptyRootHash, stateDB)
+		if err != nil {
+			panic(fmt.Errorf("failed to create eth StateDB: %w", err))
+		}
+	}
+
+	// Return the dual state DB wrapping both implementations
+	return NewDualStateDB(ethStateDB, snapshotDB)
 }
 
 type SnapshotDB struct {

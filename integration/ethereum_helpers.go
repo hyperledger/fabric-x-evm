@@ -7,6 +7,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package integration
 
 import (
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"os"
@@ -34,18 +35,6 @@ func hexToBigInt(s string) (*big.Int, error) {
 	return n, nil
 }
 
-// hexToUint64 converts "0x..." string to uint64
-func hexToUint64(s string) (uint64, error) {
-	n, err := hexToBigInt(s)
-	if err != nil {
-		return 0, err
-	}
-	if !n.IsUint64() {
-		return 0, fmt.Errorf("value too large for uint64: %s", s)
-	}
-	return n.Uint64(), nil
-}
-
 // hexToBytes converts "0x..." string to []byte
 func hexToBytes(s string) ([]byte, error) {
 	if s == "" || s == "0x" {
@@ -60,28 +49,31 @@ func hexToAddress(s string) common.Address {
 }
 
 // buildTransaction creates a signed transaction from test data
-func buildTransaction(testTx TestTransaction, dataIndex int) (*types.Transaction, error) {
-	// Parse transaction fields
-	nonce, err := hexToUint64(testTx.Nonce)
-	if err != nil {
-		return nil, fmt.Errorf("invalid nonce: %w", err)
+func buildTransaction(testTx *stTransaction, dataIndex, gasIndex, valueIndex int) (*types.Transaction, error) {
+	// Parse transaction fields - stTransaction already has parsed values
+	nonce := testTx.Nonce
+
+	if gasIndex >= len(testTx.GasLimit) {
+		return nil, fmt.Errorf("gasLimit index %d out of bounds", gasIndex)
+	}
+	gasLimit := testTx.GasLimit[gasIndex]
+
+	gasPrice := testTx.GasPrice
+	if gasPrice == nil {
+		gasPrice = big.NewInt(0)
 	}
 
-	gasLimit, err := hexToUint64(testTx.GasLimit[dataIndex])
-	if err != nil {
-		return nil, fmt.Errorf("invalid gasLimit: %w", err)
+	if valueIndex >= len(testTx.Value) {
+		return nil, fmt.Errorf("value index %d out of bounds", valueIndex)
 	}
-
-	gasPrice, err := hexToBigInt(testTx.GasPrice)
-	if err != nil {
-		return nil, fmt.Errorf("invalid gasPrice: %w", err)
-	}
-
-	value, err := hexToBigInt(testTx.Value[dataIndex])
+	value, err := hexToBigInt(testTx.Value[valueIndex])
 	if err != nil {
 		return nil, fmt.Errorf("invalid value: %w", err)
 	}
 
+	if dataIndex >= len(testTx.Data) {
+		return nil, fmt.Errorf("data index %d out of bounds", dataIndex)
+	}
 	data, err := hexToBytes(testTx.Data[dataIndex])
 	if err != nil {
 		return nil, fmt.Errorf("invalid data: %w", err)
@@ -105,8 +97,8 @@ func buildTransaction(testTx TestTransaction, dataIndex int) (*types.Transaction
 	})
 
 	// Sign transaction if secret key is provided
-	if testTx.SecretKey != "" {
-		key, err := crypto.HexToECDSA(strings.TrimPrefix(testTx.SecretKey, "0x"))
+	if len(testTx.PrivateKey) > 0 {
+		key, err := crypto.ToECDSA(testTx.PrivateKey)
 		if err != nil {
 			return nil, fmt.Errorf("invalid secret key: %w", err)
 		}
@@ -124,16 +116,9 @@ func buildTransaction(testTx TestTransaction, dataIndex int) (*types.Transaction
 }
 
 // buildBlockInfo creates block context from test environment
-func buildBlockInfo(env TestEnv) (*utils.BlockInfo, error) {
-	blockNum, err := hexToBigInt(env.CurrentNumber)
-	if err != nil {
-		return nil, fmt.Errorf("invalid block number: %w", err)
-	}
-
-	blockTime, err := hexToUint64(env.CurrentTimestamp)
-	if err != nil {
-		return nil, fmt.Errorf("invalid timestamp: %w", err)
-	}
+func buildBlockInfo(env *stEnv) (*utils.BlockInfo, error) {
+	blockNum := big.NewInt(int64(env.Number))
+	blockTime := env.Timestamp
 
 	return &utils.BlockInfo{
 		BlockNumber: blockNum,
@@ -158,4 +143,19 @@ func GetTestPath(relativePath string) (string, error) {
 	}
 
 	return "", fmt.Errorf("test file not found: %s", relativePath)
+}
+
+// ParseTestFile reads and parses an Ethereum test JSON file into StateTest format
+func ParseTestFile(path string) (map[string]*StateTest, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var tests map[string]*StateTest
+	if err := json.Unmarshal(data, &tests); err != nil {
+		return nil, err
+	}
+
+	return tests, nil
 }

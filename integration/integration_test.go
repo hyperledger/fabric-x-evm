@@ -15,6 +15,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/hyperledger/fabric-x-evm/endorser"
 	"github.com/hyperledger/fabric-x-evm/integration/contracts"
 	"google.golang.org/grpc/grpclog"
 	_ "modernc.org/sqlite"
@@ -81,7 +82,7 @@ var cases = []testCase{
 func TestLocal(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			th, err := newLocalTestHarness(t.Context(), TestLogger{T: t}, tc.ethChainConfig, tc.primeDbPath)
+			th, err := newLocalTestHarness(t.Context(), TestLogger{T: t}, &endorser.EVMConfig{ChainConfig: tc.ethChainConfig}, tc.primeDbPath)
 			if err != nil {
 				t.Fatal(err)
 			}

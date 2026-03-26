@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	ethstate "github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/holiman/uint256"
@@ -66,7 +67,7 @@ func NewStatePrimer(
 	}
 
 	// Create a SnapshotDB to apply operations
-	stateDB := endorser.NewSnapshotDB(sim)
+	stateDB := endorser.NewSnapshotDB(sim, nil)
 
 	return &StatePrimer{
 		db:                db,
@@ -241,6 +242,15 @@ func (sp *StatePrimer) Reset() (*StatePrimer, error) {
 	}
 
 	sp.sim = sim
-	sp.stateDB = endorser.NewSnapshotDB(sim)
+	sp.stateDB = endorser.NewSnapshotDB(sim, nil)
 	return sp, nil
+}
+
+// GetEthStateDB extracts the ethStateDB from the underlying DualStateDB.
+// This allows the primed state to be reused in subsequent operations.
+func (sp *StatePrimer) GetEthStateDB() *ethstate.StateDB {
+	if dualDB, ok := sp.stateDB.(*endorser.DualStateDB); ok {
+		return dualDB.EthStateDB()
+	}
+	return nil
 }

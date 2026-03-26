@@ -85,4 +85,5 @@ test-local:
 
 .PHONY: eth-tests
 eth-tests:
-	@VERBOSE=$(VERBOSE) ./scripts/run_eth_test.sh
+	@go test -test.fullpath=true -timeout 1000s -run ^TestEthereumTests$$ github.com/hyperledger/fabric-x-evm/integration
+	# @VERBOSE=$(VERBOSE) ./scripts/run_eth_test.sh

@@ -128,7 +128,7 @@ func NewLocalXTestHarness(ctx context.Context, logger sdk.Logger, ethChainConfig
 	cfg.Endorsers[0].PeerTLS = ""
 	cfg.Endorsers[0].MspDir = ""
 
-	db, builder, end, sync := newEndorser(logger, cfg.Endorsers[0], cfg.Network.Channel, cfg.Network.Namespace, ethChainConfig, "fabric-x")
+	db, builder, end, sync := newEndorser(logger, cfg.Endorsers[0], cfg.Network.Channel, cfg.Network.Namespace, &endorser.EVMConfig{ChainConfig: ethChainConfig}, "fabric-x")
 	syncG, syncGCtx := errgroup.WithContext(context.Background())
 	syncG.Go(func() error { return sync.Start(syncGCtx) })
 
@@ -173,17 +173,20 @@ func NewLocalXTestHarness(ctx context.Context, logger sdk.Logger, ethChainConfig
 }
 
 // newLocalTestHarness is the internal version for integration tests.
-func newLocalTestHarness(ctx context.Context, logger sdk.Logger, ethChainConfig *params.ChainConfig, primeDbPath string) (*TestHarness, error) {
-	return NewLocalTestHarness(ctx, logger, ethChainConfig, primeDbPath)
+func newLocalTestHarness(ctx context.Context, logger sdk.Logger, evmConfig *endorser.EVMConfig, primeDbPath string) (*TestHarness, error) {
+	return NewLocalTestHarness(ctx, logger, evmConfig, primeDbPath)
 }
 
 // NewLocalTestHarness commits updates directly to the DB, bypassing peers and orderers.
 // Exported for use by eth-tests package.
-func NewLocalTestHarness(ctx context.Context, logger sdk.Logger, ethChainConfig *params.ChainConfig, primeDbPath string) (*TestHarness, error) {
+func NewLocalTestHarness(ctx context.Context, logger sdk.Logger, evmConfig *endorser.EVMConfig, primeDbPath string) (*TestHarness, error) {
 	cwd, _ := os.Getwd()
 	testdataDir := cmp.Or(os.Getenv("TESTDATA"), path.Join(cwd, "..", "testdata"))
 	cfg := FabricSamplesConfig(testdataDir)
-	if ethChainConfig != nil {
+
+	var ethChainConfig *params.ChainConfig
+	if evmConfig != nil && evmConfig.ChainConfig != nil {
+		ethChainConfig = evmConfig.ChainConfig
 		cfg.Network.ChainID = ethChainConfig.ChainID.Int64()
 	}
 
@@ -191,7 +194,7 @@ func NewLocalTestHarness(ctx context.Context, logger sdk.Logger, ethChainConfig 
 	cfg.Endorsers[0].PeerTLS = ""
 	cfg.Endorsers[0].MspDir = ""
 
-	db, builder, end, sync := newEndorser(logger, cfg.Endorsers[0], cfg.Network.Channel, cfg.Network.Namespace, ethChainConfig, "fabric")
+	db, builder, end, sync := newEndorser(logger, cfg.Endorsers[0], cfg.Network.Channel, cfg.Network.Namespace, evmConfig, "fabric")
 	syncG, syncGCtx := errgroup.WithContext(context.Background())
 	syncG.Go(func() error { return sync.Start(syncGCtx) })
 
@@ -264,8 +267,8 @@ func NewFabricTestHarness(ctx context.Context, logger sdk.Logger, ethChainConfig
 		cfg.Network.ChainID = ethChainConfig.ChainID.Int64()
 	}
 
-	db1, builder1, end1, sync1 := newEndorser(logger, cfg.Endorsers[0], cfg.Network.Channel, cfg.Network.Namespace, ethChainConfig, "fabric")
-	_, builder2, end2, sync2 := newEndorser(logger, cfg.Endorsers[1], cfg.Network.Channel, cfg.Network.Namespace, ethChainConfig, "fabric")
+	db1, builder1, end1, sync1 := newEndorser(logger, cfg.Endorsers[0], cfg.Network.Channel, cfg.Network.Namespace, &endorser.EVMConfig{ChainConfig: ethChainConfig}, "fabric")
+	_, builder2, end2, sync2 := newEndorser(logger, cfg.Endorsers[1], cfg.Network.Channel, cfg.Network.Namespace, &endorser.EVMConfig{ChainConfig: ethChainConfig}, "fabric")
 	syncG, syncGCtx := errgroup.WithContext(ctx)
 	syncG.Go(func() error { return sync1.Start(syncGCtx) })
 	syncG.Go(func() error { return sync2.Start(syncGCtx) })
@@ -355,7 +358,7 @@ func NewFabricXTestHarness(ctx context.Context, logger sdk.Logger, ethChainConfi
 		cfg.Network.ChainID = ethChainConfig.ChainID.Int64()
 	}
 
-	db1, builder1, end1, sync1 := newEndorser(logger, cfg.Endorsers[0], cfg.Network.Channel, cfg.Network.Namespace, ethChainConfig, "fabric-x")
+	db1, builder1, end1, sync1 := newEndorser(logger, cfg.Endorsers[0], cfg.Network.Channel, cfg.Network.Namespace, &endorser.EVMConfig{ChainConfig: ethChainConfig}, "fabric-x")
 	syncG, syncGCtx := errgroup.WithContext(ctx)
 	syncG.Go(func() error { return sync1.Start(syncGCtx) })
 
@@ -424,7 +427,7 @@ func NewFabricXTestHarness(ctx context.Context, logger sdk.Logger, ethChainConfi
 	return th, nil
 }
 
-func newEndorser(logger sdk.Logger, cfg config.Endorser, channel, namespace string, ethChainConfig *params.ChainConfig, typ string) (*state.VersionedDB, endorsement.Builder, *endorser.Endorser, *network.Synchronizer) {
+func newEndorser(logger sdk.Logger, cfg config.Endorser, channel, namespace string, evmConfig *endorser.EVMConfig, typ string) (*state.VersionedDB, endorsement.Builder, *endorser.Endorser, *network.Synchronizer) {
 	var err error
 
 	// if mspDir is empty, we mock the signer
@@ -461,7 +464,12 @@ func newEndorser(logger sdk.Logger, cfg config.Endorser, channel, namespace stri
 		panic("typ must be fabric or fabric-x")
 	}
 
-	end, err := endorser.New(endorser.NewEVMEngine(namespace, writeDB, &endorser.EVMConfig{ChainConfig: ethChainConfig}, monotonicVersions), builder)
+	// Use the provided evmConfig, or create a default one if nil
+	if evmConfig == nil {
+		evmConfig = &endorser.EVMConfig{}
+	}
+
+	end, err := endorser.New(endorser.NewEVMEngine(namespace, writeDB, evmConfig, monotonicVersions), builder)
 	if err != nil {
 		panic(err)
 	}

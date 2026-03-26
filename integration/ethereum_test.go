@@ -7,15 +7,89 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package integration
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"math/big"
+	"math/rand"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/core/rawdb"
+	ethstate "github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/hyperledger/fabric-x-evm/endorser"
 )
+
+// loadBlacklist loads the blacklist file and returns a map of blacklisted file paths
+func loadBlacklist(path string) (map[string]struct{}, error) {
+	blacklist := make(map[string]struct{})
+
+	file, err := os.Open(path)
+	if err != nil {
+		// If blacklist doesn't exist, return empty map
+		if os.IsNotExist(err) {
+			return blacklist, nil
+		}
+		return nil, err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" && !strings.HasPrefix(line, "#") {
+			blacklist[line] = struct{}{}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	return blacklist, nil
+}
+
+// findJSONFiles recursively finds all .json files in the given directory
+func findJSONFiles(root string) ([]string, error) {
+	var files []string
+
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if !info.IsDir() && strings.HasSuffix(path, ".json") {
+			files = append(files, path)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return files, nil
+}
+
+// filterBlacklistedFiles removes blacklisted files from the list
+func filterBlacklistedFiles(files []string, blacklist map[string]struct{}) []string {
+	var filtered []string
+
+	for _, file := range files {
+		// Check if the file is in the blacklist
+		if _, isBlacklisted := blacklist[file]; !isBlacklisted {
+			filtered = append(filtered, file)
+		}
+	}
+
+	return filtered
+}
 
 // TestEthereumTests runs official ethereum/tests from the git submodule
 //
@@ -24,14 +98,24 @@ import (
 //
 // This follows the same approach as Besu, Geth, and other Ethereum clients.
 func TestEthereumTests(t *testing.T) {
-	testFiles := []string{
-		// Tests from the ethereum-tests submodule
-		"../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stExample/add11.json",
-		"../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stArgsZeroOneBalance/addNonConst.json",
-		"../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stArgsZeroOneBalance/addmodNonConst.json",
-
-		// Add more tests as needed
+	// Load blacklist
+	blacklist, err := loadBlacklist("../testdata/eth_tests.blacklist")
+	if err != nil {
+		t.Fatalf("Failed to load blacklist: %v", err)
 	}
+	t.Logf("Loaded blacklist with %d entries", len(blacklist))
+
+	// Find all JSON files recursively
+	testsDir := "../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/"
+	allFiles, err := findJSONFiles(testsDir)
+	if err != nil {
+		t.Fatalf("Failed to find test files: %v", err)
+	}
+	t.Logf("Found %d total test files", len(allFiles))
+
+	// Filter out blacklisted files
+	testFiles := filterBlacklistedFiles(allFiles, blacklist)
+	t.Logf("Running %d test files after filtering blacklist", len(testFiles))
 
 	for _, testPath := range testFiles {
 		file, err := GetTestPath(testPath)
@@ -53,6 +137,7 @@ func runEthereumTestFile(t *testing.T, path string) {
 		t.Fatalf("Failed to parse test file: %v", err)
 	}
 
+	// Run each StateTest with all configurations
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			runSingleEthereumTest(t, test)
@@ -60,56 +145,149 @@ func runEthereumTestFile(t *testing.T, path string) {
 	}
 }
 
-// runSingleEthereumTest executes one ethereum test case
-func runSingleEthereumTest(t *testing.T, test EthereumTest) {
-	// Use AllEthashProtocolChanges for now (supports most opcodes)
-	chainConfig := params.AllEthashProtocolChanges
+// runSingleEthereumTest executes one ethereum test case with all configurations
+func runSingleEthereumTest(t *testing.T, stateTest *StateTest) {
+	// Iterate through all subtests (fork/index combinations)
+	for _, subtest := range stateTest.Subtests() {
+		key := fmt.Sprintf("%s/%d", subtest.Fork, subtest.Index)
 
-	// Create test harness with local backend and state priming
-	th, err := newEthereumTestHarness(t, chainConfig, test.Pre)
+		// If -short flag is used, we don't execute all four permutations, only one.
+		executionMask := 0xf
+		if testing.Short() {
+			executionMask = (1 << (rand.Int63() & 4))
+		}
+
+		// Test with hash scheme and trie (no snapshotter)
+		t.Run(key+"/hash/trie", func(t *testing.T) {
+			if executionMask&0x1 == 0 {
+				t.Skip("test (randomly) skipped due to short-tag")
+			}
+			runEthereumTestConfig(t, stateTest, subtest, false, rawdb.HashScheme)
+		})
+
+		// Test with hash scheme and snapshotter
+		t.Run(key+"/hash/snap", func(t *testing.T) {
+			if executionMask&0x2 == 0 {
+				t.Skip("test (randomly) skipped due to short-tag")
+			}
+			runEthereumTestConfig(t, stateTest, subtest, true, rawdb.HashScheme)
+		})
+
+		// Test with path scheme and trie (no snapshotter)
+		t.Run(key+"/path/trie", func(t *testing.T) {
+			if executionMask&0x4 == 0 {
+				t.Skip("test (randomly) skipped due to short-tag")
+			}
+			runEthereumTestConfig(t, stateTest, subtest, false, rawdb.PathScheme)
+		})
+
+		// Test with path scheme and snapshotter
+		t.Run(key+"/path/snap", func(t *testing.T) {
+			if executionMask&0x8 == 0 {
+				t.Skip("test (randomly) skipped due to short-tag")
+			}
+			runEthereumTestConfig(t, stateTest, subtest, true, rawdb.PathScheme)
+		})
+	}
+}
+
+// runEthereumTestConfig executes a specific test configuration
+func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubtest, snapshotter bool, scheme string) {
+	// Build block info from test environment
+	blockInfo, err := buildBlockInfo(&stateTest.json.Env)
+	if err != nil {
+		t.Fatalf("Failed to build block info: %v", err)
+	}
+
+	// Get the post-state to extract the correct indices and expected results
+	post := stateTest.json.Post[subtest.Fork][subtest.Index]
+	dataIndex := post.Indexes.Data
+	gasIndex := post.Indexes.Gas
+	valueIndex := post.Indexes.Value
+
+	// Build and sign transaction using the indices from post-state
+	tx, err := buildTransaction(&stateTest.json.Tx, dataIndex, gasIndex, valueIndex)
+	if err != nil {
+		t.Fatalf("Failed to build transaction: %v", err)
+	}
+
+	// Call prepareTestEnvironment to get context, config, block, and msg
+	vmConfig := vm.Config{} // Empty VM config for now
+	_, config, block, msg, context, err := stateTest.prepareTestEnvironment(subtest.Fork, subtest.Index, vmConfig, snapshotter, scheme)
+	if err != nil {
+		t.Fatalf("Failed to prepare test environment: %v", err)
+	}
+
+	// Create EVMConfig to pass to test harness
+	evmConfig := &endorser.EVMConfig{
+		BlockContext: &context,
+		ChainConfig:  config,
+		VMConfig:     &vmConfig,
+	}
+
+	t.Logf("Creating test harness with EVM config: fork=%s, block=%d, msg.From=%s, snapshotter=%v, scheme=%s",
+		subtest.Fork, block.NumberU64(), msg.From.Hex(), snapshotter, scheme)
+
+	// Create test harness with local backend and state priming, passing evmConfig
+	th, err := newEthereumTestHarness(t, evmConfig, stateTest.json.Pre)
 	if err != nil {
 		t.Fatalf("Failed to create test harness: %v", err)
 	}
 	defer th.Stop()
 
-	// Build block info from test environment
-	blockInfo, err := buildBlockInfo(test.Env)
-	if err != nil {
-		t.Fatalf("Failed to build block info: %v", err)
+	// Execute transaction through gateway
+	_, execErr := th.gateways[0].ExecuteEthTx(t.Context(), tx, blockInfo)
+
+	// Get expected root from post-state
+	expectedRoot := common.Hash(post.Root)
+
+	var actualRoot common.Hash
+	// After execution, extract the ethStateDB and commit the ethereum state
+	if len(th.endorsers) > 0 {
+		ethStateDB := th.endorsers[0].GetEthStateDB()
+		if ethStateDB != nil {
+			// Commit the ethereum state
+			root, err := ethStateDB.Commit(blockInfo.BlockNumber.Uint64(),
+				config.IsEIP158(blockInfo.BlockNumber),
+				config.IsCancun(blockInfo.BlockNumber, blockInfo.BlockTime))
+			if err != nil {
+				t.Logf("Failed to commit ethereum state: %v", err)
+			} else {
+				t.Logf("Committed ethereum state with root: %s", root.Hex())
+			}
+
+			actualRoot = root
+		}
 	}
 
-	// Execute each transaction variant (tests can have multiple data/gas/value combinations)
-	for dataIdx := range test.Transaction.Data {
-		t.Logf("Executing transaction variant %d/%d", dataIdx+1, len(test.Transaction.Data))
-
-		// Build and sign transaction
-		tx, err := buildTransaction(test.Transaction, dataIdx)
-		if err != nil {
-			t.Fatalf("Failed to build transaction: %v", err)
+	// Check for expected errors
+	if post.ExpectException != "" {
+		if execErr == nil {
+			t.Fatalf("expected error %q, got no error", post.ExpectException)
 		}
+		t.Logf("Got expected error: %v", execErr)
+		return
+	}
 
-		// Execute transaction through gateway
-		_, execErr := th.gateways[0].ExecuteEthTx(t.Context(), tx, blockInfo)
+	// Log execution result
+	if execErr != nil {
+		t.Fatalf("unexpected transaction execution error: %v", execErr)
+	}
 
-		// Log execution result
-		if execErr != nil {
-			t.Logf("Transaction execution error: %v", execErr)
-			// TODO: Check if error was expected based on test.Post
-		} else {
-			t.Logf("Transaction executed successfully")
-			// TODO: Validate state against test.Post
-		}
+	// Verify root hash
+	if expectedRoot != actualRoot {
+		t.Fatalf("post state root mismatch: got %s, want %s", actualRoot.Hex(), expectedRoot.Hex())
 	}
 
 	t.Logf("Test completed successfully")
 }
 
 // newEthereumTestHarness creates a test harness with pre-state primed from ethereum test format
-func newEthereumTestHarness(t *testing.T, chainConfig *params.ChainConfig, pre map[string]TestAccount) (*TestHarness, error) {
+func newEthereumTestHarness(t *testing.T, evmConfig *endorser.EVMConfig, pre types.GenesisAlloc) (*TestHarness, error) {
 	t.Helper()
 
 	// Create a temporary test harness to get access to the database
-	th, err := newLocalTestHarness(t.Context(), TestLogger{T: t}, chainConfig, "")
+	th, err := newLocalTestHarness(t.Context(), TestLogger{T: t}, evmConfig, "")
 	if err != nil {
 		return nil, err
 	}
@@ -122,76 +300,82 @@ func newEthereumTestHarness(t *testing.T, chainConfig *params.ChainConfig, pre m
 		// The test harness has endorsers which have access to the txSim (VersionedDB)
 		// We'll use a similar approach to PrimeStateFromJSON but with our test format
 
-		if err := primeEthereumTestState(t.Context(), th, pre); err != nil {
+		ethStateDB, err := primeEthereumTestState(t.Context(), th, pre)
+		if err != nil {
 			th.Stop()
 			return nil, err
 		}
+
+		// Set the ethStateDB on all endorsers so they can reuse the primed state
+		for _, endorser := range th.endorsers {
+			endorser.SetEthStateDB(ethStateDB)
+		}
+		t.Logf("Set primed ethStateDB on %d endorsers", len(th.endorsers))
 	}
 
 	return th, nil
 }
 
 // primeEthereumTestState primes the state database with ethereum test pre-state
-func primeEthereumTestState(ctx context.Context, th *TestHarness, pre map[string]TestAccount) error {
+// and returns the ethStateDB for reuse
+func primeEthereumTestState(ctx context.Context, th *TestHarness, pre types.GenesisAlloc) (*ethstate.StateDB, error) {
 	if len(pre) == 0 {
-		return nil
+		return nil, nil
 	}
 
-	// Create a StatePrimer to handle state initialization
-	primer, err := th.NewStatePrimer()
+	// Create a StatePrimer with chain config and environment
+	primer, err := NewStatePrimer(
+		th.db,
+		th.namespace,
+		th.signer,
+		th.builders,
+		th.submitter,
+		th.channel,
+		th.nsVersion,
+		th.monotonicVersions,
+	)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Convert each test account to StatePrimer operations
-	for addrStr, account := range pre {
-		addr := common.HexToAddress(addrStr)
-
-		// Parse and set nonce
+	for addr, account := range pre {
+		// Set nonce
 		var nonce *uint64
-		if account.Nonce != "" {
-			n, err := hexToUint64(account.Nonce)
-			if err != nil {
-				return fmt.Errorf("invalid nonce for %s: %w", addrStr, err)
-			}
+		if account.Nonce != 0 {
+			n := account.Nonce
 			nonce = &n
 		}
 
-		// Parse and set balance
+		// Set balance
 		var balance *big.Int
-		if account.Balance != "" {
-			bal, err := hexToBigInt(account.Balance)
-			if err != nil {
-				return fmt.Errorf("invalid balance for %s: %w", addrStr, err)
-			}
-			balance = bal
+		if account.Balance != nil {
+			balance = account.Balance
 		}
 
-		// Parse and set code
+		// Set code
 		var code []byte
-		if account.Code != "" && account.Code != "0x" {
-			c, err := hexToBytes(account.Code)
-			if err != nil {
-				return fmt.Errorf("invalid code for %s: %w", addrStr, err)
-			}
-			code = c
+		if len(account.Code) > 0 {
+			code = account.Code
 		}
 
-		// Parse and set storage
+		// Set storage
 		var storage map[common.Hash]common.Hash
 		if len(account.Storage) > 0 {
-			storage = make(map[common.Hash]common.Hash)
-			for keyStr, valStr := range account.Storage {
-				key := common.HexToHash(keyStr)
-				val := common.HexToHash(valStr)
-				storage[key] = val
-			}
+			storage = account.Storage
 		}
 
 		// Apply all account properties
 		primer.SetAccount(addr, nonce, code, balance, storage)
 	}
 
+	// Extract the ethStateDB before committing
+	ethStateDB := primer.GetEthStateDB()
+
 	// Commit all state changes to the ledger
-	return primer.Commit(ctx)
+	if err := primer.Commit(ctx); err != nil {
+		return nil, err
+	}
+
+	return ethStateDB, nil
 }
