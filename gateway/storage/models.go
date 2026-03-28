@@ -8,6 +8,7 @@ type Block struct {
 	BlockNumber int64
 	BlockHash   []byte
 	ParentHash  []byte
+	StateRoot   []byte
 	Timestamp   int64
 	ExtraData   []byte
 }

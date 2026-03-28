@@ -34,11 +34,12 @@ INSERT INTO
         block_number,
         block_hash,
         parent_hash,
+        state_root,
         timestamp,
         extra_data
     )
 VALUES
-    (?, ?, ?, ?, ?) ON CONFLICT (block_number) DO NOTHING;
+    (?, ?, ?, ?, ?, ?) ON CONFLICT (block_number) DO NOTHING;
 
 -- name: InsertTransaction :exec
 INSERT INTO

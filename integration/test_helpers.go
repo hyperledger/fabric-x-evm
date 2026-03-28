@@ -23,14 +23,6 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
-	"golang.org/x/sync/errgroup"
-
-	"github.com/hyperledger/fabric-x-evm/endorser"
-	"github.com/hyperledger/fabric-x-evm/endorser/api"
-	"github.com/hyperledger/fabric-x-evm/endorser/config"
-	gwapi "github.com/hyperledger/fabric-x-evm/gateway/api"
-	"github.com/hyperledger/fabric-x-evm/gateway/core"
-	"github.com/hyperledger/fabric-x-evm/utils"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	bfab "github.com/hyperledger/fabric-x-sdk/blocks/fabric"
@@ -44,6 +36,14 @@ import (
 	nfab "github.com/hyperledger/fabric-x-sdk/network/fabric"
 	nfabx "github.com/hyperledger/fabric-x-sdk/network/fabricx"
 	"github.com/hyperledger/fabric-x-sdk/state"
+	"golang.org/x/sync/errgroup"
+
+	"github.com/hyperledger/fabric-x-evm/endorser"
+	"github.com/hyperledger/fabric-x-evm/endorser/api"
+	"github.com/hyperledger/fabric-x-evm/endorser/config"
+	gwapi "github.com/hyperledger/fabric-x-evm/gateway/api"
+	"github.com/hyperledger/fabric-x-evm/gateway/core"
+	"github.com/hyperledger/fabric-x-evm/utils"
 )
 
 type localSigner struct{}

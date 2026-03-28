@@ -14,6 +14,7 @@ type Block struct {
 	BlockNumber  uint64
 	BlockHash    []byte
 	ParentHash   []byte
+	StateRoot    []byte
 	Timestamp    int64
 	Transactions []Transaction // populated when full=true in API requests
 }

@@ -15,15 +15,17 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
+	"github.com/hyperledger/fabric-x-evm/gateway/storage/trie"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 )
 
-func NewEthBlockPersister(db BlockInserter) *EthBlockPersister {
-	return &EthBlockPersister{db: db}
+func NewEthBlockPersister(db BlockInserter, ts *trie.Store) *EthBlockPersister {
+	return &EthBlockPersister{db: db, ts: ts}
 }
 
 type EthBlockPersister struct {
 	db BlockInserter
+	ts *trie.Store
 }
 
 type BlockInserter interface {
@@ -32,6 +34,14 @@ type BlockInserter interface {
 
 func (e EthBlockPersister) Handle(ctx context.Context, b blocks.Block) error {
 	ebl := convertToDomain(b)
+
+	stateRoot, err := e.ts.Commit(ctx, b)
+	if err != nil {
+		return err // irrecoverable
+	}
+	ebl.StateRoot = stateRoot.Bytes()
+	// TODO: use proper headers. We now add some mock values to make sure we're not violating unique constraints.
+	ebl.ParentHash = ebl.BlockHash
 
 	// store
 	// p.log.Debugf("%d tx in block %d", len(b.Transactions), b.BlockNumber)

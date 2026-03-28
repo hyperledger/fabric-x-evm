@@ -218,7 +218,7 @@ func rpcBlock(b *domain.Block, full bool) *RPCBlock {
 		Sha3Uncles:       common.Hash{},
 		LogsBloom:        "" + strings.Repeat("0", 512),
 		TransactionsRoot: common.Hash{},
-		StateRoot:        common.Hash{},
+		StateRoot:        common.BytesToHash(b.StateRoot),
 		ReceiptsRoot:     common.Hash{},
 		Miner:            common.Address{}, // b.Miner
 		Difficulty:       hexutil.Big(*big.NewInt(0)),

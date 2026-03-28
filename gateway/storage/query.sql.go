@@ -47,7 +47,7 @@ func (q *Queries) BlockNumberByHash(ctx context.Context, blockHash []byte) (int6
 
 const getBlockByHash = `-- name: GetBlockByHash :one
 SELECT
-    block_number, block_hash, parent_hash, timestamp, extra_data
+    block_number, block_hash, parent_hash, state_root, timestamp, extra_data
 FROM
     blocks
 WHERE
@@ -61,6 +61,7 @@ func (q *Queries) GetBlockByHash(ctx context.Context, blockHash []byte) (Block, 
 		&i.BlockNumber,
 		&i.BlockHash,
 		&i.ParentHash,
+		&i.StateRoot,
 		&i.Timestamp,
 		&i.ExtraData,
 	)
@@ -69,7 +70,7 @@ func (q *Queries) GetBlockByHash(ctx context.Context, blockHash []byte) (Block, 
 
 const getBlockByNumber = `-- name: GetBlockByNumber :one
 SELECT
-    block_number, block_hash, parent_hash, timestamp, extra_data
+    block_number, block_hash, parent_hash, state_root, timestamp, extra_data
 FROM
     blocks
 WHERE
@@ -83,6 +84,7 @@ func (q *Queries) GetBlockByNumber(ctx context.Context, blockNumber int64) (Bloc
 		&i.BlockNumber,
 		&i.BlockHash,
 		&i.ParentHash,
+		&i.StateRoot,
 		&i.Timestamp,
 		&i.ExtraData,
 	)
@@ -398,17 +400,19 @@ INSERT INTO
         block_number,
         block_hash,
         parent_hash,
+        state_root,
         timestamp,
         extra_data
     )
 VALUES
-    (?, ?, ?, ?, ?) ON CONFLICT (block_number) DO NOTHING
+    (?, ?, ?, ?, ?, ?) ON CONFLICT (block_number) DO NOTHING
 `
 
 type InsertBlockParams struct {
 	BlockNumber int64
 	BlockHash   []byte
 	ParentHash  []byte
+	StateRoot   []byte
 	Timestamp   int64
 	ExtraData   []byte
 }
@@ -418,6 +422,7 @@ func (q *Queries) InsertBlock(ctx context.Context, arg InsertBlockParams) error 
 		arg.BlockNumber,
 		arg.BlockHash,
 		arg.ParentHash,
+		arg.StateRoot,
 		arg.Timestamp,
 		arg.ExtraData,
 	)
@@ -523,7 +528,7 @@ func (q *Queries) InsertTransaction(ctx context.Context, arg InsertTransactionPa
 
 const latestBlock = `-- name: LatestBlock :one
 SELECT
-    block_number, block_hash, parent_hash, timestamp, extra_data
+    block_number, block_hash, parent_hash, state_root, timestamp, extra_data
 FROM
     blocks
 ORDER BY
@@ -539,6 +544,7 @@ func (q *Queries) LatestBlock(ctx context.Context) (Block, error) {
 		&i.BlockNumber,
 		&i.BlockHash,
 		&i.ParentHash,
+		&i.StateRoot,
 		&i.Timestamp,
 		&i.ExtraData,
 	)

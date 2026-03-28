@@ -36,6 +36,7 @@ func insertTestBlock(t *testing.T, store *Store, blockNum uint64, blockHash []by
 		BlockNumber: blockNum,
 		BlockHash:   blockHash,
 		ParentHash:  make([]byte, 32),
+		StateRoot:   make([]byte, 32),
 		Timestamp:   1000,
 	})
 	if err != nil {
@@ -677,6 +678,7 @@ func TestInsertBlock_WithTransactionsAndLogs(t *testing.T) {
 		BlockNumber: 100,
 		BlockHash:   blockHash,
 		ParentHash:  makeHash(0x0F),
+		StateRoot:   makeHash(0x01),
 		Timestamp:   1234567890,
 		Transactions: []domain.Transaction{
 			{

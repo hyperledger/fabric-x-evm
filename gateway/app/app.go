@@ -17,7 +17,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/rpc"
+	sdk "github.com/hyperledger/fabric-x-sdk"
+	"github.com/hyperledger/fabric-x-sdk/blocks"
+	"github.com/hyperledger/fabric-x-sdk/blocks/fabric"
+	"github.com/hyperledger/fabric-x-sdk/identity"
+	"github.com/hyperledger/fabric-x-sdk/network"
+	nfab "github.com/hyperledger/fabric-x-sdk/network/fabric"
 	"golang.org/x/sync/errgroup"
 	_ "modernc.org/sqlite"
 
@@ -29,13 +36,7 @@ import (
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
 	"github.com/hyperledger/fabric-x-evm/gateway/storage"
-	sdk "github.com/hyperledger/fabric-x-sdk"
-	"github.com/hyperledger/fabric-x-sdk/blocks"
-	"github.com/hyperledger/fabric-x-sdk/blocks/fabric"
-	"github.com/hyperledger/fabric-x-sdk/identity"
-	"github.com/hyperledger/fabric-x-sdk/network"
-	nfab "github.com/hyperledger/fabric-x-sdk/network/fabric"
-	_ "modernc.org/sqlite"
+	"github.com/hyperledger/fabric-x-evm/gateway/storage/trie"
 )
 
 // App represents the gateway application with all its components.
@@ -117,12 +118,22 @@ func New(cfg config.Config) (*App, error) {
 		return nil, fmt.Errorf("failed to initialize block store: %w", err)
 	}
 
+	// Seed the trie from the last committed block's state root so it resumes correctly after restart.
+	initialRoot := common.Hash{} // types.EmptyRootHash is geth's zero hash — handled identically
+	if latest, err := blockStore.LatestBlock(context.Background(), false); err == nil && latest != nil {
+		initialRoot = common.BytesToHash(latest.StateRoot)
+	}
+	trieStore, err := trie.New(cfg.Gateway.TrieDBPath, initialRoot)
+	if err != nil {
+		return nil, fmt.Errorf("open trie store: %w", err)
+	}
+
 	gateway, err := core.New(ec, submitter, blockStore, cfg.Network.ChainID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gateway: %w", err)
 	}
 
-	processor := blocks.NewProcessor(fabric.NewBlockParser(logger), []blocks.BlockHandler{core.NewEthBlockPersister(blockStore)})
+	processor := blocks.NewProcessor(fabric.NewBlockParser(logger), []blocks.BlockHandler{core.NewEthBlockPersister(blockStore, trieStore)})
 	gwSync, err := network.NewSynchronizer(blockStore, cfg.Network.Channel, cfg.Gateway.SyncPeerAddr, cfg.Gateway.SyncPeerTLS, gwSigner, processor, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gateway synchronizer: %w", err)

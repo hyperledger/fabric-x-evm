@@ -42,7 +42,8 @@ type Network struct {
 type Gateway struct {
 	SignerMSPDir   string
 	SignerMSPID    string
-	DbConnStr      string
+	DbConnStr      string // path to the sqlite database for blocks and transactions
+	TrieDBPath     string // path to PebbleDB trie database; empty = in-memory (dev/test only)
 	Orderers       []Orderer
 	SubmitWaitTime time.Duration
 	SyncPeerAddr   string

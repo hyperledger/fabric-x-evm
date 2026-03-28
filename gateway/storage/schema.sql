@@ -4,6 +4,7 @@ CREATE TABLE
         block_number INTEGER PRIMARY KEY NOT NULL CHECK (block_number >= 0),
         block_hash BLOB NOT NULL UNIQUE CHECK (length (block_hash) = 32),
         parent_hash BLOB NOT NULL CHECK (length (parent_hash) = 32),
+        state_root BLOB NOT NULL CHECK (length (state_root) = 32),
         timestamp BIGINT NOT NULL CHECK (timestamp >= 0),
         extra_data BLOB
     );
