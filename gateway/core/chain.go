@@ -8,34 +8,70 @@ package core
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"math/big"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/hyperledger/fabric-x-evm/common"
+
+	fc "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
+	"github.com/hyperledger/fabric-x-evm/gateway/storage"
 	"github.com/hyperledger/fabric-x-evm/gateway/storage/trie"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
+	"github.com/hyperledger/fabric-x-sdk/state/sqlite"
 )
 
-func NewEthBlockPersister(db BlockInserter, ts *trie.Store) *EthBlockPersister {
-	return &EthBlockPersister{db: db, ts: ts}
+// Chain owns the block storage and state trie. It implements blocks.BlockHandler
+// (for block ingestion) and core.Store (via the embedded *storage.Store, for API queries).
+type Chain struct {
+	*storage.Store
+	db       *sql.DB
+	ts       *trie.Store
+	prevHash common.Hash // Ethereum hash of last committed block; seeded from DB on startup
 }
 
-type EthBlockPersister struct {
-	db BlockInserter
-	ts *trie.Store
+// NewChain opens the SQLite database and trie store, seeds state from the latest committed
+// block, and returns a ready Chain. dbConnStr uses the modernc SQLite DSN format;
+// triePath is the directory for the PebbleDB trie (empty string = in-memory).
+// The caller must register the SQLite driver (e.g. _ "modernc.org/sqlite") before calling.
+func NewChain(dbConnStr, triePath string) (*Chain, error) {
+	db, err := sqlite.Open(dbConnStr)
+	if err != nil {
+		return nil, fmt.Errorf("open db: %w", err)
+	}
+
+	blockStore := storage.NewStore(db)
+	if err := blockStore.Init(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("init block store: %w", err)
+	}
+
+	// Seed trie root and parent hash from the latest committed block so state
+	// resumes correctly after a restart.
+	var initialRoot, prevHash common.Hash
+	if latest, err := blockStore.LatestBlock(context.Background(), false); err == nil && latest != nil {
+		initialRoot = common.BytesToHash(latest.StateRoot)
+		prevHash = common.BytesToHash(latest.BlockHash)
+	}
+
+	ts, err := trie.New(triePath, initialRoot)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("open trie store: %w", err)
+	}
+
+	return &Chain{Store: blockStore, db: db, ts: ts, prevHash: prevHash}, nil
 }
 
-type BlockInserter interface {
-	InsertBlock(ctx context.Context, b domain.Block) error
-}
-
-func (e EthBlockPersister) Handle(ctx context.Context, b blocks.Block) error {
+// Handle implements blocks.BlockHandler. It commits the block's write sets to the trie,
+// then persists the block and its transactions to the database.
+func (c *Chain) Handle(ctx context.Context, b blocks.Block) error {
 	ebl := convertToDomain(b)
 
-	stateRoot, err := e.ts.Commit(ctx, b)
+	stateRoot, err := c.ts.Commit(ctx, b)
 	if err != nil {
 		return err // irrecoverable
 	}
@@ -43,16 +79,21 @@ func (e EthBlockPersister) Handle(ctx context.Context, b blocks.Block) error {
 	// TODO: use proper headers. We now add some mock values to make sure we're not violating unique constraints.
 	ebl.ParentHash = ebl.BlockHash
 
-	// store
-	// p.log.Debugf("%d tx in block %d", len(b.Transactions), b.BlockNumber)
-	if err := e.db.InsertBlock(ctx, ebl); err != nil {
-		//e.log.Warnf("error inserting block: %s (ignoring)", err.Error()) // TODO: handle
+	if err := c.Store.InsertBlock(ctx, ebl); err != nil {
 		return err
 	}
 
 	return nil
 }
 
+// Close releases the trie and database resources.
+func (c *Chain) Close() error {
+	c.ts.Close()
+	return c.db.Close()
+}
+
+// convertToDomain maps a Fabric SDK block to the gateway domain model,
+// extracting and decoding the embedded Ethereum transactions.
 func convertToDomain(b blocks.Block) domain.Block {
 	ebl := domain.Block{
 		BlockNumber:  b.Number,
@@ -92,7 +133,7 @@ func convertTransaction(ethTxBytes []byte, blockHash []byte, blockNumber uint64,
 		return domain.Transaction{}, fmt.Errorf("invalid tx: %w", err)
 	}
 
-	signer := types.MakeSigner(common.ChainConfig, new(big.Int).SetUint64(blockNumber), 0)
+	signer := types.MakeSigner(fc.ChainConfig, new(big.Int).SetUint64(blockNumber), 0)
 	from, err := types.Sender(signer, ethTx)
 	if err != nil {
 		return domain.Transaction{}, fmt.Errorf("invalid sender: %w", err)
@@ -109,7 +150,7 @@ func convertTransaction(ethTxBytes []byte, blockHash []byte, blockNumber uint64,
 
 	var logs []domain.Log
 	if len(events) > 0 {
-		rawLogs, err := common.UnmarshalLogs(events)
+		rawLogs, err := fc.UnmarshalLogs(events)
 		if err != nil {
 			// ?
 			//return fmt.Errorf("parse logs: %w", err)

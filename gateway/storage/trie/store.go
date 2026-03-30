@@ -118,20 +118,6 @@ func (s *Store) Close() {
 	s.diskdb.Close()
 }
 
-// TODO
-// Needed for eth_getProof
-// Returns the account proof and storage proofs in EIP-1186 format.
-// func (t *TrieStore) GetProof(ctx context.Context, addr common.Address, storageKeys []common.Hash, root common.Hash) (*AccountProof, error)
-
-// These open a StateDB at the given root and query it.
-// Needed for eth_getBalance, eth_getTransactionCount, eth_getCode, eth_getStorageAt
-// func (t *TrieStore) GetBalance(ctx context.Context, addr common.Address, root common.Hash) (*big.Int, error) {}
-// func (t *TrieStore) GetNonce(ctx context.Context, addr common.Address, root common.Hash) (uint64, error) {}
-// func (t *TrieStore) GetCode(ctx context.Context, addr common.Address, root common.Hash) ([]byte, error) {}
-// func (t *TrieStore) GetStorageAt(ctx context.Context, addr common.Address, slot common.Hash, root common.Hash) (common.Hash, error) {}
-// // Useful for internal consistency checks and some RPC methods
-// func (t *TrieStore) HasRoot(ctx context.Context, root common.Hash) (bool, error)
-
 // applyWrite interprets a Fabric KVWrite and applies it to the StateDB.
 // Keys with unknown prefixes are silently ignored.
 func applyWrite(sdb *state.StateDB, w blocks.KVWrite) {
