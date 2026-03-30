@@ -113,10 +113,8 @@ func (sp *StatePrimer) SetBalance(addr common.Address, balance *big.Int) *StateP
 
 // SetStorage sets storage slots for an address immediately in the simulation store.
 func (sp *StatePrimer) SetStorage(addr common.Address, storage map[common.Hash]common.Hash) *StatePrimer {
-	if storage != nil {
-		for key, value := range storage {
-			sp.stateDB.SetState(addr, key, value)
-		}
+	for key, value := range storage {
+		sp.stateDB.SetState(addr, key, value)
 	}
 	return sp
 }
@@ -134,7 +132,7 @@ func (sp *StatePrimer) SetAccount(addr common.Address, nonce *uint64, code []byt
 	if balance != nil {
 		sp.SetBalance(addr, balance)
 	}
-	if storage != nil && len(storage) > 0 {
+	if len(storage) > 0 {
 		sp.SetStorage(addr, storage)
 	}
 	return sp

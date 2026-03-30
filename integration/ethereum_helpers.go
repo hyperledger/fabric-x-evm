@@ -15,11 +15,8 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/holiman/uint256"
-	"github.com/hyperledger/fabric-x-evm/endorser"
 	"github.com/hyperledger/fabric-x-evm/utils"
 )
 
@@ -60,54 +57,6 @@ func hexToBytes(s string) ([]byte, error) {
 // hexToAddress converts "0x..." string to common.Address
 func hexToAddress(s string) common.Address {
 	return common.HexToAddress(s)
-}
-
-// hexToHash converts "0x..." string to common.Hash
-func hexToHash(s string) common.Hash {
-	return common.HexToHash(s)
-}
-
-// primeStateFromTest initializes SnapshotDB from test Pre allocation
-func primeStateFromTest(stateDB *endorser.SnapshotDB, pre map[string]TestAccount) error {
-	for addrStr, account := range pre {
-		addr := hexToAddress(addrStr)
-
-		// Set nonce
-		if account.Nonce != "" {
-			nonce, err := hexToUint64(account.Nonce)
-			if err != nil {
-				return fmt.Errorf("invalid nonce for %s: %w", addrStr, err)
-			}
-			stateDB.SetNonce(addr, nonce, tracing.NonceChangeUnspecified)
-		}
-
-		// Set balance using AddBalance (there's no SetBalance method)
-		if account.Balance != "" {
-			balance, err := hexToBigInt(account.Balance)
-			if err != nil {
-				return fmt.Errorf("invalid balance for %s: %w", addrStr, err)
-			}
-			stateDB.AddBalance(addr, uint256.MustFromBig(balance), tracing.BalanceChangeUnspecified)
-		}
-
-		// Set code
-		if account.Code != "" && account.Code != "0x" {
-			code, err := hexToBytes(account.Code)
-			if err != nil {
-				return fmt.Errorf("invalid code for %s: %w", addrStr, err)
-			}
-			stateDB.SetCode(addr, code, tracing.CodeChangeUnspecified)
-		}
-
-		// Set storage (SetState doesn't take a tracing reason parameter)
-		for keyStr, valStr := range account.Storage {
-			key := hexToHash(keyStr)
-			val := hexToHash(valStr)
-			stateDB.SetState(addr, key, val)
-		}
-	}
-
-	return nil
 }
 
 // buildTransaction creates a signed transaction from test data

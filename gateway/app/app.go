@@ -146,7 +146,7 @@ func New(cfg config.Config) (*App, error) {
 
 // Run starts the application and blocks until a signal is received or a fatal error occurs.
 func (a *App) Run(ctx context.Context) error {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	g, gctx := errgroup.WithContext(ctx)

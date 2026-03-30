@@ -2,6 +2,7 @@
 checks:
 	@test -z $(shell gofmt -l -s $(shell go list -f '{{.Dir}}' ./...) | tee /dev/stderr) || (echo "Fix formatting issues"; exit 1)
 	@go vet -all $(shell go list -f '{{.Dir}}' ./...)
+	@staticcheck ./... || (echo "Staticcheck failed"; exit 1)
 	find . -type d -name testdata -prune -o -name '*.go' -print | xargs go tool addlicense -check || (echo "Missing license headers"; exit 1)
 
 .PHONY: unit-tests
@@ -49,7 +50,7 @@ start-x:
 
 .PHONY: test-x
 test-x:
-	@go test -timeout 360s -v -run ^TestFabricX$$ ./integration 
+	@go test -timeout 360s -v -run ^TestFabricX$$ ./integration
 
 .PHONY: stop-x
 stop-x:
@@ -71,7 +72,7 @@ start-3:
 
 .PHONY: test-3
 test-3:
-	@go test -timeout 360s -v -run ^TestFabric$$ ./integration 
+	@go test -timeout 360s -v -run ^TestFabric$$ ./integration
 
 .PHONY: stop-3
 stop-3:
@@ -81,7 +82,7 @@ stop-3:
 .PHONY: test-local
 test-local:
 	@go test -timeout 360s -v -run ^TestLocal$$ ./integration
-	
+
 .PHONY: eth-tests
 eth-tests:
 	@VERBOSE=$(VERBOSE) ./scripts/run_eth_test.sh
