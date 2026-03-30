@@ -50,13 +50,22 @@ func New(engine *EVMEngine, builder endorsement.Builder) (*Endorser, error) {
 
 // SetEVMConfig sets the EVM configuration (BlockContext, ChainConfig, VMConfig) on the underlying EVMEngine.
 // This allows callers to specify custom EVM execution parameters for transaction endorsement.
+//
+// NOTE: The Endorser currently holds a single, long-lived EVMEngine instance.
+// Calling SetEVMConfig mutates shared engine state and is therefore **not safe
+// to invoke concurrently with transaction execution**. A config change made
+// by one caller will be immediately visible to all other callers using the same
+// Endorser.
+//
+// Callers must ensure that this method is only invoked when no EVM execution
+// is in progress (e.g., during initialization or in single-threaded test
+// scenarios). Failing to do so may result in races or transactions executing
+// with unintended EVM parameters.
+//
+// This API is primarily intended for testing and controlled environments; it
+// is the caller’s responsibility to enforce correct sequencing.
 func (f *Endorser) SetEVMConfig(config *EVMConfig) {
 	f.engine.SetEVMConfig(config)
-}
-
-// GetEVMConfig returns the current EVM configuration from the underlying EVMEngine.
-func (f *Endorser) GetEVMConfig() *EVMConfig {
-	return f.engine.GetEVMConfig()
 }
 
 // ExecuteTransaction processes a transaction and returns a signed proposal response.
