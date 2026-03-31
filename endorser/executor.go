@@ -151,8 +151,8 @@ func (e *EVMEngine) newExecutor(blockInfo *utils.BlockInfo, stateBlockNum uint64
 	return newExecutor(sim, blockInfo, e.evmConfig, e.ethStateDB), nil
 }
 
-// newSnapshotAt returns a DualStateDB over the state at the given Fabric block height (0 = latest).
-func (e *EVMEngine) newSnapshotAt(blockNumber *big.Int) (*DualStateDB, error) {
+// newSnapshotAt returns an ExtendedStateDB over the state at the given Fabric block height (0 = latest).
+func (e *EVMEngine) newSnapshotAt(blockNumber *big.Int) (ExtendedStateDB, error) {
 	blockNum := uint64(0)
 	if blockNumber != nil {
 		blockNum = blockNumber.Uint64()
@@ -161,7 +161,7 @@ func (e *EVMEngine) newSnapshotAt(blockNumber *big.Int) (*DualStateDB, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewSnapshotDB(sim, e.ethStateDB), nil
+	return NewSnapshotDB(sim), nil
 }
 
 // executor is a per-transaction EVM execution context. It is an internal type;
@@ -220,8 +220,19 @@ func newExecutor(sim *state.SimulationStore, blockInfo *utils.BlockInfo, evmConf
 		}
 	}
 
+	// if we have been given a non-nil ethStateDB instance, it means that we are meant
+	// to instantiate a dual state DB that uses the ethStateDB instance alongside the
+	// simulator to handle state updates so that we can track eth root state evolution
+	var stateDB ExtendedStateDB
+	if ethStateDB == nil {
+		stateDB = NewSnapshotDB(sim)
+	} else {
+		// NOTE: this is only meant to be used in testing
+		stateDB = NewSnapshotDBWithDualState(sim, ethStateDB)
+	}
+
 	return &executor{
-		state:    NewSnapshotDB(sim, ethStateDB),
+		state:    stateDB,
 		chainID:  cmn.ChainConfig.ChainID,
 		chainCfg: ethChainConfig,
 		blockCtx: blockCtx,
