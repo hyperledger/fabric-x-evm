@@ -356,13 +356,17 @@ func (d *DualStateDB) RevertToSnapshot(snapshot int) {
 }
 
 // Snapshot creates a snapshot in both state implementations.
-// Returns the snapshot ID from the SnapshotDB.
+// Snapshot creates a snapshot in both state implementations.
+// Both implementations must return the same snapshot ID for proper synchronization.
+// We use the ethStateDB's snapshot ID as the canonical one.
 func (d *DualStateDB) Snapshot() int {
 	d.logger.Debugf("Snapshot: called")
-	d.ethStateDB.Snapshot()
+	ethSnapshot := d.ethStateDB.Snapshot()
 	snapSnapshot := d.snapshotDB.Snapshot()
-	d.logger.Debugf("Snapshot: returning snapSnapshot=%d", snapSnapshot)
-	return snapSnapshot
+	d.logger.Debugf("Snapshot: ethSnapshot=%d, snapSnapshot=%d", ethSnapshot, snapSnapshot)
+
+	// Return the ethStateDB's snapshot ID as it's the authoritative one for state root tracking
+	return ethSnapshot
 }
 
 // AddLog adds a log to both state implementations.
