@@ -35,10 +35,10 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/tests"
 	"github.com/ethereum/go-ethereum/triedb"
+	"github.com/ethereum/go-ethereum/triedb/hashdb"
+	"github.com/ethereum/go-ethereum/triedb/pathdb"
 	"github.com/holiman/uint256"
 	"github.com/hyperledger/fabric-x-evm/endorser"
-	"github.com/hyperledger/fabric-x-sdk/blocks"
-	fabricstate "github.com/hyperledger/fabric-x-sdk/state"
 	"golang.org/x/crypto/sha3"
 )
 
@@ -543,83 +543,47 @@ func (tx *stTransaction) toMessage(ps stPostState, baseFee *big.Int) (*core.Mess
 }
 
 func makePreState(db ethdb.Database, accounts types.GenesisAlloc, snapshotter bool, scheme string) StateTestState {
-	// Create a mock backend for NewSnapshotDB
-	backend := newMockBackend()
+	// Use the same approach as go-ethereum's MakePreState
+	tconf := &triedb.Config{Preimages: true}
+	if scheme == rawdb.HashScheme {
+		tconf.HashDB = &hashdb.Config{}
+	} else {
+		tconf.PathDB = &pathdb.Config{}
+	}
+	trieDB := triedb.NewDatabase(db, tconf)
+	sdb := state.NewDatabase(trieDB, nil)
+	statedb, _ := state.New(types.EmptyRootHash, sdb)
 
-	// Use NewSnapshotDB to create the DualStateDB
-	dualStateDB := endorser.NewSnapshotDBWithDualState(backend, nil)
-
-	// Populate accounts using the DualStateDB interface
-	// This will populate both the ethStateDB and SnapshotDB automatically
+	// Populate accounts
 	for addr, a := range accounts {
-		dualStateDB.CreateAccount(addr)
-		dualStateDB.SetCode(addr, a.Code, tracing.CodeChangeUnspecified)
-		dualStateDB.SetNonce(addr, a.Nonce, tracing.NonceChangeUnspecified)
-		dualStateDB.AddBalance(addr, uint256.MustFromBig(a.Balance), tracing.BalanceChangeUnspecified)
+		statedb.SetCode(addr, a.Code, tracing.CodeChangeUnspecified)
+		statedb.SetNonce(addr, a.Nonce, tracing.NonceChangeUnspecified)
+		statedb.SetBalance(addr, uint256.MustFromBig(a.Balance), tracing.BalanceChangeUnspecified)
 		for k, v := range a.Storage {
-			dualStateDB.SetState(addr, k, v)
+			statedb.SetState(addr, k, v)
 		}
 	}
 
-	// Don't commit here - the commit will happen after transaction execution
-	// Get the internal triedb from the DualStateDB
-	triedb := dualStateDB.(*endorser.DualStateDB).TrieDB()
+	// Commit and re-open to start with a clean state
+	root, _ := statedb.Commit(0, false, false)
 
-	// Snapshots are not supported with this approach since we haven't committed yet
-	// The snapshotter parameter is ignored for now
-	var snaps *snapshot.Tree = nil
-
-	// Return the DualStateDB with its internal triedb
-	return StateTestState{dualStateDB, triedb, snaps}
-}
-
-// mockBackend is a simple in-memory implementation of endorser.Backend for testing
-type mockBackend struct {
-	store map[string][]byte
-	logs  []mockLog
-}
-
-type mockLog struct {
-	address []byte
-	topics  [][]byte
-	data    []byte
-}
-
-func newMockBackend() *mockBackend {
-	return &mockBackend{
-		store: make(map[string][]byte),
-		logs:  make([]mockLog, 0),
+	// If snapshot is requested, initialize the snapshotter and use it in state
+	var snaps *snapshot.Tree
+	if snapshotter {
+		snapconfig := snapshot.Config{
+			CacheSize:  1,
+			Recovery:   false,
+			NoBuild:    false,
+			AsyncBuild: false,
+		}
+		snaps, _ = snapshot.New(snapconfig, db, trieDB, root)
 	}
-}
+	sdb = state.NewDatabase(trieDB, snaps)
+	statedb, _ = state.New(root, sdb)
 
-func (m *mockBackend) DelState(key string) error {
-	delete(m.store, key)
-	return nil
-}
-
-func (m *mockBackend) GetState(key string) ([]byte, error) {
-	return m.store[key], nil
-}
-
-func (m *mockBackend) PutState(key string, value []byte) error {
-	m.store[key] = value
-	return nil
-}
-
-func (m *mockBackend) AddLog(address []byte, topics [][]byte, data []byte) {
-	m.logs = append(m.logs, mockLog{address, topics, data})
-}
-
-func (m *mockBackend) Version() uint64 {
-	return 0
-}
-
-func (m *mockBackend) Result() blocks.ReadWriteSet {
-	return blocks.ReadWriteSet{}
-}
-
-func (m *mockBackend) Logs() []fabricstate.Log {
-	return nil
+	// Return plain ethStateDB (not wrapped in DualStateDB)
+	// The Run method already handles both DualStateDB and plain StateDB
+	return StateTestState{statedb, trieDB, snaps}
 }
 
 func vmTestBlockHash(n uint64) common.Hash {

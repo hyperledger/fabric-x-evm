@@ -25,6 +25,9 @@ func TestSingleAdd11(t *testing.T) {
 	// Original path in go-ethereum: ./testdata/LegacyTests/Constantinople/GeneralStateTests/stExample/add11.json
 	// Path in this repo: ../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stExample/add11.json
 	testPath := filepath.Join("..", "testdata", "ethereum-tests", "LegacyTests", "Constantinople", "GeneralStateTests", "stExample", "add11.json")
+	// testPath = filepath.Join("..", "testdata", "ethereum-tests", "LegacyTests", "Constantinople", "GeneralStateTests", "stCallDelegateCodesHomestead", "callcodecallcallcode_101_SuicideEnd.json")
+	// testPath = filepath.Join("..", "testdata", "ethereum-tests", "LegacyTests", "Constantinople", "GeneralStateTests", "stCreate2", "create2collisionNonce.json")
+	// testPath = filepath.Join("..", "testdata", "ethereum-tests", "LegacyTests", "Constantinople", "GeneralStateTests", "stQuadraticComplexityTest", "Call50000bytesContract50_2.json")
 
 	// Load the test file
 	file, err := os.Open(testPath)
