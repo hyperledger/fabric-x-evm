@@ -8,7 +8,6 @@ package core
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"fmt"
 
@@ -52,18 +51,12 @@ func NewEndorsementClient(endorsers []Endorser, signer Signer, channel, namespac
 }
 
 func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Transaction, blockInfo *utils.BlockInfo) (sdk.Endorsement, error) {
-	// Generate a random fabric nonce (32 bytes)
-	fabNonce := make([]byte, 32)
-	if _, err := rand.Read(fabNonce); err != nil {
-		return sdk.Endorsement{}, fmt.Errorf("failed to generate random nonce: %w", err)
-	}
-
 	ethTxBytes, err := tx.MarshalBinary()
 	if err != nil {
 		return sdk.Endorsement{}, err
 	}
 
-	prop, err := network.NewSignedProposal(e.signer, e.channel, e.namespace, e.nsVersion, [][]byte{{byte(common.ProposalTypeEVMTx)}, ethTxBytes}, fabNonce)
+	prop, err := network.NewSignedProposal(e.signer, e.channel, e.namespace, e.nsVersion, [][]byte{{byte(common.ProposalTypeEVMTx)}, ethTxBytes})
 	if err != nil {
 		return sdk.Endorsement{}, err
 	}
@@ -96,7 +89,7 @@ func (e *EndorsementClient) CallContract(ctx context.Context, args ethereum.Call
 		return nil, fmt.Errorf("invalid callmessage: %w", err)
 	}
 
-	prop, err := network.NewSignedProposal(e.signer, e.channel, e.namespace, e.nsVersion, [][]byte{{byte(common.ProposalTypeCall)}, msg}, nil)
+	prop, err := network.NewSignedProposal(e.signer, e.channel, e.namespace, e.nsVersion, [][]byte{{byte(common.ProposalTypeCall)}, msg})
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +112,7 @@ func (e *EndorsementClient) GetState(ctx context.Context, query common.StateQuer
 		return nil, fmt.Errorf("invalid query: %w", err)
 	}
 
-	prop, err := network.NewSignedProposal(e.signer, e.channel, e.namespace, e.nsVersion, [][]byte{{byte(common.ProposalTypeState)}, msg}, nil)
+	prop, err := network.NewSignedProposal(e.signer, e.channel, e.namespace, e.nsVersion, [][]byte{{byte(common.ProposalTypeState)}, msg})
 	if err != nil {
 		return nil, err
 	}

@@ -83,6 +83,10 @@ stop-3:
 test-local:
 	@go test -timeout 360s -v -run ^TestLocal$$ ./integration
 
+.PHONY: test-local-x
+test-local-x:
+	@go test -timeout 360s -v -run ^TestLocalX$$ ./integration
+
 .PHONY: eth-tests
 eth-tests:
 	@go test -test.fullpath=true -timeout 1000s -run ^TestEthereumTests$$ github.com/hyperledger/fabric-x-evm/integration
