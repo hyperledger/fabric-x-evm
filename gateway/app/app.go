@@ -99,7 +99,7 @@ func New(cfg config.Config) (*App, error) {
 		}
 	}
 
-	submitter, err := network.NewSubmitter(orderers, nfab.NewTxPackager(gwSigner), cfg.Gateway.SubmitWaitTime)
+	submitter, err := network.NewSubmitter(orderers, nfab.NewTxPackager(gwSigner), cfg.Gateway.SubmitWaitTime, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create submitter: %w", err)
 	}

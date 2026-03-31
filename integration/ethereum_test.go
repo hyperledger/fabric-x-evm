@@ -8,9 +8,7 @@ package integration
 
 import (
 	"bufio"
-	"context"
 	"fmt"
-	"math/big"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -19,7 +17,6 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
-	ethstate "github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/hyperledger/fabric-x-evm/endorser"
@@ -257,96 +254,15 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 func newEthereumTestHarness(t *testing.T, evmConfig *endorser.EVMConfig, pre types.GenesisAlloc) (*TestHarness, error) {
 	t.Helper()
 
-	// Create a temporary test harness to get access to the database
-	th, err := newLocalTestHarness(t.Context(), TestLogger{T: t}, evmConfig, "")
+	th, err := newLocalTestHarness(t, TestLogger{T: t}, evmConfig, "", "fabric")
 	if err != nil {
 		return nil, err
 	}
 
-	// Prime the state using the existing infrastructure
-	if len(pre) > 0 {
-		t.Logf("Priming state with %d accounts", len(pre))
-
-		// We need to access the database and prime it
-		// The test harness has endorsers which have access to the txSim (VersionedDB)
-		// We'll use a similar approach to PrimeStateFromJSON but with our test format
-
-		ethStateDB, err := primeEthereumTestState(t.Context(), th, pre)
-		if err != nil {
-			th.Stop()
-			return nil, err
-		}
-
-		// Set the ethStateDB on all endorsers so they can reuse the primed state
-		for _, endorser := range th.endorsers {
-			endorser.SetEthStateDB(ethStateDB)
-		}
-		t.Logf("Set primed ethStateDB on %d endorsers", len(th.endorsers))
+	if err := th.PrimeGenesisAlloc(t.Context(), pre); err != nil {
+		th.Stop()
+		return nil, err
 	}
 
 	return th, nil
-}
-
-// primeEthereumTestState primes the state database with ethereum test pre-state
-// and returns the ethStateDB for reuse
-func primeEthereumTestState(ctx context.Context, th *TestHarness, pre types.GenesisAlloc) (*ethstate.StateDB, error) {
-	if len(pre) == 0 {
-		return nil, nil
-	}
-
-	// Create a StatePrimer with chain config and environment
-	primer, err := NewStatePrimer(
-		th.db,
-		th.namespace,
-		th.signer,
-		th.builders,
-		th.submitter,
-		th.channel,
-		th.nsVersion,
-		th.monotonicVersions,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	// Convert each test account to StatePrimer operations
-	for addr, account := range pre {
-		// Set nonce
-		var nonce *uint64
-		if account.Nonce != 0 {
-			n := account.Nonce
-			nonce = &n
-		}
-
-		// Set balance
-		var balance *big.Int
-		if account.Balance != nil {
-			balance = account.Balance
-		}
-
-		// Set code
-		var code []byte
-		if len(account.Code) > 0 {
-			code = account.Code
-		}
-
-		// Set storage
-		var storage map[common.Hash]common.Hash
-		if len(account.Storage) > 0 {
-			storage = account.Storage
-		}
-
-		// Apply all account properties
-		primer.SetAccount(addr, nonce, code, balance, storage)
-	}
-
-	// Extract the ethStateDB before committing
-	ethStateDB := primer.GetEthStateDB()
-
-	// Commit all state changes to the ledger
-	if err := primer.Commit(ctx); err != nil {
-		return nil, err
-	}
-
-	return ethStateDB, nil
 }

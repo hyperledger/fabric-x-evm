@@ -80,9 +80,12 @@ var cases = []testCase{
 // Gateway (receive) -> Endorser (endorse) -> Gateway (submit) -> Orderer (order) -> Peer (commit) -> Endorser (update state)
 // Gateway (receive) -> Endorser (endorse) -> Gateway (update state)
 func TestLocal(t *testing.T) {
+	// silence GRPC logging
+	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr))
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			th, err := newLocalTestHarness(t.Context(), TestLogger{T: t}, &endorser.EVMConfig{ChainConfig: tc.ethChainConfig}, tc.primeDbPath)
+			th, err := newLocalTestHarness(t, TestLogger{T: t}, &endorser.EVMConfig{ChainConfig: tc.ethChainConfig}, tc.primeDbPath, "fabric")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -94,9 +97,12 @@ func TestLocal(t *testing.T) {
 
 // TestLocalX is TestLocal but with fabric-x encoding of transactions
 func TestLocalX(t *testing.T) {
+	// silence GRPC logging
+	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr))
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			th, err := newLocalXTestHarness(t.Context(), TestLogger{T: t}, tc.ethChainConfig, tc.primeDbPath)
+			th, err := newLocalTestHarness(t, TestLogger{T: t}, &endorser.EVMConfig{ChainConfig: tc.ethChainConfig}, tc.primeDbPath, "fabric-x")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -116,7 +122,7 @@ func TestFabric(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			th, err := newFabricTestHarness(t.Context(), TestLogger{T: t}, tc.ethChainConfig, tc.primeDbPath)
+			th, err := newFabricTestHarness(t, TestLogger{T: t}, tc.ethChainConfig, tc.primeDbPath)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -136,7 +142,7 @@ func TestFabricX(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			th, err := newFabricXTestHarness(t.Context(), TestLogger{T: t}, tc.ethChainConfig, tc.primeDbPath)
+			th, err := newFabricXTestHarness(t, TestLogger{T: t}, tc.ethChainConfig, tc.primeDbPath)
 			if err != nil {
 				t.Fatal(err)
 			}

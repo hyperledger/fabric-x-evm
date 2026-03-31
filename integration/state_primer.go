@@ -140,6 +140,14 @@ func (sp *StatePrimer) SetAccount(addr common.Address, nonce *uint64, code []byt
 	return sp
 }
 
+// AllocEntry represents a single account entry in a genesis allocation JSON file.
+type AllocEntry struct {
+	Balance string            `json:"balance"`
+	Code    string            `json:"code"`
+	Nonce   string            `json:"nonce"`
+	Storage map[string]string `json:"storage"`
+}
+
 // LoadFromJSON loads state priming operations from a JSON file.
 // The JSON format matches the AllocEntry structure used in genesis files.
 func (sp *StatePrimer) LoadFromJSON(jsonFilePath string) (*StatePrimer, error) {
@@ -207,7 +215,6 @@ func (sp *StatePrimer) Commit(ctx context.Context) error {
 		sp.namespace,
 		sp.nsVersion,
 		[][]byte{[]byte("prime")},
-		nil,
 	)
 	if err != nil {
 		return err
