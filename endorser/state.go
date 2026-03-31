@@ -37,7 +37,22 @@ type Backend interface {
 	Logs() []state.Log
 }
 
-func NewSnapshotDB(store Backend, ethStateDB *ethstate.StateDB) *DualStateDB {
+// NewSnapshotDB returns a state DB backed by the supplied store
+func NewSnapshotDB(store Backend) ExtendedStateDB {
+	return &SnapshotDB{
+		store:          store,
+		ops:            make([]StateOp, 0),
+		selfDestructed: make(map[common.Address]struct{}),
+	}
+}
+
+// NewSnapshotDBWithDualState returns a state DB backed by the supplied store
+// The returned state DB is actually a dual state DB, containing both ethereum
+// state DB and fabric's. This is used in testing to assert facts about the
+// state of the root trie which is kept by the ethereum KVS.
+//
+// NOTE: this constructor is meant to be used in testing only.
+func NewSnapshotDBWithDualState(store Backend, ethStateDB *ethstate.StateDB) ExtendedStateDB {
 	// Create the SnapshotDB
 	snapshotDB := &SnapshotDB{
 		store:          store,

@@ -80,8 +80,7 @@ var cases = []testCase{
 // Gateway (receive) -> Endorser (endorse) -> Gateway (submit) -> Orderer (order) -> Peer (commit) -> Endorser (update state)
 // Gateway (receive) -> Endorser (endorse) -> Gateway (update state)
 func TestLocal(t *testing.T) {
-	// silence GRPC logging
-	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr))
+	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr)) // silence GRPC logging
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -97,8 +96,7 @@ func TestLocal(t *testing.T) {
 
 // TestLocalX is TestLocal but with fabric-x encoding of transactions
 func TestLocalX(t *testing.T) {
-	// silence GRPC logging
-	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr))
+	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr)) // silence GRPC logging
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -117,8 +115,7 @@ func TestFabric(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping Fabric test in short mode")
 	}
-	// silence GRPC logging
-	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr))
+	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr)) // silence GRPC logging
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -137,8 +134,7 @@ func TestFabricX(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping FabricX test in short mode")
 	}
-	// silence GRPC logging
-	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr))
+	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr)) // silence GRPC logging
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -9,6 +9,7 @@ package integration
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -20,6 +21,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/hyperledger/fabric-x-evm/endorser"
+	"google.golang.org/grpc/grpclog"
 )
 
 // loadBlacklist loads the blacklist file and returns a map of blacklisted file paths
@@ -95,15 +97,17 @@ func filterBlacklistedFiles(files []string, blacklist map[string]struct{}) []str
 //
 // This follows the same approach as Besu, Geth, and other Ethereum clients.
 func TestEthereumTests(t *testing.T) {
+	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr)) // silence GRPC logging
+
 	// Load blacklist
-	blacklist, err := loadBlacklist("../testdata/eth_tests.blacklist")
+	blacklist, err := loadBlacklist(filepath.Join("..", "testdata", "eth_tests.blacklist"))
 	if err != nil {
 		t.Fatalf("Failed to load blacklist: %v", err)
 	}
 	t.Logf("Loaded blacklist with %d entries", len(blacklist))
 
 	// Find all JSON files recursively
-	testsDir := "../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/"
+	testsDir := filepath.Join("..", "testdata", "ethereum-tests", "LegacyTests", "Constantinople", "GeneralStateTests")
 	allFiles, err := findJSONFiles(testsDir)
 	if err != nil {
 		t.Fatalf("Failed to find test files: %v", err)
@@ -288,6 +292,7 @@ func newEthereumTestHarness(t *testing.T, evmConfig *endorser.EVMConfig, pre typ
 		return nil, err
 	}
 
+	// Prime the state using the existing infrastructure
 	if err := th.PrimeGenesisAlloc(t.Context(), pre); err != nil {
 		th.Stop()
 		return nil, err

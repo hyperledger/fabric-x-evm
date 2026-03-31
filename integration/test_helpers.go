@@ -258,6 +258,7 @@ func newLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig *endorser.EV
 	}
 	t.Cleanup(nw.Stop)
 
+	name := strings.ReplaceAll(strings.ReplaceAll(t.Name(), "/", "_"), ".", "_")
 	cfg := config.Config{
 		Network: config.Network{
 			Channel:   "mychannel",
@@ -266,7 +267,7 @@ func newLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig *endorser.EV
 			ChainID:   31337,
 		},
 		Gateway: config.Gateway{
-			DbConnStr:      fmt.Sprintf("file:%s_gateway?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_")),
+			DbConnStr:      fmt.Sprintf("file:%s_gateway?mode=memory&cache=shared", name),
 			SubmitWaitTime: 50 * time.Millisecond,
 			SyncTimeout:    2 * time.Second,
 			Orderers:       []config.Orderer{{Address: nw.OrdererAddr}},
@@ -275,7 +276,7 @@ func newLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig *endorser.EV
 			{
 				PeerAddr:  nw.PeerAddr,
 				Name:      "endorser1",
-				DbConnStr: fmt.Sprintf("file:%s_endorser1?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_")),
+				DbConnStr: fmt.Sprintf("file:%s_endorser1?mode=memory&cache=shared", name),
 			},
 		},
 	}
@@ -385,6 +386,7 @@ func newEndorser(t *testing.T, logger sdk.Logger, cfg econf.Endorser, channel, n
 		t.Fatalf("networkType must be fabric or fabric-x, got %q", typ)
 	}
 
+	// Use the provided evmConfig, or create a default one if nil
 	if evmConfig == nil {
 		evmConfig = &endorser.EVMConfig{}
 	}

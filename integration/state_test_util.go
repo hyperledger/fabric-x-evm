@@ -547,7 +547,7 @@ func makePreState(db ethdb.Database, accounts types.GenesisAlloc, snapshotter bo
 	backend := newMockBackend()
 
 	// Use NewSnapshotDB to create the DualStateDB
-	dualStateDB := endorser.NewSnapshotDB(backend, nil)
+	dualStateDB := endorser.NewSnapshotDBWithDualState(backend, nil)
 
 	// Populate accounts using the DualStateDB interface
 	// This will populate both the ethStateDB and SnapshotDB automatically
@@ -563,7 +563,7 @@ func makePreState(db ethdb.Database, accounts types.GenesisAlloc, snapshotter bo
 
 	// Don't commit here - the commit will happen after transaction execution
 	// Get the internal triedb from the DualStateDB
-	triedb := dualStateDB.TrieDB()
+	triedb := dualStateDB.(*endorser.DualStateDB).TrieDB()
 
 	// Snapshots are not supported with this approach since we haven't committed yet
 	// The snapshotter parameter is ignored for now
