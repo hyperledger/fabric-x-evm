@@ -99,14 +99,14 @@ func filterBlacklistedFiles(files []string, blacklist map[string]struct{}) []str
 // This follows the same approach as Besu, Geth, and other Ethereum clients.
 func TestEthereumTests(t *testing.T) {
 	// Load blacklist
-	blacklist, err := loadBlacklist("../testdata/eth_tests.blacklist")
+	blacklist, err := loadBlacklist(filepath.Join("..", "testdata", "eth_tests.blacklist"))
 	if err != nil {
 		t.Fatalf("Failed to load blacklist: %v", err)
 	}
 	t.Logf("Loaded blacklist with %d entries", len(blacklist))
 
 	// Find all JSON files recursively
-	testsDir := "../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/"
+	testsDir := filepath.Join("..", "testdata", "ethereum-tests", "LegacyTests", "Constantinople", "GeneralStateTests")
 	allFiles, err := findJSONFiles(testsDir)
 	if err != nil {
 		t.Fatalf("Failed to find test files: %v", err)
