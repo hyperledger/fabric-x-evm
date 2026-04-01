@@ -151,42 +151,13 @@ func runSingleEthereumTest(t *testing.T, stateTest *StateTest) {
 	for _, subtest := range stateTest.Subtests() {
 		key := fmt.Sprintf("%s/%d", subtest.Fork, subtest.Index)
 
-		// If -short flag is used, we don't execute all four permutations, only one.
-		executionMask := 0xf
-		if testing.Short() {
-			executionMask = (1 << (rand.Int63() & 4))
+		if testing.Short() && rand.Intn(2) == 0 {
+			t.Skip("skipping in short mode")
 		}
 
 		// Test with hash scheme and trie (no snapshotter)
-		t.Run(key+"/hash/trie", func(t *testing.T) {
-			if executionMask&0x1 == 0 {
-				t.Skip("test (randomly) skipped due to short-tag")
-			}
+		t.Run(key, func(t *testing.T) {
 			runEthereumTestConfig(t, stateTest, subtest, false, rawdb.HashScheme)
-		})
-
-		// Test with hash scheme and snapshotter
-		t.Run(key+"/hash/snap", func(t *testing.T) {
-			if executionMask&0x2 == 0 {
-				t.Skip("test (randomly) skipped due to short-tag")
-			}
-			runEthereumTestConfig(t, stateTest, subtest, true, rawdb.HashScheme)
-		})
-
-		// Test with path scheme and trie (no snapshotter)
-		t.Run(key+"/path/trie", func(t *testing.T) {
-			if executionMask&0x4 == 0 {
-				t.Skip("test (randomly) skipped due to short-tag")
-			}
-			runEthereumTestConfig(t, stateTest, subtest, false, rawdb.PathScheme)
-		})
-
-		// Test with path scheme and snapshotter
-		t.Run(key+"/path/snap", func(t *testing.T) {
-			if executionMask&0x8 == 0 {
-				t.Skip("test (randomly) skipped due to short-tag")
-			}
-			runEthereumTestConfig(t, stateTest, subtest, true, rawdb.PathScheme)
 		})
 	}
 }

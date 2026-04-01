@@ -94,6 +94,10 @@ type SnapshotDB struct {
 	// selfDestructed is kept in memory to determine whether SelfDestruct was called on this contract
 	// during this transaction. It is only accurate if SnapshotDB is recreated for each transaction!
 	selfDestructed map[common.Address]struct{}
+	// refund is the gas refund counter
+	refund uint64
+	// refundSnapshots stores refund values at each snapshot point
+	refundSnapshots []uint64
 }
 
 // AppendOp records an operation
@@ -309,9 +313,20 @@ func (d *SnapshotDB) Prepare(rules params.Rules, sender, coinbase common.Address
 // PointCache is for pre-compile optimizations
 func (d *SnapshotDB) PointCache() *utils.PointCache { return nil }
 
-func (d *SnapshotDB) AddRefund(r uint64) {}
-func (d *SnapshotDB) SubRefund(r uint64) {}
-func (d *SnapshotDB) GetRefund() uint64  { return 0 }
+func (d *SnapshotDB) AddRefund(gas uint64) {
+	d.refund += gas
+}
+
+func (d *SnapshotDB) SubRefund(gas uint64) {
+	if gas > d.refund {
+		panic(fmt.Sprintf("Refund counter below zero (gas: %d > refund: %d)", gas, d.refund))
+	}
+	d.refund -= gas
+}
+
+func (d *SnapshotDB) GetRefund() uint64 {
+	return d.refund
+}
 
 // Witness is used for stateless execution; stub.
 func (d *SnapshotDB) Witness() *stateless.Witness { return nil }
@@ -324,8 +339,22 @@ func (d *SnapshotDB) Result() blocks.ReadWriteSet { return d.store.Result() }
 func (d *SnapshotDB) Logs() []state.Log           { return d.store.Logs() }
 
 // -------------------- Snapshots  --------------------
-func (d *SnapshotDB) RevertToSnapshot(ss int) {}
-func (d *SnapshotDB) Snapshot() int           { return 0 }
+func (d *SnapshotDB) RevertToSnapshot(ss int) {
+	if ss < 0 || ss >= len(d.refundSnapshots) {
+		return
+	}
+	// Restore the refund counter to the snapshot value
+	d.refund = d.refundSnapshots[ss]
+	// Truncate the snapshots array to remove snapshots after this point
+	d.refundSnapshots = d.refundSnapshots[:ss]
+}
+
+func (d *SnapshotDB) Snapshot() int {
+	// Save the current refund value
+	d.refundSnapshots = append(d.refundSnapshots, d.refund)
+	// Return the snapshot ID (index in the snapshots array)
+	return len(d.refundSnapshots) - 1
+}
 
 // GetStorageRoot is for trie db
 func (d *SnapshotDB) GetStorageRoot(addr common.Address) common.Hash {

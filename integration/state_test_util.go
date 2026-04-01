@@ -10,6 +10,7 @@ which is licensed under the GNU Lesser General Public License v3.0.
 package integration
 
 import (
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -39,6 +40,8 @@ import (
 	"github.com/ethereum/go-ethereum/triedb/pathdb"
 	"github.com/holiman/uint256"
 	"github.com/hyperledger/fabric-x-evm/endorser"
+	"github.com/hyperledger/fabric-x-sdk/blocks"
+	fabricstate "github.com/hyperledger/fabric-x-sdk/state"
 	"golang.org/x/crypto/sha3"
 )
 
@@ -323,7 +326,7 @@ func (t *StateTest) prepareTestEnvironment(fork string, postStateIndex int, vmco
 	vmconfig.ExtraEips = eips
 
 	block = t.genesis(config).ToBlock()
-	st = makePreState(rawdb.NewMemoryDatabase(), t.json.Pre, snapshotter, scheme)
+	st = makePreStateWithDualState(rawdb.NewMemoryDatabase(), t.json.Pre, snapshotter, scheme)
 
 	var baseFee *big.Int
 	if config.IsLondon(new(big.Int)) {
@@ -542,6 +545,7 @@ func (tx *stTransaction) toMessage(ps stPostState, baseFee *big.Int) (*core.Mess
 	return msg, nil
 }
 
+//lint:ignore U1000 kept for future tests / debugging
 func makePreState(db ethdb.Database, accounts types.GenesisAlloc, snapshotter bool, scheme string) StateTestState {
 	// Use the same approach as go-ethereum's MakePreState
 	tconf := &triedb.Config{Preimages: true}
@@ -583,6 +587,80 @@ func makePreState(db ethdb.Database, accounts types.GenesisAlloc, snapshotter bo
 
 	// Return plain ethStateDB (not wrapped in DualStateDB)
 	// The Run method already handles both DualStateDB and plain StateDB
+	return StateTestState{statedb, trieDB, snaps}
+}
+
+func makePreStateWithDualState(db ethdb.Database, accounts types.GenesisAlloc, snapshotter bool, scheme string) StateTestState {
+	// Use the same approach as go-ethereum's MakePreState
+	tconf := &triedb.Config{Preimages: true}
+	if scheme == rawdb.HashScheme {
+		tconf.HashDB = &hashdb.Config{}
+	} else {
+		tconf.PathDB = &pathdb.Config{}
+	}
+	trieDB := triedb.NewDatabase(db, tconf)
+	sdb := state.NewDatabase(trieDB, nil)
+	ethStateDB, _ := state.New(types.EmptyRootHash, sdb)
+
+	// Create a mock SimulationStore for DualStateDB
+	fabricDB, _ := fabricstate.NewWriteDB("testchannel", ":memory:")
+	sim, _ := fabricstate.NewSimulationStore(context.TODO(), fabricDB, "testns", 0, false)
+
+	// Use DualStateDB instead of plain StateDB for debugging
+	statedb := endorser.NewSnapshotDBWithDualState(sim, ethStateDB)
+
+	// Populate accounts
+	for addr, a := range accounts {
+		statedb.CreateAccount(addr)
+		statedb.AddBalance(addr, uint256.MustFromBig(a.Balance), tracing.BalanceChangeUnspecified)
+		statedb.SetCode(addr, a.Code, tracing.CodeChangeUnspecified)
+		statedb.SetNonce(addr, a.Nonce, tracing.NonceChangeUnspecified)
+		for k, v := range a.Storage {
+			statedb.SetState(addr, k, v)
+		}
+	}
+
+	// Commit and re-open to start with a clean state
+	root, _ := statedb.(*endorser.DualStateDB).EthStateDB().Commit(0, false, false)
+
+	// Commit the fabric state to the database
+	rws := sim.Result()
+	err := fabricDB.UpdateWorldState(context.TODO(), blocks.Block{Number: 0, Transactions: []blocks.Transaction{
+		{
+			ID:     "setup",
+			Number: 0,
+			Valid:  true,
+			NsRWS: []blocks.NsReadWriteSet{
+				{
+					Namespace: "testns",
+					RWS:       rws,
+				},
+			},
+		},
+	}})
+	if err != nil {
+		panic(err)
+	}
+
+	// If snapshot is requested, initialize the snapshotter and use it in state
+	var snaps *snapshot.Tree
+	if snapshotter {
+		snapconfig := snapshot.Config{
+			CacheSize:  1,
+			Recovery:   false,
+			NoBuild:    false,
+			AsyncBuild: false,
+		}
+		snaps, _ = snapshot.New(snapconfig, db, trieDB, root)
+	}
+	sdb = state.NewDatabase(trieDB, snaps)
+	ethStateDB, _ = state.New(root, sdb)
+
+	// Create new SimulationStore for the reopened state - now reading from block 1
+	// since we just committed block 0
+	sim, _ = fabricstate.NewSimulationStore(context.TODO(), fabricDB, "testns", 1, false)
+	statedb = endorser.NewSnapshotDBWithDualState(sim, ethStateDB)
+
 	return StateTestState{statedb, trieDB, snaps}
 }
 
