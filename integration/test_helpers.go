@@ -169,8 +169,18 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 	}
 
 	// Start sync goroutines; they run until the test context is cancelled.
+	// Register a cleanup to wait for each goroutine to exit before the test
+	// is considered done, preventing goroutine accumulation across subtests.
 	for _, s := range syncs {
-		go func() { _ = s.Start(t.Context()) }()
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			_ = s.Start(t.Context())
+		}()
+		t.Cleanup(func() {
+			<-done
+			_ = s.Close()
+		})
 	}
 
 	// Build identity deserializer.
@@ -291,7 +301,6 @@ func newLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig *endorser.EV
 		return nil, err
 	}
 
-	logger.Infof("local test harness is ready!")
 	return th, nil
 }
 
@@ -329,7 +338,6 @@ func newFabricTestHarness(t *testing.T, logger sdk.Logger, ethChainConfig *param
 		}
 	}
 
-	logger.Infof("fabric test harness is ready!")
 	return th, nil
 }
 
@@ -349,7 +357,6 @@ func newFabricXTestHarness(t *testing.T, logger sdk.Logger, ethChainConfig *para
 
 	time.Sleep(2 * time.Second) // wait until synced...
 
-	logger.Infof("fabric-x test harness is ready!")
 	return th, nil
 }
 
@@ -371,6 +378,7 @@ func newEndorser(t *testing.T, logger sdk.Logger, cfg econf.Endorser, channel, n
 	if err != nil {
 		t.Fatalf("NewWriteDB: %v", err)
 	}
+	t.Cleanup(func() { writeDB.Close() })
 
 	// the shape of endorsements and blocks differs per ledger.
 	var builder endorsement.Builder
@@ -401,6 +409,7 @@ func newEndorser(t *testing.T, logger sdk.Logger, cfg econf.Endorser, channel, n
 	if err != nil {
 		t.Fatalf("NewReadDB: %v", err)
 	}
+	t.Cleanup(func() { readDB.Close() })
 
 	sync, err := network.NewSynchronizer(readDB, channel, cfg.PeerAddr, cfg.PeerTLS, signer, processor, logger)
 	if err != nil {

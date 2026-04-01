@@ -114,13 +114,13 @@ func TestEthereumTests(t *testing.T) {
 	testFiles := filterBlacklistedFiles(allFiles, blacklist)
 	t.Logf("Running %d test files after filtering blacklist", len(testFiles))
 
-	for _, testPath := range testFiles {
+	for i, testPath := range testFiles {
 		file, err := GetTestPath(testPath)
 		if err != nil {
 			t.Logf("Skipping %s: %v", testPath, err)
 			continue
 		}
-
+		fmt.Fprintf(os.Stderr, "[%d/%d] %s\n", i+1, len(testFiles), filepath.Base(file))
 		t.Run(filepath.Base(file), func(t *testing.T) {
 			runEthereumTestFile(t, file)
 		})
@@ -179,9 +179,15 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 		t.Fatalf("Failed to build transaction: %v", err)
 	}
 
-	// Call prepareTestEnvironment to get context, config, block, and msg
+	// Call prepareTestEnvironment to get context, config, block, and msg.
+	// The returned StateTestState holds a TrieDB and optional Snapshots that must
+	// be closed to stop the background snapshot-generator goroutine.
 	vmConfig := vm.Config{} // Empty VM config for now
-	_, config, block, msg, context, err := stateTest.prepareTestEnvironment(subtest.Fork, subtest.Index, vmConfig, snapshotter, scheme)
+	st, config, block, msg, context, err := stateTest.prepareTestEnvironment(t, subtest.Fork, subtest.Index, vmConfig, snapshotter, scheme)
+	// Close immediately: config/block/msg/context are plain values that don't reference the
+	// StateDB/TrieDB/Snapshots, so we can stop the snapshot-generator goroutine right here
+	// rather than relying on a defer that won't run if this goroutine later gets stuck.
+	st.Close()
 	if err != nil {
 		t.Fatalf("Failed to prepare test environment: %v", err)
 	}
@@ -262,6 +268,12 @@ func newEthereumTestHarness(t *testing.T, evmConfig *endorser.EVMConfig, pre typ
 	if err := th.PrimeGenesisAlloc(t.Context(), pre); err != nil {
 		th.Stop()
 		return nil, err
+	}
+
+	// Attach t.Logf as the log sink so DualStateDB state-op traces are captured
+	// and emitted by the test runner if this subtest fails.
+	for _, end := range th.endorsers {
+		end.SetEthStateDB(end.GetEthStateDB(), t.Logf)
 	}
 
 	return th, nil

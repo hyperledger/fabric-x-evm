@@ -49,9 +49,11 @@ func New(engine *EVMEngine, builder endorsement.Builder) (*Endorser, error) {
 	}, nil
 }
 
-// SetEthStateDB sets the ethStateDB on the underlying EVMEngine. This allows reusing a primed ethStateDB.
-func (f *Endorser) SetEthStateDB(ethStateDB *ethstate.StateDB) {
-	f.engine.SetEthStateDB(ethStateDB)
+// SetEthStateDB sets the ethStateDB on the underlying EVMEngine.
+// An optional logSink receives debug log lines from DualStateDB during execution;
+// pass t.Logf in tests to capture state-op traces on failure.
+func (f *Endorser) SetEthStateDB(ethStateDB *ethstate.StateDB, logSink ...func(string, ...any)) {
+	f.engine.SetEthStateDB(ethStateDB, logSink...)
 }
 
 // GetEthStateDB returns the ethStateDB from the underlying EVMEngine.
