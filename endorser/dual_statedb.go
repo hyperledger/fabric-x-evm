@@ -203,9 +203,15 @@ func (d *DualStateDB) GetRefund() uint64 {
 // GetStateAndCommittedState returns both current and committed state from the SnapshotDB.
 func (d *DualStateDB) GetStateAndCommittedState(addr common.Address, hash common.Hash) (common.Hash, common.Hash) {
 	d.logger.Debugf("GetStateAndCommittedState: addr=%s, hash=%s", addr.Hex(), hash.Hex())
-	current, committed := d.snapshotDB.GetStateAndCommittedState(addr, hash)
-	d.logger.Debugf("GetStateAndCommittedState: output current=%s, committed=%s", current.Hex(), committed.Hex())
-	return current, committed
+	// Call both to verify they return the same data
+	ethCurrent, ethCommitted := d.ethStateDB.GetStateAndCommittedState(addr, hash)
+	snapCurrent, snapCommitted := d.snapshotDB.GetStateAndCommittedState(addr, hash)
+	d.logger.Debugf("GetStateAndCommittedState: ethCurrent=%s, ethCommitted=%s", ethCurrent.Hex(), ethCommitted.Hex())
+	d.logger.Debugf("GetStateAndCommittedState: snapCurrent=%s, snapCommitted=%s", snapCurrent.Hex(), snapCommitted.Hex())
+	if ethCurrent != snapCurrent || ethCommitted != snapCommitted {
+		d.logger.Debugf("GetStateAndCommittedState: MISMATCH DETECTED!")
+	}
+	return snapCurrent, snapCommitted
 }
 
 // GetState returns the state from the SnapshotDB.

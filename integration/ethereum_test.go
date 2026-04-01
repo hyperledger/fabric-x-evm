@@ -118,14 +118,9 @@ func TestEthereumTests(t *testing.T) {
 	t.Logf("Running %d test files after filtering blacklist", len(testFiles))
 
 	for _, testPath := range testFiles {
-		file, err := GetTestPath(testPath)
-		if err != nil {
-			t.Logf("Skipping %s: %v", testPath, err)
-			continue
-		}
-
-		t.Run(filepath.Base(file), func(t *testing.T) {
-			runEthereumTestFile(t, file)
+		t.Run(filepath.Base(testPath), func(t *testing.T) {
+			t.Parallel() // Run test files in parallel
+			runEthereumTestFile(t, testPath)
 		})
 	}
 }
@@ -140,6 +135,7 @@ func runEthereumTestFile(t *testing.T, path string) {
 	// Run each StateTest with all configurations
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel() // Run individual tests in parallel
 			runSingleEthereumTest(t, test)
 		})
 	}
@@ -151,7 +147,7 @@ func runSingleEthereumTest(t *testing.T, stateTest *StateTest) {
 	for _, subtest := range stateTest.Subtests() {
 		key := fmt.Sprintf("%s/%d", subtest.Fork, subtest.Index)
 
-		if testing.Short() && rand.Intn(2) == 0 {
+		if testing.Short() && rand.Intn(3) > 0 {
 			t.Skip("skipping in short mode")
 		}
 

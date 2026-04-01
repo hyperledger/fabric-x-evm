@@ -70,9 +70,12 @@ func (api *EndorserAPI) ProcessProposal(ctx context.Context, signedProp *peer.Si
 		}
 		res, err := api.endorser.ExecuteTransaction(ctx, inv, ethTx, blockInfo)
 		if err != nil {
-			return nil, err
+			// Return the error as a response, not as a function error
+			// This allows EVM execution errors (like code size exceeded) to be
+			// handled gracefully without failing the entire proposal
+			return response(nil, err), nil
 		}
-		return res, err
+		return res, nil
 
 	// Call (query only)
 	case common.ProposalTypeCall:

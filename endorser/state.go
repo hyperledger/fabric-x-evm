@@ -43,6 +43,7 @@ func NewSnapshotDB(store Backend) ExtendedStateDB {
 		store:          store,
 		ops:            make([]StateOp, 0),
 		selfDestructed: make(map[common.Address]struct{}),
+		committedState: make(map[string]common.Hash),
 	}
 }
 
@@ -58,6 +59,7 @@ func NewSnapshotDBWithDualState(store Backend, ethStateDB *ethstate.StateDB) Ext
 		store:          store,
 		ops:            make([]StateOp, 0),
 		selfDestructed: make(map[common.Address]struct{}),
+		committedState: make(map[string]common.Hash),
 	}
 
 	// If ethStateDB is not provided, create a new in-memory one
@@ -98,6 +100,9 @@ type SnapshotDB struct {
 	refund uint64
 	// refundSnapshots stores refund values at each snapshot point
 	refundSnapshots []uint64
+	// committedState caches the original committed values from the store before any modifications
+	// Key format: "addr:slot" -> committed value
+	committedState map[string]common.Hash
 }
 
 // AppendOp records an operation
@@ -156,14 +161,35 @@ func (d *SnapshotDB) GetState(addr common.Address, slot common.Hash) common.Hash
 	d.appendOp(StateOp{Type: OpGetState, Address: addr, Slot: &slot})
 	res, err := d.store.GetState(storeKey(addr, slot))
 	must(err)
-	return common.HexToHash(string(res))
+	value := common.HexToHash(string(res))
+
+	// Cache the committed value on first read (before any modifications)
+	key := addr.Hex() + ":" + slot.Hex()
+	if _, exists := d.committedState[key]; !exists {
+		d.committedState[key] = value
+	}
+
+	return value
 }
 
-// NOTE: we only care about the current state.
+// GetStateAndCommittedState returns both current and committed state.
+// The current state is what's in the store now (may include modifications from this transaction).
+// The committed state is what was in the store when the transaction started (cached on first read).
 func (d *SnapshotDB) GetStateAndCommittedState(addr common.Address, slot common.Hash) (common.Hash, common.Hash) {
 	d.appendOp(StateOp{Type: OpGetState, Address: addr, Slot: &slot})
-	state := d.GetState(addr, slot)
-	return state, common.Hash{} // dummy committed
+
+	// Get current state
+	current := d.GetState(addr, slot)
+
+	// Get committed state from cache
+	key := addr.Hex() + ":" + slot.Hex()
+	committed, exists := d.committedState[key]
+	if !exists {
+		// If not in cache, current IS the committed (no modifications yet)
+		committed = current
+	}
+
+	return current, committed
 }
 
 // HasSelfDestructed tracks whether a contract account (one with code) has executed a SELFDESTRUCT in the current transaction.

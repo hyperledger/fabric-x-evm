@@ -265,6 +265,8 @@ func (t *StateTest) Run(subtest StateSubtest, vmconfig vm.Config, snapshotter bo
 		logs = rlpHash(dualDB.EthStateDB().Logs())
 	} else if ethDB, ok := st.StateDB.(*state.StateDB); ok {
 		logs = rlpHash(ethDB.Logs())
+	} else if loggerDB, ok := st.StateDB.(*endorser.EthStateDBLogger); ok {
+		logs = rlpHash(loggerDB.Logs())
 	}
 	if logs != common.Hash(post.Logs) {
 		return fmt.Errorf("post state logs hash mismatch: got %x, want %x", logs, post.Logs)
@@ -414,6 +416,11 @@ func (t *StateTest) RunNoVerify(subtest StateSubtest, vmconfig vm.Config, snapsh
 		}
 	} else if ethDB, ok := st.StateDB.(*state.StateDB); ok {
 		root, err = ethDB.Commit(block.NumberU64(), config.IsEIP158(block.Number()), config.IsCancun(block.Number(), block.Time()))
+		if err != nil {
+			return st, common.Hash{}, 0, fmt.Errorf("commit failed: %w", err)
+		}
+	} else if loggerDB, ok := st.StateDB.(*endorser.EthStateDBLogger); ok {
+		root, err = loggerDB.Commit(block.NumberU64(), config.IsEIP158(block.Number()), config.IsCancun(block.Number(), block.Time()))
 		if err != nil {
 			return st, common.Hash{}, 0, fmt.Errorf("commit failed: %w", err)
 		}
@@ -585,9 +592,12 @@ func makePreState(db ethdb.Database, accounts types.GenesisAlloc, snapshotter bo
 	sdb = state.NewDatabase(trieDB, snaps)
 	statedb, _ = state.New(root, sdb)
 
+	// Wrap with logger for debugging
+	loggedStateDB := endorser.NewEthStateDBLogger(statedb)
+
 	// Return plain ethStateDB (not wrapped in DualStateDB)
 	// The Run method already handles both DualStateDB and plain StateDB
-	return StateTestState{statedb, trieDB, snaps}
+	return StateTestState{loggedStateDB, trieDB, snaps}
 }
 
 func makePreStateWithDualState(db ethdb.Database, accounts types.GenesisAlloc, snapshotter bool, scheme string) StateTestState {
