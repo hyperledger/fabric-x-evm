@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -118,13 +119,13 @@ func TestEthereumTests(t *testing.T) {
 	testFiles := filterBlacklistedFiles(allFiles, blacklist)
 	t.Logf("Running %d test files after filtering blacklist", len(testFiles))
 
-	for _, testPath := range testFiles {
+	for i, testPath := range testFiles {
 		file, err := GetTestPath(testPath)
 		if err != nil {
 			t.Logf("Skipping %s: %v", testPath, err)
 			continue
 		}
-
+		fmt.Fprintf(os.Stderr, "[%d/%d] %s\n", i+1, len(testFiles), filepath.Base(file))
 		t.Run(filepath.Base(file), func(t *testing.T) {
 			runEthereumTestFile(t, file)
 		})
@@ -146,6 +147,24 @@ func runEthereumTestFile(t *testing.T, path string) {
 	}
 }
 
+// subtestTimeout is the maximum duration allowed for a single leaf subtest configuration.
+const subtestTimeout = 10 * time.Second
+
+// timeboxed runs fn in a goroutine and fails the test if it does not complete
+// within subtestTimeout. Cancelling t.Context() propagates into any gRPC or
+// context-aware work inside fn, so the goroutine exits promptly after the
+// timeout fires.
+func timeboxed(t *testing.T, fn func()) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() { defer close(done); fn() }()
+	select {
+	case <-done:
+	case <-time.After(subtestTimeout):
+		t.Fatalf("subtest timed out after %v", subtestTimeout)
+	}
+}
+
 // runSingleEthereumTest executes one ethereum test case with all configurations
 func runSingleEthereumTest(t *testing.T, stateTest *StateTest) {
 	// Iterate through all subtests (fork/index combinations)
@@ -163,7 +182,7 @@ func runSingleEthereumTest(t *testing.T, stateTest *StateTest) {
 			if executionMask&0x1 == 0 {
 				t.Skip("test (randomly) skipped due to short-tag")
 			}
-			runEthereumTestConfig(t, stateTest, subtest, false, rawdb.HashScheme)
+			timeboxed(t, func() { runEthereumTestConfig(t, stateTest, subtest, false, rawdb.HashScheme) })
 		})
 
 		// Test with hash scheme and snapshotter
@@ -171,7 +190,7 @@ func runSingleEthereumTest(t *testing.T, stateTest *StateTest) {
 			if executionMask&0x2 == 0 {
 				t.Skip("test (randomly) skipped due to short-tag")
 			}
-			runEthereumTestConfig(t, stateTest, subtest, true, rawdb.HashScheme)
+			timeboxed(t, func() { runEthereumTestConfig(t, stateTest, subtest, true, rawdb.HashScheme) })
 		})
 
 		// Test with path scheme and trie (no snapshotter)
@@ -179,7 +198,7 @@ func runSingleEthereumTest(t *testing.T, stateTest *StateTest) {
 			if executionMask&0x4 == 0 {
 				t.Skip("test (randomly) skipped due to short-tag")
 			}
-			runEthereumTestConfig(t, stateTest, subtest, false, rawdb.PathScheme)
+			timeboxed(t, func() { runEthereumTestConfig(t, stateTest, subtest, false, rawdb.PathScheme) })
 		})
 
 		// Test with path scheme and snapshotter
@@ -187,7 +206,7 @@ func runSingleEthereumTest(t *testing.T, stateTest *StateTest) {
 			if executionMask&0x8 == 0 {
 				t.Skip("test (randomly) skipped due to short-tag")
 			}
-			runEthereumTestConfig(t, stateTest, subtest, true, rawdb.PathScheme)
+			timeboxed(t, func() { runEthereumTestConfig(t, stateTest, subtest, true, rawdb.PathScheme) })
 		})
 	}
 }
@@ -212,9 +231,15 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 		t.Fatalf("Failed to build transaction: %v", err)
 	}
 
-	// Call prepareTestEnvironment to get context, config, block, and msg
+	// Call prepareTestEnvironment to get context, config, block, and msg.
+	// The returned StateTestState holds a TrieDB and optional Snapshots that must
+	// be closed to stop the background snapshot-generator goroutine.
 	vmConfig := vm.Config{} // Empty VM config for now
-	_, config, block, msg, context, err := stateTest.prepareTestEnvironment(subtest.Fork, subtest.Index, vmConfig, snapshotter, scheme)
+	st, config, block, msg, context, err := stateTest.prepareTestEnvironment(subtest.Fork, subtest.Index, vmConfig, snapshotter, scheme)
+	// Close immediately: config/block/msg/context are plain values that don't reference the
+	// StateDB/TrieDB/Snapshots, so we can stop the snapshot-generator goroutine right here
+	// rather than relying on a defer that won't run if this goroutine later gets stuck.
+	st.Close()
 	if err != nil {
 		t.Fatalf("Failed to prepare test environment: %v", err)
 	}
@@ -296,6 +321,12 @@ func newEthereumTestHarness(t *testing.T, evmConfig *endorser.EVMConfig, pre typ
 	if err := th.PrimeGenesisAlloc(t.Context(), pre); err != nil {
 		th.Stop()
 		return nil, err
+	}
+
+	// Attach t.Logf as the log sink so DualStateDB state-op traces are captured
+	// and emitted by the test runner if this subtest fails.
+	for _, end := range th.endorsers {
+		end.SetEthStateDB(end.GetEthStateDB(), t.Logf)
 	}
 
 	return th, nil

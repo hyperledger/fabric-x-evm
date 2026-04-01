@@ -17,7 +17,6 @@ import (
 	"github.com/ethereum/go-ethereum/trie/utils"
 	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/holiman/uint256"
-	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/state"
 )
@@ -28,7 +27,6 @@ type ExtendedStateDB interface {
 	vm.StateDB
 	Result() blocks.ReadWriteSet
 	Logs() []state.Log
-	Ops() []StateOp
 }
 
 // DualStateDB implements the ExtendedStateDB interface by delegating all calls
@@ -37,14 +35,23 @@ type ExtendedStateDB interface {
 type DualStateDB struct {
 	ethStateDB *ethstate.StateDB
 	snapshotDB *SnapshotDB
-	logger     sdk.Logger
+	logger     debugLogger
 }
+
+type debugLogger interface{ Debugf(f string, p ...any) }
+
+type noopLogger struct{}
+
+func (noopLogger) Debugf(string, ...any) {}
+
+type sinkLogger struct{ fn func(string, ...any) }
+
+func (s sinkLogger) Debugf(f string, p ...any) { s.fn(f, p...) }
 
 // NewDualStateDB creates a new DualStateDB that wraps both state implementations.
 // The constructor takes concrete types (not interfaces) so that callers can
 // access non-interface methods on both implementations.
-func NewDualStateDB(ethStateDB *ethstate.StateDB, snapshotDB *SnapshotDB) *DualStateDB {
-	logger := sdk.NewStdLogger("DualStateDB")
+func NewDualStateDB(ethStateDB *ethstate.StateDB, snapshotDB *SnapshotDB, logger debugLogger) *DualStateDB {
 	logger.Debugf("NewDualStateDB: input ethStateDB=%p, snapshotDB=%p", ethStateDB, snapshotDB)
 	result := &DualStateDB{
 		ethStateDB: ethStateDB,
@@ -424,14 +431,5 @@ func (d *DualStateDB) Logs() []state.Log {
 	d.logger.Debugf("Logs: called")
 	result := d.snapshotDB.Logs()
 	d.logger.Debugf("Logs: returning result len=%d", len(result))
-	return result
-}
-
-// Ops returns the recorded state operations from the SnapshotDB.
-// This is a SnapshotDB-specific method not part of vm.StateDB interface.
-func (d *DualStateDB) Ops() []StateOp {
-	d.logger.Debugf("Ops: called")
-	result := d.snapshotDB.Ops()
-	d.logger.Debugf("Ops: returning result len=%d", len(result))
 	return result
 }

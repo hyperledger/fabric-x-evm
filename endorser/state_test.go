@@ -168,25 +168,6 @@ func TestAddLog(t *testing.T) {
 	if !bytes.Equal(logs[0].Data, data) {
 		t.Errorf("log data mismatch: got %x, want %x", logs[0].Data, data)
 	}
-
-	// Verify the operation was recorded
-	ops := simDB.Ops()
-	var foundLogOp bool
-	for _, op := range ops {
-		if op.Type == OpAddLog {
-			foundLogOp = true
-			if op.Log == nil {
-				t.Error("OpAddLog recorded but Log is nil")
-			}
-			if op.Log.Address != contract {
-				t.Errorf("OpAddLog address mismatch: got %s, want %s", op.Log.Address, contract)
-			}
-			break
-		}
-	}
-	if !foundLogOp {
-		t.Error("OpAddLog operation was not recorded")
-	}
 }
 
 func TestAddMultipleLogs(t *testing.T) {

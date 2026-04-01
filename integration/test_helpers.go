@@ -13,6 +13,7 @@ import (
 	"math/big"
 	"os"
 	"path"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -168,8 +169,18 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 	}
 
 	// Start sync goroutines; they run until the test context is cancelled.
+	// Register a cleanup to wait for each goroutine to exit before the test
+	// is considered done, preventing goroutine accumulation across subtests.
 	for _, s := range syncs {
-		go func() { _ = s.Start(t.Context()) }()
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			_ = s.Start(t.Context())
+		}()
+		t.Cleanup(func() {
+			<-done
+			_ = s.Close()
+		})
 	}
 
 	// Build identity deserializer.
@@ -258,7 +269,8 @@ func newLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig *endorser.EV
 	}
 	t.Cleanup(nw.Stop)
 
-	name := strings.ReplaceAll(strings.ReplaceAll(t.Name(), "/", "_"), ".", "_")
+	tname := strings.ReplaceAll(strings.ReplaceAll(t.Name(), "/", "_"), ".", "-")
+	dir := t.TempDir()
 	cfg := config.Config{
 		Network: config.Network{
 			Channel:   "mychannel",
@@ -267,8 +279,8 @@ func newLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig *endorser.EV
 			ChainID:   31337,
 		},
 		Gateway: config.Gateway{
-			DbConnStr:      fmt.Sprintf("file:%s_gateway?mode=memory&cache=shared", name),
-			SubmitWaitTime: 50 * time.Millisecond,
+			DbConnStr:      filepath.Join(dir, tname+"gateway.db"),
+			SubmitWaitTime: 10 * time.Millisecond,
 			SyncTimeout:    2 * time.Second,
 			Orderers:       []config.Orderer{{Address: nw.OrdererAddr}},
 		},
@@ -276,7 +288,7 @@ func newLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig *endorser.EV
 			{
 				PeerAddr:  nw.PeerAddr,
 				Name:      "endorser1",
-				DbConnStr: fmt.Sprintf("file:%s_endorser1?mode=memory&cache=shared", name),
+				DbConnStr: filepath.Join(dir, tname+"endorser1.db"),
 			},
 		},
 	}
@@ -289,7 +301,6 @@ func newLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig *endorser.EV
 		return nil, err
 	}
 
-	logger.Infof("local test harness is ready!")
 	return th, nil
 }
 
@@ -327,7 +338,6 @@ func newFabricTestHarness(t *testing.T, logger sdk.Logger, ethChainConfig *param
 		}
 	}
 
-	logger.Infof("fabric test harness is ready!")
 	return th, nil
 }
 
@@ -347,7 +357,6 @@ func newFabricXTestHarness(t *testing.T, logger sdk.Logger, ethChainConfig *para
 
 	time.Sleep(2 * time.Second) // wait until synced...
 
-	logger.Infof("fabric-x test harness is ready!")
 	return th, nil
 }
 
@@ -369,6 +378,7 @@ func newEndorser(t *testing.T, logger sdk.Logger, cfg econf.Endorser, channel, n
 	if err != nil {
 		t.Fatalf("NewWriteDB: %v", err)
 	}
+	t.Cleanup(func() { writeDB.Close() })
 
 	// the shape of endorsements and blocks differs per ledger.
 	var builder endorsement.Builder
@@ -400,6 +410,7 @@ func newEndorser(t *testing.T, logger sdk.Logger, cfg econf.Endorser, channel, n
 	if err != nil {
 		t.Fatalf("NewReadDB: %v", err)
 	}
+	t.Cleanup(func() { readDB.Close() })
 
 	sync, err := network.NewSynchronizer(readDB, channel, cfg.PeerAddr, cfg.PeerTLS, signer, processor, logger)
 	if err != nil {

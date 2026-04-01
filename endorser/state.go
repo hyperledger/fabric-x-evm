@@ -41,7 +41,6 @@ type Backend interface {
 func NewSnapshotDB(store Backend) ExtendedStateDB {
 	return &SnapshotDB{
 		store:          store,
-		ops:            make([]StateOp, 0),
 		selfDestructed: make(map[common.Address]struct{}),
 	}
 }
@@ -52,7 +51,13 @@ func NewSnapshotDB(store Backend) ExtendedStateDB {
 // state of the root trie which is kept by the ethereum KVS.
 //
 // NOTE: this constructor is meant to be used in testing only.
-func NewSnapshotDBWithDualState(store Backend, ethStateDB *ethstate.StateDB) ExtendedStateDB {
+func NewSnapshotDBWithDualState(store Backend, ethStateDB *ethstate.StateDB, logger debugLogger) ExtendedStateDB {
+	var log debugLogger
+	if logger != nil {
+		log = logger
+	} else {
+		log = noopLogger{}
+	}
 	// Create the SnapshotDB
 	snapshotDB := &SnapshotDB{
 		store:          store,
@@ -85,7 +90,7 @@ func NewSnapshotDBWithDualState(store Backend, ethStateDB *ethstate.StateDB) Ext
 	}
 
 	// Return the dual state DB wrapping both implementations
-	return NewDualStateDB(ethStateDB, snapshotDB)
+	return NewDualStateDB(ethStateDB, snapshotDB, log)
 }
 
 type SnapshotDB struct {
@@ -94,11 +99,6 @@ type SnapshotDB struct {
 	// selfDestructed is kept in memory to determine whether SelfDestruct was called on this contract
 	// during this transaction. It is only accurate if SnapshotDB is recreated for each transaction!
 	selfDestructed map[common.Address]struct{}
-}
-
-// AppendOp records an operation
-func (d *SnapshotDB) appendOp(op StateOp) {
-	d.ops = append(d.ops, op)
 }
 
 func accKey(addr common.Address, typ string) string {
@@ -110,28 +110,24 @@ func storeKey(addr common.Address, slot common.Hash) string {
 
 // CreateAccount logs creation
 func (d *SnapshotDB) CreateAccount(addr common.Address) {
-	d.appendOp(StateOp{Type: OpCreateAccount, Address: addr})
 	must(d.store.PutState(accKey(addr, "bal"), uint256ToBytes(uint256.MustFromBig(big.NewInt(0)))))
 	must(d.store.PutState(accKey(addr, "nonce"), uint256ToBytes(uint256.MustFromBig(big.NewInt(0)))))
 }
 
 // CreateContract logs contract creation
 func (d *SnapshotDB) CreateContract(addr common.Address) {
-	d.appendOp(StateOp{Type: OpCreateContract, Address: addr})
 	must(d.store.PutState(accKey(addr, "code"), []byte{}))
 }
 
 // -------------------- State reads --------------------
 
 func (d *SnapshotDB) GetBalance(addr common.Address) *uint256.Int {
-	d.appendOp(StateOp{Type: OpGetBalance, Address: addr})
 	res, err := d.store.GetState(accKey(addr, "bal"))
 	must(err)
 	return bytesToUint256(res)
 }
 
 func (d *SnapshotDB) GetCode(addr common.Address) []byte {
-	d.appendOp(StateOp{Type: OpGetCode, Address: addr})
 	res, err := d.store.GetState(accKey(addr, "code"))
 	must(err)
 	return res
@@ -149,7 +145,6 @@ func (d *SnapshotDB) GetCodeSize(addr common.Address) int {
 
 // GetState returns the current in-flight state.
 func (d *SnapshotDB) GetState(addr common.Address, slot common.Hash) common.Hash {
-	d.appendOp(StateOp{Type: OpGetState, Address: addr, Slot: &slot})
 	res, err := d.store.GetState(storeKey(addr, slot))
 	must(err)
 	return common.HexToHash(string(res))
@@ -157,7 +152,6 @@ func (d *SnapshotDB) GetState(addr common.Address, slot common.Hash) common.Hash
 
 // NOTE: we only care about the current state.
 func (d *SnapshotDB) GetStateAndCommittedState(addr common.Address, slot common.Hash) (common.Hash, common.Hash) {
-	d.appendOp(StateOp{Type: OpGetState, Address: addr, Slot: &slot})
 	state := d.GetState(addr, slot)
 	return state, common.Hash{} // dummy committed
 }
@@ -171,7 +165,6 @@ func (d *SnapshotDB) HasSelfDestructed(addr common.Address) bool {
 
 // Exist is true if contract/account exists.
 func (d *SnapshotDB) Exist(addr common.Address) bool {
-	d.appendOp(StateOp{Type: OpExist, Address: addr})
 	raw, _ := d.store.GetState(accKey(addr, "bal"))
 	if raw != nil {
 		return true
@@ -181,8 +174,6 @@ func (d *SnapshotDB) Exist(addr common.Address) bool {
 
 // Empty is for EIP-161 rules (empty account): balance == 0, nonce == 0, and code length == 0.
 func (d *SnapshotDB) Empty(addr common.Address) bool {
-	d.appendOp(StateOp{Type: OpEmpty, Address: addr})
-
 	// Get account fields
 	balance := d.GetBalance(addr)
 	if balance != nil && !balance.IsZero() {
@@ -200,7 +191,6 @@ func (d *SnapshotDB) Empty(addr common.Address) bool {
 // -------------------- Writes --------------------
 
 func (d *SnapshotDB) AddBalance(addr common.Address, bal *uint256.Int, reason tracing.BalanceChangeReason) uint256.Int {
-	d.appendOp(StateOp{Type: OpAddBalance, Address: addr, IntValue: bal, Reason: byte(reason)})
 	// ignore adding zero balance; this is something the EVM does but creates unnecessary writes.
 	if bal.IsZero() {
 		return *uint256.NewInt(0)
@@ -216,7 +206,6 @@ func (d *SnapshotDB) AddBalance(addr common.Address, bal *uint256.Int, reason tr
 }
 
 func (d *SnapshotDB) SubBalance(addr common.Address, bal *uint256.Int, reason tracing.BalanceChangeReason) uint256.Int {
-	d.appendOp(StateOp{Type: OpSubBalance, Address: addr, IntValue: bal, Reason: byte(reason)})
 	// ignore subtracting zero balance; this is something the EVM does but creates unnecessary writes.
 	if bal.IsZero() {
 		return *uint256.NewInt(0)
@@ -232,7 +221,6 @@ func (d *SnapshotDB) SubBalance(addr common.Address, bal *uint256.Int, reason tr
 }
 
 func (d *SnapshotDB) SetCode(addr common.Address, code []byte, reason tracing.CodeChangeReason) []byte {
-	d.appendOp(StateOp{Type: OpSetCode, Address: addr, Data: &code, Reason: byte(reason)})
 	prev := d.GetCode(addr)
 	must(d.store.PutState(accKey(addr, "code"), code))
 
@@ -240,7 +228,6 @@ func (d *SnapshotDB) SetCode(addr common.Address, code []byte, reason tracing.Co
 }
 
 func (d *SnapshotDB) SetState(addr common.Address, slot common.Hash, value common.Hash) common.Hash {
-	d.appendOp(StateOp{Type: OpSetState, Address: addr, Slot: &slot, Value: &value})
 	prev := d.GetState(addr, slot) // ! we have to return the previous value, this adds a read.
 
 	must(d.store.PutState(storeKey(addr, slot), []byte(value.Hex())))
@@ -260,8 +247,6 @@ func (d *SnapshotDB) GetNonce(addr common.Address) uint64 {
 
 // Removes code, storage, balance; marks account as dead.
 func (d *SnapshotDB) SelfDestruct(addr common.Address) uint256.Int {
-	d.appendOp(StateOp{Type: OpSelfDestruct, Address: addr})
-
 	// TODO: Removes code, storage, balance; marks account as dead.
 	// Set in-memory flag for HasSelfDestructed
 	d.selfDestructed[addr] = struct{}{}
@@ -270,7 +255,6 @@ func (d *SnapshotDB) SelfDestruct(addr common.Address) uint256.Int {
 }
 
 func (d *SnapshotDB) SelfDestruct6780(addr common.Address) (uint256.Int, bool) {
-	d.appendOp(StateOp{Type: OpSelfDestruct6780, Address: addr})
 	return *uint256.NewInt(0), false // TODO
 }
 
@@ -281,7 +265,6 @@ func (d *SnapshotDB) AddLog(log *types.Log) {
 	}
 
 	d.store.AddLog(log.Address.Bytes(), topics, log.Data)
-	d.appendOp(StateOp{Type: OpAddLog, Address: log.Address, Log: log})
 }
 
 // -------------------- Dummy / gas ops --------------------
@@ -440,33 +423,3 @@ const (
 	// OpSlotInAccessList          OpType = "SlotInAccessList"
 	// OpAddPreimage               OpType = "AddPreimage"
 )
-
-func (d *SnapshotDB) Ops() []StateOp {
-	return d.ops
-}
-
-// Apply executes a write transaction on the database or silently ignores it.
-func (d *SnapshotDB) Apply(op StateOp) {
-	switch op.Type {
-	case OpCreateAccount:
-		d.CreateAccount(op.Address)
-	case OpCreateContract:
-		d.CreateContract(op.Address)
-	case OpAddBalance:
-		d.AddBalance(op.Address, op.IntValue, tracing.BalanceChangeReason(op.Reason))
-	case OpSubBalance:
-		d.SubBalance(op.Address, op.IntValue, tracing.BalanceChangeReason(op.Reason))
-	case OpSetNonce:
-		d.SetNonce(op.Address, op.IntValue.Uint64(), tracing.NonceChangeReason(op.Reason))
-	case OpSetState:
-		d.SetState(op.Address, *op.Slot, *op.Value)
-	case OpSetCode:
-		d.SetCode(op.Address, *op.Data, tracing.CodeChangeReason(op.Reason))
-	case OpSelfDestruct:
-		d.SelfDestruct(op.Address)
-	case OpAddLog:
-		d.AddLog(op.Log)
-	default:
-		// no op
-	}
-}
