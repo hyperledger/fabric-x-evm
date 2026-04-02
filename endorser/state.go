@@ -42,6 +42,7 @@ func NewSnapshotDB(store Backend) ExtendedStateDB {
 	return &SnapshotDB{
 		store:          store,
 		selfDestructed: make(map[common.Address]struct{}),
+		committedState: make(map[string]common.Hash),
 	}
 }
 
@@ -55,8 +56,8 @@ func NewSnapshotDBWithDualState(store Backend, ethStateDB *ethstate.StateDB) Ext
 	// Create the SnapshotDB
 	snapshotDB := &SnapshotDB{
 		store:          store,
-		ops:            make([]StateOp, 0),
 		selfDestructed: make(map[common.Address]struct{}),
+		committedState: make(map[string]common.Hash),
 	}
 
 	// If ethStateDB is not provided, create a new in-memory one
@@ -88,7 +89,6 @@ func NewSnapshotDBWithDualState(store Backend, ethStateDB *ethstate.StateDB) Ext
 }
 
 type SnapshotDB struct {
-	ops   []StateOp
 	store Backend
 	// selfDestructed is kept in memory to determine whether SelfDestruct was called on this contract
 	// during this transaction. It is only accurate if SnapshotDB is recreated for each transaction!
@@ -97,6 +97,9 @@ type SnapshotDB struct {
 	refund uint64
 	// refundSnapshots stores refund values at each snapshot point
 	refundSnapshots []uint64
+	// committedState caches the original committed values from the store before any modifications
+	// Key format: "addr:slot" -> committed value
+	committedState map[string]common.Hash
 }
 
 func accKey(addr common.Address, typ string) string {
@@ -145,13 +148,33 @@ func (d *SnapshotDB) GetCodeSize(addr common.Address) int {
 func (d *SnapshotDB) GetState(addr common.Address, slot common.Hash) common.Hash {
 	res, err := d.store.GetState(storeKey(addr, slot))
 	must(err)
-	return common.HexToHash(string(res))
+	value := common.HexToHash(string(res))
+
+	// Cache the committed value on first read (before any modifications)
+	key := addr.Hex() + ":" + slot.Hex()
+	if _, exists := d.committedState[key]; !exists {
+		d.committedState[key] = value
+	}
+
+	return value
 }
 
-// NOTE: we only care about the current state.
+// GetStateAndCommittedState returns both current and committed state.
+// The current state is what's in the store now (may include modifications from this transaction).
+// The committed state is what was in the store when the transaction started (cached on first read).
 func (d *SnapshotDB) GetStateAndCommittedState(addr common.Address, slot common.Hash) (common.Hash, common.Hash) {
-	state := d.GetState(addr, slot)
-	return state, common.Hash{} // dummy committed
+	// Get current state
+	current := d.GetState(addr, slot)
+
+	// Get committed state from cache
+	key := addr.Hex() + ":" + slot.Hex()
+	committed, exists := d.committedState[key]
+	if !exists {
+		// If not in cache, current IS the committed (no modifications yet)
+		committed = current
+	}
+
+	return current, committed
 }
 
 // HasSelfDestructed tracks whether a contract account (one with code) has executed a SELFDESTRUCT in the current transaction.
@@ -373,76 +396,3 @@ func must(err error) {
 		panic(fmt.Errorf("irrecoverable: %s", err.Error()))
 	}
 }
-
-// -------------------- State Ops are recorded for debugging --------------------
-
-// OpType represents the type of operation we record
-type OpType string
-
-type StateOp struct {
-	Type     OpType         `json:"type"`
-	Address  common.Address `json:"address"`
-	Slot     *common.Hash   `json:"slot,omitempty"`
-	Value    *common.Hash   `json:"value,omitempty"`
-	IntValue *uint256.Int   `json:"int_value,omitempty"`
-	Data     *[]byte        `json:"data,omitempty"`
-	Reason   byte           `json:"reason"`
-	Log      *types.Log     `json:"log,omitempty"`
-}
-
-func (op StateOp) String() string {
-	slot := ""
-	if op.Slot != nil {
-		n := new(big.Int)
-		n.SetString(op.Slot.Hex()[2:], 16)
-		if n.Cmp(big.NewInt(9999)) == -1 {
-			// represent low slots as decimal for readability
-			slot = n.String()
-		} else {
-			slot = op.Slot.Hex()
-		}
-	}
-
-	dataLen := 0
-	if op.Data != nil {
-		dataLen = len(*op.Data)
-	}
-	return fmt.Sprintf("%s: addr=%s slot=%s val=%s intval=%s data=%db reason=%v log=%v", op.Type, op.Address, slot, op.Value, op.IntValue, dataLen, op.Reason, op.Log)
-}
-
-const (
-	OpCreateAccount             OpType = "CreateAccount"
-	OpCreateContract            OpType = "CreateContract"
-	OpAddBalance                OpType = "AddBalance"
-	OpSubBalance                OpType = "SubBalance"
-	OpGetBalance                OpType = "GetBalance"
-	OpSetNonce                  OpType = "SetNonce"
-	OpGetNonce                  OpType = "GetNonce"
-	OpSetCode                   OpType = "SetCode"
-	OpGetCode                   OpType = "GetCode"
-	OpGetCodeSize               OpType = "GetCodeSize"
-	OpGetCodeHash               OpType = "GetCodeHash"
-	OpSetState                  OpType = "SetState"
-	OpGetState                  OpType = "GetState"
-	OpGetStateAndCommittedState OpType = "GetStateAndCommittedState"
-	OpSelfDestruct              OpType = "SelfDestruct"
-	OpSelfDestruct6780          OpType = "SelfDestruct6780"
-	OpHasSelfDestructed         OpType = "HasSelfDestructed"
-	OpExist                     OpType = "Exist"
-	OpEmpty                     OpType = "Empty"
-	OpAddLog                    OpType = "AddLog"
-	// OpGetStorageRoot            OpType = "GetStorageRoot"
-	// OpRevertToSnapshot          OpType = "RevertToSnapshot"
-	// OpSnapshot                  OpType = "Snapshot"
-	// No need to capture:
-	// OpGetTransientState         OpType = "GetTransientState"
-	// OpSetTransientState         OpType = "SetTransientState"
-	// OpAddRefund                 OpType = "AddRefund"
-	// OpGetRefund                 OpType = "GetRefund"
-	// OpSubRefund                 OpType = "SubRefund"
-	// OpAddressInAccessList       OpType = "AddressInAccessList"
-	// OpAddAddressToAccessList    OpType = "AddAddressToAccessList"
-	// OpAddSlotToAccessList       OpType = "AddSlotToAccessList"
-	// OpSlotInAccessList          OpType = "SlotInAccessList"
-	// OpAddPreimage               OpType = "AddPreimage"
-)

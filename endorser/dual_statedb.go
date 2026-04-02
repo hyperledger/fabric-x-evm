@@ -17,7 +17,7 @@ import (
 	"github.com/ethereum/go-ethereum/trie/utils"
 	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/holiman/uint256"
-	sdk "github.com/hyperledger/fabric-x-sdk"
+	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/state"
 )
@@ -36,24 +36,14 @@ type ExtendedStateDB interface {
 type DualStateDB struct {
 	ethStateDB *ethstate.StateDB
 	snapshotDB *SnapshotDB
-	logger     debugLogger
+	logger     *flogging.FabricLogger
 }
-
-type debugLogger interface{ Debugf(f string, p ...any) }
-
-type noopLogger struct{}
-
-func (noopLogger) Debugf(string, ...any) {}
-
-type sinkLogger struct{ fn func(string, ...any) }
-
-func (s sinkLogger) Debugf(f string, p ...any) { s.fn(f, p...) }
 
 // NewDualStateDB creates a new DualStateDB that wraps both state implementations.
 // The constructor takes concrete types (not interfaces) so that callers can
 // access non-interface methods on both implementations.
 func NewDualStateDB(ethStateDB *ethstate.StateDB, snapshotDB *SnapshotDB) *DualStateDB {
-	logger := sdk.NoOpLogger{}
+	logger := flogging.MustGetLogger("DualStateDB")
 	logger.Debugf("NewDualStateDB: input ethStateDB=%p, snapshotDB=%p", ethStateDB, snapshotDB)
 	result := &DualStateDB{
 		ethStateDB: ethStateDB,
@@ -212,9 +202,15 @@ func (d *DualStateDB) GetRefund() uint64 {
 // GetStateAndCommittedState returns both current and committed state from the SnapshotDB.
 func (d *DualStateDB) GetStateAndCommittedState(addr common.Address, hash common.Hash) (common.Hash, common.Hash) {
 	d.logger.Debugf("GetStateAndCommittedState: addr=%s, hash=%s", addr.Hex(), hash.Hex())
-	current, committed := d.snapshotDB.GetStateAndCommittedState(addr, hash)
-	d.logger.Debugf("GetStateAndCommittedState: output current=%s, committed=%s", current.Hex(), committed.Hex())
-	return current, committed
+	// Call both to verify they return the same data
+	ethCurrent, ethCommitted := d.ethStateDB.GetStateAndCommittedState(addr, hash)
+	snapCurrent, snapCommitted := d.snapshotDB.GetStateAndCommittedState(addr, hash)
+	d.logger.Debugf("GetStateAndCommittedState: ethCurrent=%s, ethCommitted=%s", ethCurrent.Hex(), ethCommitted.Hex())
+	d.logger.Debugf("GetStateAndCommittedState: snapCurrent=%s, snapCommitted=%s", snapCurrent.Hex(), snapCommitted.Hex())
+	if ethCurrent != snapCurrent || ethCommitted != snapCommitted {
+		d.logger.Warn("GetStateAndCommittedState: MISMATCH DETECTED!")
+	}
+	return snapCurrent, snapCommitted
 }
 
 // GetState returns the state from the SnapshotDB.

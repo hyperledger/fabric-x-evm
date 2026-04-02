@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"math/big"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -124,25 +123,6 @@ func buildBlockInfo(env *stEnv) (*utils.BlockInfo, error) {
 		BlockNumber: blockNum,
 		BlockTime:   blockTime,
 	}, nil
-}
-
-// GetTestPath resolves a test file path, checking if it exists
-func GetTestPath(relativePath string) (string, error) {
-	// Try relative to current directory
-	if _, err := os.Stat(relativePath); err == nil {
-		return relativePath, nil
-	}
-
-	// Try relative to project root
-	projectRoot, err := findProjectRoot()
-	if err == nil {
-		fullPath := filepath.Join(projectRoot, relativePath)
-		if _, err := os.Stat(fullPath); err == nil {
-			return fullPath, nil
-		}
-	}
-
-	return "", fmt.Errorf("test file not found: %s", relativePath)
 }
 
 // ParseTestFile reads and parses an Ethereum test JSON file into StateTest format

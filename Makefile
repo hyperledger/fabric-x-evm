@@ -92,6 +92,6 @@ eth-tests:
 	@go test -test.fullpath=true -timeout 1000s -run ^TestEthereumTests$$ github.com/hyperledger/fabric-x-evm/integration
 	# @VERBOSE=$(VERBOSE) ./scripts/run_eth_test.sh
 
-.PHONY: eth-tests
+.PHONY: eth-tests-trie
 eth-tests-trie:
 	@go test -test.fullpath=true -timeout 1000s -run ^TestEthereumTests$$ github.com/hyperledger/fabric-x-evm/integration -args -verify_root=true

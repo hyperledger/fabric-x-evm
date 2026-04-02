@@ -250,7 +250,7 @@ that use these values to set gas prices on future transactions will set `gasPric
 | `transactions`                           | Full objects or hashes             | real data                                         |
 | `logsBloom`                              | 512 ASCII zeros, no `0x` prefix    | format bug — see note                             |
 | `transactionsRoot`                       | empty hash                         | no Merkle Patricia Trie (MPT)                     |
-| `stateRoot`                              | empty hash                         | no MPT                                            |
+| `stateRoot`                              | MPT hash                           | Not fully compatible yet                          |
 | `receiptsRoot`                           | empty hash                         | no MPT                                            |
 | `miner` / `coinbase`                     | `0x000…`                           |                                                   |
 | `gasLimit` / `gasUsed` / `baseFeePerGas` | `0`                                | gas not metered                                   |

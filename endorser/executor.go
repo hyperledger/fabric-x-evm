@@ -370,16 +370,25 @@ func (h *executor) execute(msg *core.Message) ([]byte, error) {
 	// Create EVM instance with configured VMConfig
 	evm := vm.NewEVM(h.blockCtx, h.state, h.chainCfg, h.vmConfig)
 
+	// Take a snapshot before executing the transaction
+	// This mimicks geth's approach and permits tests to pass
+	snapshot := h.state.Snapshot()
+
 	// Create a GasPool with unlimited gas (we handle gas limits in the message)
 	gp := new(core.GasPool).AddGas(msg.GasLimit)
 
 	// Use ApplyMessage to execute the transaction
 	result, err := core.ApplyMessage(evm, msg, gp)
 	if err != nil {
+		// Revert to the snapshot on error from ApplyMessage
+		// This mimicks geth's approach and permits tests to pass
+		h.state.RevertToSnapshot(snapshot)
 		return nil, err
 	}
 
 	// Return the result data and any execution error
+	// Note: result.Err contains execution errors (e.g., revert, out of gas, code size exceeded)
+	// These are not fatal errors - the transaction is included but failed
 	if result.Err != nil {
 		return result.ReturnData, result.Err
 	}
