@@ -59,8 +59,6 @@ func NewEVMEngine(namespace string, db state.ReadStore, evmConfig *EVMConfig, mo
 }
 
 // SetEthStateDB sets the ethStateDB for the EVMEngine.
-// An optional logSink receives debug log lines from DualStateDB during execution;
-// pass t.Logf in tests to capture state-op traces on failure.
 func (e *EVMEngine) SetEthStateDB(ethStateDB *ethstate.StateDB) {
 	e.ethStateDB = ethStateDB
 }
@@ -227,6 +225,7 @@ func newExecutor(sim *state.SimulationStore, blockInfo *utils.BlockInfo, evmConf
 	if ethStateDB == nil {
 		stateDB = NewSnapshotDB(sim)
 	} else {
+		// NOTE: this is only meant to be used in testing
 		stateDB = NewSnapshotDBWithDualState(sim, ethStateDB)
 	}
 
