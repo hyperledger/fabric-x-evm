@@ -8,6 +8,7 @@ package integration
 
 import (
 	"bufio"
+	"flag"
 	"fmt"
 	"io"
 	"math/rand"
@@ -31,9 +32,9 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// VERIFY_TRIE_ROOT is false by default, because many tests are konwn to fail.
+// verify_root is false by default, because many tests are konwn to fail.
 // Set it to true to fix the tests one by one.
-const VERIFY_TRIE_ROOT = false
+var verify_root = flag.Bool("verify_root", false, "Verify trie root computed by committer")
 
 // loadBlacklist loads the blacklist file and returns a map of blacklisted file paths
 func loadBlacklist(path string) (map[string]struct{}, error) {
@@ -198,7 +199,7 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 	// The returned StateTestState holds a TrieDB and optional Snapshots that must
 	// be closed to stop the background snapshot-generator goroutine.
 	vmConfig := vm.Config{} // Empty VM config for now
-	st, config, block, msg, context, err := stateTest.prepareTestEnvironment(t, subtest.Fork, subtest.Index, vmConfig, snapshotter, scheme)
+	st, config, block, msg, context, err := stateTest.prepareTestEnvironment(subtest.Fork, subtest.Index, vmConfig, snapshotter, scheme)
 	// Close immediately: config/block/msg/context are plain values that don't reference the
 	// StateDB/TrieDB/Snapshots, so we can stop the snapshot-generator goroutine right here
 	// rather than relying on a defer that won't run if this goroutine later gets stuck.
@@ -267,7 +268,7 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 	if expectedRoot != actualRoot {
 		t.Fatalf("post state root mismatch: got %s, want %s", actualRoot.Hex(), expectedRoot.Hex())
 	}
-	if VERIFY_TRIE_ROOT {
+	if *verify_root {
 		// Also verify via trie.Store (Chain path)
 		txRWS, err := endorsementToRWS(env)
 		if err != nil {
@@ -370,7 +371,7 @@ func newEthereumTestHarness(t *testing.T, evmConfig *endorser.EVMConfig, pre typ
 	// Attach t.Logf as the log sink so DualStateDB state-op traces are captured
 	// and emitted by the test runner if this subtest fails.
 	for _, end := range th.endorsers {
-		end.SetEthStateDB(end.GetEthStateDB(), t.Logf)
+		end.SetEthStateDB(end.GetEthStateDB())
 	}
 
 	return th, nil

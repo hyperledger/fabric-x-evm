@@ -67,7 +67,7 @@ func execStateTest(t *testing.T, test *StateTest) {
 				t.Skip("test (randomly) skipped due to short-tag")
 			}
 			withTrace(t, test, subtest, func(vmconfig vm.Config) error {
-				return test.Run(t, subtest, vmconfig, false, rawdb.HashScheme)
+				return test.Run(subtest, vmconfig, false, rawdb.HashScheme)
 			})
 		})
 
@@ -76,7 +76,7 @@ func execStateTest(t *testing.T, test *StateTest) {
 				t.Skip("test (randomly) skipped due to short-tag")
 			}
 			withTrace(t, test, subtest, func(vmconfig vm.Config) error {
-				return test.Run(t, subtest, vmconfig, true, rawdb.HashScheme)
+				return test.Run(subtest, vmconfig, true, rawdb.HashScheme)
 			})
 		})
 
@@ -85,7 +85,7 @@ func execStateTest(t *testing.T, test *StateTest) {
 				t.Skip("test (randomly) skipped due to short-tag")
 			}
 			withTrace(t, test, subtest, func(vmconfig vm.Config) error {
-				return test.Run(t, subtest, vmconfig, false, rawdb.PathScheme)
+				return test.Run(subtest, vmconfig, false, rawdb.PathScheme)
 			})
 		})
 
@@ -94,7 +94,7 @@ func execStateTest(t *testing.T, test *StateTest) {
 				t.Skip("test (randomly) skipped due to short-tag")
 			}
 			withTrace(t, test, subtest, func(vmconfig vm.Config) error {
-				return test.Run(t, subtest, vmconfig, true, rawdb.PathScheme)
+				return test.Run(subtest, vmconfig, true, rawdb.PathScheme)
 			})
 		})
 	}

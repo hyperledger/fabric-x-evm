@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"math/big"
 	"strings"
-	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -57,8 +56,8 @@ type StateSubtest struct {
 	Index int
 }
 
-func (s *StateTest) UnmarshalJSON(in []byte) error {
-	return json.Unmarshal(in, &s.json)
+func (t *StateTest) UnmarshalJSON(in []byte) error {
+	return json.Unmarshal(in, &t.json)
 }
 
 type stJSON struct {
@@ -209,9 +208,9 @@ func (tx *stTransaction) UnmarshalJSON(data []byte) error {
 }
 
 // Subtests returns all valid subtests of the test.
-func (s *StateTest) Subtests() []StateSubtest {
+func (t *StateTest) Subtests() []StateSubtest {
 	var sub []StateSubtest
-	for fork, pss := range s.json.Post {
+	for fork, pss := range t.json.Post {
 		for i := range pss {
 			sub = append(sub, StateSubtest{fork, i})
 		}
@@ -220,8 +219,8 @@ func (s *StateTest) Subtests() []StateSubtest {
 }
 
 // checkError checks if the error returned by the state transition matches any expected error.
-func (s *StateTest) checkError(subtest StateSubtest, err error) error {
-	expectedError := s.json.Post[subtest.Fork][subtest.Index].ExpectException
+func (t *StateTest) checkError(subtest StateSubtest, err error) error {
+	expectedError := t.json.Post[subtest.Fork][subtest.Index].ExpectException
 	if err == nil && expectedError == "" {
 		return nil
 	}
@@ -239,8 +238,8 @@ func (s *StateTest) checkError(subtest StateSubtest, err error) error {
 }
 
 // Run executes a specific subtest and verifies the post-state and logs
-func (s *StateTest) Run(t *testing.T, subtest StateSubtest, vmconfig vm.Config, snapshotter bool, scheme string) error {
-	st, root, _, err := s.RunNoVerify(t, subtest, vmconfig, snapshotter, scheme)
+func (s *StateTest) Run(subtest StateSubtest, vmconfig vm.Config, snapshotter bool, scheme string) error {
+	st, root, _, err := s.RunNoVerify(subtest, vmconfig, snapshotter, scheme)
 	//lint:ignore SA5001 st is guaranteed non-nil
 	defer st.Close()
 
@@ -312,7 +311,7 @@ func (st *StateTestState) Close() {
 //   - msg: The transaction message to execute, derived from the test transaction and post-state.
 //   - context: The EVM block context with all necessary block-level parameters.
 //   - err: Any error encountered during preparation.
-func (s *StateTest) prepareTestEnvironment(t *testing.T, fork string, postStateIndex int, vmconfig vm.Config, snapshotter bool, scheme string) (
+func (s *StateTest) prepareTestEnvironment(fork string, postStateIndex int, vmconfig vm.Config, snapshotter bool, scheme string) (
 	st StateTestState,
 	config *params.ChainConfig,
 	block *types.Block,
@@ -327,7 +326,7 @@ func (s *StateTest) prepareTestEnvironment(t *testing.T, fork string, postStateI
 	vmconfig.ExtraEips = eips
 
 	block = s.genesis(config).ToBlock()
-	st = makePreStateWithDualState(t, rawdb.NewMemoryDatabase(), s.json.Pre, snapshotter, scheme)
+	st = makePreStateWithDualState(rawdb.NewMemoryDatabase(), s.json.Pre, snapshotter, scheme)
 
 	var baseFee *big.Int
 	if config.IsLondon(new(big.Int)) {
@@ -383,8 +382,8 @@ func (s *StateTest) prepareTestEnvironment(t *testing.T, fork string, postStateI
 }
 
 // RunNoVerify runs a specific subtest and returns the statedb and post-state root.
-func (s *StateTest) RunNoVerify(t *testing.T, subtest StateSubtest, vmconfig vm.Config, snapshotter bool, scheme string) (st StateTestState, root common.Hash, gasUsed uint64, err error) {
-	st, config, block, msg, context, err := s.prepareTestEnvironment(t, subtest.Fork, subtest.Index, vmconfig, snapshotter, scheme)
+func (s *StateTest) RunNoVerify(subtest StateSubtest, vmconfig vm.Config, snapshotter bool, scheme string) (st StateTestState, root common.Hash, gasUsed uint64, err error) {
+	st, config, block, msg, context, err := s.prepareTestEnvironment(subtest.Fork, subtest.Index, vmconfig, snapshotter, scheme)
 	if err != nil {
 		return st, common.Hash{}, 0, err
 	}
@@ -429,19 +428,19 @@ func (s *StateTest) RunNoVerify(t *testing.T, subtest StateSubtest, vmconfig vm.
 	return st, root, vmRet.UsedGas, nil
 }
 
-func (s *StateTest) genesis(config *params.ChainConfig) *core.Genesis {
+func (t *StateTest) genesis(config *params.ChainConfig) *core.Genesis {
 	genesis := &core.Genesis{
 		Config:     config,
-		Coinbase:   s.json.Env.Coinbase,
-		Difficulty: s.json.Env.Difficulty,
-		GasLimit:   s.json.Env.GasLimit,
-		Number:     s.json.Env.Number,
-		Timestamp:  s.json.Env.Timestamp,
-		Alloc:      s.json.Pre,
+		Coinbase:   t.json.Env.Coinbase,
+		Difficulty: t.json.Env.Difficulty,
+		GasLimit:   t.json.Env.GasLimit,
+		Number:     t.json.Env.Number,
+		Timestamp:  t.json.Env.Timestamp,
+		Alloc:      t.json.Pre,
 	}
-	if s.json.Env.Random != nil {
+	if t.json.Env.Random != nil {
 		// Post-Merge
-		genesis.Mixhash = common.BigToHash(s.json.Env.Random)
+		genesis.Mixhash = common.BigToHash(t.json.Env.Random)
 		genesis.Difficulty = big.NewInt(0)
 	}
 	return genesis
@@ -591,7 +590,7 @@ func makePreState(db ethdb.Database, accounts types.GenesisAlloc, snapshotter bo
 	return StateTestState{statedb, trieDB, snaps}
 }
 
-func makePreStateWithDualState(t *testing.T, db ethdb.Database, accounts types.GenesisAlloc, snapshotter bool, scheme string) StateTestState {
+func makePreStateWithDualState(db ethdb.Database, accounts types.GenesisAlloc, snapshotter bool, scheme string) StateTestState {
 	// Use the same approach as go-ethereum's MakePreState
 	tconf := &triedb.Config{Preimages: true}
 	if scheme == rawdb.HashScheme {
@@ -608,7 +607,7 @@ func makePreStateWithDualState(t *testing.T, db ethdb.Database, accounts types.G
 	sim, _ := fabricstate.NewSimulationStore(context.TODO(), fabricDB, "testns", 0, false)
 
 	// Use DualStateDB instead of plain StateDB for debugging
-	statedb := endorser.NewSnapshotDBWithDualState(sim, ethStateDB, nil)
+	statedb := endorser.NewSnapshotDBWithDualState(sim, ethStateDB)
 
 	// Populate accounts
 	for addr, a := range accounts {
@@ -660,7 +659,7 @@ func makePreStateWithDualState(t *testing.T, db ethdb.Database, accounts types.G
 	// Create new SimulationStore for the reopened state - now reading from block 1
 	// since we just committed block 0
 	sim, _ = fabricstate.NewSimulationStore(context.TODO(), fabricDB, "testns", 1, false)
-	statedb = endorser.NewSnapshotDBWithDualState(sim, ethStateDB, nil)
+	statedb = endorser.NewSnapshotDBWithDualState(sim, ethStateDB)
 
 	return StateTestState{statedb, trieDB, snaps}
 }

@@ -69,7 +69,7 @@ func NewStatePrimer(
 
 	// Create a SnapshotDB to apply operations; the primer uses a dual state DB
 	// so that we can also track changes to the root trie if we're running tests
-	stateDB := endorser.NewSnapshotDBWithDualState(sim, nil, nil)
+	stateDB := endorser.NewSnapshotDBWithDualState(sim, nil)
 
 	return &StatePrimer{
 		db:                db,
@@ -257,7 +257,7 @@ func (sp *StatePrimer) Reset() (*StatePrimer, error) {
 	}
 
 	sp.sim = sim
-	sp.stateDB = endorser.NewSnapshotDBWithDualState(sim, nil, nil)
+	sp.stateDB = endorser.NewSnapshotDBWithDualState(sim, nil)
 	return sp, nil
 }
 

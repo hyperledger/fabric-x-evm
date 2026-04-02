@@ -45,7 +45,6 @@ type EVMEngine struct {
 	db                state.ReadStore
 	ethStateDB        *ethstate.StateDB
 	evmConfig         *EVMConfig
-	logSink           func(string, ...any) // optional; receives debug log lines per execution (test-only, set via SetEthStateDB)
 }
 
 // NewEVMEngine creates a new EVMEngine.
@@ -62,11 +61,8 @@ func NewEVMEngine(namespace string, db state.ReadStore, evmConfig *EVMConfig, mo
 // SetEthStateDB sets the ethStateDB for the EVMEngine.
 // An optional logSink receives debug log lines from DualStateDB during execution;
 // pass t.Logf in tests to capture state-op traces on failure.
-func (e *EVMEngine) SetEthStateDB(ethStateDB *ethstate.StateDB, logSink ...func(string, ...any)) {
+func (e *EVMEngine) SetEthStateDB(ethStateDB *ethstate.StateDB) {
 	e.ethStateDB = ethStateDB
-	if len(logSink) > 0 {
-		e.logSink = logSink[0]
-	}
 }
 
 // GetEthStateDB returns the ethStateDB from the EVMEngine.
@@ -152,7 +148,7 @@ func (e *EVMEngine) newExecutor(blockInfo *utils.BlockInfo, stateBlockNum uint64
 	if err != nil {
 		return nil, err
 	}
-	return newExecutor(sim, blockInfo, e.evmConfig, e.ethStateDB, e.logSink), nil
+	return newExecutor(sim, blockInfo, e.evmConfig, e.ethStateDB), nil
 }
 
 // newSnapshotAt returns an ExtendedStateDB over the state at the given Fabric block height (0 = latest).
@@ -181,7 +177,7 @@ type executor struct {
 // newExecutor creates an executor with the provided SimulationStore.
 // If blockInfo is not provided, the store's current version is used as the block number.
 // If evmConfig is provided, it overrides the default BlockContext, ChainConfig, and VMConfig.
-func newExecutor(sim *state.SimulationStore, blockInfo *utils.BlockInfo, evmConfig *EVMConfig, ethStateDB *ethstate.StateDB, logSink func(string, ...any)) *executor {
+func newExecutor(sim *state.SimulationStore, blockInfo *utils.BlockInfo, evmConfig *EVMConfig, ethStateDB *ethstate.StateDB) *executor {
 	if blockInfo == nil {
 		// Note: sim.Version() is a Fabric block number, not an Ethereum block number — these are
 		// separate namespaces. With AllEthashProtocolChanges active from block 0 this is harmless,
@@ -231,12 +227,7 @@ func newExecutor(sim *state.SimulationStore, blockInfo *utils.BlockInfo, evmConf
 	if ethStateDB == nil {
 		stateDB = NewSnapshotDB(sim)
 	} else {
-		// NOTE: this is only meant to be used in testing
-		var logger debugLogger
-		if logSink != nil {
-			logger = sinkLogger{logSink}
-		}
-		stateDB = NewSnapshotDBWithDualState(sim, ethStateDB, logger)
+		stateDB = NewSnapshotDBWithDualState(sim, ethStateDB)
 	}
 
 	return &executor{

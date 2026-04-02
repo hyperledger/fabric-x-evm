@@ -51,13 +51,7 @@ func NewSnapshotDB(store Backend) ExtendedStateDB {
 // state of the root trie which is kept by the ethereum KVS.
 //
 // NOTE: this constructor is meant to be used in testing only.
-func NewSnapshotDBWithDualState(store Backend, ethStateDB *ethstate.StateDB, logger debugLogger) ExtendedStateDB {
-	var log debugLogger
-	if logger != nil {
-		log = logger
-	} else {
-		log = noopLogger{}
-	}
+func NewSnapshotDBWithDualState(store Backend, ethStateDB *ethstate.StateDB) ExtendedStateDB {
 	// Create the SnapshotDB
 	snapshotDB := &SnapshotDB{
 		store:          store,
@@ -90,7 +84,7 @@ func NewSnapshotDBWithDualState(store Backend, ethStateDB *ethstate.StateDB, log
 	}
 
 	// Return the dual state DB wrapping both implementations
-	return NewDualStateDB(ethStateDB, snapshotDB, log)
+	return NewDualStateDB(ethStateDB, snapshotDB)
 }
 
 type SnapshotDB struct {
