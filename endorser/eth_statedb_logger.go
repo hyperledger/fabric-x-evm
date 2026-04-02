@@ -16,20 +16,20 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/trie/utils"
 	"github.com/holiman/uint256"
-	"github.com/hyperledger/fabric-x-evm/utils/logger"
+	"github.com/hyperledger/fabric-lib-go/common/flogging"
 )
 
 // EthStateDBLogger wraps an Ethereum StateDB and logs all method calls
 type EthStateDBLogger struct {
 	inner  *ethstate.StateDB
-	logger logger.Logger
+	logger *flogging.FabricLogger
 }
 
 // NewEthStateDBLogger creates a new logging wrapper
 func NewEthStateDBLogger(inner *ethstate.StateDB) *EthStateDBLogger {
 	return &EthStateDBLogger{
 		inner:  inner,
-		logger: logger.NewLogger("EthStateDB"),
+		logger: flogging.MustGetLogger("EthStateDB"),
 	}
 }
 

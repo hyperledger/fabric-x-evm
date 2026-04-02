@@ -17,7 +17,7 @@ import (
 	"github.com/ethereum/go-ethereum/trie/utils"
 	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/holiman/uint256"
-	"github.com/hyperledger/fabric-x-evm/utils/logger"
+	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/state"
 )
@@ -37,21 +37,21 @@ type ExtendedStateDB interface {
 type DualStateDB struct {
 	ethStateDB *ethstate.StateDB
 	snapshotDB *SnapshotDB
-	logger     logger.Logger
+	logger     *flogging.FabricLogger
 }
 
 // NewDualStateDB creates a new DualStateDB that wraps both state implementations.
 // The constructor takes concrete types (not interfaces) so that callers can
 // access non-interface methods on both implementations.
 func NewDualStateDB(ethStateDB *ethstate.StateDB, snapshotDB *SnapshotDB) *DualStateDB {
-	log := logger.NewLogger("DualStateDB")
-	log.Debugf("NewDualStateDB: input ethStateDB=%p, snapshotDB=%p", ethStateDB, snapshotDB)
+	logger := flogging.MustGetLogger("DualStateDB")
+	logger.Debugf("NewDualStateDB: input ethStateDB=%p, snapshotDB=%p", ethStateDB, snapshotDB)
 	result := &DualStateDB{
 		ethStateDB: ethStateDB,
 		snapshotDB: snapshotDB,
-		logger:     log,
+		logger:     logger,
 	}
-	log.Debugf("NewDualStateDB: output result=%p", result)
+	logger.Debugf("NewDualStateDB: output result=%p", result)
 	return result
 }
 
