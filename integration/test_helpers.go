@@ -7,6 +7,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package integration
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -15,11 +16,13 @@ import (
 	"path"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	ethstate "github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/params"
@@ -98,21 +101,70 @@ func (th *TestHarness) PrimeGenesisAlloc(ctx context.Context, pre types.GenesisA
 		return err
 	}
 
-	for addr, account := range pre {
-		var nonce *uint64
-		if account.Nonce != 0 {
-			n := account.Nonce
-			nonce = &n
+	// Sort addresses to ensure deterministic account creation order
+	// (Go map iteration order is random, which affects the state trie structure)
+	var addresses []common.Address
+	for addr := range pre {
+		addresses = append(addresses, addr)
+	}
+	sort.Slice(addresses, func(i, j int) bool {
+		return bytes.Compare(addresses[i].Bytes(), addresses[j].Bytes()) < 0
+	})
+
+	// Convert each test account to StatePrimer operations in sorted order
+	for _, addr := range addresses {
+		account := pre[addr]
+		// Set nonce (always set it, even if 0, to ensure consistent state tracking)
+		n := account.Nonce
+		nonce := &n
+
+		// Set balance
+		var balance *big.Int
+		if account.Balance != nil {
+			balance = account.Balance
 		}
-		primer.SetAccount(addr, nonce, account.Code, account.Balance, account.Storage)
+
+		// Set code
+		var code []byte
+		if len(account.Code) > 0 {
+			code = account.Code
+		}
+
+		// Set storage
+		var storage map[common.Hash]common.Hash
+		if len(account.Storage) > 0 {
+			storage = account.Storage
+		}
+
+		// Apply all account properties
+		primer.SetAccount(addr, nonce, code, balance, storage)
 	}
 
+	// Extract the ethStateDB before committing
 	ethStateDB := primer.GetEthStateDB()
 
+	// Commit the ethStateDB to finalize the primed state, matching TestSingleAdd11's approach
+	// This is critical: we commit with deleteEmptyObjects=false to preserve all primed accounts
+	root, err := ethStateDB.Commit(0, false, false)
+	if err != nil {
+		return fmt.Errorf("failed to commit primed ethStateDB: %w", err)
+	}
+
+	// Create a new ethStateDB from the committed root, matching TestSingleAdd11's makePreState
+	// This ensures we start transaction execution with a clean, committed state
+	stateDB := ethStateDB.Database()
+	ethStateDB, err = ethstate.New(root, stateDB)
+	if err != nil {
+		return fmt.Errorf("failed to create new ethStateDB from committed root: %w", err)
+	}
+
+	// Commit all state changes to the Fabric ledger
 	if err := primer.Commit(ctx); err != nil {
 		return err
 	}
 
+	// Attach t.Logf as the log sink so DualStateDB state-op traces are captured
+	// and emitted by the test runner if this subtest fails.
 	for _, end := range th.endorsers {
 		end.SetEthStateDB(ethStateDB)
 	}

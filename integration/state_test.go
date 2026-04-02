@@ -24,12 +24,8 @@ func TestSingleAdd11(t *testing.T) {
 	// Adjust the path to point to the ethereum-tests directory in this repo
 	// Original path in go-ethereum: ./testdata/LegacyTests/Constantinople/GeneralStateTests/stExample/add11.json
 	// Path in this repo: ../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stExample/add11.json
-	testPath := filepath.Join("..", "testdata", "ethereum-tests", "LegacyTests", "Constantinople", "GeneralStateTests", "stExample", "add11.json")
-	// testPath = filepath.Join("..", "testdata", "ethereum-tests", "LegacyTests", "Constantinople", "GeneralStateTests", "stExtCodeHash", "extCodeHashCreatedAndDeletedAccountStaticCall.json")
-	// testPath = filepath.Join("..", "testdata", "ethereum-tests", "LegacyTests", "Constantinople", "GeneralStateTests", "stCallDelegateCodesHomestead", "callcodecallcallcode_101_SuicideEnd.json")
-	// testPath = filepath.Join("..", "testdata", "ethereum-tests", "LegacyTests", "Constantinople", "GeneralStateTests", "stCreate2", "create2collisionNonce.json")
-	// testPath = filepath.Join("..", "testdata", "ethereum-tests", "LegacyTests", "Constantinople", "GeneralStateTests", "stQuadraticComplexityTest", "Call50000bytesContract50_2.json")
-	// testPath = filepath.Join("..", "testdata", "ethereum-tests", "LegacyTests", "Constantinople", "GeneralStateTests", "stShift", "sar01.json")
+	testPath := filepath.Join("..", "testdata", "ethereum-tests", "LegacyTests", "Constantinople", "GeneralStateTests", "stCreateTest", "CREATE_EmptyContractAndCallIt_0wei.json")
+	// testPath = filepath.Join("..", "testdata", "ethereum-tests", "LegacyTests", "Constantinople", "GeneralStateTests", "stSpecialTest", "failed_tx_xcf416c53.json")
 
 	// Load the test file
 	file, err := os.Open(testPath)
