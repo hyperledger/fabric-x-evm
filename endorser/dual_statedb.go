@@ -209,7 +209,7 @@ func (d *DualStateDB) GetStateAndCommittedState(addr common.Address, hash common
 	d.logger.Debugf("GetStateAndCommittedState: ethCurrent=%s, ethCommitted=%s", ethCurrent.Hex(), ethCommitted.Hex())
 	d.logger.Debugf("GetStateAndCommittedState: snapCurrent=%s, snapCommitted=%s", snapCurrent.Hex(), snapCommitted.Hex())
 	if ethCurrent != snapCurrent || ethCommitted != snapCommitted {
-		d.logger.Debugf("GetStateAndCommittedState: MISMATCH DETECTED!")
+		d.logger.Warn("GetStateAndCommittedState: MISMATCH DETECTED!")
 	}
 	return snapCurrent, snapCommitted
 }
