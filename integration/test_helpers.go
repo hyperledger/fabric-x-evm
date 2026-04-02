@@ -42,6 +42,7 @@ import (
 	efabx "github.com/hyperledger/fabric-x-sdk/endorsement/fabricx"
 	"github.com/hyperledger/fabric-x-sdk/fabrictest"
 	"github.com/hyperledger/fabric-x-sdk/identity"
+	"github.com/hyperledger/fabric-x-sdk/local"
 	"github.com/hyperledger/fabric-x-sdk/network"
 	nfab "github.com/hyperledger/fabric-x-sdk/network/fabric"
 	nfabx "github.com/hyperledger/fabric-x-sdk/network/fabricx"
@@ -171,16 +172,18 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 	// Start sync goroutines; they run until the test context is cancelled.
 	// Register a cleanup to wait for each goroutine to exit before the test
 	// is considered done, preventing goroutine accumulation across subtests.
-	for _, s := range syncs {
-		done := make(chan struct{})
-		go func() {
-			defer close(done)
-			_ = s.Start(t.Context())
-		}()
-		t.Cleanup(func() {
-			<-done
-			_ = s.Close()
-		})
+	if networkType != "bypass" {
+		for _, s := range syncs {
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				_ = s.Start(t.Context())
+			}()
+			t.Cleanup(func() {
+				<-done
+				_ = s.Close()
+			})
+		}
 	}
 
 	// Build identity deserializer.
@@ -223,12 +226,14 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 	for i, o := range cfg.Gateway.Orderers {
 		orderers[i] = network.OrdererConf{Address: o.Address, TLSPath: o.TLSPath}
 	}
-	var submitter *network.FabricSubmitter
+	var submitter core.Submitter
 	switch networkType {
 	case "fabric":
 		submitter, err = nfab.NewSubmitter(orderers, gwSigner, cfg.Gateway.SubmitWaitTime, logger)
 	case "fabric-x":
 		submitter, err = nfabx.NewSubmitter(orderers, gwSigner, cfg.Gateway.SubmitWaitTime, logger)
+	case "bypass":
+		submitter = local.NewLocalSubmitter(dbs[0], cfg.Network.Channel, cfg.Network.Namespace, nfab.NewTxPackager(gwSigner), bfab.NewBlockParser(logger), false)
 	default:
 		return nil, nil, fmt.Errorf("unsupported network type: %s", networkType)
 	}
@@ -263,11 +268,20 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 // newLocalTestHarness commits updates directly to the DB, bypassing peers and orderers.
 // Exported for use by eth-tests package.
 func newLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig *endorser.EVMConfig, primeDbPath, networkType string) (*TestHarness, error) {
-	nw, err := fabrictest.Start("basic", networkType, fabrictest.BatchingConfig{})
-	if err != nil {
-		t.Fatalf("fabrictest.Start: %v", err)
+	var orderer, peer string
+
+	if networkType == "bypass" {
+		orderer = "127.0.0.1:1337"
+		peer = "127.0.0.1:1337"
+	} else {
+		nw, err := fabrictest.Start("basic", networkType, fabrictest.BatchingConfig{})
+		if err != nil {
+			t.Fatalf("fabrictest.Start: %v", err)
+		}
+		t.Cleanup(nw.Stop)
+		orderer = nw.OrdererAddr
+		peer = nw.PeerAddr
 	}
-	t.Cleanup(nw.Stop)
 
 	tname := strings.ReplaceAll(strings.ReplaceAll(t.Name(), "/", "_"), ".", "-")
 	dir := t.TempDir()
@@ -282,11 +296,11 @@ func newLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig *endorser.EV
 			DbConnStr:      filepath.Join(dir, tname+"gateway.db"),
 			SubmitWaitTime: 10 * time.Millisecond,
 			SyncTimeout:    2 * time.Second,
-			Orderers:       []config.Orderer{{Address: nw.OrdererAddr}},
+			Orderers:       []config.Orderer{{Address: orderer}},
 		},
 		Endorsers: []econf.Endorser{
 			{
-				PeerAddr:  nw.PeerAddr,
+				PeerAddr:  peer,
 				Name:      "endorser1",
 				DbConnStr: filepath.Join(dir, tname+"endorser1.db"),
 			},
@@ -385,6 +399,8 @@ func newEndorser(t *testing.T, logger sdk.Logger, cfg econf.Endorser, channel, n
 	var processor network.BlockProcessor
 	var monotonicVersions bool
 	switch typ {
+	case "bypass":
+		fallthrough // with the bypass network type, we encode blocks like fabric
 	case "fabric":
 		processor = blocks.NewProcessor(bfab.NewBlockParser(logger), []blocks.BlockHandler{writeDB})
 		builder = efab.NewEndorsementBuilder(signer)

@@ -421,7 +421,7 @@ func (d *DualStateDB) Finalise(deleteEmptyObjects bool) {
 func (d *DualStateDB) Result() blocks.ReadWriteSet {
 	d.logger.Debugf("Result: called")
 	result := d.snapshotDB.Result()
-	d.logger.Debugf("Result: returning result with %d reads, %d writes", len(result.Reads), len(result.Writes))
+	d.logger.Debugf("Result: returning result with %d reads, %d writes: %v", len(result.Reads), len(result.Writes), result.Writes)
 	return result
 }
 

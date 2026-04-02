@@ -41,7 +41,6 @@ import (
 	"github.com/ethereum/go-ethereum/triedb/pathdb"
 	"github.com/holiman/uint256"
 	"github.com/hyperledger/fabric-x-evm/endorser"
-	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	fabricstate "github.com/hyperledger/fabric-x-sdk/state"
 	"golang.org/x/crypto/sha3"
@@ -609,7 +608,7 @@ func makePreStateWithDualState(t *testing.T, db ethdb.Database, accounts types.G
 	sim, _ := fabricstate.NewSimulationStore(context.TODO(), fabricDB, "testns", 0, false)
 
 	// Use DualStateDB instead of plain StateDB for debugging
-	statedb := endorser.NewSnapshotDBWithDualState(sim, ethStateDB, sdk.NewTestLogger(t, "db"))
+	statedb := endorser.NewSnapshotDBWithDualState(sim, ethStateDB, nil)
 
 	// Populate accounts
 	for addr, a := range accounts {
@@ -661,7 +660,7 @@ func makePreStateWithDualState(t *testing.T, db ethdb.Database, accounts types.G
 	// Create new SimulationStore for the reopened state - now reading from block 1
 	// since we just committed block 0
 	sim, _ = fabricstate.NewSimulationStore(context.TODO(), fabricDB, "testns", 1, false)
-	statedb = endorser.NewSnapshotDBWithDualState(sim, ethStateDB, sdk.NewTestLogger(t, "state"))
+	statedb = endorser.NewSnapshotDBWithDualState(sim, ethStateDB, nil)
 
 	return StateTestState{statedb, trieDB, snaps}
 }

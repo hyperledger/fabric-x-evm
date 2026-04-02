@@ -22,6 +22,7 @@ import (
 
 	"github.com/hyperledger/fabric-x-evm/endorser"
 	sdk "github.com/hyperledger/fabric-x-sdk"
+	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	"github.com/hyperledger/fabric-x-sdk/network"
 	"github.com/hyperledger/fabric-x-sdk/state"
@@ -240,6 +241,12 @@ func (sp *StatePrimer) Commit(ctx context.Context) error {
 		Responses: presps,
 		Proposal:  inv.Proposal,
 	})
+}
+
+// Writes returns the ReadWriteSet of all state changes recorded since the last Reset.
+// Safe to call after Commit — the simulation store is not cleared by Commit.
+func (sp *StatePrimer) Writes() blocks.ReadWriteSet {
+	return sp.sim.Result()
 }
 
 // Reset creates a new simulation store, discarding all uncommitted changes.

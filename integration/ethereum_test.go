@@ -9,6 +9,7 @@ package integration
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -19,8 +20,20 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/hyperledger/fabric-protos-go-apiv2/ledger/rwset"
+	"github.com/hyperledger/fabric-protos-go-apiv2/ledger/rwset/kvrwset"
 	"github.com/hyperledger/fabric-x-evm/endorser"
+	"github.com/hyperledger/fabric-x-evm/gateway/storage/trie"
+	sdk "github.com/hyperledger/fabric-x-sdk"
+	"github.com/hyperledger/fabric-x-sdk/blocks"
+	"github.com/hyperledger/fabric/protoutil"
+	"google.golang.org/grpc/grpclog"
+	"google.golang.org/protobuf/proto"
 )
+
+// VERIFY_TRIE_ROOT is false by default, because many tests are konwn to fail.
+// Set it to true to fix the tests one by one.
+const VERIFY_TRIE_ROOT = false
 
 // loadBlacklist loads the blacklist file and returns a map of blacklisted file paths
 func loadBlacklist(path string) (map[string]struct{}, error) {
@@ -95,6 +108,8 @@ func filterBlacklistedFiles(files []string, blacklist map[string]struct{}) []str
 //
 // This follows the same approach as Besu, Geth, and other Ethereum clients.
 func TestEthereumTests(t *testing.T) {
+	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr)) // disable grpc logging
+
 	// Load blacklist
 	blacklist, err := loadBlacklist(filepath.Join("..", "testdata", "eth_tests.blacklist"))
 	if err != nil {
@@ -120,7 +135,7 @@ func TestEthereumTests(t *testing.T) {
 			t.Logf("Skipping %s: %v", testPath, err)
 			continue
 		}
-		fmt.Fprintf(os.Stderr, "[%d/%d] %s\n", i+1, len(testFiles), filepath.Base(file))
+		t.Logf("[%d/%d] %s\n", i+1, len(testFiles), filepath.Base(file))
 		t.Run(filepath.Base(file), func(t *testing.T) {
 			runEthereumTestFile(t, file)
 		})
@@ -210,7 +225,7 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 	defer th.Stop()
 
 	// Execute transaction through gateway
-	_, execErr := th.gateways[0].ExecuteEthTx(t.Context(), tx, blockInfo)
+	env, execErr := th.gateways[0].ExecuteEthTx(t.Context(), tx, blockInfo)
 
 	// Get expected root from post-state
 	expectedRoot := common.Hash(post.Root)
@@ -252,15 +267,97 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 	if expectedRoot != actualRoot {
 		t.Fatalf("post state root mismatch: got %s, want %s", actualRoot.Hex(), expectedRoot.Hex())
 	}
-
+	if VERIFY_TRIE_ROOT {
+		// Also verify via trie.Store (Chain path)
+		txRWS, err := endorsementToRWS(env)
+		if err != nil {
+			t.Fatalf("extract tx RWS from endorsement: %v", err)
+		}
+		verifyTrieRoot(t, th.primer.Writes(), txRWS, blockInfo.BlockNumber.Uint64(), expectedRoot)
+	}
 	t.Logf("Test completed successfully")
+}
+
+// endorsementToRWS extracts the blocks.ReadWriteSet from the first ProposalResponse
+// in an sdk.Endorsement. It reverses the encoding done by endorsement/fabric.EndorsementBuilder.
+func endorsementToRWS(env sdk.Endorsement) (blocks.ReadWriteSet, error) {
+	if len(env.Responses) == 0 {
+		return blocks.ReadWriteSet{}, nil
+	}
+
+	prp, err := protoutil.UnmarshalProposalResponsePayload(env.Responses[0].Payload)
+	if err != nil {
+		return blocks.ReadWriteSet{}, fmt.Errorf("unmarshal proposal response payload: %w", err)
+	}
+
+	ca, err := protoutil.UnmarshalChaincodeAction(prp.Extension)
+	if err != nil {
+		return blocks.ReadWriteSet{}, fmt.Errorf("unmarshal chaincode action: %w", err)
+	}
+
+	txrws := &rwset.TxReadWriteSet{}
+	if err := proto.Unmarshal(ca.Results, txrws); err != nil {
+		return blocks.ReadWriteSet{}, fmt.Errorf("unmarshal tx rws: %w", err)
+	}
+
+	var rws blocks.ReadWriteSet
+	for _, ns := range txrws.NsRwset {
+		kvRws := &kvrwset.KVRWSet{}
+		if err := proto.Unmarshal(ns.Rwset, kvRws); err != nil {
+			return blocks.ReadWriteSet{}, fmt.Errorf("unmarshal kv rws for ns %s: %w", ns.Namespace, err)
+		}
+		for _, w := range kvRws.Writes {
+			rws.Writes = append(rws.Writes, blocks.KVWrite{
+				Key:      w.Key,
+				IsDelete: w.IsDelete,
+				Value:    w.Value,
+			})
+		}
+	}
+
+	return rws, nil
+}
+
+// verifyTrieRoot validates that trie.Store produces the same state root as the
+// ethStateDB path. Genesis and tx writes are combined into one block at blockNum
+// to mirror the single ethStateDB.Commit call (preserving EIP-158 semantics).
+func verifyTrieRoot(t *testing.T, genesisRWS, txRWS blocks.ReadWriteSet, blockNum uint64, expectedRoot common.Hash) {
+	t.Helper()
+
+	txns := make([]blocks.Transaction, 0, 2)
+	if len(genesisRWS.Writes) > 0 {
+		txns = append(txns, blocks.Transaction{
+			Valid: true,
+			NsRWS: []blocks.NsReadWriteSet{{Namespace: "basic", RWS: genesisRWS}},
+		})
+	}
+	txns = append(txns, blocks.Transaction{
+		Valid: true,
+		NsRWS: []blocks.NsReadWriteSet{{Namespace: "basic", RWS: txRWS}},
+	})
+
+	ts, err := trie.New("", types.EmptyRootHash)
+	if err != nil {
+		t.Fatalf("create trie store: %v", err)
+	}
+	defer ts.Close()
+
+	trieRoot, err := ts.Commit(t.Context(), blocks.Block{Number: blockNum, Transactions: txns})
+	if err != nil {
+		t.Fatalf("trie commit: %v", err)
+	}
+
+	if trieRoot != expectedRoot {
+		t.Fatalf("trie root mismatch: got %s, want %s", trieRoot.Hex(), expectedRoot.Hex())
+	}
+	t.Logf("trie root verified: %s", trieRoot.Hex())
 }
 
 // newEthereumTestHarness creates a test harness with pre-state primed from ethereum test format
 func newEthereumTestHarness(t *testing.T, evmConfig *endorser.EVMConfig, pre types.GenesisAlloc) (*TestHarness, error) {
 	t.Helper()
 
-	th, err := newLocalTestHarness(t, TestLogger{T: t}, evmConfig, "", "fabric")
+	th, err := newLocalTestHarness(t, TestLogger{T: t}, evmConfig, "", "bypass")
 	if err != nil {
 		return nil, err
 	}
