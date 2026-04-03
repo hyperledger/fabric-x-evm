@@ -16,7 +16,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	ethstate "github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/tracing"
-	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/holiman/uint256"
 	pb "github.com/hyperledger/fabric-protos-go-apiv2/peer"
 
@@ -25,14 +24,13 @@ import (
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	"github.com/hyperledger/fabric-x-sdk/network"
-	"github.com/hyperledger/fabric-x-sdk/state"
 )
 
 // StatePrimer provides a builder pattern for priming ledger state.
 // It allows setting nonces, code, balances, and storage for addresses,
 // then commits all changes in a single transaction.
 type StatePrimer struct {
-	db        *state.VersionedDB
+	db        endorser.ReadStore
 	namespace string
 	signer    sdk.Signer
 	builders  []endorsement.Builder
@@ -44,13 +42,13 @@ type StatePrimer struct {
 	monotonicVersions bool
 
 	// Simulation store that caches all state changes
-	sim     *state.SimulationStore
-	stateDB vm.StateDB
+	sim     *endorser.SimulationStore
+	stateDB endorser.ExtendedStateDB
 }
 
 // NewStatePrimer creates a new state primer builder.
 func NewStatePrimer(
-	db *state.VersionedDB,
+	db endorser.ReadStore,
 	namespace string,
 	signer sdk.Signer,
 	builders []endorsement.Builder,
@@ -62,7 +60,7 @@ func NewStatePrimer(
 	monotonicVersions bool,
 ) (*StatePrimer, error) {
 	// Create a simulation store immediately
-	sim, err := state.NewSimulationStore(context.TODO(), db, namespace, 0, monotonicVersions)
+	sim, err := endorser.NewSimulationStore(context.TODO(), db, namespace, 0, monotonicVersions)
 	if err != nil {
 		return nil, err
 	}
@@ -245,13 +243,14 @@ func (sp *StatePrimer) Commit(ctx context.Context) error {
 
 // Writes returns the ReadWriteSet of all state changes recorded since the last Reset.
 // Safe to call after Commit — the simulation store is not cleared by Commit.
+// Note: Flush() must be called before this method to ensure all cached operations are written.
 func (sp *StatePrimer) Writes() blocks.ReadWriteSet {
 	return sp.sim.Result()
 }
 
 // Reset creates a new simulation store, discarding all uncommitted changes.
 func (sp *StatePrimer) Reset() (*StatePrimer, error) {
-	sim, err := state.NewSimulationStore(context.TODO(), sp.db, sp.namespace, 0, sp.monotonicVersions)
+	sim, err := endorser.NewSimulationStore(context.TODO(), sp.db, sp.namespace, 0, sp.monotonicVersions)
 	if err != nil {
 		return nil, err
 	}

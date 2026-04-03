@@ -19,15 +19,14 @@ import (
 	"github.com/holiman/uint256"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
-	"github.com/hyperledger/fabric-x-sdk/state"
 )
 
 // ExtendedStateDB extends vm.StateDB with additional methods specific to
-// the endorser implementation (Result, Logs, Ops).
+// the endorser implementation (Result, Logs, Flush).
 type ExtendedStateDB interface {
 	vm.StateDB
 	Result() blocks.ReadWriteSet
-	Logs() []state.Log
+	Logs() []Log
 }
 
 // DualStateDB implements the ExtendedStateDB interface by delegating all calls
@@ -216,9 +215,13 @@ func (d *DualStateDB) GetStateAndCommittedState(addr common.Address, hash common
 // GetState returns the state from the SnapshotDB.
 func (d *DualStateDB) GetState(addr common.Address, hash common.Hash) common.Hash {
 	d.logger.Debugf("GetState: addr=%s, hash=%s", addr.Hex(), hash.Hex())
-	result := d.snapshotDB.GetState(addr, hash)
-	d.logger.Debugf("GetState: output result=%s", result.Hex())
-	return result
+	ethResult := d.ethStateDB.GetState(addr, hash)
+	snapResult := d.snapshotDB.GetState(addr, hash)
+	d.logger.Debugf("GetState: ethResult=%s, snapResult=%s", ethResult.Hex(), snapResult.Hex())
+	if ethResult != snapResult {
+		d.logger.Warnf("GetState MISMATCH: eth=%s snap=%s addr=%s slot=%s", ethResult.Hex(), snapResult.Hex(), addr.Hex(), hash.Hex())
+	}
+	return snapResult
 }
 
 // SetState sets the state in both state implementations.
@@ -433,7 +436,7 @@ func (d *DualStateDB) Result() blocks.ReadWriteSet {
 
 // Logs returns the logs from the SnapshotDB.
 // This is a SnapshotDB-specific method not part of vm.StateDB interface.
-func (d *DualStateDB) Logs() []state.Log {
+func (d *DualStateDB) Logs() []Log {
 	d.logger.Debugf("Logs: called")
 	result := d.snapshotDB.Logs()
 	d.logger.Debugf("Logs: returning result len=%d", len(result))

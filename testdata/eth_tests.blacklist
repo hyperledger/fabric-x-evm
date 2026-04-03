@@ -1,22 +1,6 @@
-../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stCallCreateCallCodeTest/Call1024OOG.json
-../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stCallCreateCallCodeTest/Callcode1024OOG.json
-../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stCallCreateCallCodeTest/CallcodeLoseGasOOG.json
-../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stCallCreateCallCodeTest/CallLoseGasOOG.json
-../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stCallCreateCallCodeTest/createInitFailBadJumpDestination.json
-../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stCallCreateCallCodeTest/createInitFail_OOGduringInit.json
-../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stCallCreateCallCodeTest/createInitFailStackSizeLargerThan1024.json
-../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stCallCreateCallCodeTest/createInitFailStackUnderflow.json
-../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stCallCreateCallCodeTest/createInitFailUndefinedInstruction.json
-../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stChangedEIP150/callcodecallcodecallcode_111_OOGMAfter_1.json
-../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stChangedEIP150/createInitFail_OOGduringInit.json
 ../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stCreate2/create2collisionStorage.json
 ../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stCreate2/RevertInCreateInInitCreate2.json
-../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stDelegatecallTestHomestead/Call1024OOG.json
-../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stDelegatecallTestHomestead/CallcodeLoseGasOOG.json
-../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stDelegatecallTestHomestead/CallLoseGasOOG.json
-../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stDelegatecallTestHomestead/Delegatecall1024OOG.json
 ../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stExtCodeHash/dynamicAccountOverwriteEmpty.json
-../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stExtCodeHash/extCodeHashSubcallOOG.json
 ../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stExtCodeHash/extCodeHashSubcallSuicide.json
 ../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stQuadraticComplexityTest/Return50000_2.json
 ../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stQuadraticComplexityTest/Return50000.json
@@ -24,8 +8,6 @@
 ../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stRevertTest/RevertInCreateInInit.json
 ../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stSStoreTest/InitCollision.json
 ../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stStaticCall/static_Call50000.json
-../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stSystemOperationsTest/ABAcallsSuicide0.json
-../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stSystemOperationsTest/ABAcallsSuicide1.json
 ../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stSystemOperationsTest/doubleSelfdestructTest2.json
 ../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stSystemOperationsTest/doubleSelfdestructTest.json
 ../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stSystemOperationsTest/suicideSendEtherPostDeath.json
@@ -35,5 +17,3 @@
 ../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stTimeConsuming/sstore_combinations_initial1.json
 ../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stTimeConsuming/sstore_combinations_initial2_1.json
 ../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stTimeConsuming/sstore_combinations_initial2.json
-../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stTransactionTest/SuicidesAndInternlCallSuicidesBonusGasAtCall.json
-../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stTransactionTest/SuicidesAndInternlCallSuicidesSuccess.json

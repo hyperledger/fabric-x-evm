@@ -4,6 +4,45 @@ Copyright IBM Corp. All Rights Reserved.
 SPDX-License-Identifier: LGPL-3.0-or-later
 */
 
+// Package endorser implements the EVM state management for Fabric.
+//
+// SNAPSHOT/REVERT ARCHITECTURE:
+//
+// The EVM requires snapshot/revert support for proper execution semantics. When a subcall fails,
+// all state changes made during that subcall must be reverted as if they never happened.
+//
+// This is implemented through a two-layer architecture:
+//
+// 1. SimulationStore (endorser/simulation_store.go):
+//   - Handles ALL ledger state operations (balance, nonce, code, storage)
+//   - Journals every operation (reads, writes, logs) as it occurs
+//   - Implements Snapshot() and RevertToSnapshot() for ledger state
+//   - Only non-reverted operations appear in the final read-write set (RWS)
+//   - This ensures MVCC correctness: reverted reads don't create dependencies
+//
+// 2. SnapshotDB (this file):
+//   - Thin wrapper around SimulationStore
+//   - Delegates all ledger operations directly to SimulationStore (passthrough)
+//   - Maintains its own journal ONLY for in-memory EVM state:
+//   - refund counter (gas refunds)
+//   - selfDestructed map (tracks SELFDESTRUCT calls)
+//   - Coordinates snapshots with SimulationStore using the same snapshot IDs
+//
+// When Snapshot() is called:
+//   - SnapshotDB calls store.Snapshot() to get an ID
+//   - Uses the same ID to record its in-memory journal position
+//   - Both layers can now revert to this point independently
+//
+// When RevertToSnapshot() is called:
+//   - SnapshotDB calls store.RevertToSnapshot() to revert ledger state
+//   - Then reverts its own in-memory state (refund, selfDestruct)
+//   - All operations after the snapshot are undone in both layers
+//
+// This design ensures:
+//   - Ledger state changes are properly journaled and can be reverted
+//   - In-memory EVM state is also properly reverted
+//   - The final RWS contains only non-reverted operations
+//   - MVCC validation will only check non-reverted reads
 package endorser
 
 import (
@@ -24,7 +63,6 @@ import (
 	"github.com/ethereum/go-ethereum/triedb/hashdb"
 	"github.com/holiman/uint256"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
-	"github.com/hyperledger/fabric-x-sdk/state"
 )
 
 type Backend interface {
@@ -34,7 +72,9 @@ type Backend interface {
 	AddLog(address []byte, topics [][]byte, data []byte)
 	Version() uint64
 	Result() blocks.ReadWriteSet
-	Logs() []state.Log
+	Logs() []Log
+	Snapshot() int
+	RevertToSnapshot(int)
 }
 
 // NewSnapshotDB returns a state DB backed by the supplied store
@@ -43,6 +83,9 @@ func NewSnapshotDB(store Backend) ExtendedStateDB {
 		store:          store,
 		selfDestructed: make(map[common.Address]struct{}),
 		committedState: make(map[string]common.Hash),
+		journal:        []snapshotJournalEntry{},
+		validRevisions: []snapshotRevision{},
+		nextRevisionId: 0,
 	}
 }
 
@@ -58,6 +101,9 @@ func NewSnapshotDBWithDualState(store Backend, ethStateDB *ethstate.StateDB) Ext
 		store:          store,
 		selfDestructed: make(map[common.Address]struct{}),
 		committedState: make(map[string]common.Hash),
+		journal:        []snapshotJournalEntry{},
+		validRevisions: []snapshotRevision{},
+		nextRevisionId: 0,
 	}
 
 	// If ethStateDB is not provided, create a new in-memory one
@@ -88,18 +134,55 @@ func NewSnapshotDBWithDualState(store Backend, ethStateDB *ethstate.StateDB) Ext
 	return NewDualStateDB(ethStateDB, snapshotDB)
 }
 
+// snapshotJournalEntry is a modification entry for in-memory state that can be reverted.
+// Only used for refund counter and selfDestruct tracking, which are EVM-specific runtime state
+// not stored in the ledger. Ledger state (balance, nonce, code, storage) is handled by SimulationStore.
+type snapshotJournalEntry interface {
+	revert(*SnapshotDB)
+}
+
+// refundChangeEntry records a change to the refund counter
+type refundChangeEntry struct {
+	prevRefund uint64
+}
+
+func (e refundChangeEntry) revert(s *SnapshotDB) {
+	s.refund = e.prevRefund
+}
+
+// selfDestructEntry records a self-destruct operation
+type selfDestructEntry struct {
+	addr common.Address
+}
+
+func (e selfDestructEntry) revert(s *SnapshotDB) {
+	delete(s.selfDestructed, e.addr)
+}
+
+// snapshotRevision tracks a snapshot point in the journal
+type snapshotRevision struct {
+	id           int
+	journalIndex int
+}
+
+// SnapshotDB wraps a Backend (SimulationStore) and provides the ExtendedStateDB interface.
+// It delegates ledger state operations (balance, nonce, code, storage) to the store.
+// It maintains its own journal for in-memory EVM state (refund counter, selfDestruct tracking).
 type SnapshotDB struct {
 	store Backend
-	// selfDestructed is kept in memory to determine whether SelfDestruct was called on this contract
-	// during this transaction. It is only accurate if SnapshotDB is recreated for each transaction!
+	// selfDestructed tracks contracts that called SELFDESTRUCT in this transaction
 	selfDestructed map[common.Address]struct{}
 	// refund is the gas refund counter
 	refund uint64
-	// refundSnapshots stores refund values at each snapshot point
-	refundSnapshots []uint64
 	// committedState caches the original committed values from the store before any modifications
 	// Key format: "addr:slot" -> committed value
 	committedState map[string]common.Hash
+
+	// Journal for tracking in-memory state changes (refund, selfDestruct)
+	// Ledger state changes are journaled in SimulationStore
+	journal        []snapshotJournalEntry
+	validRevisions []snapshotRevision
+	nextRevisionId int
 }
 
 func accKey(addr common.Address, typ string) string {
@@ -146,14 +229,21 @@ func (d *SnapshotDB) GetCodeSize(addr common.Address) int {
 
 // GetState returns the current in-flight state.
 func (d *SnapshotDB) GetState(addr common.Address, slot common.Hash) common.Hash {
-	res, err := d.store.GetState(storeKey(addr, slot))
+	key := storeKey(addr, slot)
+	res, err := d.store.GetState(key)
 	must(err)
-	value := common.HexToHash(string(res))
+
+	// Convert bytes directly to hash (res is the raw 32-byte value, or empty if not set)
+	var value common.Hash
+	if len(res) > 0 {
+		value = common.BytesToHash(res)
+	}
+	// If res is empty/nil, value remains zero hash (correct default)
 
 	// Cache the committed value on first read (before any modifications)
-	key := addr.Hex() + ":" + slot.Hex()
-	if _, exists := d.committedState[key]; !exists {
-		d.committedState[key] = value
+	cacheKey := addr.Hex() + ":" + slot.Hex()
+	if _, exists := d.committedState[cacheKey]; !exists {
+		d.committedState[cacheKey] = value
 	}
 
 	return value
@@ -232,6 +322,7 @@ func (d *SnapshotDB) AddBalance(addr common.Address, bal *uint256.Int, reason tr
 	if prev == nil {
 		prev = uint256.NewInt(0) // TODO: this creates an account, do we want that?
 	}
+
 	newBal := new(uint256.Int).Add(prev, bal)
 	must(d.store.PutState(accKey(addr, "bal"), uint256ToBytes(newBal)))
 
@@ -247,6 +338,7 @@ func (d *SnapshotDB) SubBalance(addr common.Address, bal *uint256.Int, reason tr
 	if prev == nil {
 		prev = uint256.NewInt(0) // TODO: this creates an account, do we want that?
 	}
+
 	newBal := new(uint256.Int).Sub(prev, bal)
 	must(d.store.PutState(accKey(addr, "bal"), uint256ToBytes(newBal)))
 
@@ -256,14 +348,17 @@ func (d *SnapshotDB) SubBalance(addr common.Address, bal *uint256.Int, reason tr
 func (d *SnapshotDB) SetCode(addr common.Address, code []byte, reason tracing.CodeChangeReason) []byte {
 	prev := d.GetCode(addr)
 	must(d.store.PutState(accKey(addr, "code"), code))
-
 	return prev
 }
 
 func (d *SnapshotDB) SetState(addr common.Address, slot common.Hash, value common.Hash) common.Hash {
 	prev := d.GetState(addr, slot) // ! we have to return the previous value, this adds a read.
 
-	must(d.store.PutState(storeKey(addr, slot), []byte(value.Hex())))
+	// Store the raw 32-byte value directly, not as a hex string
+	key := storeKey(addr, slot)
+	valueBytes := value.Bytes()
+	must(d.store.PutState(key, valueBytes))
+
 	return prev
 }
 
@@ -280,6 +375,9 @@ func (d *SnapshotDB) GetNonce(addr common.Address) uint64 {
 
 // Removes code, storage, balance; marks account as dead.
 func (d *SnapshotDB) SelfDestruct(addr common.Address) uint256.Int {
+	// Journal the self-destruct for potential revert
+	d.journal = append(d.journal, selfDestructEntry{addr: addr})
+
 	// TODO: Removes code, storage, balance; marks account as dead.
 	// Set in-memory flag for HasSelfDestructed
 	d.selfDestructed[addr] = struct{}{}
@@ -326,6 +424,8 @@ func (d *SnapshotDB) Prepare(rules params.Rules, sender, coinbase common.Address
 func (d *SnapshotDB) PointCache() *utils.PointCache { return nil }
 
 func (d *SnapshotDB) AddRefund(gas uint64) {
+	// Journal the refund change for potential revert
+	d.journal = append(d.journal, refundChangeEntry{prevRefund: d.refund})
 	d.refund += gas
 }
 
@@ -333,6 +433,8 @@ func (d *SnapshotDB) SubRefund(gas uint64) {
 	if gas > d.refund {
 		panic(fmt.Sprintf("Refund counter below zero (gas: %d > refund: %d)", gas, d.refund))
 	}
+	// Journal the refund change for potential revert
+	d.journal = append(d.journal, refundChangeEntry{prevRefund: d.refund})
 	d.refund -= gas
 }
 
@@ -348,25 +450,58 @@ func (d *SnapshotDB) AccessEvents() *ethstate.AccessEvents { return nil }
 func (d *SnapshotDB) Finalise(b bool)                      {}
 
 func (d *SnapshotDB) Result() blocks.ReadWriteSet { return d.store.Result() }
-func (d *SnapshotDB) Logs() []state.Log           { return d.store.Logs() }
+func (d *SnapshotDB) Logs() []Log                 { return d.store.Logs() }
 
 // -------------------- Snapshots  --------------------
-func (d *SnapshotDB) RevertToSnapshot(ss int) {
-	if ss < 0 || ss >= len(d.refundSnapshots) {
-		return
+// Snapshot and RevertToSnapshot are now simple passthroughs to the underlying store.
+// The store (SimulationStore) handles all the snapshot/revert logic internally.
+
+// Snapshot creates a snapshot of both the store and in-memory state.
+// Returns a snapshot ID that can be used with RevertToSnapshot.
+func (d *SnapshotDB) Snapshot() int {
+	// Create snapshot in the store (for ledger state)
+	storeID := d.store.Snapshot()
+
+	// Use the same ID for our in-memory journal
+	// Record the current journal position
+	d.validRevisions = append(d.validRevisions, snapshotRevision{
+		id:           storeID,
+		journalIndex: len(d.journal),
+	})
+	if storeID >= d.nextRevisionId {
+		d.nextRevisionId = storeID + 1
 	}
-	// Restore the refund counter to the snapshot value
-	d.refund = d.refundSnapshots[ss]
-	// Truncate the snapshots array to remove snapshots after this point
-	// Keep snapshots up to and including ss, so next snapshot will be ss+1
-	d.refundSnapshots = d.refundSnapshots[:ss+1]
+	return storeID
 }
 
-func (d *SnapshotDB) Snapshot() int {
-	// Save the current refund value
-	d.refundSnapshots = append(d.refundSnapshots, d.refund)
-	// Return the snapshot ID (index in the snapshots array)
-	return len(d.refundSnapshots) - 1
+// RevertToSnapshot reverts both the store and in-memory state to the snapshot.
+func (d *SnapshotDB) RevertToSnapshot(revid int) {
+	// Revert the store (for ledger state)
+	d.store.RevertToSnapshot(revid)
+
+	// Revert our in-memory state (refund, selfDestruct)
+	// Find the snapshot in the stack of valid snapshots
+	idx := -1
+	for i, rev := range d.validRevisions {
+		if rev.id == revid {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return // Snapshot not found
+	}
+
+	snapshot := d.validRevisions[idx].journalIndex
+
+	// Replay the journal in reverse to undo in-memory changes
+	for i := len(d.journal) - 1; i >= snapshot; i-- {
+		d.journal[i].revert(d)
+	}
+
+	// Truncate journal and revisions
+	d.journal = d.journal[:snapshot]
+	d.validRevisions = d.validRevisions[:idx]
 }
 
 // GetStorageRoot is for trie db
