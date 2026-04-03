@@ -283,12 +283,9 @@ func (d *DualStateDB) SelfDestruct6780(addr common.Address) (uint256.Int, bool) 
 	return balance, destructed
 }
 
-// Exist checks if an account exists in either the ethStateDB or SnapshotDB.
-// We need to check both because the ethStateDB may have primed accounts that
-// haven't been written to the SnapshotDB yet.
+// Exist checks if an account exists in either the ethStateDB
 func (d *DualStateDB) Exist(addr common.Address) bool {
 	d.logger.Debugf("Exist: addr=%s", addr.Hex())
-	// Check both state DBs - account exists if it exists in either one
 	ethExists := d.ethStateDB.Exist(addr)
 	snapExists := d.snapshotDB.Exist(addr)
 	result := snapExists

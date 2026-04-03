@@ -163,8 +163,6 @@ func (th *TestHarness) PrimeGenesisAlloc(ctx context.Context, pre types.GenesisA
 		return err
 	}
 
-	// Attach t.Logf as the log sink so DualStateDB state-op traces are captured
-	// and emitted by the test runner if this subtest fails.
 	for _, end := range th.endorsers {
 		end.SetEthStateDB(ethStateDB)
 	}
