@@ -12,9 +12,11 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"regexp"
 	"time"
 
 	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-evm/common"
@@ -70,9 +72,15 @@ func (api *EndorserAPI) ProcessProposal(ctx context.Context, signedProp *peer.Si
 		}
 		res, err := api.endorser.ExecuteTransaction(ctx, inv, ethTx, blockInfo)
 		if err != nil {
-			// Return the error as a response, not as a function error
-			// This allows EVM execution errors (like code size exceeded) to be
-			// handled gracefully without failing the entire proposal
+			// Distinguish between pre-execution validation errors and execution errors.
+			// Pre-execution errors (from ApplyMessage) indicate the transaction is invalid
+			// and should be rejected. Execution errors (from result.Err) indicate the
+			// transaction executed but failed, and should be included in the response.
+			if isPreExecutionError(err) {
+				// Pre-execution validation error: reject the transaction
+				return nil, err
+			}
+			// Execution error: include in response with error status
 			return response(nil, err), nil
 		}
 		return res, nil
@@ -141,4 +149,53 @@ func response(res []byte, err error) *peer.ProposalResponse {
 			Payload: res,
 		},
 	}
+}
+
+// isPreExecutionError checks if an error is a pre-execution validation error
+// that should reject the transaction, as opposed to an execution error that
+// should be included in the transaction result.
+//
+// According to go-ethereum's ApplyMessage documentation:
+// "An error always indicates a core error meaning that the message would always
+// fail for that particular state and would never be accepted within a block."
+//
+// Pre-execution errors include:
+// - Nonce errors (too low, too high)
+// - Insufficient funds
+// - Gas limit errors
+// - Init code size exceeded (EIP-3860)
+//
+// Execution errors (NOT pre-execution) include:
+// - Out of gas during execution
+// - Execution reverted
+// - Invalid opcode
+func isPreExecutionError(err error) bool {
+	// Check for pre-execution validation errors from core package
+	if errors.Is(err, core.ErrNonceTooLow) ||
+		errors.Is(err, core.ErrNonceTooHigh) ||
+		errors.Is(err, core.ErrNonceMax) ||
+		errors.Is(err, core.ErrGasLimitReached) ||
+		errors.Is(err, core.ErrInsufficientFundsForTransfer) ||
+		errors.Is(err, core.ErrMaxInitCodeSizeExceeded) ||
+		errors.Is(err, core.ErrInsufficientFunds) ||
+		errors.Is(err, core.ErrGasUintOverflow) ||
+		errors.Is(err, core.ErrIntrinsicGas) ||
+		errors.Is(err, core.ErrTxTypeNotSupported) ||
+		errors.Is(err, core.ErrTipAboveFeeCap) ||
+		errors.Is(err, core.ErrTipVeryHigh) ||
+		errors.Is(err, core.ErrFeeCapVeryHigh) ||
+		errors.Is(err, core.ErrFeeCapTooLow) ||
+		errors.Is(err, core.ErrSenderNoEOA) ||
+		errors.Is(err, core.ErrBlobFeeCapTooLow) ||
+		errors.Is(err, core.ErrMissingBlobHashes) ||
+		errors.Is(err, core.ErrTooManyBlobs) ||
+		errors.Is(err, core.ErrBlobTxCreate) {
+		return true
+	}
+
+	// Check for blob validation errors that are created with fmt.Errorf
+	// Pattern: "blob <number> has invalid hash version"
+	errMsg := err.Error()
+	matched, _ := regexp.MatchString(`^blob \d+ has invalid hash version$`, errMsg)
+	return matched
 }

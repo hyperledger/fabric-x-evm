@@ -74,6 +74,83 @@ type revision struct {
 	logIndex     int
 }
 
+// accessList tracks addresses and storage slots accessed during transaction execution.
+// This is used for EIP-2929 (gas cost increases for state access opcodes)
+// and EIP-2930 (optional access lists in transactions).
+// The access list is NOT persisted - it's reset at the start of each transaction.
+type accessList struct {
+	addresses map[common.Address]int
+	slots     []map[common.Hash]struct{}
+}
+
+// newAccessList creates a new access list.
+func newAccessList() *accessList {
+	return &accessList{
+		addresses: make(map[common.Address]int),
+	}
+}
+
+// containsAddress checks if an address is in the access list.
+func (al *accessList) containsAddress(addr common.Address) bool {
+	_, ok := al.addresses[addr]
+	return ok
+}
+
+// contains checks if a slot is in the access list.
+func (al *accessList) contains(addr common.Address, slot common.Hash) (addressOk bool, slotOk bool) {
+	idx, ok := al.addresses[addr]
+	if !ok {
+		return false, false
+	}
+	if idx == -1 {
+		// address present but no slots
+		return true, false
+	}
+	_, slotOk = al.slots[idx][slot]
+	return true, slotOk
+}
+
+// addAddress adds an address to the access list.
+func (al *accessList) addAddress(addr common.Address) {
+	if _, present := al.addresses[addr]; !present {
+		al.addresses[addr] = -1
+	}
+}
+
+// addSlot adds a slot to the access list.
+func (al *accessList) addSlot(addr common.Address, slot common.Hash) {
+	idx, addrPresent := al.addresses[addr]
+	if !addrPresent || idx == -1 {
+		// Address not present, or addr present but no slots
+		al.addresses[addr] = len(al.slots)
+		slotmap := map[common.Hash]struct{}{slot: {}}
+		al.slots = append(al.slots, slotmap)
+		return
+	}
+	// Address already has slots
+	al.slots[idx][slot] = struct{}{}
+}
+
+// deleteAddress removes an address from the access list.
+// This is used when reverting snapshots.
+func (al *accessList) deleteAddress(addr common.Address) {
+	delete(al.addresses, addr)
+}
+
+// deleteSlot removes a storage slot from the access list.
+// This is used when reverting snapshots.
+func (al *accessList) deleteSlot(addr common.Address, slot common.Hash) {
+	idx, addrPresent := al.addresses[addr]
+	if !addrPresent {
+		return
+	}
+	if idx == -1 {
+		// Address present but no slots - nothing to delete
+		return
+	}
+	delete(al.slots[idx], slot)
+}
+
 // Journal entry types for different operations:
 
 // readEntry records a read from the ReadStore.
@@ -97,6 +174,24 @@ type selfDestructEntry struct {
 	addr common.Address
 }
 
+// transientStorageChange records a transient storage change for snapshot/revert support.
+type transientStorageChange struct {
+	account  common.Address
+	key      common.Hash
+	prevalue common.Hash
+}
+
+// accessListAddAddressEntry records an address addition to the access list.
+type accessListAddAddressEntry struct {
+	addr common.Address
+}
+
+// accessListAddSlotEntry records a slot addition to the access list.
+type accessListAddSlotEntry struct {
+	addr common.Address
+	slot common.Hash
+}
+
 // StateDB implements ExtendedStateDB by combining ledger state management
 // with EVM-specific state tracking using a single unified journal.
 type StateDB struct {
@@ -107,8 +202,10 @@ type StateDB struct {
 	monotonicVersions bool // if true, KVRead.Version is built from WriteRecord.Version (fabric-x MVCC semantics)
 
 	// EVM-specific runtime state
-	refund         uint64
-	selfDestructed map[common.Address]struct{}
+	refund           uint64
+	selfDestructed   map[common.Address]struct{}
+	accessList       *accessList                                    // EIP-2929/2930 access list (not persisted, reset per transaction)
+	transientStorage map[common.Address]map[common.Hash]common.Hash // EIP-1153 transient storage (not persisted, reset per transaction)
 
 	// Snapshot/revert support: single journal tracks ALL operations
 	journal        []any
@@ -134,6 +231,8 @@ func NewStateDB(ctx context.Context, store ReadStore, namespace string, blockNum
 		blockNum:          blockNum,
 		monotonicVersions: monotonicVersions,
 		selfDestructed:    make(map[common.Address]struct{}),
+		accessList:        newAccessList(),
+		transientStorage:  make(map[common.Address]map[common.Hash]common.Hash),
 		journal:           make([]any, 0),
 		validRevisions:    make([]revision, 0),
 		nextRevisionId:    0,
@@ -314,7 +413,13 @@ func (s *StateDB) GetCode(addr common.Address) []byte {
 }
 
 // GetCodeHash returns the code hash of an account.
+// Returns zero hash if account doesn't exist.
+// Returns empty code hash (keccak256 of nil) if account exists but has no code.
+// Returns keccak256 of code if account has code.
 func (s *StateDB) GetCodeHash(addr common.Address) common.Hash {
+	if !s.Exist(addr) {
+		return common.Hash{}
+	}
 	code := s.GetCode(addr)
 	return crypto.Keccak256Hash(code)
 }
@@ -402,7 +507,12 @@ func (s *StateDB) SetState(addr common.Address, slot common.Hash, value common.H
 	}
 
 	// Write new value
-	s.putState(key, value.Bytes())
+	// If value is zero, write empty bytes to trigger deletion
+	if value == (common.Hash{}) {
+		s.putState(key, nil)
+	} else {
+		s.putState(key, value.Bytes())
+	}
 
 	return prev
 }
@@ -414,10 +524,26 @@ func (s *StateDB) GetStorageRoot(addr common.Address) common.Hash {
 
 // SelfDestruct marks an account as self-destructed.
 func (s *StateDB) SelfDestruct(addr common.Address) uint256.Int {
-	// Journal the self-destruct
+	// Get the current balance before zeroing it
+	prevBalance := s.GetBalance(addr)
+
+	// Set balance to zero if it's not already zero.
+	// This matches geth's behavior and is required for proper state transitions.
+	// The balance write is journaled via putState, making it revertible when
+	// RevertToSnapshot truncates the journal.
+	if !prevBalance.IsZero() {
+		s.putState(accKey(addr, "bal"), uint256ToBytes(uint256.NewInt(0)))
+	}
+
+	// Journal the self-destruct marker for HasSelfDestructed queries.
+	// This is needed because:
+	// 1. The EVM queries HasSelfDestructed to check if an account was self-destructed
+	// 2. The selfDestructEntry allows RevertToSnapshot to remove the address from
+	//    the selfDestructed map when reverting
 	s.journal = append(s.journal, selfDestructEntry{addr: addr})
 	s.selfDestructed[addr] = struct{}{}
-	return *uint256.NewInt(0)
+
+	return *prevBalance
 }
 
 // SelfDestruct6780 implements EIP-6780 self-destruct.
@@ -528,6 +654,18 @@ func (s *StateDB) RevertToSnapshot(revid int) {
 			s.refund = e.prevRefund
 		case selfDestructEntry:
 			delete(s.selfDestructed, e.addr)
+		case transientStorageChange:
+			// Revert transient storage to previous value
+			if s.transientStorage[e.account] == nil {
+				s.transientStorage[e.account] = make(map[common.Hash]common.Hash)
+			}
+			s.transientStorage[e.account][e.key] = e.prevalue
+		case accessListAddAddressEntry:
+			// Revert access list address addition
+			s.accessList.deleteAddress(e.addr)
+		case accessListAddSlotEntry:
+			// Revert access list slot addition
+			s.accessList.deleteSlot(e.addr, e.slot)
 		}
 	}
 
@@ -577,24 +715,97 @@ func (s *StateDB) Version() uint64 {
 // -------------------- Stub implementations for unused methods --------------------
 
 func (s *StateDB) GetTransientState(addr common.Address, key common.Hash) common.Hash {
+	if storage, ok := s.transientStorage[addr]; ok {
+		return storage[key]
+	}
 	return common.Hash{}
 }
 
-func (s *StateDB) SetTransientState(addr common.Address, key, value common.Hash) {}
+func (s *StateDB) SetTransientState(addr common.Address, key, value common.Hash) {
+	// Get previous value for journal
+	prev := s.GetTransientState(addr, key)
+
+	// Create journal entry to track the change
+	s.journal = append(s.journal, transientStorageChange{
+		account:  addr,
+		key:      key,
+		prevalue: prev,
+	})
+
+	// Set the new value
+	if s.transientStorage[addr] == nil {
+		s.transientStorage[addr] = make(map[common.Hash]common.Hash)
+	}
+	s.transientStorage[addr][key] = value
+}
 
 func (s *StateDB) AddPreimage(hash common.Hash, preimage []byte) {}
 
-func (s *StateDB) AddressInAccessList(addr common.Address) bool { return false }
-
-func (s *StateDB) SlotInAccessList(addr common.Address, slot common.Hash) (bool, bool) {
-	return false, false
+// AddressInAccessList checks if an address is in the access list.
+func (s *StateDB) AddressInAccessList(addr common.Address) bool {
+	return s.accessList.containsAddress(addr)
 }
 
-func (s *StateDB) AddAddressToAccessList(addr common.Address) {}
+// SlotInAccessList checks if a storage slot is in the access list.
+func (s *StateDB) SlotInAccessList(addr common.Address, slot common.Hash) (bool, bool) {
+	return s.accessList.contains(addr, slot)
+}
 
-func (s *StateDB) AddSlotToAccessList(addr common.Address, slot common.Hash) {}
+// AddAddressToAccessList adds an address to the access list.
+func (s *StateDB) AddAddressToAccessList(addr common.Address) {
+	if s.accessList.containsAddress(addr) {
+		return
+	}
+	s.journal = append(s.journal, accessListAddAddressEntry{addr: addr})
+	s.accessList.addAddress(addr)
+}
 
+// AddSlotToAccessList adds a storage slot to the access list.
+func (s *StateDB) AddSlotToAccessList(addr common.Address, slot common.Hash) {
+	addrOk, slotOk := s.accessList.contains(addr, slot)
+	if addrOk && slotOk {
+		return
+	}
+	// Add address journal entry if address is not present
+	if !addrOk {
+		s.journal = append(s.journal, accessListAddAddressEntry{addr: addr})
+	}
+	// Always add slot journal entry
+	s.journal = append(s.journal, accessListAddSlotEntry{addr: addr, slot: slot})
+	s.accessList.addSlot(addr, slot)
+}
+
+// Prepare initializes the access list and transient storage for a new transaction.
+// This follows EIP-2929 (Berlin) and EIP-2930 semantics.
 func (s *StateDB) Prepare(rules params.Rules, sender, coinbase common.Address, dest *common.Address, precompiles []common.Address, txAccesses types.AccessList) {
+	// Reset access list for new transaction (EIP-2929)
+	s.accessList = newAccessList()
+
+	// Add sender to access list
+	s.accessList.addAddress(sender)
+
+	// Add destination if present (not for contract creation)
+	if dest != nil {
+		s.accessList.addAddress(*dest)
+	}
+
+	// Add precompiled contracts
+	for _, addr := range precompiles {
+		s.accessList.addAddress(addr)
+	}
+
+	// Add transaction access list entries (EIP-2930)
+	for _, el := range txAccesses {
+		s.accessList.addAddress(el.Address)
+		for _, key := range el.StorageKeys {
+			s.accessList.addSlot(el.Address, key)
+		}
+	}
+
+	// Add coinbase if Shanghai rules apply (EIP-3651)
+	if rules.IsShanghai {
+		s.accessList.addAddress(coinbase)
+	}
 }
 
 func (s *StateDB) PointCache() *utils.PointCache { return nil }

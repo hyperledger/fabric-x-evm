@@ -3,6 +3,7 @@ node_modules
 .gomodcache
 .vscode
 testdata/*
+!testdata/ethereum-tests
 !testdata/configtx.yaml
 !testdata/crypto-config.yaml
 !testdata/tether_txs.json

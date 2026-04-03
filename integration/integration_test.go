@@ -252,12 +252,13 @@ func testNonceValidation(t *testing.T, th *TestHarness) {
 	}
 
 	// call should fail now - transaction has nonce 3 but ledger has nonce 5
-	res, err := node.ExecuteEthTx(t.Context(), tx, nil)
-	if res.Responses[0] == nil ||
-		res.Responses[0].Response == nil ||
-		res.Responses[0].Response.Status != 500 ||
-		res.Responses[0].Response.Message != "nonce too low" {
+	_, err = node.ExecuteEthTx(t.Context(), tx, nil)
+	if err == nil {
 		t.Fatal("expected transaction with wrong nonce to fail, but it succeeded")
+	}
+	expectedErr := "process proposal: nonce too low"
+	if err.Error() != expectedErr {
+		t.Fatalf("expected error %q, got %q", expectedErr, err.Error())
 	}
 	t.Logf("Transaction with wrong nonce correctly failed: %v", err)
 

@@ -119,6 +119,8 @@ func TestEthereumTests(t *testing.T) {
 	t.Logf("Loaded blacklist with %d entries", len(blacklist))
 
 	// Find all JSON files recursively
+
+	// 1) LegacyTests
 	testsDir := filepath.Join("..", "testdata", "ethereum-tests", "LegacyTests", "Constantinople", "GeneralStateTests")
 	allFiles, err := findJSONFiles(testsDir)
 	if err != nil {
@@ -126,17 +128,26 @@ func TestEthereumTests(t *testing.T) {
 	}
 	t.Logf("Found %d total test files", len(allFiles))
 
+	// 2) GeneralStateTests
+	testsDir = filepath.Join("..", "testdata", "ethereum-tests", "GeneralStateTests")
+	allFiles1, err := findJSONFiles(testsDir)
+	if err != nil {
+		t.Fatalf("Failed to find test files: %v", err)
+	}
+	t.Logf("Found %d total test files", len(allFiles))
+
+	allFiles = append(allFiles, allFiles1...)
+
 	// Filter out blacklisted files
 	testFiles := filterBlacklistedFiles(allFiles, blacklist)
 	t.Logf("Running %d test files after filtering blacklist", len(testFiles))
 
 	// testFiles = []string{
-	// 	"../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stCallCreateCallCodeTest/Call1024OOG.json",
+	// 	"../testdata/ethereum-tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial20_2_Paris.json",
 	// }
 
 	for _, testPath := range testFiles {
 		t.Run(filepath.Base(testPath), func(t *testing.T) {
-			t.Parallel() // Run test files in parallel
 			runEthereumTestFile(t, testPath)
 		})
 	}
@@ -152,7 +163,7 @@ func runEthereumTestFile(t *testing.T, path string) {
 	// Run each StateTest with all configurations
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			t.Parallel() // Run individual tests in parallel
+			t.Parallel() // Run test files in parallel
 			runSingleEthereumTest(t, test)
 		})
 	}
@@ -199,13 +210,22 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 	// The returned StateTestState holds a TrieDB and optional Snapshots that must
 	// be closed to stop the background snapshot-generator goroutine.
 	vmConfig := vm.Config{} // Empty VM config for now
-	st, config, _, _, context, err := stateTest.prepareTestEnvironment(subtest.Fork, subtest.Index, vmConfig, snapshotter, scheme)
+	st, config, _, _, context, prepareErr := stateTest.prepareTestEnvironment(subtest.Fork, subtest.Index, vmConfig, snapshotter, scheme)
 	// Close immediately: config/block/msg/context are plain values that don't reference the
 	// StateDB/TrieDB/Snapshots, so we can stop the snapshot-generator goroutine right here
 	// rather than relying on a defer that won't run if this goroutine later gets stuck.
 	st.Close()
-	if err != nil {
-		t.Fatalf("Failed to prepare test environment: %v", err)
+
+	// Check if the error from prepareTestEnvironment is expected (e.g., blob count exceeded)
+	// This matches the behavior of TestSingleAdd11 which uses checkError
+	if prepareErr != nil {
+		if post.ExpectException != "" {
+			// Error was expected, test passes
+			t.Logf("WANTED: %s\n   GOT: %s\n", post.ExpectException, prepareErr.Error())
+			return
+		}
+		// Error was not expected, test fails
+		t.Fatalf("Failed to prepare test environment: %v", prepareErr)
 	}
 
 	// Create EVMConfig to pass to test harness
@@ -250,7 +270,7 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 		if execErr == nil {
 			t.Fatalf("expected error %q, got no error", post.ExpectException)
 		}
-		t.Logf("Got expected error: %v", execErr)
+		t.Logf("WANTED: %s\n   GOT: %s\n", post.ExpectException, execErr.Error())
 		return
 	}
 

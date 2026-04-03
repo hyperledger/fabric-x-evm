@@ -174,7 +174,7 @@ func (tx *stTransaction) UnmarshalJSON(data []byte) error {
 		PrivateKey           hexutil.Bytes `json:"secretKey"`
 		Sender               *common.Address
 		BlobVersionedHashes  []common.Hash
-		BlobGasFeeCap        *math.HexOrDecimal256
+		BlobGasFeeCap        *math.HexOrDecimal256 `json:"maxFeePerBlobGas"`
 	}
 	var dec stTransactionMarshaling
 	if err := json.Unmarshal(data, &dec); err != nil {
@@ -231,6 +231,7 @@ func (t *StateTest) checkError(subtest StateSubtest, err error) error {
 		return fmt.Errorf("unexpected error: %w", err)
 	}
 	if err != nil && expectedError != "" {
+		fmt.Printf("WANTED: %s\n   GOT: %s\n", expectedError, err.Error())
 		// Ignore expected errors
 		return nil
 	}

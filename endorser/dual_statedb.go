@@ -228,7 +228,8 @@ func (d *DualStateDB) SetState(addr common.Address, key common.Hash, value commo
 // GetStorageRoot returns the storage root from the SnapshotDB.
 func (d *DualStateDB) GetStorageRoot(addr common.Address) common.Hash {
 	d.logger.Debugf("GetStorageRoot: addr=%s", addr.Hex())
-	result := d.snapshotDB.GetStorageRoot(addr)
+	// FIXME: use snapshotDB as soon as it supports this function
+	result := d.ethStateDB.GetStorageRoot(addr)
 	d.logger.Debugf("GetStorageRoot: output result=%s", result.Hex())
 	return result
 }

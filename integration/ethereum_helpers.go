@@ -17,6 +17,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/holiman/uint256"
 	"github.com/hyperledger/fabric-x-evm/utils"
 )
 
@@ -85,7 +86,108 @@ func buildTransaction(testTx *stTransaction, dataIndex, gasIndex, valueIndex int
 		to = &addr
 	}
 
-	// Create transaction
+	// Handle blob transactions (EIP-4844) - type 3
+	// Only create blob transaction if BlobGasFeeCap is explicitly set (not nil)
+	// Note: BlobVersionedHashes can be empty for validation tests
+	if testTx.BlobGasFeeCap != nil {
+		maxFeePerGas := testTx.MaxFeePerGas
+		if maxFeePerGas == nil {
+			maxFeePerGas = gasPrice
+		}
+		maxPriorityFeePerGas := testTx.MaxPriorityFeePerGas
+		if maxPriorityFeePerGas == nil {
+			maxPriorityFeePerGas = gasPrice
+		}
+		blobFeeCap := testTx.BlobGasFeeCap
+		if blobFeeCap == nil {
+			blobFeeCap = big.NewInt(0)
+		}
+
+		// Handle access list
+		var accessList types.AccessList
+		if testTx.AccessLists != nil && dataIndex < len(testTx.AccessLists) && testTx.AccessLists[dataIndex] != nil {
+			accessList = *testTx.AccessLists[dataIndex]
+		}
+
+		tx := types.NewTx(&types.BlobTx{
+			Nonce:      nonce,
+			GasTipCap:  uint256.MustFromBig(maxPriorityFeePerGas),
+			GasFeeCap:  uint256.MustFromBig(maxFeePerGas),
+			Gas:        gasLimit,
+			To:         *to, // Blob transactions must have a recipient
+			Value:      uint256.MustFromBig(value),
+			Data:       data,
+			AccessList: accessList,
+			BlobFeeCap: uint256.MustFromBig(blobFeeCap),
+			BlobHashes: testTx.BlobVersionedHashes,
+		})
+
+		// Sign transaction if secret key is provided
+		if len(testTx.PrivateKey) > 0 {
+			key, err := crypto.ToECDSA(testTx.PrivateKey)
+			if err != nil {
+				return nil, fmt.Errorf("invalid secret key: %w", err)
+			}
+
+			signer := types.LatestSignerForChainID(big.NewInt(1))
+			signedTx, err := types.SignTx(tx, signer, key)
+			if err != nil {
+				return nil, fmt.Errorf("failed to sign tx: %w", err)
+			}
+			return signedTx, nil
+		}
+
+		return tx, nil
+	}
+
+	// Handle EIP-1559 transactions
+	if testTx.MaxFeePerGas != nil || testTx.MaxPriorityFeePerGas != nil {
+		maxFeePerGas := testTx.MaxFeePerGas
+		if maxFeePerGas == nil {
+			maxFeePerGas = gasPrice
+		}
+		maxPriorityFeePerGas := testTx.MaxPriorityFeePerGas
+		if maxPriorityFeePerGas == nil {
+			maxPriorityFeePerGas = gasPrice
+		}
+
+		// Handle access list
+		var accessList types.AccessList
+		if testTx.AccessLists != nil && dataIndex < len(testTx.AccessLists) && testTx.AccessLists[dataIndex] != nil {
+			accessList = *testTx.AccessLists[dataIndex]
+		}
+
+		tx := types.NewTx(&types.DynamicFeeTx{
+			Nonce:      nonce,
+			GasTipCap:  maxPriorityFeePerGas,
+			GasFeeCap:  maxFeePerGas,
+			Gas:        gasLimit,
+			To:         to,
+			Value:      value,
+			Data:       data,
+			AccessList: accessList,
+		})
+
+		// Sign transaction if secret key is provided
+		if len(testTx.PrivateKey) > 0 {
+			key, err := crypto.ToECDSA(testTx.PrivateKey)
+			if err != nil {
+				return nil, fmt.Errorf("invalid secret key: %w", err)
+			}
+
+			// Use appropriate signer for EIP-1559
+			signer := types.LatestSignerForChainID(big.NewInt(1))
+			signedTx, err := types.SignTx(tx, signer, key)
+			if err != nil {
+				return nil, fmt.Errorf("failed to sign tx: %w", err)
+			}
+			return signedTx, nil
+		}
+
+		return tx, nil
+	}
+
+	// Create legacy transaction
 	tx := types.NewTx(&types.LegacyTx{
 		Nonce:    nonce,
 		GasPrice: gasPrice,
