@@ -118,8 +118,8 @@ func assertEqual[T comparable](t *testing.T, label string, got1, got2, expected 
 	}
 }
 
-func snapshotDB(t *testing.T, backend state.ReadStore, blockNum uint64) (*state.SimulationStore, ExtendedStateDB) {
-	sim, err := state.NewSimulationStore(t.Context(), backend, Namespace, blockNum, false)
+func snapshotDB(t *testing.T, backend ReadStore, blockNum uint64) (*SimulationStore, ExtendedStateDB) {
+	sim, err := NewSimulationStore(t.Context(), backend, Namespace, blockNum, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,4 +206,151 @@ func TestAddMultipleLogs(t *testing.T) {
 	if !bytes.Equal(logs[1].Address, contract2.Bytes()) {
 		t.Errorf("second log address mismatch")
 	}
+}
+
+// TestSnapshotRevertRWS tests that snapshot/revert properly affects the read-write set.
+// When operations are reverted, they should not appear in the final RWS.
+func TestSnapshotRevertRWS(t *testing.T) {
+	// Setup: Create a DB with some initial state
+	originalState, err := state.NewWriteDB(Channel, Db1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Prime the DB with initial values so we have something to read
+	addr1 := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	addr2 := common.HexToAddress("0x2222222222222222222222222222222222222222")
+	slot1 := common.HexToHash("0x01")
+	slot2 := common.HexToHash("0x02")
+
+	// Setup initial state
+	setupSim, setupDB := snapshotDB(t, originalState, 0)
+	setupDB.CreateAccount(addr1)
+	setupDB.SetState(addr1, slot1, common.HexToHash("0xAAAA"))
+	setupDB.CreateAccount(addr2)
+	setupDB.SetState(addr2, slot2, common.HexToHash("0xBBBB"))
+
+	// Commit initial state
+	setupRWS := setupSim.Result()
+	err = originalState.UpdateWorldState(t.Context(), blocks.Block{
+		Number: 0,
+		Transactions: []blocks.Transaction{{
+			ID: "setup", Number: 0, Valid: true,
+			NsRWS: []blocks.NsReadWriteSet{{Namespace: Namespace, RWS: setupRWS}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Test 1: Operations WITH revert - only pre-snapshot ops should appear in RWS
+	t.Run("WithRevert", func(t *testing.T) {
+		sim, simDB := snapshotDB(t, originalState, 1)
+
+		// Pre-snapshot operations
+		val1 := simDB.GetState(addr1, slot1) // Read 1
+		if val1 != common.HexToHash("0xAAAA") {
+			t.Fatalf("expected 0xAAAA, got %v", val1)
+		}
+		simDB.SetState(addr1, slot1, common.HexToHash("0xCCCC")) // Write 1
+
+		// Take snapshot
+		snapID := simDB.Snapshot()
+
+		// Post-snapshot operations (these will be reverted)
+		val2 := simDB.GetState(addr2, slot2) // Read 2 (will be reverted)
+		if val2 != common.HexToHash("0xBBBB") {
+			t.Fatalf("expected 0xBBBB, got %v", val2)
+		}
+		simDB.SetState(addr2, slot2, common.HexToHash("0xDDDD")) // Write 2 (will be reverted)
+		simDB.SetState(addr1, slot1, common.HexToHash("0xEEEE")) // Write 3 (will be reverted)
+
+		// Revert to snapshot
+		simDB.RevertToSnapshot(snapID)
+
+		// Get RWS - should only contain pre-snapshot operations
+		rws := sim.Result()
+
+		// Check reads: should only have addr1:slot1, NOT addr2:slot2
+		if len(rws.Reads) != 1 {
+			t.Fatalf("expected 1 read, got %d: %v", len(rws.Reads), rws.Reads)
+		}
+		expectedReadKey := storeKey(addr1, slot1)
+		if rws.Reads[0].Key != expectedReadKey {
+			t.Errorf("expected read key %s, got %s", expectedReadKey, rws.Reads[0].Key)
+		}
+
+		// Check writes: should only have addr1:slot1=0xCCCC, NOT addr2:slot2
+		if len(rws.Writes) != 1 {
+			t.Fatalf("expected 1 write, got %d: %v", len(rws.Writes), rws.Writes)
+		}
+		if rws.Writes[0].Key != expectedReadKey {
+			t.Errorf("expected write key %s, got %s", expectedReadKey, rws.Writes[0].Key)
+		}
+		expectedValue := common.HexToHash("0xCCCC").Bytes()
+		if !bytes.Equal(rws.Writes[0].Value, expectedValue) {
+			t.Errorf("expected write value %x, got %x", expectedValue, rws.Writes[0].Value)
+		}
+	})
+
+	// Test 2: Operations WITHOUT revert - all ops should appear in RWS
+	t.Run("WithoutRevert", func(t *testing.T) {
+		sim, simDB := snapshotDB(t, originalState, 1)
+
+		// Pre-snapshot operations
+		val1 := simDB.GetState(addr1, slot1) // Read 1
+		if val1 != common.HexToHash("0xAAAA") {
+			t.Fatalf("expected 0xAAAA, got %v", val1)
+		}
+		simDB.SetState(addr1, slot1, common.HexToHash("0xCCCC")) // Write 1
+
+		// Take snapshot (but don't revert)
+		_ = simDB.Snapshot()
+
+		// Post-snapshot operations (these will NOT be reverted)
+		val2 := simDB.GetState(addr2, slot2) // Read 2
+		if val2 != common.HexToHash("0xBBBB") {
+			t.Fatalf("expected 0xBBBB, got %v", val2)
+		}
+		simDB.SetState(addr2, slot2, common.HexToHash("0xDDDD")) // Write 2
+		simDB.SetState(addr1, slot1, common.HexToHash("0xEEEE")) // Write 3 (overwrites Write 1)
+
+		// Get RWS - should contain ALL operations
+		rws := sim.Result()
+
+		// Check reads: should have both addr1:slot1 AND addr2:slot2
+		if len(rws.Reads) != 2 {
+			t.Fatalf("expected 2 reads, got %d: %v", len(rws.Reads), rws.Reads)
+		}
+
+		// Check writes: should have both addresses
+		// Note: addr1:slot1 appears once with final value 0xEEEE (Write 3 overwrote Write 1)
+		if len(rws.Writes) != 2 {
+			t.Fatalf("expected 2 writes, got %d: %v", len(rws.Writes), rws.Writes)
+		}
+
+		// Verify addr1:slot1 has final value 0xEEEE
+		key1 := storeKey(addr1, slot1)
+		key2 := storeKey(addr2, slot2)
+		foundKey1, foundKey2 := false, false
+		for _, w := range rws.Writes {
+			if w.Key == key1 {
+				foundKey1 = true
+				expectedValue := common.HexToHash("0xEEEE").Bytes()
+				if !bytes.Equal(w.Value, expectedValue) {
+					t.Errorf("addr1:slot1 expected value %x, got %x", expectedValue, w.Value)
+				}
+			}
+			if w.Key == key2 {
+				foundKey2 = true
+				expectedValue := common.HexToHash("0xDDDD").Bytes()
+				if !bytes.Equal(w.Value, expectedValue) {
+					t.Errorf("addr2:slot2 expected value %x, got %x", expectedValue, w.Value)
+				}
+			}
+		}
+		if !foundKey1 || !foundKey2 {
+			t.Errorf("missing expected writes: foundKey1=%v, foundKey2=%v", foundKey1, foundKey2)
+		}
+	})
 }

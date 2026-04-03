@@ -24,7 +24,6 @@ import (
 	cmn "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/utils"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
-	"github.com/hyperledger/fabric-x-sdk/state"
 )
 
 // EVMConfig holds the configuration for EVM execution.
@@ -42,13 +41,13 @@ type EVMConfig struct {
 type EVMEngine struct {
 	namespace         string
 	monotonicVersions bool
-	db                state.ReadStore
+	db                ReadStore
 	ethStateDB        *ethstate.StateDB
 	evmConfig         *EVMConfig
 }
 
 // NewEVMEngine creates a new EVMEngine.
-func NewEVMEngine(namespace string, db state.ReadStore, evmConfig *EVMConfig, monotonicVersions bool) *EVMEngine {
+func NewEVMEngine(namespace string, db ReadStore, evmConfig *EVMConfig, monotonicVersions bool) *EVMEngine {
 	return &EVMEngine{
 		namespace:         namespace,
 		db:                db,
@@ -142,7 +141,7 @@ func (e *EVMEngine) NonceAt(_ context.Context, account common.Address, blockNumb
 // newExecutor creates a fresh executor with an isolated SimulationStore.
 // stateBlockNum selects the Fabric block height for the state snapshot (0 = latest).
 func (e *EVMEngine) newExecutor(blockInfo *utils.BlockInfo, stateBlockNum uint64) (*executor, error) {
-	sim, err := state.NewSimulationStore(context.TODO(), e.db, e.namespace, stateBlockNum, e.monotonicVersions)
+	sim, err := NewSimulationStore(context.TODO(), e.db, e.namespace, stateBlockNum, e.monotonicVersions)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +154,7 @@ func (e *EVMEngine) newSnapshotAt(blockNumber *big.Int) (ExtendedStateDB, error)
 	if blockNumber != nil {
 		blockNum = blockNumber.Uint64()
 	}
-	sim, err := state.NewSimulationStore(context.TODO(), e.db, e.namespace, blockNum, e.monotonicVersions)
+	sim, err := NewSimulationStore(context.TODO(), e.db, e.namespace, blockNum, e.monotonicVersions)
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +174,7 @@ type executor struct {
 // newExecutor creates an executor with the provided SimulationStore.
 // If blockInfo is not provided, the store's current version is used as the block number.
 // If evmConfig is provided, it overrides the default BlockContext, ChainConfig, and VMConfig.
-func newExecutor(sim *state.SimulationStore, blockInfo *utils.BlockInfo, evmConfig *EVMConfig, ethStateDB *ethstate.StateDB) *executor {
+func newExecutor(sim *SimulationStore, blockInfo *utils.BlockInfo, evmConfig *EVMConfig, ethStateDB *ethstate.StateDB) *executor {
 	if blockInfo == nil {
 		// Note: sim.Version() is a Fabric block number, not an Ethereum block number — these are
 		// separate namespaces. With AllEthashProtocolChanges active from block 0 this is harmless,

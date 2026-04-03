@@ -615,7 +615,7 @@ func makePreStateWithDualState(db ethdb.Database, accounts types.GenesisAlloc, s
 
 	// Create a mock SimulationStore for DualStateDB
 	fabricDB, _ := fabricstate.NewWriteDB("testchannel", ":memory:")
-	sim, _ := fabricstate.NewSimulationStore(context.TODO(), fabricDB, "testns", 0, false)
+	sim, _ := endorser.NewSimulationStore(context.TODO(), fabricDB, "testns", 0, false)
 
 	// Use DualStateDB instead of plain StateDB for debugging
 	statedb := endorser.NewSnapshotDBWithDualState(sim, ethStateDB)
@@ -669,7 +669,7 @@ func makePreStateWithDualState(db ethdb.Database, accounts types.GenesisAlloc, s
 
 	// Create new SimulationStore for the reopened state - now reading from block 1
 	// since we just committed block 0
-	sim, _ = fabricstate.NewSimulationStore(context.TODO(), fabricDB, "testns", 1, false)
+	sim, _ = endorser.NewSimulationStore(context.TODO(), fabricDB, "testns", 1, false)
 	statedb = endorser.NewSnapshotDBWithDualState(sim, ethStateDB)
 
 	return StateTestState{statedb, trieDB, snaps}

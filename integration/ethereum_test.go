@@ -130,6 +130,10 @@ func TestEthereumTests(t *testing.T) {
 	testFiles := filterBlacklistedFiles(allFiles, blacklist)
 	t.Logf("Running %d test files after filtering blacklist", len(testFiles))
 
+	// testFiles = []string{
+	// 	"../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stCallCreateCallCodeTest/Call1024OOG.json",
+	// }
+
 	for _, testPath := range testFiles {
 		t.Run(filepath.Base(testPath), func(t *testing.T) {
 			t.Parallel() // Run test files in parallel
@@ -195,7 +199,7 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 	// The returned StateTestState holds a TrieDB and optional Snapshots that must
 	// be closed to stop the background snapshot-generator goroutine.
 	vmConfig := vm.Config{} // Empty VM config for now
-	st, config, block, msg, context, err := stateTest.prepareTestEnvironment(subtest.Fork, subtest.Index, vmConfig, snapshotter, scheme)
+	st, config, _, _, context, err := stateTest.prepareTestEnvironment(subtest.Fork, subtest.Index, vmConfig, snapshotter, scheme)
 	// Close immediately: config/block/msg/context are plain values that don't reference the
 	// StateDB/TrieDB/Snapshots, so we can stop the snapshot-generator goroutine right here
 	// rather than relying on a defer that won't run if this goroutine later gets stuck.
@@ -210,9 +214,6 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 		ChainConfig:  config,
 		VMConfig:     &vmConfig,
 	}
-
-	t.Logf("Creating test harness with EVM config: fork=%s, block=%d, msg.From=%s, snapshotter=%v, scheme=%s",
-		subtest.Fork, block.NumberU64(), msg.From.Hex(), snapshotter, scheme)
 
 	// Create test harness with local backend and state priming, passing evmConfig
 	th, err := newEthereumTestHarness(t, evmConfig, stateTest.json.Pre)
@@ -237,9 +238,7 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 				config.IsEIP158(blockInfo.BlockNumber),
 				config.IsCancun(blockInfo.BlockNumber, blockInfo.BlockTime))
 			if err != nil {
-				t.Logf("Failed to commit ethereum state: %v", err)
-			} else {
-				t.Logf("Committed ethereum state with root: %s", root.Hex())
+				t.Fatalf("Failed to commit ethereum state: %v", err)
 			}
 
 			actualRoot = root
@@ -272,7 +271,6 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 		}
 		verifyTrieRoot(t, th.primer.Writes(), txRWS, blockInfo.BlockNumber.Uint64(), expectedRoot)
 	}
-	t.Logf("Test completed successfully")
 }
 
 // endorsementToRWS extracts the blocks.ReadWriteSet from the first ProposalResponse
