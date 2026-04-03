@@ -37,33 +37,33 @@ func TestOpsReplayOnFreshDB(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sim, simDB := snapshotDB(t, originalState, 0)
+	db := snapshotDB(t, originalState, 0)
 
-	simDB.CreateAccount(sender)
-	simDB.AddBalance(sender, uint256.NewInt(1_000), tracing.BalanceChangeTransfer)
-	simDB.SubBalance(sender, uint256.NewInt(100), tracing.BalanceChangeTransfer)
+	db.CreateAccount(sender)
+	db.AddBalance(sender, uint256.NewInt(1_000), tracing.BalanceChangeTransfer)
+	db.SubBalance(sender, uint256.NewInt(100), tracing.BalanceChangeTransfer)
 
-	simDB.CreateAccount(recipient)
-	simDB.AddBalance(recipient, uint256.NewInt(50), tracing.BalanceChangeTransfer)
+	db.CreateAccount(recipient)
+	db.AddBalance(recipient, uint256.NewInt(50), tracing.BalanceChangeTransfer)
 
 	// Nonce ops
-	simDB.SetNonce(sender, 1, tracing.NonceChangeGenesis)
+	db.SetNonce(sender, 1, tracing.NonceChangeGenesis)
 
 	// Code ops
-	simDB.CreateAccount(contract)
-	simDB.CreateContract(contract)
+	db.CreateAccount(contract)
+	db.CreateContract(contract)
 	code := []byte{0x60, 0x00, 0x60, 0x01, 0x01} // simple bytecode
-	simDB.SetCode(contract, code, tracing.CodeChangeContractCreation)
+	db.SetCode(contract, code, tracing.CodeChangeContractCreation)
 
 	// Storage ops
 	slot := common.HexToHash("0x01")
 	val := common.HexToHash("0xdeadbeef")
-	simDB.SetState(contract, slot, val)
+	db.SetState(contract, slot, val)
 
 	// Self-destruct ops (TODO: actually destroy the contract)
-	_ = simDB.SelfDestruct(contract)
-	assertEqual(t, "SelfDestruct", simDB.HasSelfDestructed(contract), true, true)
-	_, _ = simDB.SelfDestruct6780(contract)
+	_ = db.SelfDestruct(contract)
+	assertEqual(t, "SelfDestruct", db.HasSelfDestructed(contract), true, true)
+	_, _ = db.SelfDestruct6780(contract)
 
 	// replay on fresh database
 	freshState, err := state.NewWriteDB(Channel, Db2)
@@ -73,7 +73,7 @@ func TestOpsReplayOnFreshDB(t *testing.T) {
 
 	// commit changes
 	b := blocks.Block{Transactions: []blocks.Transaction{
-		{ID: "txid", Valid: true, NsRWS: []blocks.NsReadWriteSet{{Namespace: Namespace, RWS: sim.Result()}}},
+		{ID: "txid", Valid: true, NsRWS: []blocks.NsReadWriteSet{{Namespace: Namespace, RWS: db.Result()}}},
 	}}
 
 	err = originalState.Handle(t.Context(), b)
@@ -86,8 +86,8 @@ func TestOpsReplayOnFreshDB(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, db1 := snapshotDB(t, originalState, 1)
-	_, db2 := snapshotDB(t, freshState, 1)
+	db1 := snapshotDB(t, originalState, 1)
+	db2 := snapshotDB(t, freshState, 1)
 
 	assertEqual(t, "Balance", db1.GetBalance(sender).String(), db2.GetBalance(sender).String(), uint256.NewInt(900).String())
 	assertEqual(t, "Balance", db1.GetBalance(recipient).String(), db2.GetBalance(recipient).String(), uint256.NewInt(50).String())
@@ -118,12 +118,12 @@ func assertEqual[T comparable](t *testing.T, label string, got1, got2, expected 
 	}
 }
 
-func snapshotDB(t *testing.T, backend ReadStore, blockNum uint64) (*SimulationStore, ExtendedStateDB) {
-	sim, err := NewSimulationStore(t.Context(), backend, Namespace, blockNum, false)
+func snapshotDB(t *testing.T, backend ReadStore, blockNum uint64) *StateDB {
+	stateDB, err := NewStateDB(t.Context(), backend, Namespace, blockNum, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return sim, NewSnapshotDB(sim)
+	return stateDB
 }
 
 func TestAddLog(t *testing.T) {
@@ -132,7 +132,7 @@ func TestAddLog(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sim, simDB := snapshotDB(t, originalState, 0)
+	db := snapshotDB(t, originalState, 0)
 
 	contract := newAddress()
 	topic1 := common.HexToHash("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")
@@ -145,10 +145,10 @@ func TestAddLog(t *testing.T) {
 		Data:    data,
 	}
 
-	simDB.AddLog(log)
+	db.AddLog(log)
 
 	// Verify log was recorded in the simulation store
-	logs := sim.Logs()
+	logs := db.Logs()
 	if len(logs) != 1 {
 		t.Fatalf("expected 1 log, got %d", len(logs))
 	}
@@ -176,7 +176,7 @@ func TestAddMultipleLogs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sim, simDB := snapshotDB(t, originalState, 0)
+	db := snapshotDB(t, originalState, 0)
 
 	contract1 := newAddress()
 	contract2 := newAddress()
@@ -192,10 +192,10 @@ func TestAddMultipleLogs(t *testing.T) {
 		Data:    []byte{0x02, 0x03},
 	}
 
-	simDB.AddLog(log1)
-	simDB.AddLog(log2)
+	db.AddLog(log1)
+	db.AddLog(log2)
 
-	logs := sim.Logs()
+	logs := db.Logs()
 	if len(logs) != 2 {
 		t.Fatalf("expected 2 logs, got %d", len(logs))
 	}
@@ -224,14 +224,14 @@ func TestSnapshotRevertRWS(t *testing.T) {
 	slot2 := common.HexToHash("0x02")
 
 	// Setup initial state
-	setupSim, setupDB := snapshotDB(t, originalState, 0)
+	setupDB := snapshotDB(t, originalState, 0)
 	setupDB.CreateAccount(addr1)
 	setupDB.SetState(addr1, slot1, common.HexToHash("0xAAAA"))
 	setupDB.CreateAccount(addr2)
 	setupDB.SetState(addr2, slot2, common.HexToHash("0xBBBB"))
 
 	// Commit initial state
-	setupRWS := setupSim.Result()
+	setupRWS := setupDB.Result()
 	err = originalState.UpdateWorldState(t.Context(), blocks.Block{
 		Number: 0,
 		Transactions: []blocks.Transaction{{
@@ -245,31 +245,31 @@ func TestSnapshotRevertRWS(t *testing.T) {
 
 	// Test 1: Operations WITH revert - only pre-snapshot ops should appear in RWS
 	t.Run("WithRevert", func(t *testing.T) {
-		sim, simDB := snapshotDB(t, originalState, 1)
+		db := snapshotDB(t, originalState, 1)
 
 		// Pre-snapshot operations
-		val1 := simDB.GetState(addr1, slot1) // Read 1
+		val1 := db.GetState(addr1, slot1) // Read 1
 		if val1 != common.HexToHash("0xAAAA") {
 			t.Fatalf("expected 0xAAAA, got %v", val1)
 		}
-		simDB.SetState(addr1, slot1, common.HexToHash("0xCCCC")) // Write 1
+		db.SetState(addr1, slot1, common.HexToHash("0xCCCC")) // Write 1
 
 		// Take snapshot
-		snapID := simDB.Snapshot()
+		snapID := db.Snapshot()
 
 		// Post-snapshot operations (these will be reverted)
-		val2 := simDB.GetState(addr2, slot2) // Read 2 (will be reverted)
+		val2 := db.GetState(addr2, slot2) // Read 2 (will be reverted)
 		if val2 != common.HexToHash("0xBBBB") {
 			t.Fatalf("expected 0xBBBB, got %v", val2)
 		}
-		simDB.SetState(addr2, slot2, common.HexToHash("0xDDDD")) // Write 2 (will be reverted)
-		simDB.SetState(addr1, slot1, common.HexToHash("0xEEEE")) // Write 3 (will be reverted)
+		db.SetState(addr2, slot2, common.HexToHash("0xDDDD")) // Write 2 (will be reverted)
+		db.SetState(addr1, slot1, common.HexToHash("0xEEEE")) // Write 3 (will be reverted)
 
 		// Revert to snapshot
-		simDB.RevertToSnapshot(snapID)
+		db.RevertToSnapshot(snapID)
 
 		// Get RWS - should only contain pre-snapshot operations
-		rws := sim.Result()
+		rws := db.Result()
 
 		// Check reads: should only have addr1:slot1, NOT addr2:slot2
 		if len(rws.Reads) != 1 {
@@ -295,28 +295,28 @@ func TestSnapshotRevertRWS(t *testing.T) {
 
 	// Test 2: Operations WITHOUT revert - all ops should appear in RWS
 	t.Run("WithoutRevert", func(t *testing.T) {
-		sim, simDB := snapshotDB(t, originalState, 1)
+		db := snapshotDB(t, originalState, 1)
 
 		// Pre-snapshot operations
-		val1 := simDB.GetState(addr1, slot1) // Read 1
+		val1 := db.GetState(addr1, slot1) // Read 1
 		if val1 != common.HexToHash("0xAAAA") {
 			t.Fatalf("expected 0xAAAA, got %v", val1)
 		}
-		simDB.SetState(addr1, slot1, common.HexToHash("0xCCCC")) // Write 1
+		db.SetState(addr1, slot1, common.HexToHash("0xCCCC")) // Write 1
 
 		// Take snapshot (but don't revert)
-		_ = simDB.Snapshot()
+		_ = db.Snapshot()
 
 		// Post-snapshot operations (these will NOT be reverted)
-		val2 := simDB.GetState(addr2, slot2) // Read 2
+		val2 := db.GetState(addr2, slot2) // Read 2
 		if val2 != common.HexToHash("0xBBBB") {
 			t.Fatalf("expected 0xBBBB, got %v", val2)
 		}
-		simDB.SetState(addr2, slot2, common.HexToHash("0xDDDD")) // Write 2
-		simDB.SetState(addr1, slot1, common.HexToHash("0xEEEE")) // Write 3 (overwrites Write 1)
+		db.SetState(addr2, slot2, common.HexToHash("0xDDDD")) // Write 2
+		db.SetState(addr1, slot1, common.HexToHash("0xEEEE")) // Write 3 (overwrites Write 1)
 
 		// Get RWS - should contain ALL operations
-		rws := sim.Result()
+		rws := db.Result()
 
 		// Check reads: should have both addr1:slot1 AND addr2:slot2
 		if len(rws.Reads) != 2 {

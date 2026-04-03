@@ -138,14 +138,14 @@ func (e *EVMEngine) NonceAt(_ context.Context, account common.Address, blockNumb
 	return snap.GetNonce(account), nil
 }
 
-// newExecutor creates a fresh executor with an isolated SimulationStore.
+// newExecutor creates a fresh executor with an isolated StateDB.
 // stateBlockNum selects the Fabric block height for the state snapshot (0 = latest).
 func (e *EVMEngine) newExecutor(blockInfo *utils.BlockInfo, stateBlockNum uint64) (*executor, error) {
-	sim, err := NewSimulationStore(context.TODO(), e.db, e.namespace, stateBlockNum, e.monotonicVersions)
+	stateDB, err := NewStateDB(context.TODO(), e.db, e.namespace, stateBlockNum, e.monotonicVersions)
 	if err != nil {
 		return nil, err
 	}
-	return newExecutor(sim, blockInfo, e.evmConfig, e.ethStateDB), nil
+	return newExecutor(stateDB, blockInfo, e.evmConfig, e.ethStateDB), nil
 }
 
 // newSnapshotAt returns an ExtendedStateDB over the state at the given Fabric block height (0 = latest).
@@ -154,11 +154,11 @@ func (e *EVMEngine) newSnapshotAt(blockNumber *big.Int) (ExtendedStateDB, error)
 	if blockNumber != nil {
 		blockNum = blockNumber.Uint64()
 	}
-	sim, err := NewSimulationStore(context.TODO(), e.db, e.namespace, blockNum, e.monotonicVersions)
+	stateDB, err := NewStateDB(context.TODO(), e.db, e.namespace, blockNum, e.monotonicVersions)
 	if err != nil {
 		return nil, err
 	}
-	return NewSnapshotDB(sim), nil
+	return stateDB, nil
 }
 
 // executor is a per-transaction EVM execution context. It is an internal type;
@@ -171,16 +171,16 @@ type executor struct {
 	vmConfig vm.Config
 }
 
-// newExecutor creates an executor with the provided SimulationStore.
+// newExecutor creates an executor with the provided StateDB.
 // If blockInfo is not provided, the store's current version is used as the block number.
 // If evmConfig is provided, it overrides the default BlockContext, ChainConfig, and VMConfig.
-func newExecutor(sim *SimulationStore, blockInfo *utils.BlockInfo, evmConfig *EVMConfig, ethStateDB *ethstate.StateDB) *executor {
+func newExecutor(stateDB *StateDB, blockInfo *utils.BlockInfo, evmConfig *EVMConfig, ethStateDB *ethstate.StateDB) *executor {
 	if blockInfo == nil {
-		// Note: sim.Version() is a Fabric block number, not an Ethereum block number — these are
+		// Note: stateDB.Version() is a Fabric block number, not an Ethereum block number — these are
 		// separate namespaces. With AllEthashProtocolChanges active from block 0 this is harmless,
 		// but callers executing real transactions should always supply blockInfo explicitly.
 		blockInfo = &utils.BlockInfo{
-			BlockNumber: new(big.Int).SetUint64(sim.Version()),
+			BlockNumber: new(big.Int).SetUint64(stateDB.Version()),
 			BlockTime:   1_000_000,
 		}
 	}
@@ -219,17 +219,17 @@ func newExecutor(sim *SimulationStore, blockInfo *utils.BlockInfo, evmConfig *EV
 
 	// if we have been given a non-nil ethStateDB instance, it means that we are meant
 	// to instantiate a dual state DB that uses the ethStateDB instance alongside the
-	// simulator to handle state updates so that we can track eth root state evolution
-	var stateDB ExtendedStateDB
+	// fabric state DB to handle state updates so that we can track eth root state evolution
+	var finalStateDB ExtendedStateDB
 	if ethStateDB == nil {
-		stateDB = NewSnapshotDB(sim)
+		finalStateDB = stateDB
 	} else {
 		// NOTE: this is only meant to be used in testing
-		stateDB = NewSnapshotDBWithDualState(sim, ethStateDB)
+		finalStateDB = NewDualStateDB(ethStateDB, stateDB)
 	}
 
 	return &executor{
-		state:    stateDB,
+		state:    finalStateDB,
 		chainID:  cmn.ChainConfig.ChainID,
 		chainCfg: ethChainConfig,
 		blockCtx: blockCtx,

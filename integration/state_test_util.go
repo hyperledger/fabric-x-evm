@@ -613,12 +613,12 @@ func makePreStateWithDualState(db ethdb.Database, accounts types.GenesisAlloc, s
 	sdb := state.NewDatabase(trieDB, nil)
 	ethStateDB, _ := state.New(types.EmptyRootHash, sdb)
 
-	// Create a mock SimulationStore for DualStateDB
+	// Create a mock StateDB for DualStateDB
 	fabricDB, _ := fabricstate.NewWriteDB("testchannel", ":memory:")
-	sim, _ := endorser.NewSimulationStore(context.TODO(), fabricDB, "testns", 0, false)
+	fabricStateDB, _ := endorser.NewStateDB(context.TODO(), fabricDB, "testns", 0, false)
 
 	// Use DualStateDB instead of plain StateDB for debugging
-	statedb := endorser.NewSnapshotDBWithDualState(sim, ethStateDB)
+	statedb := endorser.NewDualStateDB(ethStateDB, fabricStateDB)
 
 	// Populate accounts
 	for addr, a := range accounts {
@@ -632,10 +632,10 @@ func makePreStateWithDualState(db ethdb.Database, accounts types.GenesisAlloc, s
 	}
 
 	// Commit and re-open to start with a clean state
-	root, _ := statedb.(*endorser.DualStateDB).EthStateDB().Commit(0, false, false)
+	root, _ := statedb.EthStateDB().Commit(0, false, false)
 
 	// Commit the fabric state to the database
-	rws := sim.Result()
+	rws := fabricStateDB.Result()
 	err := fabricDB.UpdateWorldState(context.TODO(), blocks.Block{Number: 0, Transactions: []blocks.Transaction{
 		{
 			ID:     "setup",
@@ -667,10 +667,10 @@ func makePreStateWithDualState(db ethdb.Database, accounts types.GenesisAlloc, s
 	sdb = state.NewDatabase(trieDB, snaps)
 	ethStateDB, _ = state.New(root, sdb)
 
-	// Create new SimulationStore for the reopened state - now reading from block 1
+	// Create new StateDB for the reopened state - now reading from block 1
 	// since we just committed block 0
-	sim, _ = endorser.NewSimulationStore(context.TODO(), fabricDB, "testns", 1, false)
-	statedb = endorser.NewSnapshotDBWithDualState(sim, ethStateDB)
+	fabricStateDB, _ = endorser.NewStateDB(context.TODO(), fabricDB, "testns", 1, false)
+	statedb = endorser.NewDualStateDB(ethStateDB, fabricStateDB)
 
 	return StateTestState{statedb, trieDB, snaps}
 }

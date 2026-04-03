@@ -41,8 +41,7 @@ type StatePrimer struct {
 	nsVersion         string
 	monotonicVersions bool
 
-	// Simulation store that caches all state changes
-	sim     *endorser.SimulationStore
+	// DualStateDB that tracks both Fabric and Ethereum state
 	stateDB endorser.ExtendedStateDB
 }
 
@@ -59,15 +58,11 @@ func NewStatePrimer(
 	nsVersion string,
 	monotonicVersions bool,
 ) (*StatePrimer, error) {
-	// Create a simulation store immediately
-	sim, err := endorser.NewSimulationStore(context.TODO(), db, namespace, 0, monotonicVersions)
+	// Create a DualStateDB with both Fabric and Ethereum state tracking
+	stateDB, err := endorser.NewStateDBWithDualState(context.TODO(), db, namespace, 0, monotonicVersions, nil)
 	if err != nil {
 		return nil, err
 	}
-
-	// Create a SnapshotDB to apply operations; the primer uses a dual state DB
-	// so that we can also track changes to the root trie if we're running tests
-	stateDB := endorser.NewSnapshotDBWithDualState(sim, nil)
 
 	return &StatePrimer{
 		db:                db,
@@ -78,7 +73,6 @@ func NewStatePrimer(
 		channel:           channel,
 		nsVersion:         nsVersion,
 		monotonicVersions: monotonicVersions,
-		sim:               sim,
 		stateDB:           stateDB,
 	}, nil
 }
@@ -227,7 +221,7 @@ func (sp *StatePrimer) Commit(ctx context.Context) error {
 	// Collect endorsements from all builders
 	var presps []*pb.ProposalResponse
 	for _, builder := range sp.builders {
-		presp, err := builder.Endorse(inv, endorsement.Success(sp.sim.Result(), nil, nil))
+		presp, err := builder.Endorse(inv, endorsement.Success(sp.stateDB.Result(), nil, nil))
 		if err != nil {
 			return err
 		}
@@ -242,21 +236,19 @@ func (sp *StatePrimer) Commit(ctx context.Context) error {
 }
 
 // Writes returns the ReadWriteSet of all state changes recorded since the last Reset.
-// Safe to call after Commit — the simulation store is not cleared by Commit.
-// Note: Flush() must be called before this method to ensure all cached operations are written.
+// Safe to call after Commit — the StateDB is not cleared by Commit.
 func (sp *StatePrimer) Writes() blocks.ReadWriteSet {
-	return sp.sim.Result()
+	return sp.stateDB.Result()
 }
 
-// Reset creates a new simulation store, discarding all uncommitted changes.
+// Reset creates a new DualStateDB, discarding all uncommitted changes.
 func (sp *StatePrimer) Reset() (*StatePrimer, error) {
-	sim, err := endorser.NewSimulationStore(context.TODO(), sp.db, sp.namespace, 0, sp.monotonicVersions)
+	stateDB, err := endorser.NewStateDBWithDualState(context.TODO(), sp.db, sp.namespace, 0, sp.monotonicVersions, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	sp.sim = sim
-	sp.stateDB = endorser.NewSnapshotDBWithDualState(sim, nil)
+	sp.stateDB = stateDB
 	return sp, nil
 }
 

@@ -143,14 +143,14 @@ func (th *TestHarness) PrimeGenesisAlloc(ctx context.Context, pre types.GenesisA
 	// Extract the ethStateDB before committing
 	ethStateDB := primer.GetEthStateDB()
 
-	// Commit the ethStateDB to finalize the primed state, matching TestSingleAdd11's approach
+	// Commit the ethStateDB to finalize the primed state
 	// This is critical: we commit with deleteEmptyObjects=false to preserve all primed accounts
 	root, err := ethStateDB.Commit(0, false, false)
 	if err != nil {
 		return fmt.Errorf("failed to commit primed ethStateDB: %w", err)
 	}
 
-	// Create a new ethStateDB from the committed root, matching TestSingleAdd11's makePreState
+	// Create a new ethStateDB from the committed root
 	// This ensures we start transaction execution with a clean, committed state
 	stateDB := ethStateDB.Database()
 	ethStateDB, err = ethstate.New(root, stateDB)

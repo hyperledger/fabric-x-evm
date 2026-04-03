@@ -22,7 +22,7 @@ import (
 )
 
 // ExtendedStateDB extends vm.StateDB with additional methods specific to
-// the endorser implementation (Result, Logs, Flush).
+// the endorser implementation (Result, Logs).
 type ExtendedStateDB interface {
 	vm.StateDB
 	Result() blocks.ReadWriteSet
@@ -30,23 +30,23 @@ type ExtendedStateDB interface {
 }
 
 // DualStateDB implements the ExtendedStateDB interface by delegating all calls
-// to both a go-ethereum StateDB and an endorser SnapshotDB.
+// to both a go-ethereum StateDB and an endorser StateDB.
 // This allows both state implementations to be kept in sync during execution.
 type DualStateDB struct {
 	ethStateDB *ethstate.StateDB
-	snapshotDB *SnapshotDB
+	snapshotDB *StateDB
 	logger     *flogging.FabricLogger
 }
 
 // NewDualStateDB creates a new DualStateDB that wraps both state implementations.
 // The constructor takes concrete types (not interfaces) so that callers can
 // access non-interface methods on both implementations.
-func NewDualStateDB(ethStateDB *ethstate.StateDB, snapshotDB *SnapshotDB) *DualStateDB {
+func NewDualStateDB(ethStateDB *ethstate.StateDB, SnapshotDB *StateDB) *DualStateDB {
 	logger := flogging.MustGetLogger("DualStateDB")
-	logger.Debugf("NewDualStateDB: input ethStateDB=%p, snapshotDB=%p", ethStateDB, snapshotDB)
+	logger.Debugf("NewDualStateDB: input ethStateDB=%p, SnapshotDB=%p", ethStateDB, SnapshotDB)
 	result := &DualStateDB{
 		ethStateDB: ethStateDB,
-		snapshotDB: snapshotDB,
+		snapshotDB: SnapshotDB,
 		logger:     logger,
 	}
 	logger.Debugf("NewDualStateDB: output result=%p", result)
@@ -59,15 +59,6 @@ func (d *DualStateDB) EthStateDB() *ethstate.StateDB {
 	d.logger.Debugf("EthStateDB")
 	result := d.ethStateDB
 	d.logger.Debugf("EthStateDB: output result=%p", result)
-	return result
-}
-
-// SnapshotDB returns the underlying endorser SnapshotDB for accessing
-// non-interface methods.
-func (d *DualStateDB) SnapshotDB() *SnapshotDB {
-	d.logger.Debugf("SnapshotDB")
-	result := d.snapshotDB
-	d.logger.Debugf("SnapshotDB: output result=%p", result)
 	return result
 }
 
