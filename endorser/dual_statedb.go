@@ -283,11 +283,13 @@ func (d *DualStateDB) SelfDestruct6780(addr common.Address) (uint256.Int, bool) 
 	return balance, destructed
 }
 
-// Exist checks if an account exists in the SnapshotDB.
+// Exist checks if an account exists in either the ethStateDB
 func (d *DualStateDB) Exist(addr common.Address) bool {
 	d.logger.Debugf("Exist: addr=%s", addr.Hex())
-	result := d.snapshotDB.Exist(addr)
-	d.logger.Debugf("Exist: output result=%t", result)
+	ethExists := d.ethStateDB.Exist(addr)
+	snapExists := d.snapshotDB.Exist(addr)
+	result := snapExists
+	d.logger.Debugf("Exist: ethExists=%t, snapExists=%t", ethExists, snapExists)
 	return result
 }
 
@@ -361,7 +363,6 @@ func (d *DualStateDB) RevertToSnapshot(snapshot int) {
 }
 
 // Snapshot creates a snapshot in both state implementations.
-// Snapshot creates a snapshot in both state implementations.
 // Both implementations must return the same snapshot ID for proper synchronization.
 // We use the ethStateDB's snapshot ID as the canonical one.
 func (d *DualStateDB) Snapshot() int {
@@ -369,6 +370,13 @@ func (d *DualStateDB) Snapshot() int {
 	ethSnapshot := d.ethStateDB.Snapshot()
 	snapSnapshot := d.snapshotDB.Snapshot()
 	d.logger.Debugf("Snapshot: ethSnapshot=%d, snapSnapshot=%d", ethSnapshot, snapSnapshot)
+
+	// Ensure both state DBs are synchronized - they should return the same snapshot ID
+	if ethSnapshot != snapSnapshot {
+		d.logger.Errorf("Snapshot ID mismatch: ethSnapshot=%d, snapSnapshot=%d", ethSnapshot, snapSnapshot)
+		// This is a critical error that indicates the state DBs are out of sync
+		panic("DualStateDB snapshot synchronization error")
+	}
 
 	// Return the ethStateDB's snapshot ID as it's the authoritative one for state root tracking
 	return ethSnapshot

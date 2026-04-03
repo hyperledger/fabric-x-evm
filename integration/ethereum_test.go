@@ -160,7 +160,7 @@ func runSingleEthereumTest(t *testing.T, stateTest *StateTest) {
 	for _, subtest := range stateTest.Subtests() {
 		key := fmt.Sprintf("%s/%d", subtest.Fork, subtest.Index)
 
-		if testing.Short() && rand.Intn(3) > 0 {
+		if testing.Short() && rand.Intn(2) > 0 {
 			t.Skip("skipping in short mode")
 		}
 
@@ -362,12 +362,6 @@ func newEthereumTestHarness(t *testing.T, evmConfig *endorser.EVMConfig, pre typ
 	if err := th.PrimeGenesisAlloc(t.Context(), pre); err != nil {
 		th.Stop()
 		return nil, err
-	}
-
-	// Attach t.Logf as the log sink so DualStateDB state-op traces are captured
-	// and emitted by the test runner if this subtest fails.
-	for _, end := range th.endorsers {
-		end.SetEthStateDB(end.GetEthStateDB())
 	}
 
 	return th, nil

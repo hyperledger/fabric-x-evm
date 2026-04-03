@@ -112,7 +112,7 @@ func storeKey(addr common.Address, slot common.Hash) string {
 // CreateAccount logs creation
 func (d *SnapshotDB) CreateAccount(addr common.Address) {
 	must(d.store.PutState(accKey(addr, "bal"), uint256ToBytes(uint256.MustFromBig(big.NewInt(0)))))
-	must(d.store.PutState(accKey(addr, "nonce"), uint256ToBytes(uint256.MustFromBig(big.NewInt(0)))))
+	must(d.store.PutState(accKey(addr, "nonce"), uint64ToBytes(0)))
 }
 
 // CreateContract logs contract creation
@@ -184,13 +184,25 @@ func (d *SnapshotDB) HasSelfDestructed(addr common.Address) bool {
 	return ok
 }
 
-// Exist is true if contract/account exists.
+// Exist reports whether the given account address exists in the state.
+// Notably this also returns true for self-destructed accounts within the current transaction.
 func (d *SnapshotDB) Exist(addr common.Address) bool {
-	raw, _ := d.store.GetState(accKey(addr, "bal"))
-	if raw != nil {
+	// An account exists if it has been created (has balance or nonce entry) OR has code
+	// This matches the go-ethereum implementation which checks if getStateObject(addr) != nil
+	// Note: CreateAccount writes balance and nonce, so checking either is sufficient
+	balRaw, err := d.store.GetState(accKey(addr, "bal"))
+	if err == nil && balRaw != nil {
 		return true
 	}
-	return d.GetCodeSize(addr) > 0
+	nonceRaw, err := d.store.GetState(accKey(addr, "nonce"))
+	if err == nil && nonceRaw != nil {
+		return true
+	}
+	codeRaw, err := d.store.GetState(accKey(addr, "code"))
+	if err == nil && codeRaw != nil {
+		return true
+	}
+	return false
 }
 
 // Empty is for EIP-161 rules (empty account): balance == 0, nonce == 0, and code length == 0.
@@ -346,7 +358,8 @@ func (d *SnapshotDB) RevertToSnapshot(ss int) {
 	// Restore the refund counter to the snapshot value
 	d.refund = d.refundSnapshots[ss]
 	// Truncate the snapshots array to remove snapshots after this point
-	d.refundSnapshots = d.refundSnapshots[:ss]
+	// Keep snapshots up to and including ss, so next snapshot will be ss+1
+	d.refundSnapshots = d.refundSnapshots[:ss+1]
 }
 
 func (d *SnapshotDB) Snapshot() int {
