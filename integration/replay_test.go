@@ -205,6 +205,7 @@ func testTetherTokenReplay(t *testing.T, th *TestHarness) {
 	processCommon(t, node1, true, decodeRawTransactionT(t, deployRaw), &utils.BlockInfo{
 		BlockNumber: blockNum,
 		BlockTime:   ct.DeploymentBlockTime,
+		GasLimit:    5_000_000,
 	})
 
 	contractAddr := crypto.CreateAddress(from, tx.Nonce())
@@ -331,6 +332,7 @@ func testTetherTokenReplay(t *testing.T, th *TestHarness) {
 		processCommon(t, node1, true, decodeRawTransactionT(t, rawTx), &utils.BlockInfo{
 			BlockNumber: txBlockNum,
 			BlockTime:   txRec.BlockTime,
+			GasLimit:    5_000_000,
 		})
 	}
 

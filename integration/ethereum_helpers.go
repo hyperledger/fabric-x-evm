@@ -17,6 +17,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/params"
 	"github.com/holiman/uint256"
 	"github.com/hyperledger/fabric-x-evm/utils"
 )
@@ -49,7 +50,7 @@ func hexToAddress(s string) common.Address {
 }
 
 // buildTransaction creates a signed transaction from test data
-func buildTransaction(testTx *stTransaction, dataIndex, gasIndex, valueIndex int) (*types.Transaction, error) {
+func buildTransaction(testTx *stTransaction, dataIndex, gasIndex, valueIndex int, config *params.ChainConfig, blockNumber *big.Int, blockTime uint64) (*types.Transaction, error) {
 	// Parse transaction fields - stTransaction already has parsed values
 	nonce := testTx.Nonce
 
@@ -187,15 +188,16 @@ func buildTransaction(testTx *stTransaction, dataIndex, gasIndex, valueIndex int
 		return tx, nil
 	}
 
-	// Create legacy transaction
-	tx := types.NewTx(&types.LegacyTx{
-		Nonce:    nonce,
-		GasPrice: gasPrice,
-		Gas:      gasLimit,
-		To:       to,
-		Value:    value,
-		Data:     data,
-	})
+	// Check if we have an access list - if so, create AccessListTx (EIP-2930)
+	// instead of legacy transaction
+	var accessList types.AccessList
+	if testTx.AccessLists != nil && dataIndex < len(testTx.AccessLists) && testTx.AccessLists[dataIndex] != nil {
+		accessList = *testTx.AccessLists[dataIndex]
+	}
+
+	// Get the appropriate signer based on chain config and block context
+	// This ensures we use the same signer for signing and validation
+	signer := types.MakeSigner(config, blockNumber, blockTime)
 
 	// Sign transaction if secret key is provided
 	if len(testTx.PrivateKey) > 0 {
@@ -204,16 +206,55 @@ func buildTransaction(testTx *stTransaction, dataIndex, gasIndex, valueIndex int
 			return nil, fmt.Errorf("invalid secret key: %w", err)
 		}
 
-		// Use HomesteadSigner for simple tests (pre-EIP155)
-		signer := types.HomesteadSigner{}
-		signedTx, err := types.SignTx(tx, signer, key)
-		if err != nil {
-			return nil, fmt.Errorf("failed to sign tx: %w", err)
+		if len(accessList) > 0 {
+			// Create and sign EIP-2930 AccessListTx
+			txData := &types.AccessListTx{
+				ChainID:    config.ChainID,
+				Nonce:      nonce,
+				GasPrice:   gasPrice,
+				Gas:        gasLimit,
+				To:         to,
+				Value:      value,
+				Data:       data,
+				AccessList: accessList,
+			}
+			return types.SignNewTx(key, signer, txData)
+		} else {
+			// Create and sign legacy transaction
+			txData := &types.LegacyTx{
+				Nonce:    nonce,
+				GasPrice: gasPrice,
+				Gas:      gasLimit,
+				To:       to,
+				Value:    value,
+				Data:     data,
+			}
+			return types.SignNewTx(key, signer, txData)
 		}
-		return signedTx, nil
 	}
 
-	return tx, nil
+	// No private key - return unsigned transaction
+	if len(accessList) > 0 {
+		return types.NewTx(&types.AccessListTx{
+			ChainID:    config.ChainID,
+			Nonce:      nonce,
+			GasPrice:   gasPrice,
+			Gas:        gasLimit,
+			To:         to,
+			Value:      value,
+			Data:       data,
+			AccessList: accessList,
+		}), nil
+	}
+
+	return types.NewTx(&types.LegacyTx{
+		Nonce:    nonce,
+		GasPrice: gasPrice,
+		Gas:      gasLimit,
+		To:       to,
+		Value:    value,
+		Data:     data,
+	}), nil
 }
 
 // buildBlockInfo creates block context from test environment
@@ -224,6 +265,7 @@ func buildBlockInfo(env *stEnv) (*utils.BlockInfo, error) {
 	return &utils.BlockInfo{
 		BlockNumber: blockNum,
 		BlockTime:   blockTime,
+		GasLimit:    env.GasLimit,
 	}, nil
 }
 

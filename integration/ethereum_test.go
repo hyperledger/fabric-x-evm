@@ -36,15 +36,18 @@ import (
 // Set it to true to fix the tests one by one.
 var verify_root = flag.Bool("verify_root", false, "Verify trie root computed by committer")
 
-// loadBlacklist loads the blacklist file and returns a map of blacklisted file paths
-func loadBlacklist(path string) (map[string]struct{}, error) {
-	blacklist := make(map[string]struct{})
+// want_very_slow is set when we want to run the tests that we typically skip because they are too slow
+var want_very_slow = flag.Bool("very_slow", false, "Run the very slow tests that are otherwise blacklisted")
+
+// loadSlow loads the test cases that are typically skipped because they are slow
+func loadSlow(path string) (map[string]struct{}, error) {
+	slow := make(map[string]struct{})
 
 	file, err := os.Open(path)
 	if err != nil {
-		// If blacklist doesn't exist, return empty map
+		// If file doesn't exist, return empty map
 		if os.IsNotExist(err) {
-			return blacklist, nil
+			return slow, nil
 		}
 		return nil, err
 	}
@@ -54,7 +57,7 @@ func loadBlacklist(path string) (map[string]struct{}, error) {
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line != "" && !strings.HasPrefix(line, "#") {
-			blacklist[line] = struct{}{}
+			slow[line] = struct{}{}
 		}
 	}
 
@@ -62,7 +65,7 @@ func loadBlacklist(path string) (map[string]struct{}, error) {
 		return nil, err
 	}
 
-	return blacklist, nil
+	return slow, nil
 }
 
 // findJSONFiles recursively finds all .json files in the given directory
@@ -88,13 +91,13 @@ func findJSONFiles(root string) ([]string, error) {
 	return files, nil
 }
 
-// filterBlacklistedFiles removes blacklisted files from the list
-func filterBlacklistedFiles(files []string, blacklist map[string]struct{}) []string {
+// filterSlowTests removes blacklisted files from the list
+func filterSlowTests(files []string, slow map[string]struct{}, want_very_slow bool) []string {
 	var filtered []string
 
 	for _, file := range files {
-		// Check if the file is in the blacklist
-		if _, isBlacklisted := blacklist[file]; !isBlacklisted {
+		// Check if we want this test case
+		if _, isSlow := slow[file]; isSlow == want_very_slow {
 			filtered = append(filtered, file)
 		}
 	}
@@ -111,12 +114,12 @@ func filterBlacklistedFiles(files []string, blacklist map[string]struct{}) []str
 func TestEthereumTests(t *testing.T) {
 	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr)) // disable grpc logging
 
-	// Load blacklist
-	blacklist, err := loadBlacklist(filepath.Join("..", "testdata", "eth_tests.blacklist"))
+	// Load slow
+	slow, err := loadSlow(filepath.Join("..", "testdata", "eth_tests.slow"))
 	if err != nil {
 		t.Fatalf("Failed to load blacklist: %v", err)
 	}
-	t.Logf("Loaded blacklist with %d entries", len(blacklist))
+	t.Logf("Loaded blacklist with %d entries", len(slow))
 
 	// Find all JSON files recursively
 
@@ -138,12 +141,12 @@ func TestEthereumTests(t *testing.T) {
 
 	allFiles = append(allFiles, allFiles1...)
 
-	// Filter out blacklisted files
-	testFiles := filterBlacklistedFiles(allFiles, blacklist)
-	t.Logf("Running %d test files after filtering blacklist", len(testFiles))
+	// Filter out slow files unless we explicitly want them
+	testFiles := filterSlowTests(allFiles, slow, *want_very_slow)
+	t.Logf("Running %d test files after filtering", len(testFiles))
 
 	// testFiles = []string{
-	// 	"../testdata/ethereum-tests/GeneralStateTests/stTimeConsuming/sstore_combinations_initial20_2_Paris.json",
+	// 	"../testdata/ethereum-tests/GeneralStateTests/stEIP1559/lowGasLimit.json",
 	// }
 
 	for _, testPath := range testFiles {
@@ -200,25 +203,18 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 	gasIndex := post.Indexes.Gas
 	valueIndex := post.Indexes.Value
 
-	// Build and sign transaction using the indices from post-state
-	tx, err := buildTransaction(&stateTest.json.Tx, dataIndex, gasIndex, valueIndex)
-	if err != nil {
-		t.Fatalf("Failed to build transaction: %v", err)
-	}
-
 	// Call prepareTestEnvironment to get context, config, block, and msg.
 	// The returned StateTestState holds a TrieDB and optional Snapshots that must
 	// be closed to stop the background snapshot-generator goroutine.
 	vmConfig := vm.Config{} // Empty VM config for now
-	st, config, _, _, context, prepareErr := stateTest.prepareTestEnvironment(subtest.Fork, subtest.Index, vmConfig, snapshotter, scheme)
-	// Close immediately: config/block/msg/context are plain values that don't reference the
-	// StateDB/TrieDB/Snapshots, so we can stop the snapshot-generator goroutine right here
-	// rather than relying on a defer that won't run if this goroutine later gets stuck.
-	st.Close()
+	st, config, block, _, context, prepareErr := stateTest.prepareTestEnvironment(subtest.Fork, subtest.Index, vmConfig, snapshotter, scheme)
 
 	// Check if the error from prepareTestEnvironment is expected (e.g., blob count exceeded)
 	// This matches the behavior of TestSingleAdd11 which uses checkError
+	// We must check this BEFORE trying to access block.Number() or block.Time()
 	if prepareErr != nil {
+		// Close the state before returning
+		st.Close()
 		if post.ExpectException != "" {
 			// Error was expected, test passes
 			t.Logf("WANTED: %s\n   GOT: %s\n", post.ExpectException, prepareErr.Error())
@@ -227,6 +223,19 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 		// Error was not expected, test fails
 		t.Fatalf("Failed to prepare test environment: %v", prepareErr)
 	}
+
+	// Build and sign transaction using the indices from post-state and the chain config
+	// This must come AFTER the prepareErr check because block may be nil on error
+	tx, err := buildTransaction(&stateTest.json.Tx, dataIndex, gasIndex, valueIndex, config, block.Number(), block.Time())
+	if err != nil {
+		st.Close()
+		t.Fatalf("Failed to build transaction: %v", err)
+	}
+
+	// Close immediately: config/block/msg/context are plain values that don't reference the
+	// StateDB/TrieDB/Snapshots, so we can stop the snapshot-generator goroutine right here
+	// rather than relying on a defer that won't run if this goroutine later gets stuck.
+	st.Close()
 
 	// Create EVMConfig to pass to test harness
 	evmConfig := &endorser.EVMConfig{

@@ -11,4 +11,5 @@ import "math/big"
 type BlockInfo struct {
 	BlockNumber *big.Int
 	BlockTime   uint64
+	GasLimit    uint64
 }

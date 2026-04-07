@@ -182,6 +182,7 @@ func newExecutor(stateDB *StateDB, blockInfo *utils.BlockInfo, evmConfig *EVMCon
 		blockInfo = &utils.BlockInfo{
 			BlockNumber: new(big.Int).SetUint64(stateDB.Version()),
 			BlockTime:   1_000_000,
+			GasLimit:    10_000_000,
 		}
 	}
 
@@ -194,7 +195,7 @@ func newExecutor(stateDB *StateDB, blockInfo *utils.BlockInfo, evmConfig *EVMCon
 		BlockNumber: blockInfo.BlockNumber,
 		Time:        blockInfo.BlockTime,
 		Difficulty:  big.NewInt(1),
-		GasLimit:    10_000_000,
+		GasLimit:    blockInfo.GasLimit,
 		BaseFee:     big.NewInt(0),
 	}
 
@@ -372,8 +373,10 @@ func (h *executor) execute(msg *core.Message) ([]byte, error) {
 	// This mimicks geth's approach and permits tests to pass
 	snapshot := h.state.Snapshot()
 
-	// Create a GasPool with unlimited gas (we handle gas limits in the message)
-	gp := new(core.GasPool).AddGas(msg.GasLimit)
+	// The block gas pool must reflect the enclosing block gas limit, not the tx gas
+	// limit. Otherwise a tx with gas limit above the block gas limit incorrectly
+	// passes preCheck and executes.
+	gp := new(core.GasPool).AddGas(h.blockCtx.GasLimit)
 
 	// Use ApplyMessage to execute the transaction
 	result, err := core.ApplyMessage(evm, msg, gp)

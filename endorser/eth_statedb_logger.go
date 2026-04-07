@@ -253,7 +253,7 @@ func (l *EthStateDBLogger) RevertToSnapshot(snapshot int) {
 }
 
 func (l *EthStateDBLogger) Snapshot() int {
-	l.logger.Debugf("Snapshot")
+	l.logger.Debugf("Snapshot: called")
 	result := l.inner.Snapshot()
 	l.logger.Debugf("Snapshot: output result=%d", result)
 	return result

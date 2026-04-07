@@ -196,9 +196,9 @@ func (d *DualStateDB) GetStateAndCommittedState(addr common.Address, hash common
 	ethCurrent, ethCommitted := d.ethStateDB.GetStateAndCommittedState(addr, hash)
 	snapCurrent, snapCommitted := d.snapshotDB.GetStateAndCommittedState(addr, hash)
 	d.logger.Debugf("GetStateAndCommittedState: ethCurrent=%s, ethCommitted=%s", ethCurrent.Hex(), ethCommitted.Hex())
-	d.logger.Debugf("GetStateAndCommittedState: snapCurrent=%s, snapCommitted=%s", snapCurrent.Hex(), snapCommitted.Hex())
 	if ethCurrent != snapCurrent || ethCommitted != snapCommitted {
 		d.logger.Warn("GetStateAndCommittedState: MISMATCH DETECTED!")
+		d.logger.Debugf("GetStateAndCommittedState: snapCurrent=%s, snapCommitted=%s", snapCurrent.Hex(), snapCommitted.Hex())
 	}
 	return snapCurrent, snapCommitted
 }
@@ -283,8 +283,11 @@ func (d *DualStateDB) Exist(addr common.Address) bool {
 	d.logger.Debugf("Exist: addr=%s", addr.Hex())
 	ethExists := d.ethStateDB.Exist(addr)
 	snapExists := d.snapshotDB.Exist(addr)
+	if ethExists != snapExists {
+		d.logger.Warnf("Exist MISMATCH: eth=%t snap=%t", ethExists, snapExists)
+	}
 	result := snapExists
-	d.logger.Debugf("Exist: ethExists=%t, snapExists=%t", ethExists, snapExists)
+	d.logger.Debugf("Exist: output result=%t", result)
 	return result
 }
 
@@ -364,7 +367,7 @@ func (d *DualStateDB) Snapshot() int {
 	d.logger.Debugf("Snapshot: called")
 	ethSnapshot := d.ethStateDB.Snapshot()
 	snapSnapshot := d.snapshotDB.Snapshot()
-	d.logger.Debugf("Snapshot: ethSnapshot=%d, snapSnapshot=%d", ethSnapshot, snapSnapshot)
+	d.logger.Debugf("Snapshot: output result=%d", ethSnapshot)
 
 	// Ensure both state DBs are synchronized - they should return the same snapshot ID
 	if ethSnapshot != snapSnapshot {
