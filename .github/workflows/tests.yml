@@ -63,3 +63,33 @@ jobs:
 
       - name: Fabric integration tests
         run: make integration-tests
+
+  optional-tests:
+    name: Optional Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    needs:
+      - quick-tests
+      - integration-tests
+    if: |
+      github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'want-optional-tests')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Legacy Ethereum tests
+        run: make eth-tests-legacy
+
+      - name: Slow Ethereum tests
+        run: make eth-tests-slow
+
+      - name: Slow Legacy Ethereum tests
+        run: make eth-tests-slow-legacy

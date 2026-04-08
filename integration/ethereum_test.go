@@ -39,6 +39,9 @@ var verify_root = flag.Bool("verify_root", false, "Verify trie root computed by 
 // want_very_slow is set when we want to run the tests that we typically skip because they are too slow
 var want_very_slow = flag.Bool("very_slow", false, "Run the very slow tests that are otherwise blacklisted")
 
+// want_legacy is set when we want to run the legacy tests, which we typically skip
+var want_legacy = flag.Bool("legacy", false, "Run the legacy tests that are otherwise blacklisted")
+
 // loadSlow loads the test cases that are typically skipped because they are slow
 func loadSlow(path string) (map[string]struct{}, error) {
 	slow := make(map[string]struct{})
@@ -123,23 +126,23 @@ func TestEthereumTests(t *testing.T) {
 
 	// Find all JSON files recursively
 
-	// 1) LegacyTests
-	testsDir := filepath.Join("..", "testdata", "ethereum-tests", "LegacyTests", "Constantinople", "GeneralStateTests")
+	// 1) GeneralStateTests
+	testsDir := filepath.Join("..", "testdata", "ethereum-tests", "GeneralStateTests")
 	allFiles, err := findJSONFiles(testsDir)
 	if err != nil {
 		t.Fatalf("Failed to find test files: %v", err)
 	}
 	t.Logf("Found %d total test files", len(allFiles))
 
-	// 2) GeneralStateTests
-	testsDir = filepath.Join("..", "testdata", "ethereum-tests", "GeneralStateTests")
-	allFiles1, err := findJSONFiles(testsDir)
-	if err != nil {
-		t.Fatalf("Failed to find test files: %v", err)
+	if *want_legacy {
+		// 2) LegacyTests
+		testsDir = filepath.Join("..", "testdata", "ethereum-tests", "LegacyTests", "Constantinople", "GeneralStateTests")
+		allFiles, err = findJSONFiles(testsDir)
+		if err != nil {
+			t.Fatalf("Failed to find test files: %v", err)
+		}
+		t.Logf("Found %d total test files", len(allFiles))
 	}
-	t.Logf("Found %d total test files", len(allFiles))
-
-	allFiles = append(allFiles, allFiles1...)
 
 	// Filter out slow files unless we explicitly want them
 	testFiles := filterSlowTests(allFiles, slow, *want_very_slow)

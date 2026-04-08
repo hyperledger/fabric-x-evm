@@ -89,5 +89,17 @@ test-local-x:
 
 .PHONY: eth-tests
 eth-tests:
-	@go test -test.fullpath=true -timeout 2000s -run ^TestEthereumTests$$ github.com/hyperledger/fabric-x-evm/integration
+	@go test -test.fullpath=true -timeout 1000s -run ^TestEthereumTests$$ github.com/hyperledger/fabric-x-evm/integration
 	# @VERBOSE=$(VERBOSE) ./scripts/run_eth_test.sh
+
+.PHONY: eth-tests-legacy
+eth-tests-legacy:
+	@go test -test.fullpath=true -timeout 1000s -run ^TestEthereumTests$$ github.com/hyperledger/fabric-x-evm/integration -legacy
+
+.PHONY: eth-tests-slow
+eth-tests-slow:
+	@go test -test.fullpath=true -timeout 10000s -run ^TestEthereumTests$$ github.com/hyperledger/fabric-x-evm/integration -very_slow
+
+.PHONY: eth-tests-slow-legacy
+eth-tests-slow-legacy:
+	@go test -test.fullpath=true -timeout 10000s -run ^TestEthereumTests$$ github.com/hyperledger/fabric-x-evm/integration -very_slow -legacy
