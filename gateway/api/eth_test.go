@@ -248,7 +248,7 @@ func TestEthAPI_Accounts(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			api := NewEthAPI(nil, tt.testAccounts, nil)
 
-			accounts, err := api.Accounts(nil)
+			accounts, err := api.Accounts(context.TODO())
 			if err != nil {
 				t.Fatalf("Accounts() error = %v", err)
 			}
@@ -273,7 +273,7 @@ func TestEthAPI_SendTransaction_Validation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to load test accounts: %v", err)
 	}
-	
+
 	// Use first account for testing
 	testAddr := testAccounts[0]
 	unknownAddr := common.HexToAddress("0x0000000000000000000000000000000000000000")
@@ -323,7 +323,7 @@ func TestEthAPI_SendTransaction_Validation(t *testing.T) {
 
 			api := NewEthAPI(mockBackend, testAccounts, testKeys)
 
-			_, err := api.SendTransaction(nil, tt.args)
+			_, err := api.SendTransaction(context.TODO(), tt.args)
 
 			if tt.wantErr {
 				if err == nil {
