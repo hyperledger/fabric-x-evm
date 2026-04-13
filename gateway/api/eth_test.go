@@ -8,15 +8,58 @@ package api
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"encoding/json"
 	"math/big"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/rpc"
 )
+
+// testAccount represents a test account for loading from JSON
+type testAccount struct {
+	Address    string `json:"address"`
+	PrivateKey string `json:"privateKey"`
+}
+
+// testAccountsFile represents the structure of the test accounts JSON file
+type testAccountsFile struct {
+	Accounts []testAccount `json:"accounts"`
+}
+
+// loadTestAccountsFromFile loads test accounts from JSON and returns addresses and pre-converted keys
+func loadTestAccountsFromFile(path string) ([]common.Address, map[common.Address]*ecdsa.PrivateKey, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var accountsFile testAccountsFile
+	if err := json.Unmarshal(data, &accountsFile); err != nil {
+		return nil, nil, err
+	}
+
+	addresses := make([]common.Address, len(accountsFile.Accounts))
+	keys := make(map[common.Address]*ecdsa.PrivateKey)
+
+	for i, acc := range accountsFile.Accounts {
+		addr := common.HexToAddress(acc.Address)
+		addresses[i] = addr
+
+		privateKey, err := crypto.HexToECDSA(strings.TrimPrefix(acc.PrivateKey, "0x"))
+		if err != nil {
+			return nil, nil, err
+		}
+		keys[addr] = privateKey
+	}
+
+	return addresses, keys, nil
+}
 
 func TestRpcBlockNumberToBigInt(t *testing.T) {
 	tests := []struct {
@@ -177,26 +220,26 @@ func TestRPCReceiptMarshalJSON(t *testing.T) {
 func TestEthAPI_Accounts(t *testing.T) {
 	tests := []struct {
 		name         string
-		testAccounts []string
+		testAccounts []common.Address
 		wantCount    int
 	}{
 		{
 			name: "multiple accounts",
-			testAccounts: []string{
-				"0x1234567890123456789012345678901234567890",
-				"0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
-				"0x9876543210987654321098765432109876543210",
+			testAccounts: []common.Address{
+				common.HexToAddress("0x1234567890123456789012345678901234567890"),
+				common.HexToAddress("0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"),
+				common.HexToAddress("0x9876543210987654321098765432109876543210"),
 			},
 			wantCount: 3,
 		},
 		{
 			name:         "single account",
-			testAccounts: []string{"0x1234567890123456789012345678901234567890"},
+			testAccounts: []common.Address{common.HexToAddress("0x1234567890123456789012345678901234567890")},
 			wantCount:    1,
 		},
 		{
 			name:         "no accounts",
-			testAccounts: []string{},
+			testAccounts: []common.Address{},
 			wantCount:    0,
 		},
 	}
@@ -216,9 +259,8 @@ func TestEthAPI_Accounts(t *testing.T) {
 
 			// Verify addresses match
 			for i, addr := range accounts {
-				expected := common.HexToAddress(tt.testAccounts[i])
-				if addr != expected {
-					t.Errorf("Account[%d] = %v, want %v", i, addr, expected)
+				if addr != tt.testAccounts[i] {
+					t.Errorf("Account[%d] = %v, want %v", i, addr, tt.testAccounts[i])
 				}
 			}
 		})
@@ -226,47 +268,45 @@ func TestEthAPI_Accounts(t *testing.T) {
 }
 
 func TestEthAPI_SendTransaction_Validation(t *testing.T) {
-	// Test account with known private key (Hardhat test account #0)
-	testAddr := "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
-	testKey := "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-
-	testAccounts := []string{testAddr}
-	testKeys := map[string]string{testAddr: testKey}
+	// Load test accounts from JSON file
+	testAccounts, testKeys, err := loadTestAccountsFromFile("../../testdata/test-accounts.json")
+	if err != nil {
+		t.Fatalf("Failed to load test accounts: %v", err)
+	}
+	
+	// Use first account for testing
+	testAddr := testAccounts[0]
+	unknownAddr := common.HexToAddress("0x0000000000000000000000000000000000000000")
+	toAddr := common.HexToAddress("0x1234567890123456789012345678901234567890")
 
 	tests := []struct {
 		name    string
-		args    map[string]any
+		args    TransactionArgs
 		wantErr bool
 		errMsg  string
 	}{
 		{
 			name: "missing from address",
-			args: map[string]any{
-				"to":   "0x1234567890123456789012345678901234567890",
-				"data": "0x",
+			args: TransactionArgs{
+				To: &toAddr,
 			},
 			wantErr: true,
-			errMsg:  "missing or invalid 'from' field",
+			errMsg:  "missing 'from' field",
 		},
 		{
 			name: "unknown from address",
-			args: map[string]any{
-				"from": "0x0000000000000000000000000000000000000000",
-				"to":   "0x1234567890123456789012345678901234567890",
-				"data": "0x",
+			args: TransactionArgs{
+				From: &unknownAddr,
+				To:   &toAddr,
 			},
 			wantErr: true,
 			errMsg:  "no private key available",
 		},
 		{
 			name: "valid transaction parameters",
-			args: map[string]any{
-				"from":     testAddr,
-				"to":       "0x1234567890123456789012345678901234567890",
-				"data":     "0x",
-				"value":    "0x0",
-				"gas":      "0x5208",
-				"gasPrice": "0x1",
+			args: TransactionArgs{
+				From: &testAddr,
+				To:   &toAddr,
 			},
 			wantErr: false,
 		},

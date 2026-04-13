@@ -121,11 +121,12 @@ func New(cfg config.Config) (*App, error) {
 	}
 
 	// Load test accounts if configured
-	if err := cfg.LoadTestAccounts(); err != nil {
+	testAccountMgr, err := LoadTestAccounts(cfg.Gateway.TestAccountsPath)
+	if err != nil {
 		return nil, fmt.Errorf("failed to load test accounts: %w", err)
 	}
 
-	rpcServer, err := api.NewServer(gateway, cfg.Gateway.TestAccounts, cfg.Gateway.TestAccountKeys)
+	rpcServer, err := api.NewServer(gateway, testAccountMgr.Addresses, testAccountMgr.PrivateKeys)
 	if err != nil {
 		return nil, err
 	}

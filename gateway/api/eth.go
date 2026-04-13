@@ -8,15 +8,14 @@ package api
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"fmt"
 	"math/big"
-	"strings"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/eth/filters"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
@@ -54,26 +53,14 @@ type Backend interface {
 type EthAPI struct {
 	b               Backend
 	testAccounts    []common.Address
-	testAccountKeys map[common.Address]string // address -> private key hex
+	testAccountKeys map[common.Address]*ecdsa.PrivateKey // address -> pre-converted private key
 }
 
-func NewEthAPI(b Backend, testAccountsHex []string, testAccountKeys map[string]string) *EthAPI {
-	// Convert hex strings to addresses
-	accounts := make([]common.Address, len(testAccountsHex))
-	for i, hexAddr := range testAccountsHex {
-		accounts[i] = common.HexToAddress(hexAddr)
-	}
-
-	// Convert address strings to common.Address keys
-	keys := make(map[common.Address]string)
-	for addrHex, keyHex := range testAccountKeys {
-		keys[common.HexToAddress(addrHex)] = keyHex
-	}
-
+func NewEthAPI(b Backend, testAccounts []common.Address, testAccountKeys map[common.Address]*ecdsa.PrivateKey) *EthAPI {
 	return &EthAPI{
 		b:               b,
-		testAccounts:    accounts,
-		testAccountKeys: keys,
+		testAccounts:    testAccounts,
+		testAccountKeys: testAccountKeys,
 	}
 }
 
@@ -196,73 +183,30 @@ func (api *EthAPI) SendRawTransaction(ctx context.Context, input hexutil.Bytes) 
 }
 
 // eth_sendTransaction
-func (api *EthAPI) SendTransaction(ctx context.Context, args map[string]any) (common.Hash, error) {
-	// Extract from address
-	fromHex, ok := args["from"].(string)
-	if !ok {
-		return common.Hash{}, fmt.Errorf("missing or invalid 'from' field")
+func (api *EthAPI) SendTransaction(ctx context.Context, args TransactionArgs) (common.Hash, error) {
+	// Validate from address
+	if args.From == nil {
+		return common.Hash{}, fmt.Errorf("missing 'from' field")
 	}
-	from := common.HexToAddress(fromHex)
 
 	// Get private key for this address
-	privateKeyHex, ok := api.testAccountKeys[from]
+	privateKey, ok := api.testAccountKeys[*args.From]
 	if !ok {
-		return common.Hash{}, fmt.Errorf("no private key available for address %s", from.Hex())
+		return common.Hash{}, fmt.Errorf("no private key available for address %s", args.From.Hex())
 	}
 
-	// Parse private key
-	privateKey, err := crypto.HexToECDSA(strings.TrimPrefix(privateKeyHex, "0x"))
-	if err != nil {
-		return common.Hash{}, fmt.Errorf("invalid private key: %w", err)
-	}
+	// Set defaults for unspecified fields
+	args.setDefaults()
 
-	// Build transaction from args
-	var tx *types.Transaction
-
-	// Get nonce
+	// Get nonce if not specified
 	var nonce uint64
-	if nonceHex, ok := args["nonce"].(string); ok {
-		nonce, err = hexutil.DecodeUint64(nonceHex)
-		if err != nil {
-			return common.Hash{}, fmt.Errorf("invalid nonce: %w", err)
-		}
+	if args.Nonce != nil {
+		nonce = uint64(*args.Nonce)
 	} else {
-		// Get nonce from state
-		nonce, err = api.b.NonceAt(ctx, from, nil)
+		var err error
+		nonce, err = api.b.NonceAt(ctx, *args.From, nil)
 		if err != nil {
 			return common.Hash{}, fmt.Errorf("failed to get nonce: %w", err)
-		}
-	}
-
-	// Get gas limit
-	var gasLimit uint64 = 21000 // default
-	if gasHex, ok := args["gas"].(string); ok {
-		gasLimit, err = hexutil.DecodeUint64(gasHex)
-		if err != nil {
-			return common.Hash{}, fmt.Errorf("invalid gas: %w", err)
-		}
-	}
-
-	// Get value
-	value := big.NewInt(0)
-	if valueHex, ok := args["value"].(string); ok {
-		value, err = hexutil.DecodeBig(valueHex)
-		if err != nil {
-			return common.Hash{}, fmt.Errorf("invalid value: %w", err)
-		}
-	}
-
-	// Get data
-	var data []byte
-	if dataHex, ok := args["data"].(string); ok {
-		data, err = hexutil.Decode(dataHex)
-		if err != nil {
-			return common.Hash{}, fmt.Errorf("invalid data: %w", err)
-		}
-	} else if inputHex, ok := args["input"].(string); ok {
-		data, err = hexutil.Decode(inputHex)
-		if err != nil {
-			return common.Hash{}, fmt.Errorf("invalid input: %w", err)
 		}
 	}
 
@@ -272,16 +216,21 @@ func (api *EthAPI) SendTransaction(ctx context.Context, args map[string]any) (co
 		return common.Hash{}, fmt.Errorf("failed to get chainID: %w", err)
 	}
 
-	// Check if this is a contract deployment or call
-	if toHex, ok := args["to"].(string); ok && toHex != "" {
-		// Contract call
-		to := common.HexToAddress(toHex)
+	// Build transaction
+	var tx *types.Transaction
+	data := args.data()
+	gasLimit := uint64(*args.Gas)
+	value := (*big.Int)(args.Value)
+	gasPrice := (*big.Int)(args.GasPrice)
+
+	if args.To != nil {
+		// Contract call or transfer
 		tx = types.NewTx(&types.LegacyTx{
 			Nonce:    nonce,
-			To:       &to,
+			To:       args.To,
 			Value:    value,
 			Gas:      gasLimit,
-			GasPrice: big.NewInt(1), // Use 1 wei as gas price
+			GasPrice: gasPrice,
 			Data:     data,
 		})
 	} else {
@@ -291,7 +240,7 @@ func (api *EthAPI) SendTransaction(ctx context.Context, args map[string]any) (co
 			To:       nil,
 			Value:    value,
 			Gas:      gasLimit,
-			GasPrice: big.NewInt(1),
+			GasPrice: gasPrice,
 			Data:     data,
 		})
 	}

@@ -9,16 +9,18 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"io"
 	"log"
 	"net/http"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/node"
 	"github.com/ethereum/go-ethereum/rpc"
 )
 
 // NewServer returns an RPC server.
-func NewServer(b Backend, testAccounts []string, testAccountKeys map[string]string) (*rpc.Server, error) {
+func NewServer(b Backend, testAccounts []common.Address, testAccountKeys map[common.Address]*ecdsa.PrivateKey) (*rpc.Server, error) {
 	srv := rpc.NewServer()
 	if err := srv.RegisterName("eth", NewEthAPI(b, testAccounts, testAccountKeys)); err != nil {
 		return nil, err
