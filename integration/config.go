@@ -72,7 +72,7 @@ func FabricSamplesConfig(testdataDir string) config.Config {
 		Gateway: config.Gateway{
 			SignerMSPDir: filepath.Join(orgsDir, "peerOrganizations/org1.example.com/users/User1@org1.example.com/msp"),
 			SignerMSPID:  "Org1MSP",
-			DbConnStr:    "file:blocks?mode=memory&cache=shared",
+			DbConnStr:    fmt.Sprintf("file:gateway%d?mode=memory&cache=shared", x),
 			TrieDBPath:   "",
 			// DbConnStr:      "file:../testdata/blocks.db",
 			SubmitWaitTime: 2200 * time.Millisecond,
@@ -130,6 +130,7 @@ func XTestCommitterConfig() config.Config {
 	}
 
 	org1 := filepath.Join(orgsDir, "peerOrganizations", "org1.example.com")
+	x := rand.Int64()
 
 	return config.Config{
 		Network: config.Network{
@@ -141,7 +142,7 @@ func XTestCommitterConfig() config.Config {
 		Gateway: config.Gateway{
 			SignerMSPDir:   filepath.Join(org1, "users", "User1@org1.example.com", "msp"),
 			SignerMSPID:    "Org1MSP",
-			DbConnStr:      "file:blocks?mode=memory&cache=shared",
+			DbConnStr:      fmt.Sprintf("file:gateway%d?mode=memory&cache=shared", x),
 			SubmitWaitTime: 200 * time.Millisecond,
 			SyncPeerAddr:   "127.0.0.1:4001",
 			SyncPeerTLS:    "", // No TLS for X test committer
@@ -158,7 +159,7 @@ func XTestCommitterConfig() config.Config {
 				PeerTLS:   "", // No TLS for X test committer
 				MspDir:    filepath.Join(org1, "peers", "endorser.org1.example.com", "msp"),
 				MspID:     "Org1MSP",
-				DbConnStr: "file:db1?mode=memory&cache=shared",
+				DbConnStr: fmt.Sprintf("file:endorser1%d?mode=memory&cache=shared", x),
 				// DbConnStr: "endorser.sqlite",
 			},
 		},
