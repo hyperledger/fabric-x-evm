@@ -11,6 +11,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math/big"
+	"sync"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
@@ -36,10 +37,14 @@ type Submitter interface {
 // contract, the gateway requests endorsement from a set of EVM endorsers. It then
 // submits a signed transaction with the read/writeset to the Fabric orderers.
 type Gateway struct {
-	submitter Submitter
-	endorsers *EndorsementClient
-	store     Store
-	chainID   *big.Int
+	submitter   Submitter
+	endorsers   *EndorsementClient
+	store       Store
+	chainID     *big.Int
+	txQueue     *TxQueue
+	workerCount int
+	wg          sync.WaitGroup
+	stopOnce    sync.Once
 }
 
 type Store interface {
@@ -57,18 +62,51 @@ type Store interface {
 }
 
 // New creates a new Ethereum Gateway.
-func New(ec *EndorsementClient, submitter Submitter, store Store, chainID int64) (*Gateway, error) {
+func New(ec *EndorsementClient, submitter Submitter, store Store, chainID int64, workerCount int) (*Gateway, error) {
+	if workerCount <= 0 {
+		workerCount = 1
+	}
+
 	return &Gateway{
-		endorsers: ec,
-		submitter: submitter,
-		store:     store,
-		chainID:   big.NewInt(chainID),
+		endorsers:   ec,
+		submitter:   submitter,
+		store:       store,
+		chainID:     big.NewInt(chainID),
+		txQueue:     NewTxQueue(),
+		workerCount: workerCount,
 	}, nil
 }
 
-// SendTransaction sends a signed ethereum transaction to the endorsers and submits the result to the orderer.
-// As per standard ethereum APIs, it does not return the payload of executed transaction.
-func (g Gateway) SendTransaction(ctx context.Context, tx *types.Transaction) error {
+// Start initializes the worker pool to process transactions from the queue
+func (g *Gateway) Start(ctx context.Context) {
+	for range g.workerCount {
+		g.wg.Add(1)
+		go g.worker(ctx)
+	}
+}
+
+// worker processes transactions from the queue
+func (g *Gateway) worker(ctx context.Context) {
+	defer g.wg.Done()
+
+	for {
+		tx, ok := g.txQueue.Dequeue()
+		if !ok {
+			// Queue is closed and empty
+			return
+		}
+
+		// Process the transaction (old SendTransaction logic)
+		if err := g.processTx(ctx, tx); err != nil {
+			// TODO: Add proper error handling/logging
+			// For now, we just continue processing
+			continue
+		}
+	}
+}
+
+// processTx handles the actual transaction processing
+func (g *Gateway) processTx(ctx context.Context, tx *types.Transaction) error {
 	end, err := g.ExecuteEthTx(ctx, tx, nil)
 	if err != nil {
 		return err
@@ -76,23 +114,32 @@ func (g Gateway) SendTransaction(ctx context.Context, tx *types.Transaction) err
 	if err := g.SubmitFabricTx(ctx, end); err != nil {
 		return err
 	}
+
+	return nil
+}
+
+// SendTransaction enqueues a signed ethereum transaction for processing.
+// As per standard ethereum APIs, it does not return the payload of executed transaction.
+func (g *Gateway) SendTransaction(ctx context.Context, tx *types.Transaction) error {
+	// Enqueue the transaction for async processing
+	g.txQueue.Enqueue(tx)
 	return nil
 }
 
 // CallContract is a query. It doesn't require a signature of the end user and doesn't change the ledger or nonce.
 // We requests endorsement from a single endorser, return the payload, and discard the signed response.
 // This is the same way queries are handled in Fabric.
-func (g Gateway) CallContract(ctx context.Context, call ethereum.CallMsg, blockNumber *big.Int) ([]byte, error) {
+func (g *Gateway) CallContract(ctx context.Context, call ethereum.CallMsg, blockNumber *big.Int) ([]byte, error) {
 	return g.endorsers.CallContract(ctx, call, &utils.BlockInfo{BlockNumber: blockNumber})
 }
 
 // ExecuteEthTx requests endorsements for the submitted ethereum-style transaction.
-func (g Gateway) ExecuteEthTx(ctx context.Context, tx *types.Transaction, blockInfo *utils.BlockInfo) (sdk.Endorsement, error) {
+func (g *Gateway) ExecuteEthTx(ctx context.Context, tx *types.Transaction, blockInfo *utils.BlockInfo) (sdk.Endorsement, error) {
 	return g.endorsers.ExecuteTransaction(ctx, tx, blockInfo)
 }
 
 // SubmitFabricTx submits a Fabric envelope.
-func (g Gateway) SubmitFabricTx(ctx context.Context, end sdk.Endorsement) error {
+func (g *Gateway) SubmitFabricTx(ctx context.Context, end sdk.Endorsement) error {
 	if err := g.submitter.Submit(ctx, end); err != nil {
 		return fmt.Errorf("submit: %w", err)
 	}
@@ -100,19 +147,19 @@ func (g Gateway) SubmitFabricTx(ctx context.Context, end sdk.Endorsement) error 
 }
 
 // ChainID returns the configured chainID for this deployment.
-func (g Gateway) ChainID(ctx context.Context) (*big.Int, error) {
+func (g *Gateway) ChainID(ctx context.Context) (*big.Int, error) {
 	return g.chainID, nil
 }
 
 // BlockNumber is the current blockheight as observed by this gateway.
-func (g Gateway) BlockNumber(ctx context.Context) (uint64, error) {
+func (g *Gateway) BlockNumber(ctx context.Context) (uint64, error) {
 	return g.store.BlockNumber(ctx)
 }
 
 // GetBlockByNumber returns the block at the specified number.
 // If full is true, the block includes transactions.
 // num == 0 means "latest" (blocks start at 1 since they map directly to Fabric block numbers).
-func (g Gateway) GetBlockByNumber(ctx context.Context, num uint64, full bool) (*domain.Block, error) {
+func (g *Gateway) GetBlockByNumber(ctx context.Context, num uint64, full bool) (*domain.Block, error) {
 	if num == 0 {
 		return g.store.LatestBlock(ctx, full)
 	}
@@ -121,24 +168,24 @@ func (g Gateway) GetBlockByNumber(ctx context.Context, num uint64, full bool) (*
 
 // GetBlockByHash returns block metadata based on the block hash.
 // If full is true, the block includes transactions.
-func (g Gateway) GetBlockByHash(ctx context.Context, hash common.Hash, full bool) (*domain.Block, error) {
+func (g *Gateway) GetBlockByHash(ctx context.Context, hash common.Hash, full bool) (*domain.Block, error) {
 	return g.store.GetBlockByHash(ctx, hash.Bytes(), full)
 }
 
 // GetBlockTxCountByHash counts the transactions in a specific block.
-func (g Gateway) GetBlockTxCountByHash(ctx context.Context, hash common.Hash) (int64, error) {
+func (g *Gateway) GetBlockTxCountByHash(ctx context.Context, hash common.Hash) (int64, error) {
 	return g.store.GetBlockTxCountByHash(ctx, hash.Bytes())
 }
 
 // GetBlockTxCountByNumber counts the transactions in a specific block.
-func (g Gateway) GetBlockTxCountByNumber(ctx context.Context, num uint64) (int64, error) {
+func (g *Gateway) GetBlockTxCountByNumber(ctx context.Context, num uint64) (int64, error) {
 	return g.store.GetBlockTxCountByNumber(ctx, num)
 }
 
 // State
 
 // BalanceAt returns the balance of an account.
-func (g Gateway) BalanceAt(ctx context.Context, account common.Address, blockNumber *big.Int) (*big.Int, error) {
+func (g *Gateway) BalanceAt(ctx context.Context, account common.Address, blockNumber *big.Int) (*big.Int, error) {
 	res, err := g.endorsers.GetState(ctx, cmn.StateQuery{
 		Account:     account,
 		BlockNumber: blockNumber,
@@ -150,7 +197,7 @@ func (g Gateway) BalanceAt(ctx context.Context, account common.Address, blockNum
 	return big.NewInt(0).SetBytes(res), err
 }
 
-func (g Gateway) StorageAt(ctx context.Context, account common.Address, key common.Hash, blockNumber *big.Int) ([]byte, error) {
+func (g *Gateway) StorageAt(ctx context.Context, account common.Address, key common.Hash, blockNumber *big.Int) ([]byte, error) {
 	res, err := g.endorsers.GetState(ctx, cmn.StateQuery{
 		Account:     account,
 		Key:         key,
@@ -163,7 +210,7 @@ func (g Gateway) StorageAt(ctx context.Context, account common.Address, key comm
 	return res, err
 }
 
-func (g Gateway) CodeAt(ctx context.Context, account common.Address, blockNumber *big.Int) ([]byte, error) {
+func (g *Gateway) CodeAt(ctx context.Context, account common.Address, blockNumber *big.Int) ([]byte, error) {
 	res, err := g.endorsers.GetState(ctx, cmn.StateQuery{
 		Account:     account,
 		BlockNumber: blockNumber,
@@ -175,7 +222,7 @@ func (g Gateway) CodeAt(ctx context.Context, account common.Address, blockNumber
 	return res, err
 }
 
-func (g Gateway) NonceAt(ctx context.Context, account common.Address, blockNumber *big.Int) (uint64, error) {
+func (g *Gateway) NonceAt(ctx context.Context, account common.Address, blockNumber *big.Int) (uint64, error) {
 	res, err := g.endorsers.GetState(ctx, cmn.StateQuery{
 		Account:     account,
 		BlockNumber: blockNumber,
@@ -192,7 +239,7 @@ func (g Gateway) NonceAt(ctx context.Context, account common.Address, blockNumbe
 
 // TransactionByHash retrieves a past transaction data from local storage, reconstructs a Transaction object and returns it.
 // We always return false for "is pending".
-func (g Gateway) TransactionByHash(ctx context.Context, hash common.Hash) (*domain.Transaction, bool, error) {
+func (g *Gateway) TransactionByHash(ctx context.Context, hash common.Hash) (*domain.Transaction, bool, error) {
 	tx, err := g.store.GetTransactionByHash(ctx, hash.Bytes())
 	if err != nil {
 		return nil, false, err
@@ -212,20 +259,32 @@ func (g Gateway) TransactionByHash(ctx context.Context, hash common.Hash) (*doma
 }
 
 // GetTransactionByBlockHashAndIndex retrieves a transaction based on block hash in the transaction index in that block.
-func (g Gateway) GetTransactionByBlockHashAndIndex(ctx context.Context, hash common.Hash, idx int64) (*domain.Transaction, error) {
+func (g *Gateway) GetTransactionByBlockHashAndIndex(ctx context.Context, hash common.Hash, idx int64) (*domain.Transaction, error) {
 	return g.store.GetTransactionByBlockHashAndIndex(ctx, hash.Bytes(), idx)
 }
 
 // GetTransactionByBlockNumberAndIndex retrieves a transaction based on block number in the transaction index in that block.
-func (g Gateway) GetTransactionByBlockNumberAndIndex(ctx context.Context, num uint64, idx int64) (*domain.Transaction, error) {
+func (g *Gateway) GetTransactionByBlockNumberAndIndex(ctx context.Context, num uint64, idx int64) (*domain.Transaction, error) {
 	return g.store.GetTransactionByBlockNumberAndIndex(ctx, num, idx)
 }
 
-func (g Gateway) GetLogs(ctx context.Context, query domain.LogFilter) ([]domain.Log, error) {
+func (g *Gateway) GetLogs(ctx context.Context, query domain.LogFilter) ([]domain.Log, error) {
 	return g.store.GetLogs(ctx, query)
 }
 
-// Stop closes all connections.
-func (g Gateway) Stop() error {
-	return g.submitter.Close()
+// Stop performs an orderly shutdown of the gateway.
+// It closes the transaction queue, waits for all workers to finish, and closes connections.
+func (g *Gateway) Stop() error {
+	var err error
+	g.stopOnce.Do(func() {
+		// Close the queue to signal workers to stop
+		g.txQueue.Close()
+
+		// Wait for all workers to finish processing
+		g.wg.Wait()
+
+		// Close submitter connection
+		err = g.submitter.Close()
+	})
+	return err
 }

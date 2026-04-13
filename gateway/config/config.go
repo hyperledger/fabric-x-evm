@@ -38,6 +38,8 @@ type Gateway struct {
 
 	TestAccountsPath string `mapstructure:"test-accounts-path" yaml:"test-accounts-path"` // Path to JSON file with test accounts for eth_accounts RPC
 	EnableTestRPC    bool   `mapstructure:"enable-test-rpc" yaml:"enable-test-rpc"`       // Enable test-only RPC methods (eth_accounts, eth_sendTransaction) - UNSAFE for production
+
+	WorkerCount int `mapstructure:"worker-count" yaml:"worker-count"` // number of worker goroutines for processing transactions; defaults to 1 if not set
 }
 
 // Orderer contains configuration for an orderer node.

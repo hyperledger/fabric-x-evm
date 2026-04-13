@@ -110,7 +110,7 @@ func buildApp(cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorse
 		return nil, fmt.Errorf("failed to create chain: %w", err)
 	}
 
-	gateway, err := core.New(ec, submitter, chain, cfg.Network.ChainID)
+	gateway, err := core.New(ec, submitter, chain, cfg.Network.ChainID, cfg.Gateway.WorkerCount)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gateway: %w", err)
 	}
@@ -184,6 +184,10 @@ func (a *App) Run(ctx context.Context) error {
 		log.Printf("endorser %d synced", i)
 	}
 
+	// Start gateway worker pool
+	log.Printf("starting gateway with %d workers", a.cfg.Gateway.WorkerCount)
+	a.gateway.Start(gctx)
+
 	// Create HTTP server before starting goroutine so Shutdown can safely read a.httpServer
 	a.httpServer = api.NewHTTPServer(a.rpcServer, a.cfg.Server.Bind)
 	g.Go(func() error {
@@ -229,12 +233,12 @@ func (a *App) Shutdown() error {
 		}
 	}
 
-	// Close submitter
-	log.Println("closing submitter...")
-	if err := a.submitter.Close(); err != nil {
-		log.Printf("submitter close error: %v", err)
+	// Stop gateway workers
+	log.Println("stopping gateway workers...")
+	if err := a.gateway.Stop(); err != nil {
+		log.Printf("gateway stop error: %v", err)
 	} else {
-		log.Println("submitter closed")
+		log.Println("gateway workers stopped")
 	}
 
 	// Close chain (trie + database)

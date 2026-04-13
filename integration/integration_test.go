@@ -85,7 +85,7 @@ func TestLocal(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			th, err := newLocalTestHarness(t, TestLogger{T: t}, &endorser.EVMConfig{ChainConfig: tc.ethChainConfig}, tc.primeDbPath, "fabric")
+			th, err := newLocalTestHarness(t, TestLogger{T: t}, &endorser.EVMConfig{ChainConfig: tc.ethChainConfig}, tc.primeDbPath, "fabric", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -102,7 +102,7 @@ func TestLocalX(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			th, err := newLocalTestHarness(t, TestLogger{T: t}, &endorser.EVMConfig{ChainConfig: tc.ethChainConfig}, tc.primeDbPath, "fabric-x")
+			th, err := newLocalTestHarness(t, TestLogger{T: t}, &endorser.EVMConfig{ChainConfig: tc.ethChainConfig}, tc.primeDbPath, "fabric-x", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -122,7 +122,7 @@ func TestFabric(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			th, err := newFabricTestHarness(t, TestLogger{T: t}, tc.ethChainConfig, tc.primeDbPath)
+			th, err := newFabricTestHarness(t, TestLogger{T: t}, tc.ethChainConfig, tc.primeDbPath, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -142,7 +142,7 @@ func TestFabricX(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			th, err := newFabricXTestHarness(t, TestLogger{T: t}, tc.ethChainConfig, tc.primeDbPath)
+			th, err := newFabricXTestHarness(t, TestLogger{T: t}, tc.ethChainConfig, tc.primeDbPath, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

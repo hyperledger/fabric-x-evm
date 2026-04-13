@@ -384,7 +384,7 @@ func verifyTrieRoot(t *testing.T, genesisRWS, txRWS blocks.ReadWriteSet, blockNu
 func newEthereumTestHarness(t *testing.T, evmConfig *endorser.EVMConfig, pre types.GenesisAlloc) (*TestHarness, error) {
 	t.Helper()
 
-	th, err := newLocalTestHarness(t, TestLogger{T: t}, evmConfig, "", "bypass")
+	th, err := newLocalTestHarness(t, TestLogger{T: t}, evmConfig, "", "bypass", nil)
 	if err != nil {
 		return nil, err
 	}

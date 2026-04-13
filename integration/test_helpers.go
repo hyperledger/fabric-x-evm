@@ -225,6 +225,12 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 		return nil, nil, err
 	}
 
+	chain, err := core.NewChain(cfg.Gateway.DbConnStr, cfg.Gateway.TrieDBPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	t.Cleanup(func() { chain.Close() })
+
 	// Build submitter.
 	orderers := make([]network.OrdererConf, len(cfg.Gateway.Orderers))
 	for i, o := range cfg.Gateway.Orderers {
@@ -232,26 +238,38 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 	}
 
 	var submitter core.Submitter
+	var gwSync *network.Synchronizer
+	var err1 error
 	if bypass {
 		submitter = local.NewLocalSubmitter(dbs[0], cfg.Network.Channel, cfg.Network.Namespace, nfab.NewTxPackager(gwSigner), bfab.NewBlockParser(logger), false)
 	} else {
 		switch cfg.Network.Protocol {
 		case "fabric":
-			submitter, err = nfab.NewSubmitter(orderers, gwSigner, cfg.Gateway.SubmitWaitTime, logger)
+			gwSync, err = nfab.NewSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, chain)
+			submitter, err1 = nfab.NewSubmitter(orderers, gwSigner, cfg.Gateway.SubmitWaitTime, logger)
 		case "fabric-x", "":
-			submitter, err = nfabx.NewSubmitter(orderers, gwSigner, cfg.Gateway.SubmitWaitTime, logger)
+			gwSync, err = nfabx.NewSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, chain)
+			submitter, err1 = nfabx.NewSubmitter(orderers, gwSigner, cfg.Gateway.SubmitWaitTime, logger)
 		default:
 			return nil, nil, fmt.Errorf("unsupported protocol: %q", cfg.Network.Protocol)
 		}
-		if err != nil {
+		if err := errors.Join(err, err1); err != nil {
 			return nil, nil, err
 		}
 	}
 
-	gw, err := core.New(ec, submitter, nil, cfg.Network.ChainID)
+	gw, err := core.New(ec, submitter, chain, cfg.Network.ChainID, cfg.Gateway.WorkerCount)
 	if err != nil {
 		return nil, nil, err
 	}
+
+	if !bypass {
+		go func() error { return gwSync.Start(t.Context()) }()
+	}
+
+	// Start gateway worker pool for tests
+	gw.Start(t.Context())
+	t.Cleanup(func() { gw.Stop() })
 
 	primer, err := NewStatePrimer(dbs[0], cfg.Network.Namespace, gwSigner, builders, submitter, cfg.Network.Channel, cfg.Network.NsVersion, cfg.Network.Protocol == "fabric-x")
 	if err != nil {
@@ -272,9 +290,46 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 	return th, syncs, nil
 }
 
+// applyConfigOverrides applies overrides from a map to a config struct using reflection.
+// Keys use dot notation like "Gateway.WorkerCount" to specify nested fields.
+func applyConfigOverrides(cfg *config.Config, overrides map[string]any) error {
+	for key, value := range overrides {
+		parts := strings.Split(key, ".")
+		if len(parts) == 0 {
+			return fmt.Errorf("invalid config key: %s", key)
+		}
+
+		v := reflect.ValueOf(cfg).Elem()
+		for i, part := range parts {
+			field := v.FieldByName(part)
+			if !field.IsValid() {
+				return fmt.Errorf("invalid config field: %s", key)
+			}
+			if i == len(parts)-1 {
+				// Last part - set the value
+				if !field.CanSet() {
+					return fmt.Errorf("cannot set config field: %s", key)
+				}
+				val := reflect.ValueOf(value)
+				if !val.Type().AssignableTo(field.Type()) {
+					return fmt.Errorf("type mismatch for %s: expected %s, got %s", key, field.Type(), val.Type())
+				}
+				field.Set(val)
+			} else {
+				// Intermediate part - navigate deeper
+				if field.Kind() != reflect.Struct {
+					return fmt.Errorf("cannot navigate through non-struct field: %s", key)
+				}
+				v = field
+			}
+		}
+	}
+	return nil
+}
+
 // newLocalTestHarness commits updates directly to the DB, bypassing peers and orderers.
 // Exported for use by eth-tests package.
-func newLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig *endorser.EVMConfig, primeDbPath, networkType string) (*TestHarness, error) {
+func newLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig *endorser.EVMConfig, primeDbPath, networkType string, configOverrides map[string]any) (*TestHarness, error) {
 	bypass := networkType == "bypass"
 
 	orderer := &common.Endpoint{Host: "127.0.0.1", Port: 1337}
@@ -308,10 +363,14 @@ func newLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig *endorser.EV
 		},
 		Gateway: config.Gateway{
 			DbConnStr:      filepath.Join(dir, tname+"gateway.db"),
+			TrieDBPath:     filepath.Join(dir, tname+"triedb.db"),
 			SubmitWaitTime: 10 * time.Millisecond,
 			SyncTimeout:    2 * time.Second,
 			Orderers: []common.ClientConfig{
 				{Endpoint: orderer},
+			},
+			Committer: common.ClientConfig{
+				Endpoint: peer,
 			},
 		},
 		Endorsers: []econf.Endorser{
@@ -326,6 +385,10 @@ func newLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig *endorser.EV
 		cfg.Network.ChainID = evmConfig.ChainConfig.ChainID.Int64()
 	}
 
+	if err := applyConfigOverrides(&cfg, configOverrides); err != nil {
+		return nil, err
+	}
+
 	th, _, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, bypass)
 	if err != nil {
 		return nil, err
@@ -337,7 +400,7 @@ func newLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig *endorser.EV
 // newFabricTestHarness returns a client for integration testing with access to a peer, orderer and local committer.
 // It follows the directory structure of a fabric samples test network.
 // Exported for use by eth-tests package.
-func newFabricTestHarness(t *testing.T, logger sdk.Logger, ethChainConfig *params.ChainConfig, primeDbPath string) (*TestHarness, error) {
+func newFabricTestHarness(t *testing.T, logger sdk.Logger, ethChainConfig *params.ChainConfig, primeDbPath string, configOverrides map[string]any) (*TestHarness, error) {
 	// Use TESTDATA environment variable if set, otherwise find project root
 	var testdataDir string
 	if envTestdata := os.Getenv("TESTDATA"); envTestdata != "" {
@@ -357,6 +420,10 @@ func newFabricTestHarness(t *testing.T, logger sdk.Logger, ethChainConfig *param
 		cfg.Network.ChainID = ethChainConfig.ChainID.Int64()
 	}
 
+	if err := applyConfigOverrides(&cfg, configOverrides); err != nil {
+		return nil, err
+	}
+
 	th, syncs, err := buildTestHarness(t, logger, cfg, &endorser.EVMConfig{ChainConfig: ethChainConfig}, primeDbPath, false)
 	if err != nil {
 		return nil, err
@@ -372,10 +439,14 @@ func newFabricTestHarness(t *testing.T, logger sdk.Logger, ethChainConfig *param
 // newFabricXTestHarness returns a client for integration testing with access to a peer, orderer and local committer.
 // It follows the directory structure of a fabric samples test network.
 // Exported for use by eth-tests package.
-func newFabricXTestHarness(t *testing.T, logger sdk.Logger, ethChainConfig *params.ChainConfig, primeDbPath string) (*TestHarness, error) {
+func newFabricXTestHarness(t *testing.T, logger sdk.Logger, ethChainConfig *params.ChainConfig, primeDbPath string, configOverrides map[string]any) (*TestHarness, error) {
 	cfg := XTestCommitterConfig()
 	if ethChainConfig != nil {
 		cfg.Network.ChainID = ethChainConfig.ChainID.Int64()
+	}
+
+	if err := applyConfigOverrides(&cfg, configOverrides); err != nil {
+		return nil, err
 	}
 
 	th, _, err := buildTestHarness(t, logger, cfg, &endorser.EVMConfig{ChainConfig: ethChainConfig}, primeDbPath, false)
@@ -516,6 +587,21 @@ func deploySmartContract(t *testing.T, gw *core.Gateway, client *EthClient, args
 		t.Fatal(err)
 	}
 
+	for pending := true; pending; {
+		_, pending, err = ec.TransactionByHash(t.Context(), tx.Hash())
+		if err != nil {
+			if !strings.Contains(err.Error(), "not found") {
+				t.Fatal(err)
+			} else {
+				pending = true
+			}
+		}
+
+		if pending {
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+
 	return addr
 }
 
@@ -535,6 +621,21 @@ func callSmartContract(t *testing.T, client *EthClient, addr ethcommon.Address, 
 	err = ec.SendTransaction(t.Context(), tx)
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	for pending := true; pending; {
+		_, pending, err = ec.TransactionByHash(t.Context(), tx.Hash())
+		if err != nil {
+			if !strings.Contains(err.Error(), "not found") {
+				t.Fatal(err)
+			} else {
+				pending = true
+			}
+		}
+
+		if pending {
+			time.Sleep(20 * time.Millisecond)
+		}
 	}
 }
 

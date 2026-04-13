@@ -100,7 +100,7 @@ func FabricSamplesConfig(testdataDir string) config.Config {
 				MSPDir: path.Join(user, "msp"),
 			},
 			DbConnStr:      "file:gateway.db?mode=memory&cache=shared",
-			TrieDBPath:     "",
+			TrieDBPath:     filepath.Join(testdataDir, "triedb"),
 			SubmitWaitTime: 2200 * time.Millisecond,
 		},
 		Endorsers: []econf.Endorser{
@@ -189,7 +189,7 @@ func XTestCommitterConfig() config.Config {
 				MSPDir: path.Join(user, "msp"),
 			},
 			DbConnStr:  "file:gateway.db?mode=memory&cache=shared",
-			TrieDBPath: "",
+			TrieDBPath: filepath.Join(testdataDir, "triedb"),
 			// DbConnStr:      "file:../testdata/blocks.db",
 			SubmitWaitTime: 200 * time.Millisecond,
 		},
