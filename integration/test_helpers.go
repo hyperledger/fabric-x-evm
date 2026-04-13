@@ -271,16 +271,24 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 		return nil, nil, err
 	}
 
+	chain, err := core.NewChain(cfg.Gateway.DbConnStr, cfg.Gateway.TrieDBPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create chain: %w", err)
+	}
+
 	// Build submitter.
 	orderers := make([]network.OrdererConf, len(cfg.Gateway.Orderers))
 	for i, o := range cfg.Gateway.Orderers {
 		orderers[i] = network.OrdererConf{Address: o.Address, TLSPath: o.TLSPath}
 	}
 	var submitter core.Submitter
+	var gwProcessor *blocks.Processor
 	switch networkType {
 	case "fabric":
+		gwProcessor = blocks.NewProcessor(bfab.NewBlockParser(logger), []blocks.BlockHandler{chain})
 		submitter, err = nfab.NewSubmitter(orderers, gwSigner, cfg.Gateway.SubmitWaitTime, logger)
 	case "fabric-x":
+		gwProcessor = blocks.NewProcessor(bfabx.NewBlockParser(logger), []blocks.BlockHandler{chain})
 		submitter, err = nfabx.NewSubmitter(orderers, gwSigner, cfg.Gateway.SubmitWaitTime, logger)
 	case "bypass":
 		submitter = local.NewLocalSubmitter(dbs[0], cfg.Network.Channel, cfg.Network.Namespace, nfab.NewTxPackager(gwSigner), bfab.NewBlockParser(logger), false)
@@ -291,10 +299,15 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 		return nil, nil, err
 	}
 
-	gw, err := core.New(ec, submitter, nil, cfg.Network.ChainID)
+	gw, err := core.New(ec, submitter, chain, cfg.Network.ChainID)
 	if err != nil {
 		return nil, nil, err
 	}
+	gwSync, err := network.NewSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.SyncPeerAddr, cfg.Gateway.SyncPeerTLS, gwSigner, gwProcessor, logger)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create gateway synchronizer: %w", err)
+	}
+	go gwSync.Start(t.Context())
 
 	primer, err := NewStatePrimer(dbs[0], cfg.Network.Namespace, gwSigner, builders, submitter, cfg.Network.Channel, cfg.Network.NsVersion, networkType == "fabric-x")
 	if err != nil {
@@ -346,6 +359,7 @@ func newLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig *endorser.EV
 			DbConnStr:      filepath.Join(dir, tname+"gateway.db"),
 			SubmitWaitTime: 10 * time.Millisecond,
 			SyncTimeout:    2 * time.Second,
+			SyncPeerAddr:   peer,
 			Orderers:       []config.Orderer{{Address: orderer}},
 		},
 		Endorsers: []econf.Endorser{
