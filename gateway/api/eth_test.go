@@ -269,7 +269,7 @@ func TestEthAPI_Accounts(t *testing.T) {
 
 func TestEthAPI_SendTransaction_Validation(t *testing.T) {
 	// Load test accounts from JSON file
-	testAccounts, testKeys, err := loadTestAccountsFromFile("../../testdata/test-accounts.json")
+	testAccounts, testKeys, err := loadTestAccountsFromFile("../../testdata/test_accounts.json")
 	if err != nil {
 		t.Fatalf("Failed to load test accounts: %v", err)
 	}
