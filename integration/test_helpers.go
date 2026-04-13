@@ -530,7 +530,7 @@ func getEndorsedTxForSmartContractCall(t *testing.T, client *EthClient, addr com
 }
 
 func newNativeEthClient(gw *core.Gateway) (*ethclient.Client, error) {
-	rpcServer, err := gwapi.NewServer(gw)
+	rpcServer, err := gwapi.NewServer(gw, nil, nil)
 	if err != nil {
 		return nil, err
 	}

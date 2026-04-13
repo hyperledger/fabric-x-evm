@@ -120,7 +120,12 @@ func New(cfg config.Config) (*App, error) {
 		return nil, fmt.Errorf("failed to create gateway synchronizer: %w", err)
 	}
 
-	rpcServer, err := api.NewServer(gateway)
+	// Load test accounts if configured
+	if err := cfg.LoadTestAccounts(); err != nil {
+		return nil, fmt.Errorf("failed to load test accounts: %w", err)
+	}
+
+	rpcServer, err := api.NewServer(gateway, cfg.Gateway.TestAccounts, cfg.Gateway.TestAccountKeys)
 	if err != nil {
 		return nil, err
 	}

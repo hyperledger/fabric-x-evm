@@ -7,6 +7,9 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package config
 
 import (
+	"encoding/json"
+	"fmt"
+	"os"
 	"time"
 
 	endorser "github.com/hyperledger/fabric-x-evm/endorser/config"
@@ -40,15 +43,17 @@ type Network struct {
 
 // Gateway contains configuration for the gateway component.
 type Gateway struct {
-	SignerMSPDir   string
-	SignerMSPID    string
-	DbConnStr      string // path to the sqlite database for blocks and transactions
-	TrieDBPath     string // path to PebbleDB trie database; empty = in-memory (dev/test only)
-	Orderers       []Orderer
-	SubmitWaitTime time.Duration
-	SyncPeerAddr   string
-	SyncPeerTLS    string
-	SyncTimeout    time.Duration
+	SignerMSPDir     string
+	SignerMSPID      string
+	DbConnStr        string
+	Orderers         []Orderer
+	SubmitWaitTime   time.Duration
+	SyncPeerAddr     string
+	SyncPeerTLS      string
+	SyncTimeout      time.Duration
+	TestAccountsPath string            // Path to JSON file with test accounts for eth_accounts RPC
+	TestAccounts     []string          // Loaded test account addresses
+	TestAccountKeys  map[string]string // Map of address -> private key for signing
 }
 
 // Orderer contains configuration for an orderer node.
@@ -60,4 +65,42 @@ type Orderer struct {
 // Server contains HTTP server configuration.
 type Server struct {
 	Bind string
+}
+
+// TestAccount represents a test account with address and private key
+type TestAccount struct {
+	Address    string `json:"address"`
+	PrivateKey string `json:"privateKey"`
+}
+
+// TestAccountsFile represents the structure of the test accounts JSON file
+type TestAccountsFile struct {
+	Accounts []TestAccount `json:"accounts"`
+}
+
+// LoadTestAccounts loads test accounts from a JSON file if TestAccountsPath is set
+func (c *Config) LoadTestAccounts() error {
+	if c.Gateway.TestAccountsPath == "" {
+		return nil // No test accounts file configured
+	}
+
+	data, err := os.ReadFile(c.Gateway.TestAccountsPath)
+	if err != nil {
+		return fmt.Errorf("failed to read test accounts file: %w", err)
+	}
+
+	var accountsFile TestAccountsFile
+	if err := json.Unmarshal(data, &accountsFile); err != nil {
+		return fmt.Errorf("failed to parse test accounts JSON: %w", err)
+	}
+
+	// Extract addresses and private keys
+	c.Gateway.TestAccounts = make([]string, len(accountsFile.Accounts))
+	c.Gateway.TestAccountKeys = make(map[string]string)
+	for i, acc := range accountsFile.Accounts {
+		c.Gateway.TestAccounts[i] = acc.Address
+		c.Gateway.TestAccountKeys[acc.Address] = acc.PrivateKey
+	}
+	
+	return nil
 }

@@ -7,8 +7,10 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"math/big"
+	"strings"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -170,4 +172,151 @@ func TestRPCReceiptMarshalJSON(t *testing.T) {
 			tt.checkFields(t, m)
 		})
 	}
+}
+
+func TestEthAPI_Accounts(t *testing.T) {
+	tests := []struct {
+		name         string
+		testAccounts []string
+		wantCount    int
+	}{
+		{
+			name: "multiple accounts",
+			testAccounts: []string{
+				"0x1234567890123456789012345678901234567890",
+				"0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+				"0x9876543210987654321098765432109876543210",
+			},
+			wantCount: 3,
+		},
+		{
+			name:         "single account",
+			testAccounts: []string{"0x1234567890123456789012345678901234567890"},
+			wantCount:    1,
+		},
+		{
+			name:         "no accounts",
+			testAccounts: []string{},
+			wantCount:    0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := NewEthAPI(nil, tt.testAccounts, nil)
+
+			accounts, err := api.Accounts(nil)
+			if err != nil {
+				t.Fatalf("Accounts() error = %v", err)
+			}
+
+			if len(accounts) != tt.wantCount {
+				t.Errorf("Accounts() returned %d accounts, want %d", len(accounts), tt.wantCount)
+			}
+
+			// Verify addresses match
+			for i, addr := range accounts {
+				expected := common.HexToAddress(tt.testAccounts[i])
+				if addr != expected {
+					t.Errorf("Account[%d] = %v, want %v", i, addr, expected)
+				}
+			}
+		})
+	}
+}
+
+func TestEthAPI_SendTransaction_Validation(t *testing.T) {
+	// Test account with known private key (Hardhat test account #0)
+	testAddr := "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+	testKey := "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+
+	testAccounts := []string{testAddr}
+	testKeys := map[string]string{testAddr: testKey}
+
+	tests := []struct {
+		name    string
+		args    map[string]any
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "missing from address",
+			args: map[string]any{
+				"to":   "0x1234567890123456789012345678901234567890",
+				"data": "0x",
+			},
+			wantErr: true,
+			errMsg:  "missing or invalid 'from' field",
+		},
+		{
+			name: "unknown from address",
+			args: map[string]any{
+				"from": "0x0000000000000000000000000000000000000000",
+				"to":   "0x1234567890123456789012345678901234567890",
+				"data": "0x",
+			},
+			wantErr: true,
+			errMsg:  "no private key available",
+		},
+		{
+			name: "valid transaction parameters",
+			args: map[string]any{
+				"from":     testAddr,
+				"to":       "0x1234567890123456789012345678901234567890",
+				"data":     "0x",
+				"value":    "0x0",
+				"gas":      "0x5208",
+				"gasPrice": "0x1",
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create API with mock backend that accepts any transaction
+			mockBackend := &mockBackend{
+				sendTxFunc: func(tx *types.Transaction) error {
+					return nil
+				},
+			}
+
+			api := NewEthAPI(mockBackend, testAccounts, testKeys)
+
+			_, err := api.SendTransaction(nil, tt.args)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("SendTransaction() expected error containing %q, got nil", tt.errMsg)
+				} else if tt.errMsg != "" && !strings.Contains(err.Error(), tt.errMsg) {
+					t.Errorf("SendTransaction() error = %v, want error containing %q", err, tt.errMsg)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("SendTransaction() unexpected error = %v", err)
+				}
+			}
+		})
+	}
+}
+
+// mockBackend is a minimal Backend implementation for testing
+type mockBackend struct {
+	Backend
+	sendTxFunc func(*types.Transaction) error
+}
+
+func (m *mockBackend) SendTransaction(_ context.Context, tx *types.Transaction) error {
+	if m.sendTxFunc != nil {
+		return m.sendTxFunc(tx)
+	}
+	return nil
+}
+
+func (m *mockBackend) ChainID(_ context.Context) (*big.Int, error) {
+	return big.NewInt(31337), nil
+}
+
+func (m *mockBackend) NonceAt(_ context.Context, account common.Address, blockNumber *big.Int) (uint64, error) {
+	return 0, nil // Return nonce 0 for testing
 }

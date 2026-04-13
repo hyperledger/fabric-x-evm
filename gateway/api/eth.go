@@ -8,12 +8,15 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"math/big"
+	"strings"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/eth/filters"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
@@ -49,11 +52,29 @@ type Backend interface {
 }
 
 type EthAPI struct {
-	b Backend
+	b               Backend
+	testAccounts    []common.Address
+	testAccountKeys map[common.Address]string // address -> private key hex
 }
 
-func NewEthAPI(b Backend) *EthAPI {
-	return &EthAPI{b: b}
+func NewEthAPI(b Backend, testAccountsHex []string, testAccountKeys map[string]string) *EthAPI {
+	// Convert hex strings to addresses
+	accounts := make([]common.Address, len(testAccountsHex))
+	for i, hexAddr := range testAccountsHex {
+		accounts[i] = common.HexToAddress(hexAddr)
+	}
+
+	// Convert address strings to common.Address keys
+	keys := make(map[common.Address]string)
+	for addrHex, keyHex := range testAccountKeys {
+		keys[common.HexToAddress(addrHex)] = keyHex
+	}
+
+	return &EthAPI{
+		b:               b,
+		testAccounts:    accounts,
+		testAccountKeys: keys,
+	}
 }
 
 // Chain
@@ -77,6 +98,11 @@ func (api *EthAPI) BlockNumber(ctx context.Context) (hexutil.Uint64, error) {
 }
 
 // Blocks
+
+// eth_accounts
+func (api *EthAPI) Accounts(ctx context.Context) ([]common.Address, error) {
+	return api.testAccounts, nil
+}
 
 // eth_getBlockByNumber
 func (api *EthAPI) GetBlockByNumber(ctx context.Context, num rpc.BlockNumber, full bool) (*RPCBlock, error) {
@@ -167,6 +193,121 @@ func (api *EthAPI) SendRawTransaction(ctx context.Context, input hexutil.Bytes) 
 		return common.Hash{}, err
 	}
 	return tx.Hash(), nil
+}
+
+// eth_sendTransaction
+func (api *EthAPI) SendTransaction(ctx context.Context, args map[string]any) (common.Hash, error) {
+	// Extract from address
+	fromHex, ok := args["from"].(string)
+	if !ok {
+		return common.Hash{}, fmt.Errorf("missing or invalid 'from' field")
+	}
+	from := common.HexToAddress(fromHex)
+
+	// Get private key for this address
+	privateKeyHex, ok := api.testAccountKeys[from]
+	if !ok {
+		return common.Hash{}, fmt.Errorf("no private key available for address %s", from.Hex())
+	}
+
+	// Parse private key
+	privateKey, err := crypto.HexToECDSA(strings.TrimPrefix(privateKeyHex, "0x"))
+	if err != nil {
+		return common.Hash{}, fmt.Errorf("invalid private key: %w", err)
+	}
+
+	// Build transaction from args
+	var tx *types.Transaction
+
+	// Get nonce
+	var nonce uint64
+	if nonceHex, ok := args["nonce"].(string); ok {
+		nonce, err = hexutil.DecodeUint64(nonceHex)
+		if err != nil {
+			return common.Hash{}, fmt.Errorf("invalid nonce: %w", err)
+		}
+	} else {
+		// Get nonce from state
+		nonce, err = api.b.NonceAt(ctx, from, nil)
+		if err != nil {
+			return common.Hash{}, fmt.Errorf("failed to get nonce: %w", err)
+		}
+	}
+
+	// Get gas limit
+	var gasLimit uint64 = 21000 // default
+	if gasHex, ok := args["gas"].(string); ok {
+		gasLimit, err = hexutil.DecodeUint64(gasHex)
+		if err != nil {
+			return common.Hash{}, fmt.Errorf("invalid gas: %w", err)
+		}
+	}
+
+	// Get value
+	value := big.NewInt(0)
+	if valueHex, ok := args["value"].(string); ok {
+		value, err = hexutil.DecodeBig(valueHex)
+		if err != nil {
+			return common.Hash{}, fmt.Errorf("invalid value: %w", err)
+		}
+	}
+
+	// Get data
+	var data []byte
+	if dataHex, ok := args["data"].(string); ok {
+		data, err = hexutil.Decode(dataHex)
+		if err != nil {
+			return common.Hash{}, fmt.Errorf("invalid data: %w", err)
+		}
+	} else if inputHex, ok := args["input"].(string); ok {
+		data, err = hexutil.Decode(inputHex)
+		if err != nil {
+			return common.Hash{}, fmt.Errorf("invalid input: %w", err)
+		}
+	}
+
+	// Get chainID
+	chainID, err := api.b.ChainID(ctx)
+	if err != nil {
+		return common.Hash{}, fmt.Errorf("failed to get chainID: %w", err)
+	}
+
+	// Check if this is a contract deployment or call
+	if toHex, ok := args["to"].(string); ok && toHex != "" {
+		// Contract call
+		to := common.HexToAddress(toHex)
+		tx = types.NewTx(&types.LegacyTx{
+			Nonce:    nonce,
+			To:       &to,
+			Value:    value,
+			Gas:      gasLimit,
+			GasPrice: big.NewInt(1), // Use 1 wei as gas price
+			Data:     data,
+		})
+	} else {
+		// Contract deployment
+		tx = types.NewTx(&types.LegacyTx{
+			Nonce:    nonce,
+			To:       nil,
+			Value:    value,
+			Gas:      gasLimit,
+			GasPrice: big.NewInt(1),
+			Data:     data,
+		})
+	}
+
+	// Sign transaction
+	signedTx, err := types.SignTx(tx, types.NewEIP155Signer(chainID), privateKey)
+	if err != nil {
+		return common.Hash{}, fmt.Errorf("failed to sign transaction: %w", err)
+	}
+
+	// Send signed transaction
+	if err := api.b.SendTransaction(ctx, signedTx); err != nil {
+		return common.Hash{}, err
+	}
+
+	return signedTx.Hash(), nil
 }
 
 // eth_getTransactionByHash
