@@ -256,7 +256,7 @@ func testNonceValidation(t *testing.T, th *TestHarness) {
 	if err == nil {
 		t.Fatal("expected transaction with wrong nonce to fail, but it succeeded")
 	}
-	expectedErr := "process proposal: nonce too low"
+	expectedErr := "process EVM transaction: nonce too low"
 	if err.Error() != expectedErr {
 		t.Fatalf("expected error %q, got %q", expectedErr, err.Error())
 	}
