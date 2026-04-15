@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ethereum/go-ethereum/common"
+	ethcommon "github.com/ethereum/go-ethereum/common"
 	ethstate "github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
@@ -29,6 +29,7 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
 
+	"github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/endorser"
 	"github.com/hyperledger/fabric-x-evm/endorser/api"
 	econf "github.com/hyperledger/fabric-x-evm/endorser/config"
@@ -37,9 +38,7 @@ import (
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
 	"github.com/hyperledger/fabric-x-evm/utils"
 	sdk "github.com/hyperledger/fabric-x-sdk"
-	"github.com/hyperledger/fabric-x-sdk/blocks"
 	bfab "github.com/hyperledger/fabric-x-sdk/blocks/fabric"
-	bfabx "github.com/hyperledger/fabric-x-sdk/blocks/fabricx"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	efab "github.com/hyperledger/fabric-x-sdk/endorsement/fabric"
 	efabx "github.com/hyperledger/fabric-x-sdk/endorsement/fabricx"
@@ -103,7 +102,7 @@ func (th *TestHarness) PrimeGenesisAlloc(ctx context.Context, pre types.GenesisA
 
 	// Sort addresses to ensure deterministic account creation order
 	// (Go map iteration order is random, which affects the state trie structure)
-	var addresses []common.Address
+	var addresses []ethcommon.Address
 	for addr := range pre {
 		addresses = append(addresses, addr)
 	}
@@ -131,7 +130,7 @@ func (th *TestHarness) PrimeGenesisAlloc(ctx context.Context, pre types.GenesisA
 		}
 
 		// Set storage
-		var storage map[common.Hash]common.Hash
+		var storage map[ethcommon.Hash]ethcommon.Hash
 		if len(account.Storage) > 0 {
 			storage = account.Storage
 		}
@@ -202,7 +201,7 @@ func (th *TestHarness) PrimeStateFromJSON(ctx context.Context, jsonFilePath stri
 //
 // Sync goroutines are started in the background using ctx. The returned synchronizers
 // can be used by callers that need to wait for the initial sync to complete.
-func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmConfig *endorser.EVMConfig, primeDBPath, networkType string) (*TestHarness, []*network.Synchronizer, error) {
+func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmConfig *endorser.EVMConfig, primeDBPath string, bypass bool) (*TestHarness, []*network.Synchronizer, error) {
 	t.Helper()
 
 	var ethChainConfig *params.ChainConfig
@@ -216,31 +215,21 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 	ends := make([]*endorser.Endorser, len(cfg.Endorsers))
 	syncs := make([]*network.Synchronizer, len(cfg.Endorsers))
 	for i, ecfg := range cfg.Endorsers {
-		dbs[i], builders[i], ends[i], syncs[i] = newEndorser(t, logger, ecfg, cfg.Network.Channel, cfg.Network.Namespace, evmConfig, networkType)
+		dbs[i], builders[i], ends[i], syncs[i] = newEndorser(t, logger, ecfg, cfg.Network.Channel, cfg.Network.Namespace, evmConfig, cfg.Network.Protocol)
 	}
 
 	// Start sync goroutines; they run until the test context is cancelled.
-	// Register a cleanup to wait for each goroutine to exit before the test
-	// is considered done, preventing goroutine accumulation across subtests.
-	if networkType != "bypass" {
+	if !bypass {
 		for _, s := range syncs {
-			done := make(chan struct{})
-			go func() {
-				defer close(done)
-				_ = s.Start(t.Context())
-			}()
-			t.Cleanup(func() {
-				<-done
-				_ = s.Close()
-			})
+			go s.Start(t.Context())
 		}
 	}
 
 	// Build identity deserializer.
 	var des api.IdentityDeserializer
-	if cfg.Endorsers[0].MspDir != "" {
+	if cfg.Endorsers[0].Identity.MSPDir != "" {
 		var err error
-		des, err = api.NewFabricDeserializer(cfg.Endorsers[0].MspDir, cfg.Endorsers[0].MspID)
+		des, err = api.NewFabricDeserializer(cfg.Endorsers[0].Identity.MSPDir, cfg.Endorsers[0].Identity.MspID)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -256,9 +245,9 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 
 	// Build gateway signer.
 	var gwSigner sdk.Signer
-	if cfg.Gateway.SignerMSPDir != "" {
+	if cfg.Gateway.Identity.MSPDir != "" {
 		var err error
-		gwSigner, err = identity.SignerFromMSP(cfg.Gateway.SignerMSPDir, cfg.Gateway.SignerMSPID)
+		gwSigner, err = identity.SignerFromMSP(cfg.Gateway.Identity.MSPDir, cfg.Gateway.Identity.MspID)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -274,21 +263,24 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 	// Build submitter.
 	orderers := make([]network.OrdererConf, len(cfg.Gateway.Orderers))
 	for i, o := range cfg.Gateway.Orderers {
-		orderers[i] = network.OrdererConf{Address: o.Address, TLSPath: o.TLSPath}
+		orderers[i] = o.ToOrdererConf()
 	}
+
 	var submitter core.Submitter
-	switch networkType {
-	case "fabric":
-		submitter, err = nfab.NewSubmitter(orderers, gwSigner, cfg.Gateway.SubmitWaitTime, logger)
-	case "fabric-x":
-		submitter, err = nfabx.NewSubmitter(orderers, gwSigner, cfg.Gateway.SubmitWaitTime, logger)
-	case "bypass":
+	if bypass {
 		submitter = local.NewLocalSubmitter(dbs[0], cfg.Network.Channel, cfg.Network.Namespace, nfab.NewTxPackager(gwSigner), bfab.NewBlockParser(logger), false)
-	default:
-		return nil, nil, fmt.Errorf("unsupported network type: %s", networkType)
-	}
-	if err != nil {
-		return nil, nil, err
+	} else {
+		switch cfg.Network.Protocol {
+		case "fabric":
+			submitter, err = nfab.NewSubmitter(orderers, gwSigner, cfg.Gateway.SubmitWaitTime, logger)
+		case "fabric-x", "":
+			submitter, err = nfabx.NewSubmitter(orderers, gwSigner, cfg.Gateway.SubmitWaitTime, logger)
+		default:
+			return nil, nil, fmt.Errorf("unsupported protocol: %q", cfg.Network.Protocol)
+		}
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 
 	gw, err := core.New(ec, submitter, nil, cfg.Network.ChainID)
@@ -296,7 +288,7 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 		return nil, nil, err
 	}
 
-	primer, err := NewStatePrimer(dbs[0], cfg.Network.Namespace, gwSigner, builders, submitter, cfg.Network.Channel, cfg.Network.NsVersion, networkType == "fabric-x")
+	primer, err := NewStatePrimer(dbs[0], cfg.Network.Namespace, gwSigner, builders, submitter, cfg.Network.Channel, cfg.Network.NsVersion, cfg.Network.Protocol == "fabric-x")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -318,25 +310,32 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 // newLocalTestHarness commits updates directly to the DB, bypassing peers and orderers.
 // Exported for use by eth-tests package.
 func newLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig *endorser.EVMConfig, primeDbPath, networkType string) (*TestHarness, error) {
-	var orderer, peer string
+	bypass := networkType == "bypass"
 
-	if networkType == "bypass" {
-		orderer = "127.0.0.1:1337"
-		peer = "127.0.0.1:1337"
-	} else {
-		nw, err := fabrictest.Start("basic", networkType, fabrictest.BatchingConfig{})
+	orderer := &common.Endpoint{Host: "127.0.0.1", Port: 1337}
+	peer := &common.Endpoint{Host: "127.0.0.1", Port: 1337}
+
+	if !bypass {
+		nw, err := fabrictest.Start("basic", networkType, fabrictest.Config{})
 		if err != nil {
 			t.Fatalf("fabrictest.Start: %v", err)
 		}
 		t.Cleanup(nw.Stop)
-		orderer = nw.OrdererAddr
-		peer = nw.PeerAddr
+		orderer.Port = nw.OrdererPort
+		peer.Port = nw.PeerPort
+	}
+
+	// bypass mode uses Fabric block format
+	protocol := networkType
+	if bypass {
+		protocol = "fabric"
 	}
 
 	tname := strings.ReplaceAll(strings.ReplaceAll(t.Name(), "/", "_"), ".", "-")
 	dir := t.TempDir()
 	cfg := config.Config{
-		Network: config.Network{
+		Network: common.Network{
+			Protocol:  protocol,
 			Channel:   "mychannel",
 			Namespace: "basic",
 			NsVersion: "1.0",
@@ -346,11 +345,13 @@ func newLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig *endorser.EV
 			DbConnStr:      filepath.Join(dir, tname+"gateway.db"),
 			SubmitWaitTime: 10 * time.Millisecond,
 			SyncTimeout:    2 * time.Second,
-			Orderers:       []config.Orderer{{Address: orderer}},
+			Orderers: []common.ClientConfig{
+				{Endpoint: orderer},
+			},
 		},
 		Endorsers: []econf.Endorser{
 			{
-				PeerAddr:  peer,
+				Committer: common.ClientConfig{Endpoint: peer},
 				Name:      "endorser1",
 				DbConnStr: filepath.Join(dir, tname+"endorser1.db"),
 			},
@@ -360,7 +361,7 @@ func newLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig *endorser.EV
 		cfg.Network.ChainID = evmConfig.ChainConfig.ChainID.Int64()
 	}
 
-	th, _, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, networkType)
+	th, _, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, bypass)
 	if err != nil {
 		return nil, err
 	}
@@ -391,15 +392,13 @@ func newFabricTestHarness(t *testing.T, logger sdk.Logger, ethChainConfig *param
 		cfg.Network.ChainID = ethChainConfig.ChainID.Int64()
 	}
 
-	th, syncs, err := buildTestHarness(t, logger, cfg, &endorser.EVMConfig{ChainConfig: ethChainConfig}, primeDbPath, "fabric")
+	th, syncs, err := buildTestHarness(t, logger, cfg, &endorser.EVMConfig{ChainConfig: ethChainConfig}, primeDbPath, false)
 	if err != nil {
 		return nil, err
 	}
 
 	for _, s := range syncs {
-		if err := s.WaitUntilSynced(t.Context(), cfg.Gateway.SyncTimeout); err != nil {
-			return nil, err
-		}
+		waitUntilSynced(t, s, 10*time.Second)
 	}
 
 	return th, nil
@@ -414,25 +413,23 @@ func newFabricXTestHarness(t *testing.T, logger sdk.Logger, ethChainConfig *para
 		cfg.Network.ChainID = ethChainConfig.ChainID.Int64()
 	}
 
-	th, _, err := buildTestHarness(t, logger, cfg, &endorser.EVMConfig{ChainConfig: ethChainConfig}, primeDbPath, "fabric-x")
+	th, _, err := buildTestHarness(t, logger, cfg, &endorser.EVMConfig{ChainConfig: ethChainConfig}, primeDbPath, false)
 	if err != nil {
 		return nil, err
 	}
 
-	time.Sleep(2 * time.Second) // wait until synced...
-
 	return th, nil
 }
 
-func newEndorser(t *testing.T, logger sdk.Logger, cfg econf.Endorser, channel, namespace string, evmConfig *endorser.EVMConfig, typ string) (*state.VersionedDB, endorsement.Builder, *endorser.Endorser, *network.Synchronizer) {
+func newEndorser(t *testing.T, logger sdk.Logger, cfg econf.Endorser, channel, namespace string, evmConfig *endorser.EVMConfig, protocol string) (*state.VersionedDB, endorsement.Builder, *endorser.Endorser, *network.Synchronizer) {
 	t.Helper()
 
 	var signer sdk.Signer
-	if cfg.MspDir == "" {
+	if cfg.Identity.MSPDir == "" {
 		signer = &localSigner{}
 	} else {
 		var err error
-		signer, err = identity.SignerFromMSP(cfg.MspDir, cfg.MspID)
+		signer, err = identity.SignerFromMSP(cfg.Identity.MSPDir, cfg.Identity.MspID)
 		if err != nil {
 			t.Fatalf("SignerFromMSP: %v", err)
 		}
@@ -444,42 +441,34 @@ func newEndorser(t *testing.T, logger sdk.Logger, cfg econf.Endorser, channel, n
 	}
 	t.Cleanup(func() { writeDB.Close() })
 
-	// the shape of endorsements and blocks differs per ledger.
-	var builder endorsement.Builder
-	var processor network.BlockProcessor
-	var monotonicVersions bool
-	switch typ {
-	case "bypass":
-		fallthrough // with the bypass network type, we encode blocks like fabric
-	case "fabric":
-		processor = blocks.NewProcessor(bfab.NewBlockParser(logger), []blocks.BlockHandler{writeDB})
-		builder = efab.NewEndorsementBuilder(signer)
-	case "fabric-x":
-		processor = blocks.NewProcessor(bfabx.NewBlockParser(logger), []blocks.BlockHandler{writeDB})
-		builder = efabx.NewEndorsementBuilder(signer)
-		monotonicVersions = true
-	default:
-		t.Fatalf("networkType must be fabric or fabric-x, got %q", typ)
-	}
-
-	if evmConfig == nil {
-		evmConfig = &endorser.EVMConfig{}
-	}
-
-	end, err := endorser.New(endorser.NewEVMEngine(namespace, writeDB, evmConfig, monotonicVersions), builder)
-	if err != nil {
-		t.Fatalf("endorser.New: %v", err)
-	}
-
 	readDB, err := state.NewReadDB(channel, cfg.DbConnStr)
 	if err != nil {
 		t.Fatalf("NewReadDB: %v", err)
 	}
 	t.Cleanup(func() { readDB.Close() })
 
-	sync, err := network.NewSynchronizer(readDB, channel, cfg.PeerAddr, cfg.PeerTLS, signer, processor, logger)
+	// the shape of endorsements and blocks differs per protocol.
+	var builder endorsement.Builder
+	var sync *network.Synchronizer
+	var monotonicVersions bool
+	switch protocol {
+	case "fabric", "":
+		builder = efab.NewEndorsementBuilder(signer)
+		sync, err = nfab.NewSynchronizer(readDB, channel, cfg.Committer.ToPeerConf(), signer, logger, writeDB)
+	case "fabric-x":
+		builder = efabx.NewEndorsementBuilder(signer)
+		sync, err = nfabx.NewSynchronizer(readDB, channel, cfg.Committer.ToPeerConf(), signer, logger, writeDB)
+		monotonicVersions = true
+	default:
+		t.Fatalf("unsupported protocol: %q", protocol)
+	}
 	if err != nil {
 		t.Fatalf("NewSynchronizer: %v", err)
+	}
+
+	end, err := endorser.New(endorser.NewEVMEngine(namespace, writeDB, evmConfig, monotonicVersions), builder)
+	if err != nil {
+		t.Fatalf("endorser.New: %v", err)
 	}
 
 	return writeDB, builder, end, sync
@@ -519,7 +508,7 @@ func processCommon(t *testing.T, gw *core.Gateway, commit bool, tx *types.Transa
 	return env
 }
 
-func getEndorsedTxForSmartContractCall(t *testing.T, client *EthClient, addr common.Address, gw *core.Gateway, method string, blockInfo *utils.BlockInfo, args ...any) sdk.Endorsement {
+func getEndorsedTxForSmartContractCall(t *testing.T, client *EthClient, addr ethcommon.Address, gw *core.Gateway, method string, blockInfo *utils.BlockInfo, args ...any) sdk.Endorsement {
 	t.Helper()
 	tx, err := client.txForCall(t.Context(), gw, &addr, method, blockInfo, args...)
 	if err != nil {
@@ -540,7 +529,7 @@ func newNativeEthClient(gw *core.Gateway) (*ethclient.Client, error) {
 	return ethclient.NewClient(client), nil
 }
 
-func deploySmartContract(t *testing.T, gw *core.Gateway, client *EthClient, args ...any) common.Address {
+func deploySmartContract(t *testing.T, gw *core.Gateway, client *EthClient, args ...any) ethcommon.Address {
 	t.Helper()
 
 	ec, err := newNativeEthClient(gw)
@@ -561,7 +550,7 @@ func deploySmartContract(t *testing.T, gw *core.Gateway, client *EthClient, args
 	return addr
 }
 
-func callSmartContract(t *testing.T, client *EthClient, addr common.Address, gw *core.Gateway, method string, blockInfo *utils.BlockInfo, args ...any) {
+func callSmartContract(t *testing.T, client *EthClient, addr ethcommon.Address, gw *core.Gateway, method string, blockInfo *utils.BlockInfo, args ...any) {
 	t.Helper()
 
 	ec, err := newNativeEthClient(gw)
@@ -580,7 +569,7 @@ func callSmartContract(t *testing.T, client *EthClient, addr common.Address, gw 
 	}
 }
 
-func querySmartContract(t *testing.T, gw *core.Gateway, client *EthClient, addr common.Address, method string, params ...any) []any {
+func querySmartContract(t *testing.T, gw *core.Gateway, client *EthClient, addr ethcommon.Address, method string, params ...any) []any {
 	t.Helper()
 
 	ec, err := newNativeEthClient(gw)
@@ -610,7 +599,7 @@ func querySmartContract(t *testing.T, gw *core.Gateway, client *EthClient, addr 
 }
 
 // querySmartContractExpect queries all gateways in the test harness and expects the same result
-func querySmartContractExpect(t *testing.T, client *EthClient, addr common.Address, th *TestHarness, expected any, method string, params ...any) {
+func querySmartContractExpect(t *testing.T, client *EthClient, addr ethcommon.Address, th *TestHarness, expected any, method string, params ...any) {
 	for _, gw := range th.gateways {
 		res := querySmartContract(t, gw, client, addr, method, params...)
 		if len(res) == 0 {
@@ -684,4 +673,21 @@ func (tl TestLogger) Warnf(format string, v ...any) {
 func (tl TestLogger) Errorf(format string, v ...any) {
 	tl.T.Helper()
 	tl.T.Logf(tl.ID+" > [ERROR] "+format, v...)
+}
+
+func waitUntilSynced(t *testing.T, sync *network.Synchronizer, timeout time.Duration) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), timeout)
+	defer cancel()
+
+	for {
+		if err := sync.Ready(); err == nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("timeout waiting for sync")
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
 }
