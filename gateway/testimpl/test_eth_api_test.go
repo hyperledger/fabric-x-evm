@@ -75,7 +75,7 @@ func TestTestEthAPI_Accounts(t *testing.T) {
 
 func TestTestEthAPI_SendTransaction_Validation(t *testing.T) {
 	// Load test accounts from JSON file
-	testAccountMgr, err := LoadTestAccounts("../../testdata/test-accounts.json")
+	testAccountMgr, err := LoadTestAccounts("../../testdata/test_accounts.json")
 	if err != nil {
 		t.Fatalf("Failed to load test accounts: %v", err)
 	}

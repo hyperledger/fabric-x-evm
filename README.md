@@ -122,7 +122,7 @@ solc --bin --abi --storage-layout --overwrite --evm-version paris \
 #### Generate a wallet
 
 For development and testing, you can use the pre-configured Hardhat test accounts
-available in `testdata/test-accounts.json`. These accounts are publicly known and
+available in `testdata/test_accounts.json`. These accounts are publicly known and
 should NEVER be used on mainnet or with real funds.
 
 To enable test RPC methods (`eth_accounts` and `eth_sendTransaction`) that support
