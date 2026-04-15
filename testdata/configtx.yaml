@@ -3,7 +3,7 @@ Organizations:
   - &Org1MSP
     Name: Org1
     ID: Org1MSP
-    MSPDir: ./crypto/peerOrganizations/org1.example.com/msp
+    MSPDir: ./crypto/peerOrganizations/Org1/msp
     Policies:
       Readers:
         Type: Signature
@@ -23,7 +23,7 @@ Organizations:
   - &Org2MSP
     Name: Org2
     ID: Org2MSP
-    MSPDir: ./crypto/peerOrganizations/org2.example.com/msp
+    MSPDir: ./crypto/peerOrganizations/Org2/msp
     Policies:
       Readers:
         Type: Signature
@@ -43,7 +43,7 @@ Organizations:
   - &OrdererMSP
     Name: OrdererOrg
     ID: OrdererMSP
-    MSPDir: ./crypto/ordererOrganizations/example.com/msp
+    MSPDir: ./crypto/ordererOrganizations/OrdererOrg/msp
     Policies:
       Readers:
         Type: Signature
@@ -55,8 +55,7 @@ Organizations:
         Type: Signature
         Rule: OR('OrdererMSP.admin')
     OrdererEndpoints:
-      - id=0,broadcast,127.0.0.1:7050
-      - id=0,deliver,127.0.0.1:7050
+      - id=0,broadcast,deliver,127.0.0.1:7050
 
 Channel: &ChannelDefaults
   Capabilities:
@@ -91,8 +90,8 @@ Profiles:
         Consenters:
           - Host: 127.0.0.1
             Port: 5427
-            ClientTLSCert: ./crypto/ordererOrganizations/example.com/orderers/orderer.example.com/tls/server.crt
-            ServerTLSCert: ./crypto/ordererOrganizations/example.com/orderers/orderer.example.com/tls/server.crt
+            ClientTLSCert: ./crypto/ordererOrganizations/OrdererOrg/orderers/orderer.example.com/tls/server.crt
+            ServerTLSCert: ./crypto/ordererOrganizations/OrdererOrg/orderers/orderer.example.com/tls/server.crt
       Organizations:
         - *OrdererMSP
       Policies:
@@ -114,7 +113,6 @@ Profiles:
       Organizations:
         - *Org1MSP
         - *Org2MSP
-      MetaNamespaceVerificationKeyPath: ./crypto/peerOrganizations/org1.example.com/users/channel_admin@org1.example.com/msp/signcerts/channel_admin@org1.example.com-cert.pem
       Policies:
         Readers:
           Type: ImplicitMeta

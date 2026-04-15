@@ -13,11 +13,13 @@ import (
 	"github.com/hyperledger/fabric-x-evm/endorser"
 	"github.com/hyperledger/fabric-x-evm/endorser/config"
 	sdk "github.com/hyperledger/fabric-x-sdk"
-	"github.com/hyperledger/fabric-x-sdk/blocks"
-	"github.com/hyperledger/fabric-x-sdk/blocks/fabric"
+	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	efab "github.com/hyperledger/fabric-x-sdk/endorsement/fabric"
+	efabx "github.com/hyperledger/fabric-x-sdk/endorsement/fabricx"
 	"github.com/hyperledger/fabric-x-sdk/identity"
 	sdknet "github.com/hyperledger/fabric-x-sdk/network"
+	nfab "github.com/hyperledger/fabric-x-sdk/network/fabric"
+	nfabx "github.com/hyperledger/fabric-x-sdk/network/fabricx"
 	"github.com/hyperledger/fabric-x-sdk/state"
 )
 
@@ -25,12 +27,12 @@ import (
 // This is the canonical way to create an endorser, whether embedded or standalone.
 func NewEndorser(
 	cfg config.Endorser,
-	network config.Network,
+	network common.Network,
 	logger sdk.Logger,
 	skipAllNonceChecks bool,
 ) (*endorser.Endorser, *sdknet.Synchronizer, error) {
 	// Signer is the identity to connect to the peer for synchronizing, and for signing the endorsement.
-	signer, err := identity.SignerFromMSP(cfg.MspDir, cfg.MspID)
+	signer, err := identity.SignerFromMSP(cfg.Identity.MSPDir, cfg.Identity.MspID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create signer: %w", err)
 	}
@@ -48,19 +50,24 @@ func NewEndorser(
 		ChainConfig: common.BuildChainConfig(network.ChainID),
 	}
 
-	// Executing transactions and signing the endorsement.
-	engine := endorser.NewEVMEngine(network.Namespace, readDB, evmConfig, false)
-	end, err := endorser.New(engine, efab.NewEndorsementBuilder(signer))
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create endorser: %w", err)
+	var builder endorsement.Builder
+	var sync *sdknet.Synchronizer
+	switch network.Protocol {
+	case "fabric-x":
+		builder = efabx.NewEndorsementBuilder(signer)
+		sync, err = nfabx.NewSynchronizer(readDB, network.Channel, cfg.Committer.ToPeerConf(), signer, logger, writeDB)
+	default: // "fabric" or ""
+		builder = efab.NewEndorsementBuilder(signer)
+		sync, err = nfab.NewSynchronizer(readDB, network.Channel, cfg.Committer.ToPeerConf(), signer, logger, writeDB)
 	}
-
-	// Synchronizer synchronizes the world state with a committing peer.
-	// extractor := bfab.NewRwSetExtractor(network.Namespace)
-	processor := blocks.NewProcessor(fabric.NewBlockParser(logger), []blocks.BlockHandler{writeDB})
-	sync, err := sdknet.NewSynchronizer(readDB, network.Channel, cfg.PeerAddr, cfg.PeerTLS, signer, processor, logger)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create synchronizer: %w", err)
+	}
+
+	// Executing transactions and signing the endorsement.
+	end, err := endorser.New(endorser.NewEVMEngine(network.Namespace, readDB, evmConfig, false), builder)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create endorser: %w", err)
 	}
 
 	return end, sync, nil
