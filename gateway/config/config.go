@@ -44,5 +44,3 @@ type Gateway struct {
 type Server struct {
 	Bind string
 }
-
-// Made with Bob
