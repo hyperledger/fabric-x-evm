@@ -121,25 +121,12 @@ solc --bin --abi --storage-layout --overwrite --evm-version paris \
 
 #### Generate a wallet
 
-For development and testing, you can use the pre-configured Hardhat test accounts
-available in `testdata/test_accounts.json`. These accounts are publicly known and
-should NEVER be used on mainnet or with real funds.
-
-To enable test RPC methods (`eth_accounts` and `eth_sendTransaction`) that support
-server-side signing with these accounts, set `EnableTestRPC: true` in your gateway
-configuration and specify the path to the test accounts file.
-
-**WARNING**: Server-side signing is inherently insecure and should only be used for
-development and testing purposes.
-
-Alternatively, generate a new wallet for manual signing:
+Copy the address and private key, they will be the deployer / admin wallet for
+the contract.
 
 ```shell
 cast wallet new
 ```
-
-Copy the address and private key, they will be the deployer / admin wallet for
-the contract.
 
 #### Configure Metamask
 

@@ -18,8 +18,6 @@ import (
 )
 
 // NewServer returns a production RPC server without test-only methods.
-// For development/testing with eth_accounts and eth_sendTransaction support,
-// use testimpl.NewTestServer instead.
 func NewServer(b Backend) (*rpc.Server, error) {
 	srv := rpc.NewServer()
 	if err := srv.RegisterName("eth", NewEthAPI(b)); err != nil {

@@ -40,6 +40,12 @@ type Gateway struct {
 	EnableTestRPC    bool   `mapstructure:"enable-test-rpc" yaml:"enable-test-rpc"`       // Enable test-only RPC methods (eth_accounts, eth_sendTransaction) - UNSAFE for production
 }
 
+// Orderer contains configuration for an orderer node.
+type Orderer struct {
+	Address string
+	TLS     common.TLSConfig
+}
+
 // Server contains HTTP server configuration.
 type Server struct {
 	Bind string
