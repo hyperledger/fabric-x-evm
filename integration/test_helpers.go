@@ -9,7 +9,6 @@ package integration
 import (
 	"bytes"
 	"context"
-	"crypto/ecdsa"
 	"errors"
 	"fmt"
 	"math/big"
@@ -531,8 +530,8 @@ func getEndorsedTxForSmartContractCall(t *testing.T, client *EthClient, addr com
 }
 
 func newNativeEthClient(gw *core.Gateway) (*ethclient.Client, error) {
-	// Create RPC server with empty test accounts (not needed for integration tests)
-	rpcServer, err := gwapi.NewServer(gw, []common.Address{}, make(map[common.Address]*ecdsa.PrivateKey))
+	// Create production RPC server (no test accounts needed for integration tests)
+	rpcServer, err := gwapi.NewServer(gw)
 	if err != nil {
 		return nil, err
 	}

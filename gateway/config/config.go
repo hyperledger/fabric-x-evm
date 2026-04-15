@@ -50,6 +50,7 @@ type Gateway struct {
 	SyncPeerTLS      string
 	SyncTimeout      time.Duration
 	TestAccountsPath string // Path to JSON file with test accounts for eth_accounts RPC
+	EnableTestRPC    bool   // Enable test-only RPC methods (eth_accounts, eth_sendTransaction) - UNSAFE for production
 }
 
 // Orderer contains configuration for an orderer node.

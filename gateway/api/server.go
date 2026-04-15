@@ -9,20 +9,20 @@ package api
 import (
 	"bytes"
 	"context"
-	"crypto/ecdsa"
 	"io"
 	"log"
 	"net/http"
 
-	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/node"
 	"github.com/ethereum/go-ethereum/rpc"
 )
 
-// NewServer returns an RPC server.
-func NewServer(b Backend, testAccounts []common.Address, testAccountKeys map[common.Address]*ecdsa.PrivateKey) (*rpc.Server, error) {
+// NewServer returns a production RPC server without test-only methods.
+// For development/testing with eth_accounts and eth_sendTransaction support,
+// use testimpl.NewTestServer instead.
+func NewServer(b Backend) (*rpc.Server, error) {
 	srv := rpc.NewServer()
-	if err := srv.RegisterName("eth", NewEthAPI(b, testAccounts, testAccountKeys)); err != nil {
+	if err := srv.RegisterName("eth", NewEthAPI(b)); err != nil {
 		return nil, err
 	}
 

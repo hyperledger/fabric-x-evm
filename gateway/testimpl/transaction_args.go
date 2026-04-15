@@ -5,9 +5,13 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 This file contains TransactionArgs struct adapted from go-ethereum:
 https://github.com/ethereum/go-ethereum/blob/master/internal/ethapi/api.go
+
+WARNING: This package contains test-only/unsafe RPC implementations.
+DO NOT use in production environments. These methods perform server-side
+transaction signing which is inherently insecure.
 */
 
-package api
+package testimpl
 
 import (
 	"math/big"

@@ -33,6 +33,7 @@ import (
 	"github.com/hyperledger/fabric-x-evm/gateway/api"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
+	"github.com/hyperledger/fabric-x-evm/gateway/testimpl"
 )
 
 // App represents the gateway application with all its components.
@@ -120,15 +121,28 @@ func New(cfg config.Config) (*App, error) {
 		return nil, fmt.Errorf("failed to create gateway synchronizer: %w", err)
 	}
 
-	// Load test accounts if configured
-	testAccountMgr, err := LoadTestAccounts(cfg.Gateway.TestAccountsPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load test accounts: %w", err)
-	}
+	// Create RPC server - use test server if explicitly enabled
+	var rpcServer *rpc.Server
+	if cfg.Gateway.EnableTestRPC {
+		// UNSAFE: Test RPC methods enabled - load test accounts
+		log.Println("WARNING: Test RPC methods enabled (eth_accounts, eth_sendTransaction)")
+		log.Println("WARNING: Server-side signing is UNSAFE and should NEVER be used in production")
 
-	rpcServer, err := api.NewServer(gateway, testAccountMgr.Addresses, testAccountMgr.PrivateKeys)
-	if err != nil {
-		return nil, err
+		testAccountMgr, err := testimpl.LoadTestAccounts(cfg.Gateway.TestAccountsPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load test accounts: %w", err)
+		}
+
+		rpcServer, err = testimpl.NewTestServer(gateway, testAccountMgr.Addresses, testAccountMgr.PrivateKeys)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// Production server without test methods
+		rpcServer, err = api.NewServer(gateway)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return &App{

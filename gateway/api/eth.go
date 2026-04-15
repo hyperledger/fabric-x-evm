@@ -8,8 +8,6 @@ package api
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"fmt"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum"
@@ -51,17 +49,18 @@ type Backend interface {
 }
 
 type EthAPI struct {
-	b               Backend
-	testAccounts    []common.Address
-	testAccountKeys map[common.Address]*ecdsa.PrivateKey // address -> pre-converted private key
+	b Backend
 }
 
-func NewEthAPI(b Backend, testAccounts []common.Address, testAccountKeys map[common.Address]*ecdsa.PrivateKey) *EthAPI {
+func NewEthAPI(b Backend) *EthAPI {
 	return &EthAPI{
-		b:               b,
-		testAccounts:    testAccounts,
-		testAccountKeys: testAccountKeys,
+		b: b,
 	}
+}
+
+// Backend returns the backend interface for use by wrappers
+func (api *EthAPI) Backend() Backend {
+	return api.b
 }
 
 // Chain
@@ -85,11 +84,6 @@ func (api *EthAPI) BlockNumber(ctx context.Context) (hexutil.Uint64, error) {
 }
 
 // Blocks
-
-// eth_accounts
-func (api *EthAPI) Accounts(ctx context.Context) ([]common.Address, error) {
-	return api.testAccounts, nil
-}
 
 // eth_getBlockByNumber
 func (api *EthAPI) GetBlockByNumber(ctx context.Context, num rpc.BlockNumber, full bool) (*RPCBlock, error) {
@@ -180,83 +174,6 @@ func (api *EthAPI) SendRawTransaction(ctx context.Context, input hexutil.Bytes) 
 		return common.Hash{}, err
 	}
 	return tx.Hash(), nil
-}
-
-// eth_sendTransaction
-func (api *EthAPI) SendTransaction(ctx context.Context, args TransactionArgs) (common.Hash, error) {
-	// Validate from address
-	if args.From == nil {
-		return common.Hash{}, fmt.Errorf("missing 'from' field")
-	}
-
-	// Get private key for this address
-	privateKey, ok := api.testAccountKeys[*args.From]
-	if !ok {
-		return common.Hash{}, fmt.Errorf("no private key available for address %s", args.From.Hex())
-	}
-
-	// Set defaults for unspecified fields
-	args.setDefaults()
-
-	// Get nonce if not specified
-	var nonce uint64
-	if args.Nonce != nil {
-		nonce = uint64(*args.Nonce)
-	} else {
-		var err error
-		nonce, err = api.b.NonceAt(ctx, *args.From, nil)
-		if err != nil {
-			return common.Hash{}, fmt.Errorf("failed to get nonce: %w", err)
-		}
-	}
-
-	// Get chainID
-	chainID, err := api.b.ChainID(ctx)
-	if err != nil {
-		return common.Hash{}, fmt.Errorf("failed to get chainID: %w", err)
-	}
-
-	// Build transaction
-	var tx *types.Transaction
-	data := args.data()
-	gasLimit := uint64(*args.Gas)
-	value := (*big.Int)(args.Value)
-	gasPrice := (*big.Int)(args.GasPrice)
-
-	if args.To != nil {
-		// Contract call or transfer
-		tx = types.NewTx(&types.LegacyTx{
-			Nonce:    nonce,
-			To:       args.To,
-			Value:    value,
-			Gas:      gasLimit,
-			GasPrice: gasPrice,
-			Data:     data,
-		})
-	} else {
-		// Contract deployment
-		tx = types.NewTx(&types.LegacyTx{
-			Nonce:    nonce,
-			To:       nil,
-			Value:    value,
-			Gas:      gasLimit,
-			GasPrice: gasPrice,
-			Data:     data,
-		})
-	}
-
-	// Sign transaction
-	signedTx, err := types.SignTx(tx, types.NewEIP155Signer(chainID), privateKey)
-	if err != nil {
-		return common.Hash{}, fmt.Errorf("failed to sign transaction: %w", err)
-	}
-
-	// Send signed transaction
-	if err := api.b.SendTransaction(ctx, signedTx); err != nil {
-		return common.Hash{}, err
-	}
-
-	return signedTx.Hash(), nil
 }
 
 // eth_getTransactionByHash
