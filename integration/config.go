@@ -7,14 +7,18 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package integration
 
 import (
+	"cmp"
 	"fmt"
 	"math/rand/v2"
 	"os"
+	"path"
 	"path/filepath"
 	"time"
 
+	"github.com/hyperledger/fabric-x-evm/common"
 	econf "github.com/hyperledger/fabric-x-evm/endorser/config"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
+	"github.com/hyperledger/fabric-x-sdk/network"
 )
 
 // findProjectRoot walks up the directory tree to find the project root.
@@ -58,51 +62,77 @@ func FabricSamplesConfig(testdataDir string) config.Config {
 			testdataDir = filepath.Join(projectRoot, testdataDir)
 		}
 	}
-	orgsDir := filepath.Join(testdataDir, "fabric-samples/test-network/organizations")
+	orgsDir := filepath.Join(testdataDir, "fabric-samples", "test-network", "organizations")
+	org1 := path.Join(orgsDir, "peerOrganizations", "org1.example.com")
+	org2 := path.Join(orgsDir, "peerOrganizations", "org2.example.com")
+	orderer := path.Join(orgsDir, "ordererOrganizations", "example.com")
 
+	endorser1 := path.Join(org1, "peers", "peer0.org1.example.com")
+	endorser2 := path.Join(org2, "peers", "peer0.org2.example.com")
+	user := path.Join(org1, "users", "User1@org1.example.com")
 	x := rand.Int64()
 
 	return config.Config{
-		Network: config.Network{
+		Network: common.Network{
+			Protocol:  "fabric",
 			Channel:   "mychannel",
 			Namespace: "basic",
 			NsVersion: "1.0",
 			ChainID:   31337,
 		},
 		Gateway: config.Gateway{
-			SignerMSPDir: filepath.Join(orgsDir, "peerOrganizations/org1.example.com/users/User1@org1.example.com/msp"),
-			SignerMSPID:  "Org1MSP",
-			DbConnStr:    "file:blocks?mode=memory&cache=shared",
-			TrieDBPath:   "",
-			// DbConnStr:      "file:../testdata/blocks.db",
-			SubmitWaitTime: 2200 * time.Millisecond,
-			SyncPeerAddr:   "localhost:7051",
-			SyncPeerTLS:    filepath.Join(orgsDir, "peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem"),
-			SyncTimeout:    10 * time.Second,
-			Orderers: []config.Orderer{
-				{
-					Address: "localhost:7050",
-					TLSPath: filepath.Join(orgsDir, "ordererOrganizations/example.com/tlsca/tlsca.example.com-cert.pem"),
+			Orderers: []common.ClientConfig{{
+				Endpoint: &common.Endpoint{Host: "localhost", Port: 7050},
+				TLS: common.TLSConfig{
+					Mode:        network.TLSModeTLS,
+					CACertPaths: []string{path.Join(orderer, "tlsca", "tlsca.example.com-cert.pem")},
+				},
+			}},
+			Committer: common.ClientConfig{
+				Endpoint: &common.Endpoint{Host: "localhost", Port: 7051},
+				TLS: common.TLSConfig{
+					Mode:        network.TLSModeTLS,
+					CACertPaths: []string{path.Join(endorser1, "tls", "ca.crt")},
 				},
 			},
+			Identity: common.IdentityConfig{
+				MspID:  "Org1MSP",
+				MSPDir: path.Join(user, "msp"),
+			},
+			DbConnStr:      "file:gateway.db?mode=memory&cache=shared",
+			TrieDBPath:     "",
+			SubmitWaitTime: 2200 * time.Millisecond,
 		},
 		Endorsers: []econf.Endorser{
 			{
-				Name:      "org1",
-				PeerAddr:  "localhost:7051",
-				PeerTLS:   filepath.Join(orgsDir, "peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem"),
-				MspDir:    filepath.Join(orgsDir, "peerOrganizations/org1.example.com/peers/peer0.org1.example.com/msp"),
-				MspID:     "Org1MSP",
-				DbConnStr: fmt.Sprintf("file:endorser1%d?mode=memory&cache=shared", x),
-				// DbConnStr: "file:../testdata/endorser1.db",
+				Name: "org1",
+				Committer: common.ClientConfig{
+					Endpoint: &common.Endpoint{Host: "localhost", Port: 7051},
+					TLS: common.TLSConfig{
+						Mode:        network.TLSModeTLS,
+						CACertPaths: []string{path.Join(endorser1, "tls", "ca.crt")},
+					},
+				},
+				Identity: common.IdentityConfig{
+					MspID:  "Org1MSP",
+					MSPDir: filepath.Join(endorser1, "msp"),
+				},
+				DbConnStr: fmt.Sprintf("file:endorser1%d.db?mode=memory&cache=shared", x),
 			},
 			{
-				Name:      "org2",
-				PeerAddr:  "localhost:9051",
-				PeerTLS:   filepath.Join(orgsDir, "peerOrganizations/org2.example.com/tlsca/tlsca.org2.example.com-cert.pem"),
-				MspDir:    filepath.Join(orgsDir, "peerOrganizations/org2.example.com/peers/peer0.org2.example.com/msp"),
-				MspID:     "Org2MSP",
-				DbConnStr: fmt.Sprintf("file:endorser2%d?mode=memory&cache=shared", x),
+				Name: "org2",
+				Committer: common.ClientConfig{
+					Endpoint: &common.Endpoint{Host: "localhost", Port: 9051},
+					TLS: common.TLSConfig{
+						Mode:        network.TLSModeTLS,
+						CACertPaths: []string{path.Join(endorser2, "tls", "ca.crt")},
+					},
+				},
+				Identity: common.IdentityConfig{
+					MspID:  "Org2MSP",
+					MSPDir: filepath.Join(endorser2, "msp"),
+				},
+				DbConnStr: fmt.Sprintf("file:endorser2%d.db?mode=memory&cache=shared", x),
 			},
 		},
 		Server: config.Server{
@@ -115,51 +145,74 @@ func FabricSamplesConfig(testdataDir string) config.Config {
 // This configuration is used for integration testing with a local test network.
 func XTestCommitterConfig() config.Config {
 	// Use TESTDATA environment variable if set, otherwise find project root
-	var orgsDir string
-	if testdataDir := os.Getenv("TESTDATA"); testdataDir != "" {
-		orgsDir = testdataDir
-	} else {
-		// Find project root and construct path to testdata/crypto
-		projectRoot, err := findProjectRoot()
-		if err != nil {
-			// Fallback to relative path (works from integration/ directory)
-			orgsDir = "../testdata/crypto"
-		} else {
-			orgsDir = filepath.Join(projectRoot, "testdata", "crypto")
+	testdataDir := cmp.Or(os.Getenv("TESTDATA"), "testdata")
+	// If testdataDir is relative, make it absolute from project root
+	if !filepath.IsAbs(testdataDir) {
+		if projectRoot, err := findProjectRoot(); err == nil {
+			testdataDir = filepath.Join(projectRoot, testdataDir)
 		}
 	}
-
-	org1 := filepath.Join(orgsDir, "peerOrganizations", "org1.example.com")
+	org1 := path.Join(testdataDir, "crypto", "peerOrganizations", "Org1")
+	committer := path.Join(org1, "peers", "committer.org1.example.com")
+	endorser := path.Join(org1, "peers", "endorser.org1.example.com")
+	user := path.Join(org1, "users", "User1@org1.example.com")
 
 	return config.Config{
-		Network: config.Network{
+		Network: common.Network{
+			Protocol:  "fabric-x",
 			Channel:   "mychannel",
 			Namespace: "basic",
 			NsVersion: "1.0",
 			ChainID:   31337,
 		},
 		Gateway: config.Gateway{
-			SignerMSPDir:   filepath.Join(org1, "users", "User1@org1.example.com", "msp"),
-			SignerMSPID:    "Org1MSP",
-			DbConnStr:      "file:blocks?mode=memory&cache=shared",
-			SubmitWaitTime: 200 * time.Millisecond,
-			SyncPeerAddr:   "127.0.0.1:4001",
-			SyncPeerTLS:    "", // No TLS for X test committer
-			SyncTimeout:    10 * time.Second,
-			Orderers: []config.Orderer{{
-				Address: "127.0.0.1:7050",
-				TLSPath: "", // No TLS path for X test committer
+			Orderers: []common.ClientConfig{{
+				Endpoint: &common.Endpoint{Host: "127.0.0.1", Port: 7050},
+				TLS: common.TLSConfig{
+					Mode:        network.TLSModeMTLS,
+					CertPath:    path.Join(user, "tls", "client.crt"),
+					KeyPath:     path.Join(user, "tls", "client.key"),
+					CACertPaths: []string{path.Join(committer, "tls", "ca.crt")},
+				},
 			}},
+			Committer: common.ClientConfig{
+				Endpoint: &common.Endpoint{Host: "127.0.0.1", Port: 4001},
+				TLS: common.TLSConfig{
+					Mode:        network.TLSModeMTLS,
+					CertPath:    path.Join(user, "tls", "client.crt"),
+					KeyPath:     path.Join(user, "tls", "client.key"),
+					CACertPaths: []string{path.Join(committer, "tls", "ca.crt")},
+				},
+			},
+			Identity: common.IdentityConfig{
+				MspID:  "Org1MSP",
+				MSPDir: path.Join(user, "msp"),
+			},
+			DbConnStr:  "file:gateway.db?mode=memory&cache=shared",
+			TrieDBPath: "",
+			// DbConnStr:      "file:../testdata/blocks.db",
+			SubmitWaitTime: 200 * time.Millisecond,
 		},
 		Endorsers: []econf.Endorser{
 			{
-				Name:      "org1",
-				PeerAddr:  "127.0.0.1:4001",
-				PeerTLS:   "", // No TLS for X test committer
-				MspDir:    filepath.Join(org1, "peers", "endorser.org1.example.com", "msp"),
-				MspID:     "Org1MSP",
-				DbConnStr: "file:db1?mode=memory&cache=shared",
-				// DbConnStr: "endorser.sqlite",
+				Name: "org1",
+				Committer: common.ClientConfig{
+					Endpoint: &common.Endpoint{
+						Host: "127.0.0.1",
+						Port: 4001,
+					},
+					TLS: common.TLSConfig{
+						Mode:        network.TLSModeMTLS,
+						CertPath:    path.Join(user, "tls", "client.crt"),
+						KeyPath:     path.Join(user, "tls", "client.key"),
+						CACertPaths: []string{path.Join(committer, "tls", "ca.crt")},
+					},
+				},
+				Identity: common.IdentityConfig{
+					MspID:  "Org1MSP",
+					MSPDir: filepath.Join(endorser, "msp"),
+				},
+				DbConnStr: "file:endorser1.db?mode=memory&cache=shared",
 			},
 		},
 		Server: config.Server{

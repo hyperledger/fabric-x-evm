@@ -6,6 +6,7 @@ testdata/*
 !testdata/ethereum-tests
 !testdata/configtx.yaml
 !testdata/crypto-config.yaml
+!testdata/fxconfig.yaml
 !testdata/tether_txs.json
 !testdata/alloc_tether_replay.json
 *.un~

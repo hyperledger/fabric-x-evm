@@ -1,0 +1,35 @@
+logging:
+  level: info
+
+msp:
+  localMspID: Org1MSP
+  configPath: testdata/crypto/peerOrganizations/Org1/users/channel_admin@org1.example.com/msp
+
+orderer:
+  address: localhost:7050
+  channel: mychannel
+  tls:
+    enabled: true
+    clientCert: testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.crt
+    clientKey: testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.key
+    rootCerts:
+      - testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/ca.crt
+queries:
+  address: localhost:7001
+  tls:
+    enabled: true
+    clientCert: testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.crt
+    clientKey: testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.key
+    rootCerts:
+      - testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/ca.crt
+
+notifications:
+  address: localhost:4001
+  tls:
+    enabled: true
+    clientCert: testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.crt
+    clientKey: testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.key
+    rootCerts:
+      - testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/ca.crt
+  connectionTimeout: 5s
+  waitingTimeout: 5s

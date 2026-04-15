@@ -88,17 +88,17 @@ func TestGetLogs_BlockRange(t *testing.T) {
 		},
 		{
 			name:      "from block 3",
-			filter:    domain.LogFilter{FromBlock: ptr(uint64(3))},
+			filter:    domain.LogFilter{FromBlock: new(uint64(3))},
 			wantCount: 3,
 		},
 		{
 			name:      "to block 2",
-			filter:    domain.LogFilter{ToBlock: ptr(uint64(2))},
+			filter:    domain.LogFilter{ToBlock: new(uint64(2))},
 			wantCount: 2,
 		},
 		{
 			name:      "block range 2-4",
-			filter:    domain.LogFilter{FromBlock: ptr(uint64(2)), ToBlock: ptr(uint64(4))},
+			filter:    domain.LogFilter{FromBlock: new(uint64(2)), ToBlock: new(uint64(4))},
 			wantCount: 3,
 		},
 	}
@@ -345,10 +345,6 @@ func TestGetLogs_CombinedFilters(t *testing.T) {
 	if len(logs) != 1 {
 		t.Errorf("got %d logs, want 1", len(logs))
 	}
-}
-
-func ptr[T any](v T) *T {
-	return &v
 }
 
 func makeHash(prefix byte) []byte {
@@ -742,7 +738,7 @@ func TestInsertBlock_WithTransactionsAndLogs(t *testing.T) {
 	}
 
 	// Verify logs were inserted
-	retrievedLogs, err := store.GetLogs(t.Context(), domain.LogFilter{FromBlock: ptr(uint64(100)), ToBlock: ptr(uint64(100))})
+	retrievedLogs, err := store.GetLogs(t.Context(), domain.LogFilter{FromBlock: new(uint64(100)), ToBlock: new(uint64(100))})
 	if err != nil {
 		t.Fatalf("GetLogs error: %v", err)
 	}

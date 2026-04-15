@@ -8,6 +8,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -18,18 +19,16 @@ import (
 
 	"github.com/ethereum/go-ethereum/rpc"
 	sdk "github.com/hyperledger/fabric-x-sdk"
-	"github.com/hyperledger/fabric-x-sdk/blocks"
-	"github.com/hyperledger/fabric-x-sdk/blocks/fabric"
 	"github.com/hyperledger/fabric-x-sdk/identity"
 	"github.com/hyperledger/fabric-x-sdk/network"
 	nfab "github.com/hyperledger/fabric-x-sdk/network/fabric"
+	nfabx "github.com/hyperledger/fabric-x-sdk/network/fabricx"
 	"golang.org/x/sync/errgroup"
 	_ "modernc.org/sqlite"
 
 	"github.com/hyperledger/fabric-x-evm/endorser"
 	eapi "github.com/hyperledger/fabric-x-evm/endorser/api"
 	eapp "github.com/hyperledger/fabric-x-evm/endorser/app"
-	econf "github.com/hyperledger/fabric-x-evm/endorser/config"
 	"github.com/hyperledger/fabric-x-evm/gateway/api"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
@@ -40,29 +39,36 @@ type App struct {
 	cfg           config.Config
 	endorserSyncs []*network.Synchronizer
 	gwSync        *network.Synchronizer
+	gateway       *core.Gateway
 	submitter     core.Submitter
 	chain         *core.Chain
 	rpcServer     *rpc.Server
 	httpServer    *http.Server
 }
 
+// Gateway returns the inner gateway, e.g. for use in tests.
+func (a *App) Gateway() *core.Gateway { return a.gateway }
+
 // New creates a new gateway application from the provided configuration.
+// It loads the gateway signer from the MSP directory configured in cfg.
 func New(cfg config.Config) (*App, error) {
+	gwSigner, err := identity.SignerFromMSP(cfg.Gateway.Identity.MSPDir, cfg.Gateway.Identity.MspID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create gateway signer: %w", err)
+	}
+	return NewWithSigner(cfg, gwSigner)
+}
+
+// NewWithSigner builds the gateway application with the provided signer.
+// Useful for callers that manage identity externally, such as integration tests.
+func NewWithSigner(cfg config.Config, gwSigner sdk.Signer) (*App, error) {
 	logger := sdk.NewStdLogger("gateway")
 
-	// create endorsers and their synchronizers
+	// Create endorsers and their synchronizers.
 	endorsers := make([]*endorser.Endorser, 0, len(cfg.Endorsers))
 	endorserSyncs := make([]*network.Synchronizer, 0, len(cfg.Endorsers))
-
 	for i, ecfg := range cfg.Endorsers {
-		net := econf.Network{
-			Channel:   cfg.Network.Channel,
-			Namespace: cfg.Network.Namespace,
-			NsVersion: cfg.Network.NsVersion,
-			ChainID:   cfg.Network.ChainID,
-		}
-
-		end, sync, err := eapp.NewEndorser(ecfg, net, logger, false)
+		end, sync, err := eapp.NewEndorser(ecfg, cfg.Network, logger, false)
 		if err != nil {
 			return nil, fmt.Errorf("endorser %d (%s): %w", i, ecfg.Name, err)
 		}
@@ -70,20 +76,19 @@ func New(cfg config.Config) (*App, error) {
 		endorserSyncs = append(endorserSyncs, sync)
 	}
 
-	// wrap endorsers in API for gateway use
-	des, err := eapi.NewFabricDeserializer(cfg.Endorsers[0].MspDir, cfg.Endorsers[0].MspID)
+	return buildApp(cfg, gwSigner, logger, endorsers, endorserSyncs)
+}
+
+// buildApp wires up the gateway from pre-built endorsers. Used by NewWithSigner
+// and directly by integration tests that manage their own endorsers.
+func buildApp(cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorsers []*endorser.Endorser, endorserSyncs []*network.Synchronizer) (*App, error) {
+	des, err := eapi.NewFabricDeserializer(cfg.Endorsers[0].Identity.MSPDir, cfg.Endorsers[0].Identity.MspID)
 	if err != nil {
 		return nil, err
 	}
-	endorserAPIs := make([]core.Endorser, 0, len(endorsers))
-	for _, end := range endorsers {
-		endAPI := eapi.New(cfg.Network.Channel, cfg.Network.Namespace, cfg.Network.NsVersion, des, end, nil)
-		endorserAPIs = append(endorserAPIs, endAPI)
-	}
-
-	gwSigner, err := identity.SignerFromMSP(cfg.Gateway.SignerMSPDir, cfg.Gateway.SignerMSPID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create gateway signer: %w", err)
+	endorserAPIs := make([]core.Endorser, len(endorsers))
+	for i, end := range endorsers {
+		endorserAPIs[i] = eapi.New(cfg.Network.Channel, cfg.Network.Namespace, cfg.Network.NsVersion, des, end, nil)
 	}
 
 	ec, err := core.NewEndorsementClient(endorserAPIs, gwSigner, cfg.Network.Channel, cfg.Network.Namespace, cfg.Network.NsVersion, nil)
@@ -93,13 +98,18 @@ func New(cfg config.Config) (*App, error) {
 
 	orderers := make([]network.OrdererConf, len(cfg.Gateway.Orderers))
 	for i, o := range cfg.Gateway.Orderers {
-		orderers[i] = network.OrdererConf{
-			Address: o.Address,
-			TLSPath: o.TLSPath,
-		}
+		orderers[i] = o.ToOrdererConf()
 	}
 
-	submitter, err := network.NewSubmitter(orderers, nfab.NewTxPackager(gwSigner), cfg.Gateway.SubmitWaitTime, logger)
+	var submitter core.Submitter
+	switch cfg.Network.Protocol {
+	case "fabric":
+		submitter, err = nfab.NewSubmitter(orderers, gwSigner, cfg.Gateway.SubmitWaitTime, logger)
+	case "fabric-x", "":
+		submitter, err = nfabx.NewSubmitter(orderers, gwSigner, cfg.Gateway.SubmitWaitTime, logger)
+	default:
+		return nil, fmt.Errorf("unsupported protocol: %q", cfg.Network.Protocol)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to create submitter: %w", err)
 	}
@@ -114,8 +124,15 @@ func New(cfg config.Config) (*App, error) {
 		return nil, fmt.Errorf("failed to create gateway: %w", err)
 	}
 
-	processor := blocks.NewProcessor(fabric.NewBlockParser(logger), []blocks.BlockHandler{chain})
-	gwSync, err := network.NewSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.SyncPeerAddr, cfg.Gateway.SyncPeerTLS, gwSigner, processor, logger)
+	var gwSync *network.Synchronizer
+	switch cfg.Network.Protocol {
+	case "fabric":
+		gwSync, err = nfab.NewSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, chain)
+	case "fabric-x", "":
+		gwSync, err = nfabx.NewSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, chain)
+	default:
+		return nil, fmt.Errorf("unsupported protocol: %q", cfg.Network.Protocol)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gateway synchronizer: %w", err)
 	}
@@ -129,10 +146,10 @@ func New(cfg config.Config) (*App, error) {
 		cfg:           cfg,
 		endorserSyncs: endorserSyncs,
 		gwSync:        gwSync,
+		gateway:       gateway,
 		submitter:     submitter,
 		chain:         chain,
 		rpcServer:     rpcServer,
-		httpServer:    nil, // Will be set when HTTP server starts
 	}, nil
 }
 
@@ -151,7 +168,7 @@ func (a *App) Run(ctx context.Context) error {
 
 	// Wait for initial sync before serving traffic
 	for i, sync := range a.endorserSyncs {
-		if err := sync.WaitUntilSynced(gctx, a.cfg.Gateway.SyncTimeout); err != nil {
+		if err := waitUntilSynced(gctx, sync, 10*time.Second); err != nil {
 			return err
 		}
 		log.Printf("endorser %d synced", i)
@@ -219,5 +236,22 @@ func (a *App) Shutdown() error {
 	}
 
 	log.Println("graceful shutdown complete")
+	return nil
+}
+
+func waitUntilSynced(ctx context.Context, sync *network.Synchronizer, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	for {
+		if err := sync.Ready(); err == nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return errors.New("timeout waiting for sync")
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
 	return nil
 }

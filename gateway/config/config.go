@@ -9,6 +9,7 @@ package config
 import (
 	"time"
 
+	"github.com/hyperledger/fabric-x-evm/common"
 	endorser "github.com/hyperledger/fabric-x-evm/endorser/config"
 )
 
@@ -16,45 +17,30 @@ import (
 // It composes shared network configuration, gateway-specific configuration,
 // endorser configurations, and server configuration.
 type Config struct {
-	Network   Network
+	Network   common.Network `mapstructure:"network" yaml:"network"`
 	Endorsers []endorser.Endorser
 	Gateway   Gateway
 	Server    Server
 }
 
-// Network contains network details shared across components
-// and network participants.
-type Network struct {
-	// Channel is the Fabric channel.
-	Channel string
-
-	// Namespace is the namespace for all token transactions.
-	Namespace string
-
-	// NsVersion is the version of the namespace, usually 1.0.
-	NsVersion string
-
-	// ChainID is the ethereum-style chain ID for this network.
-	ChainID int64
-}
-
 // Gateway contains configuration for the gateway component.
 type Gateway struct {
-	SignerMSPDir   string
-	SignerMSPID    string
-	DbConnStr      string // path to the sqlite database for blocks and transactions
-	TrieDBPath     string // path to PebbleDB trie database; empty = in-memory (dev/test only)
-	Orderers       []Orderer
-	SubmitWaitTime time.Duration
-	SyncPeerAddr   string
-	SyncPeerTLS    string
-	SyncTimeout    time.Duration
+	Identity common.IdentityConfig `mapstructure:"identity" yaml:"identity"`
+
+	DbConnStr  string // path to the sqlite database for blocks and transactions
+	TrieDBPath string // path to PebbleDB trie database; empty = in-memory (dev/test only)
+
+	Orderers       []common.ClientConfig `mapstructure:"orderers" yaml:"orderers"`
+	SubmitWaitTime time.Duration         `mapstructure:"submit-wait-time" yaml:"submit-wait-time"`
+
+	Committer   common.ClientConfig `mapstructure:"committer" yaml:"committer"`
+	SyncTimeout time.Duration       `mapstructure:"sync-timemout" yaml:"sync-timeout"`
 }
 
 // Orderer contains configuration for an orderer node.
 type Orderer struct {
 	Address string
-	TLSPath string
+	TLS     common.TLSConfig
 }
 
 // Server contains HTTP server configuration.
