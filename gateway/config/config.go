@@ -25,19 +25,6 @@ type Config struct {
 
 // Gateway contains configuration for the gateway component.
 type Gateway struct {
-<<<<<<< HEAD
-	SignerMSPDir     string
-	SignerMSPID      string
-	DbConnStr        string // path to the sqlite database for blocks and transactions
-	TrieDBPath       string // path to PebbleDB trie database; empty = in-memory (dev/test only)
-	Orderers         []Orderer
-	SubmitWaitTime   time.Duration
-	SyncPeerAddr     string
-	SyncPeerTLS      string
-	SyncTimeout      time.Duration
-	TestAccountsPath string // Path to JSON file with test accounts for eth_accounts RPC
-	EnableTestRPC    bool   // Enable test-only RPC methods (eth_accounts, eth_sendTransaction) - UNSAFE for production
-=======
 	Identity common.IdentityConfig `mapstructure:"identity" yaml:"identity"`
 
 	DbConnStr  string // path to the sqlite database for blocks and transactions
@@ -48,16 +35,14 @@ type Gateway struct {
 
 	Committer   common.ClientConfig `mapstructure:"committer" yaml:"committer"`
 	SyncTimeout time.Duration       `mapstructure:"sync-timemout" yaml:"sync-timeout"`
->>>>>>> 46b7063 (upgrade sdk and committer-x)
-}
 
-// Orderer contains configuration for an orderer node.
-type Orderer struct {
-	Address string
-	TLS     common.TLSConfig
+	TestAccountsPath string `mapstructure:"test-accounts-path" yaml:"test-accounts-path"` // Path to JSON file with test accounts for eth_accounts RPC
+	EnableTestRPC    bool   `mapstructure:"enable-test-rpc" yaml:"enable-test-rpc"`       // Enable test-only RPC methods (eth_accounts, eth_sendTransaction) - UNSAFE for production
 }
 
 // Server contains HTTP server configuration.
 type Server struct {
 	Bind string
 }
+
+// Made with Bob
