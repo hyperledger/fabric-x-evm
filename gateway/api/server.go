@@ -17,7 +17,7 @@ import (
 	"github.com/ethereum/go-ethereum/rpc"
 )
 
-// NewServer returns a production RPC server without test-only methods.
+// NewServer returns an RPC server.
 func NewServer(b Backend) (*rpc.Server, error) {
 	srv := rpc.NewServer()
 	if err := srv.RegisterName("eth", NewEthAPI(b)); err != nil {
