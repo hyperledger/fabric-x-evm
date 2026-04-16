@@ -65,7 +65,11 @@ func NewEndorser(
 	}
 
 	// Executing transactions and signing the endorsement.
-	end, err := endorser.New(endorser.NewEVMEngine(network.Namespace, readDB, evmConfig, false), builder)
+	end, err := endorser.New(
+		endorser.NewEVMEngine(network.Namespace, readDB, evmConfig, false),
+		builder,
+		evmConfig.ChainConfig,
+	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create endorser: %w", err)
 	}

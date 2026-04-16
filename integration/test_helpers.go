@@ -31,7 +31,6 @@ import (
 
 	"github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/endorser"
-	"github.com/hyperledger/fabric-x-evm/endorser/api"
 	econf "github.com/hyperledger/fabric-x-evm/endorser/config"
 	gwapi "github.com/hyperledger/fabric-x-evm/gateway/api"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
@@ -209,12 +208,6 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 		}
 	}
 
-	// Build endorsement API.
-	endAPI := make([]core.Endorser, len(ends))
-	for i, end := range ends {
-		endAPI[i] = api.New(cfg.Network.Channel, cfg.Network.Namespace, cfg.Network.NsVersion, end, ethChainConfig)
-	}
-
 	// Build gateway signer.
 	var gwSigner sdk.Signer
 	if cfg.Gateway.Identity.MSPDir != "" {
@@ -227,7 +220,7 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 		gwSigner = localSigner{}
 	}
 
-	ec, err := core.NewEndorsementClient(endAPI, gwSigner, cfg.Network.Channel, cfg.Network.Namespace, cfg.Network.NsVersion, ethChainConfig)
+	ec, err := core.NewEndorsementClient(ends, gwSigner, cfg.Network.Channel, cfg.Network.Namespace, cfg.Network.NsVersion, ethChainConfig)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -438,7 +431,11 @@ func newEndorser(t *testing.T, logger sdk.Logger, cfg econf.Endorser, channel, n
 		t.Fatalf("NewSynchronizer: %v", err)
 	}
 
-	end, err := endorser.New(endorser.NewEVMEngine(namespace, writeDB, evmConfig, monotonicVersions), builder)
+	end, err := endorser.New(
+		endorser.NewEVMEngine(namespace, writeDB, evmConfig, monotonicVersions),
+		builder,
+		evmConfig.ChainConfig,
+	)
 	if err != nil {
 		t.Fatalf("endorser.New: %v", err)
 	}
