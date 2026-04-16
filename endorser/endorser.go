@@ -27,7 +27,6 @@ import (
 type Config struct {
 	Channel   string
 	Namespace string
-	NsVersion string
 	Peer      PeerConf
 }
 type PeerConf struct {
@@ -47,11 +46,12 @@ type Endorser struct {
 // Arguments:
 //   - `engine`:         Manages EVM execution and state reads.
 //   - `builder`:        Creates the signed ProposalResponse.
-//   - `channel`:        Fabric channel name.
-//   - `namespace`:      Chaincode namespace.
-//   - `nsVersion`:      Chaincode version.
 //   - `ethChainConfig`: Ethereum chain configuration (can be nil to use default).
 func New(engine *EVMEngine, builder endorsement.Builder, ethChainConfig *params.ChainConfig) (*Endorser, error) {
+	if ethChainConfig == nil {
+		ethChainConfig = common.ChainConfig
+	}
+
 	return &Endorser{
 		engine:         engine,
 		builder:        builder,
@@ -72,11 +72,7 @@ func (f *Endorser) GetEthStateDB() *ethstate.StateDB {
 // ProcessEVMTransaction processes an Ethereum transaction and returns a signed proposal response
 func (f *Endorser) ProcessEVMTransaction(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction, blockInfo *utils.BlockInfo) (*peer.ProposalResponse, error) {
 	// Validate the ethereum transaction signature
-	ethChainConfig := f.ethChainConfig
-	if ethChainConfig == nil {
-		ethChainConfig = common.ChainConfig
-	}
-	ethSigner := types.LatestSigner(ethChainConfig)
+	ethSigner := types.LatestSigner(f.ethChainConfig)
 	if _, err := types.Sender(ethSigner, ethTx); err != nil {
 		return nil, fmt.Errorf("invalid ethereum signature: %w", err)
 	}
