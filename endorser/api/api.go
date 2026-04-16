@@ -24,13 +24,12 @@ import (
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
 
-func New(channel, namespace, nsVersion string, des IdentityDeserializer, end *endorser.Endorser, ethChainConfig *params.ChainConfig) *EndorserAPI {
+func New(channel, namespace, nsVersion string, end *endorser.Endorser, ethChainConfig *params.ChainConfig) *EndorserAPI {
 	return &EndorserAPI{
 		channel:        channel,
 		namespace:      namespace,
 		nsVersion:      nsVersion,
 		endorser:       end,
-		des:            des,
 		ethChainConfig: ethChainConfig,
 	}
 }
@@ -39,7 +38,6 @@ type EndorserAPI struct {
 	channel        string
 	namespace      string
 	nsVersion      string
-	des            IdentityDeserializer
 	endorser       *endorser.Endorser
 	ethChainConfig *params.ChainConfig
 }

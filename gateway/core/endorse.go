@@ -154,7 +154,6 @@ func (e *EndorsementClient) createInvocation(args [][]byte) (endorsement.Invocat
 		return endorsement.Invocation{}, fmt.Errorf("failed to deserialise header: %w", err)
 	}
 
-	// Compute proposal hash (hash of empty byte array as we don't have a real proposal)
 	proposalHash, err := protoutil.GetProposalHash1(hdr, proposal.Payload)
 	if err != nil {
 		return endorsement.Invocation{}, fmt.Errorf("failed to compute proposal hash: %w", err)

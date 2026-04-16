@@ -82,13 +82,9 @@ func NewWithSigner(cfg config.Config, gwSigner sdk.Signer) (*App, error) {
 // buildApp wires up the gateway from pre-built endorsers. Used by NewWithSigner
 // and directly by integration tests that manage their own endorsers.
 func buildApp(cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorsers []*endorser.Endorser, endorserSyncs []*network.Synchronizer) (*App, error) {
-	des, err := eapi.NewFabricDeserializer(cfg.Endorsers[0].Identity.MSPDir, cfg.Endorsers[0].Identity.MspID)
-	if err != nil {
-		return nil, err
-	}
 	endorserAPIs := make([]core.Endorser, len(endorsers))
 	for i, end := range endorsers {
-		endorserAPIs[i] = eapi.New(cfg.Network.Channel, cfg.Network.Namespace, cfg.Network.NsVersion, des, end, nil)
+		endorserAPIs[i] = eapi.New(cfg.Network.Channel, cfg.Network.Namespace, cfg.Network.NsVersion, end, nil)
 	}
 
 	ec, err := core.NewEndorsementClient(endorserAPIs, gwSigner, cfg.Network.Channel, cfg.Network.Namespace, cfg.Network.NsVersion, nil)

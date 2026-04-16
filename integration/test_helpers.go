@@ -61,22 +61,6 @@ func (localSigner) Serialize() ([]byte, error) {
 	return []byte("serialised identity"), nil
 }
 
-type localIdentity struct{}
-
-func (*localIdentity) Validate() error {
-	return nil
-}
-
-func (*localIdentity) Verify(msg []byte, sig []byte) error {
-	return nil
-}
-
-type localIdDeserialiser struct{}
-
-func (*localIdDeserialiser) DeserializeIdentity(serializedIdentity []byte) (api.Identity, error) {
-	return &localIdentity{}, nil
-}
-
 // NewStatePrimer returns a reset StatePrimer ready for a new batch of state operations.
 // Can be called at any time during tests.
 //
@@ -225,22 +209,10 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 		}
 	}
 
-	// Build identity deserializer.
-	var des api.IdentityDeserializer
-	if cfg.Endorsers[0].Identity.MSPDir != "" {
-		var err error
-		des, err = api.NewFabricDeserializer(cfg.Endorsers[0].Identity.MSPDir, cfg.Endorsers[0].Identity.MspID)
-		if err != nil {
-			return nil, nil, err
-		}
-	} else {
-		des = &localIdDeserialiser{}
-	}
-
 	// Build endorsement API.
 	endAPI := make([]core.Endorser, len(ends))
 	for i, end := range ends {
-		endAPI[i] = api.New(cfg.Network.Channel, cfg.Network.Namespace, cfg.Network.NsVersion, des, end, ethChainConfig)
+		endAPI[i] = api.New(cfg.Network.Channel, cfg.Network.Namespace, cfg.Network.NsVersion, end, ethChainConfig)
 	}
 
 	// Build gateway signer.
