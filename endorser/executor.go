@@ -33,6 +33,8 @@ type EVMConfig struct {
 	BlockContext *vm.BlockContext
 	ChainConfig  *params.ChainConfig
 	VMConfig     *vm.Config
+	// FreeGas disables gas-fee balance enforcement.
+	FreeGas bool
 }
 
 // EVMEngine manages EVM execution and state reads for an endorser.
@@ -169,6 +171,7 @@ type executor struct {
 	chainCfg *params.ChainConfig
 	blockCtx vm.BlockContext
 	vmConfig vm.Config
+	freeGas  bool
 }
 
 // newExecutor creates an executor with the provided StateDB.
@@ -235,6 +238,7 @@ func newExecutor(stateDB *StateDB, blockInfo *utils.BlockInfo, evmConfig *EVMCon
 		chainCfg: ethChainConfig,
 		blockCtx: blockCtx,
 		vmConfig: vmConfig,
+		freeGas:  evmConfig != nil && evmConfig.FreeGas,
 	}
 }
 
@@ -364,6 +368,15 @@ func (h *executor) execute(msg *core.Message) ([]byte, error) {
 	// Default gas limit to 5_000_000 if not set
 	if msg.GasLimit == 0 {
 		msg.GasLimit = 5_000_000
+	}
+
+	// When FreeGas is enabled, zero out gas prices so buyGas never requires
+	// ETH balance from the sender. At the moment this is the default; we only
+	// charge gas in ethereum compatibility tests.
+	if h.freeGas {
+		msg.GasPrice = new(big.Int)
+		msg.GasFeeCap = new(big.Int)
+		msg.GasTipCap = new(big.Int)
 	}
 
 	// Create EVM instance with configured VMConfig

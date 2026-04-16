@@ -225,12 +225,12 @@ func (api *EthAPI) EstimateGas(ctx context.Context, args map[string]any, block *
 
 // eth_gasPrice
 func (api *EthAPI) GasPrice(ctx context.Context) (*hexutil.Big, error) {
-	return (*hexutil.Big)(big.NewInt(1)), nil
+	return (*hexutil.Big)(big.NewInt(0)), nil
 }
 
 // eth_maxPriorityFeePerGas
 func (api *EthAPI) MaxPriorityFeePerGas(ctx context.Context) (*hexutil.Big, error) {
-	return (*hexutil.Big)(big.NewInt(1)), nil
+	return (*hexutil.Big)(big.NewInt(0)), nil
 }
 
 // eth_feeHistory
