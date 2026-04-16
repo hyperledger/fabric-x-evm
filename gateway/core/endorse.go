@@ -17,6 +17,7 @@ import (
 	fabCommon "github.com/hyperledger/fabric-protos-go-apiv2/common"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-evm/common"
+	"github.com/hyperledger/fabric-x-evm/endorser"
 	"github.com/hyperledger/fabric-x-evm/utils"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
@@ -34,7 +35,7 @@ type Endorser interface {
 // EndorsementClient forwards ethereum-style transactions and calls
 // to the endorsers and returns their signed fabric-style responses.
 type EndorsementClient struct {
-	endorsers      []Endorser
+	endorsers      []*endorser.Endorser
 	signer         Signer
 	channel        string
 	namespace      string
@@ -42,7 +43,7 @@ type EndorsementClient struct {
 	ethChainConfig *params.ChainConfig
 }
 
-func NewEndorsementClient(endorsers []Endorser, signer Signer, channel, namespace, nsVersion string, ethChainConfig *params.ChainConfig) (*EndorsementClient, error) {
+func NewEndorsementClient(endorsers []*endorser.Endorser, signer Signer, channel, namespace, nsVersion string, ethChainConfig *params.ChainConfig) (*EndorsementClient, error) {
 	return &EndorsementClient{
 		endorsers:      endorsers,
 		signer:         signer,
