@@ -8,18 +8,23 @@ package integration
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"encoding/json"
 	"math/big"
+	"math/rand"
 	"os"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	ethstate "github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/tracing"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/holiman/uint256"
 	pb "github.com/hyperledger/fabric-protos-go-apiv2/peer"
-
+	lc "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/endorser"
+	"github.com/hyperledger/fabric-x-evm/gateway/core"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
@@ -30,30 +35,28 @@ import (
 // It allows setting nonces, code, balances, and storage for addresses,
 // then commits all changes in a single transaction.
 type StatePrimer struct {
-	db        endorser.ReadStore
-	namespace string
-	signer    sdk.Signer
-	builders  []endorsement.Builder
-	submitter interface {
-		Submit(ctx context.Context, env sdk.Endorsement) error
-	}
+	gw                *core.Gateway
+	db                endorser.ReadStore
+	namespace         string
+	signer            sdk.Signer
+	builders          []endorsement.Builder
 	channel           string
 	nsVersion         string
 	monotonicVersions bool
 
 	// DualStateDB that tracks both Fabric and Ethereum state
 	stateDB endorser.ExtendedStateDB
+
+	priv *ecdsa.PrivateKey
 }
 
 // NewStatePrimer creates a new state primer builder.
 func NewStatePrimer(
+	gw *core.Gateway,
 	db endorser.ReadStore,
 	namespace string,
 	signer sdk.Signer,
 	builders []endorsement.Builder,
-	submitter interface {
-		Submit(ctx context.Context, env sdk.Endorsement) error
-	},
 	channel string,
 	nsVersion string,
 	monotonicVersions bool,
@@ -64,16 +67,22 @@ func NewStatePrimer(
 		return nil, err
 	}
 
+	priv, err := crypto.GenerateKey()
+	if err != nil {
+		return nil, err
+	}
+
 	return &StatePrimer{
+		gw:                gw,
 		db:                db,
 		namespace:         namespace,
 		signer:            signer,
 		builders:          builders,
-		submitter:         submitter,
 		channel:           channel,
 		nsVersion:         nsVersion,
 		monotonicVersions: monotonicVersions,
 		stateDB:           stateDB,
+		priv:              priv,
 	}, nil
 }
 
@@ -200,14 +209,20 @@ func (sp *StatePrimer) LoadFromJSON(jsonFilePath string) (*StatePrimer, error) {
 
 // Commit applies all state changes to the ledger by creating a proposal,
 // endorsing it, and submitting it through the normal Fabric commit flow.
-func (sp *StatePrimer) Commit(ctx context.Context) error {
+func (sp *StatePrimer) Commit(ctx context.Context, wait bool) error {
+	// create a fake ethereum tx so we can use it to track priming
+	tx, ethTxBytes, err := sp.fakeEthTx()
+	if err != nil {
+		return err
+	}
+
 	// Create a proposal for the priming transaction
 	prop, err := network.NewSignedProposal(
 		sp.signer,
 		sp.channel,
 		sp.namespace,
 		sp.nsVersion,
-		[][]byte{[]byte("prime")},
+		[][]byte{{byte(lc.ProposalTypeEVMTx)}, ethTxBytes},
 	)
 	if err != nil {
 		return err
@@ -228,11 +243,10 @@ func (sp *StatePrimer) Commit(ctx context.Context) error {
 		presps = append(presps, presp)
 	}
 
-	// Submit the endorsed transaction
-	return sp.submitter.Submit(ctx, sdk.Endorsement{
+	return sp.commitAndWait(sdk.Endorsement{
 		Responses: presps,
 		Proposal:  inv.Proposal,
-	})
+	}, tx, wait)
 }
 
 // Writes returns the ReadWriteSet of all state changes recorded since the last Reset.
@@ -258,5 +272,47 @@ func (sp *StatePrimer) GetEthStateDB() *ethstate.StateDB {
 	if dualDB, ok := sp.stateDB.(*endorser.DualStateDB); ok {
 		return dualDB.EthStateDB()
 	}
+	return nil
+}
+
+func (sp *StatePrimer) fakeEthTx() (*types.Transaction, []byte, error) {
+	b := make([]byte, 16)
+	//lint:ignore SA1019 intentional use of math/rand.Read, this is only for tests
+	_, _ = rand.Read(b)
+	tx := types.NewTx(&types.LegacyTx{
+		Nonce: rand.Uint64(),
+		To:    nil,
+		Data:  b,
+	})
+
+	ethSigner := types.LatestSignerForChainID(lc.ChainConfig.ChainID)
+
+	signedTx, err := types.SignTx(tx, ethSigner, sp.priv)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	ethTxBytes, err := signedTx.MarshalBinary()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return signedTx, ethTxBytes, nil
+}
+
+func (sp *StatePrimer) commitAndWait(end sdk.Endorsement, tx *types.Transaction, wait bool) error {
+	if err := sp.gw.SubmitFabricTx(context.Background(), end); err != nil {
+		return err
+	}
+
+	ec, err := newNativeEthClient(sp.gw)
+	if err != nil {
+		return err
+	}
+
+	if wait {
+		waitForCommit(context.Background(), ec, tx)
+	}
+
 	return nil
 }

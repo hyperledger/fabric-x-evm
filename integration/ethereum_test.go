@@ -389,7 +389,7 @@ func newEthereumTestHarness(t *testing.T, evmConfig *endorser.EVMConfig, pre typ
 		return nil, err
 	}
 
-	if err := th.PrimeGenesisAlloc(t.Context(), pre); err != nil {
+	if err := th.PrimeGenesisAlloc(t.Context(), pre, false); err != nil {
 		th.Stop()
 		return nil, err
 	}

@@ -15,6 +15,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/params"
 
 	fc "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
@@ -133,7 +134,14 @@ func convertTransaction(ethTxBytes []byte, blockHash []byte, blockNumber uint64,
 		return domain.Transaction{}, fmt.Errorf("invalid tx: %w", err)
 	}
 
-	signer := types.MakeSigner(fc.ChainConfig, new(big.Int).SetUint64(blockNumber), 0)
+	var config *params.ChainConfig
+	if ethTx.ChainId().Int64() != 0 {
+		config = fc.BuildChainConfig(ethTx.ChainId().Int64())
+	} else {
+		config = fc.ChainConfig
+	}
+
+	signer := types.MakeSigner(config, new(big.Int).SetUint64(blockNumber), 0)
 	from, err := types.Sender(signer, ethTx)
 	if err != nil {
 		return domain.Transaction{}, fmt.Errorf("invalid sender: %w", err)

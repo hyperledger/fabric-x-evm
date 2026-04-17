@@ -13,7 +13,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"time"
 
 	"github.com/hyperledger/fabric-x-evm/common"
 	econf "github.com/hyperledger/fabric-x-evm/endorser/config"
@@ -99,9 +98,8 @@ func FabricSamplesConfig(testdataDir string) config.Config {
 				MspID:  "Org1MSP",
 				MSPDir: path.Join(user, "msp"),
 			},
-			DbConnStr:      "file:gateway.db?mode=memory&cache=shared",
-			TrieDBPath:     filepath.Join(testdataDir, "triedb"),
-			SubmitWaitTime: 2200 * time.Millisecond,
+			DbConnStr:  "file:gateway.db?mode=memory&cache=shared",
+			TrieDBPath: filepath.Join(testdataDir, "triedb"),
 		},
 		Endorsers: []econf.Endorser{
 			{
@@ -191,7 +189,6 @@ func XTestCommitterConfig() config.Config {
 			DbConnStr:  "file:gateway.db?mode=memory&cache=shared",
 			TrieDBPath: filepath.Join(testdataDir, "triedb"),
 			// DbConnStr:      "file:../testdata/blocks.db",
-			SubmitWaitTime: 200 * time.Millisecond,
 		},
 		Endorsers: []econf.Endorser{
 			{
