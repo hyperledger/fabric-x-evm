@@ -197,7 +197,7 @@ func testTetherTokenReplay(t *testing.T, th *TestHarness) {
 	if err != nil {
 		t.Fatalf("failed to create state primer: %v", err)
 	}
-	if err := primer.SetBalance(from, totalBalance).Commit(t.Context()); err != nil {
+	if err := primer.SetBalance(from, totalBalance).Commit(t.Context(), true); err != nil {
 		t.Fatalf("failed to prime balance: %v", err)
 	}
 
@@ -324,7 +324,7 @@ func testTetherTokenReplay(t *testing.T, th *TestHarness) {
 		if err != nil {
 			t.Fatalf("create state primer for tx #%d: %v", i+1, err)
 		}
-		if err := primer.SetNonce(txSender, txObj.Nonce()).Commit(t.Context()); err != nil {
+		if err := primer.SetNonce(txSender, txObj.Nonce()).Commit(t.Context(), true); err != nil {
 			t.Fatalf("prime nonce for tx #%d: %v", i+1, err)
 		}
 

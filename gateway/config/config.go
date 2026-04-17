@@ -30,8 +30,7 @@ type Gateway struct {
 	DbConnStr  string // path to the sqlite database for blocks and transactions
 	TrieDBPath string // path to PebbleDB trie database; empty = in-memory (dev/test only)
 
-	Orderers       []common.ClientConfig `mapstructure:"orderers" yaml:"orderers"`
-	SubmitWaitTime time.Duration         `mapstructure:"submit-wait-time" yaml:"submit-wait-time"`
+	Orderers []common.ClientConfig `mapstructure:"orderers" yaml:"orderers"`
 
 	Committer   common.ClientConfig `mapstructure:"committer" yaml:"committer"`
 	SyncTimeout time.Duration       `mapstructure:"sync-timemout" yaml:"sync-timeout"`

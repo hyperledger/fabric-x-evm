@@ -16,6 +16,7 @@ import (
 	"path"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -29,6 +30,7 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
 
+	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/endorser"
 	econf "github.com/hyperledger/fabric-x-evm/endorser/config"
@@ -48,6 +50,7 @@ import (
 	nfab "github.com/hyperledger/fabric-x-sdk/network/fabric"
 	nfabx "github.com/hyperledger/fabric-x-sdk/network/fabricx"
 	"github.com/hyperledger/fabric-x-sdk/state"
+	"github.com/hyperledger/fabric/protoutil"
 )
 
 type localSigner struct{}
@@ -73,7 +76,7 @@ func (th *TestHarness) NewStatePrimer() (*StatePrimer, error) {
 
 // PrimeGenesisAlloc primes ledger state from an Ethereum genesis allocation and
 // injects the resulting ethStateDB into all endorsers for state reuse.
-func (th *TestHarness) PrimeGenesisAlloc(ctx context.Context, pre types.GenesisAlloc) error {
+func (th *TestHarness) PrimeGenesisAlloc(ctx context.Context, pre types.GenesisAlloc, wait bool) error {
 	if len(pre) == 0 {
 		return nil
 	}
@@ -141,7 +144,7 @@ func (th *TestHarness) PrimeGenesisAlloc(ctx context.Context, pre types.GenesisA
 	}
 
 	// Commit all state changes to the Fabric ledger
-	if err := primer.Commit(ctx); err != nil {
+	if err := primer.Commit(ctx, wait); err != nil {
 		return err
 	}
 
@@ -158,7 +161,7 @@ func (th *TestHarness) PrimeGenesisAlloc(ctx context.Context, pre types.GenesisA
 // through normal commit flow.
 //
 // This is a convenience wrapper around NewStatePrimer().LoadFromJSON().Commit().
-func (th *TestHarness) PrimeStateFromJSON(ctx context.Context, jsonFilePath string) error {
+func (th *TestHarness) PrimeStateFromJSON(ctx context.Context, jsonFilePath string, wait bool) error {
 	// bail if no file is given
 	if jsonFilePath == "" {
 		return nil
@@ -172,7 +175,7 @@ func (th *TestHarness) PrimeStateFromJSON(ctx context.Context, jsonFilePath stri
 	if err != nil {
 		return err
 	}
-	return primer.Commit(ctx)
+	return primer.Commit(ctx, wait)
 }
 
 // buildTestHarness is the shared implementation for all test harness constructors.
@@ -246,10 +249,10 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 		switch cfg.Network.Protocol {
 		case "fabric":
 			gwSync, err = nfab.NewSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, chain)
-			submitter, err1 = nfab.NewSubmitter(orderers, gwSigner, cfg.Gateway.SubmitWaitTime, logger)
+			submitter, err1 = nfab.NewSubmitter(orderers, gwSigner, 0, logger)
 		case "fabric-x", "":
 			gwSync, err = nfabx.NewSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, chain)
-			submitter, err1 = nfabx.NewSubmitter(orderers, gwSigner, cfg.Gateway.SubmitWaitTime, logger)
+			submitter, err1 = nfabx.NewSubmitter(orderers, gwSigner, 0, logger)
 		default:
 			return nil, nil, fmt.Errorf("unsupported protocol: %q", cfg.Network.Protocol)
 		}
@@ -271,7 +274,7 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 	gw.Start(t.Context())
 	t.Cleanup(func() { gw.Stop() })
 
-	primer, err := NewStatePrimer(dbs[0], cfg.Network.Namespace, gwSigner, builders, submitter, cfg.Network.Channel, cfg.Network.NsVersion, cfg.Network.Protocol == "fabric-x")
+	primer, err := NewStatePrimer(gw, dbs[0], cfg.Network.Namespace, gwSigner, builders, cfg.Network.Channel, cfg.Network.NsVersion, cfg.Network.Protocol == "fabric-x")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -283,7 +286,7 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 		primer:         primer,
 	}
 
-	if err := th.PrimeStateFromJSON(t.Context(), primeDBPath); err != nil {
+	if err := th.PrimeStateFromJSON(t.Context(), primeDBPath, !bypass); err != nil {
 		return nil, nil, err
 	}
 
@@ -362,10 +365,9 @@ func newLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig *endorser.EV
 			ChainID:   31337,
 		},
 		Gateway: config.Gateway{
-			DbConnStr:      filepath.Join(dir, tname+"gateway.db"),
-			TrieDBPath:     filepath.Join(dir, tname+"triedb.db"),
-			SubmitWaitTime: 10 * time.Millisecond,
-			SyncTimeout:    2 * time.Second,
+			DbConnStr:   filepath.Join(dir, tname+"gateway.db"),
+			TrieDBPath:  filepath.Join(dir, tname+"triedb.db"),
+			SyncTimeout: 2 * time.Second,
 			Orderers: []common.ClientConfig{
 				{Endpoint: orderer},
 			},
@@ -535,14 +537,23 @@ func (th *TestHarness) Stop() error {
 
 func processCommon(t *testing.T, gw *core.Gateway, commit bool, tx *types.Transaction, blockInfo *utils.BlockInfo) sdk.Endorsement {
 	t.Helper()
+
 	env, err := gw.ExecuteEthTx(t.Context(), tx, blockInfo)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if commit {
 		if err := gw.SubmitFabricTx(t.Context(), env); err != nil {
 			t.Fatal(err)
 		}
+
+		ec, err := newNativeEthClient(gw)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		waitForCommitT(t, ec, tx)
 	}
 
 	return env
@@ -587,20 +598,7 @@ func deploySmartContract(t *testing.T, gw *core.Gateway, client *EthClient, args
 		t.Fatal(err)
 	}
 
-	for pending := true; pending; {
-		_, pending, err = ec.TransactionByHash(t.Context(), tx.Hash())
-		if err != nil {
-			if !strings.Contains(err.Error(), "not found") {
-				t.Fatal(err)
-			} else {
-				pending = true
-			}
-		}
-
-		if pending {
-			time.Sleep(20 * time.Millisecond)
-		}
-	}
+	waitForCommitT(t, ec, tx)
 
 	return addr
 }
@@ -623,20 +621,7 @@ func callSmartContract(t *testing.T, client *EthClient, addr ethcommon.Address, 
 		t.Fatal(err)
 	}
 
-	for pending := true; pending; {
-		_, pending, err = ec.TransactionByHash(t.Context(), tx.Hash())
-		if err != nil {
-			if !strings.Contains(err.Error(), "not found") {
-				t.Fatal(err)
-			} else {
-				pending = true
-			}
-		}
-
-		if pending {
-			time.Sleep(20 * time.Millisecond)
-		}
-	}
+	waitForCommitT(t, ec, tx)
 }
 
 func querySmartContract(t *testing.T, gw *core.Gateway, client *EthClient, addr ethcommon.Address, method string, params ...any) []any {
@@ -694,9 +679,101 @@ func querySmartContractExpect(t *testing.T, client *EthClient, addr ethcommon.Ad
 
 func submit(t *testing.T, gw *core.Gateway, end sdk.Endorsement) {
 	t.Helper()
+
 	if err := gw.SubmitFabricTx(t.Context(), end); err != nil {
 		t.Error(err)
 	}
+
+	ec, err := newNativeEthClient(gw)
+	if err != nil {
+		t.Error(err)
+	}
+
+	// Extract the Ethereum transaction from the proposal
+	tx, err := extractEthTxFromProposal(end.Proposal)
+	if err != nil {
+		t.Error(err)
+	}
+
+	waitForCommitT(t, ec, tx)
+}
+
+// extractEthTxFromProposal extracts the Ethereum transaction from a peer.Proposal
+func extractEthTxFromProposal(proposal *peer.Proposal) (*types.Transaction, error) {
+	// Unmarshal the proposal payload to get the ChaincodeProposalPayload
+	payload, err := protoutil.UnmarshalChaincodeProposalPayload(proposal.Payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal proposal payload: %w", err)
+	}
+
+	// Unmarshal the ChaincodeInvocationSpec from the input
+	cis, err := protoutil.UnmarshalChaincodeInvocationSpec(payload.Input)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal chaincode invocation spec: %w", err)
+	}
+
+	// Get the args - args[0] is the proposal type, args[1] is the serialized eth tx
+	args := cis.ChaincodeSpec.Input.Args
+	if len(args) < 2 {
+		return nil, fmt.Errorf("expected at least 2 args, got %d", len(args))
+	}
+
+	// Check that this is an EVM transaction proposal
+	if len(args[0]) != 1 || args[0][0] != byte(common.ProposalTypeEVMTx) {
+		return nil, fmt.Errorf("not an EVM transaction proposal")
+	}
+
+	// Unmarshal the Ethereum transaction
+	var tx types.Transaction
+	if err := tx.UnmarshalBinary(args[1]); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal ethereum transaction: %w", err)
+	}
+
+	return &tx, nil
+}
+
+func waitForCommitT(t *testing.T, ec *ethclient.Client, tx *types.Transaction) {
+	err := waitForCommit(t.Context(), ec, tx)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func waitForCommit(ctx context.Context, ec *ethclient.Client, tx *types.Transaction) error {
+	var err error
+
+	backoff := time.Duration(0)
+	iter := 0
+	step := 40
+
+	for pending := true; pending; {
+		_, pending, err = ec.TransactionByHash(ctx, tx.Hash())
+		if err != nil {
+			if !strings.Contains(err.Error(), "not found") {
+				return err
+			}
+			pending = true
+		}
+
+		if pending {
+			if backoff == 0 {
+				runtime.Gosched()
+			} else {
+				time.Sleep(backoff)
+			}
+
+			iter++
+			if iter%step == 0 {
+				if backoff == 0 {
+					backoff = time.Millisecond
+				} else {
+					backoff *= 2
+				}
+			}
+		}
+	}
+
+	return nil
 }
 
 // decodeRawTransactionT decodes a raw Ethereum transaction and

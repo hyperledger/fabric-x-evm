@@ -232,7 +232,7 @@ func testNonceValidation(t *testing.T, th *TestHarness) {
 	if err != nil {
 		t.Fatalf("failed to create state primer: %v", err)
 	}
-	if err := primer.SetNonce(clientAddr, 3).Commit(t.Context()); err != nil {
+	if err := primer.SetNonce(clientAddr, 3).Commit(t.Context(), true); err != nil {
 		t.Fatalf("failed to prime nonce: %v", err)
 	}
 
@@ -247,7 +247,7 @@ func testNonceValidation(t *testing.T, th *TestHarness) {
 	if err != nil {
 		t.Fatalf("failed to create state primer: %v", err)
 	}
-	if err := primer.SetNonce(clientAddr, 5).Commit(t.Context()); err != nil {
+	if err := primer.SetNonce(clientAddr, 5).Commit(t.Context(), true); err != nil {
 		t.Fatalf("failed to prime nonce: %v", err)
 	}
 
