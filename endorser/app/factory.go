@@ -66,8 +66,9 @@ func NewEndorser(
 	}
 
 	// Executing transactions and signing the endorsement.
+	monotonicVersions := network.Protocol == "fabric-x"
 	end, err := endorser.New(
-		endorser.NewEVMEngine(network.Namespace, readDB, evmConfig, false),
+		endorser.NewEVMEngine(network.Namespace, readDB, evmConfig, monotonicVersions),
 		builder,
 		evmConfig.ChainConfig,
 	)

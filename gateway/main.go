@@ -8,12 +8,15 @@ package main
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path"
 
 	"github.com/hyperledger/fabric-x-evm/gateway/app"
+	"github.com/hyperledger/fabric-x-evm/gateway/config"
 	"github.com/hyperledger/fabric-x-evm/integration"
 	"google.golang.org/grpc/grpclog"
 )
@@ -29,12 +32,22 @@ func main() {
 }
 
 func start() error {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return err
-	}
+	protocol := flag.String("protocol", "fabric-x", "Protocol to use: fabric-x or fabric")
+	flag.Parse()
 
-	cfg := integration.FabricSamplesConfig(path.Join(cwd, "..", "testdata"))
+	var cfg config.Config
+	switch *protocol {
+	case "fabric-x", "":
+		cfg = integration.XTestCommitterConfig()
+	case "fabric":
+		cwd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		cfg = integration.FabricSamplesConfig(path.Join(cwd, "..", "testdata"))
+	default:
+		return errors.New("start with --protocol fabric-x or --protocol fabric")
+	}
 
 	application, err := app.New(cfg)
 	if err != nil {
