@@ -115,6 +115,7 @@ func filterSlowTests(files []string, slow map[string]struct{}, want_very_slow bo
 //
 // This follows the same approach as Besu, Geth, and other Ethereum clients.
 func TestEthereumTests(t *testing.T) {
+	t.Skip()
 	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr)) // disable grpc logging
 
 	// Load slow

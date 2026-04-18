@@ -45,6 +45,7 @@ CREATE INDEX IF NOT EXISTS idx_txs_hash ON transactions (tx_hash);
 CREATE TABLE
     IF NOT EXISTS logs (
         block_number BIGINT NOT NULL,
+        block_hash BLOB CHECK (length (block_hash) = 32),
         tx_hash BLOB NOT NULL CHECK (length (tx_hash) = 32),
         tx_index INTEGER NOT NULL CHECK (tx_index >= 0),
         log_index INTEGER NOT NULL CHECK (log_index >= 0),

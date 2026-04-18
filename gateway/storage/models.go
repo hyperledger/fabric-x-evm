@@ -15,6 +15,7 @@ type Block struct {
 
 type Log struct {
 	BlockNumber int64
+	BlockHash   []byte
 	TxHash      []byte
 	TxIndex     int64
 	LogIndex    int64

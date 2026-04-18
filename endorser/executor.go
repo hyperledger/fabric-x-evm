@@ -84,7 +84,7 @@ func (e *EVMEngine) Execute(blockInfo *utils.BlockInfo, tx *types.Transaction) (
 	}
 	var logs []byte
 	if l := ex.state.Logs(); len(l) > 0 {
-		logs, err = json.Marshal(logs)
+		logs, err = json.Marshal(l)
 		if err != nil {
 			return endorsement.ExecutionResult{}, errors.New("error marshaling logs")
 		}

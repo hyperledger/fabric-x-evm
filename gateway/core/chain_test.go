@@ -138,7 +138,8 @@ func TestConvertTransaction_RegularTransfer(t *testing.T) {
 	ethTx := createTestEthTx(t, key, to, big.NewInt(100))
 	ethb, _ := ethTx.MarshalBinary()
 
-	domainTx, err := convertTransaction(ethb, []byte("block-hash"), 42, 5, "fabric-tx-123", 1, 0, nil)
+	logIndex := int64(0)
+	domainTx, err := convertTransaction(ethb, []byte("block-hash"), 42, 5, "fabric-tx-123", 1, 0, nil, &logIndex)
 
 	require.NoError(t, err)
 	assert.Equal(t, ethTx.Hash().Bytes(), domainTx.TxHash)
@@ -164,7 +165,8 @@ func TestConvertTransaction_ContractCreation(t *testing.T) {
 	require.NoError(t, err)
 	ethb, _ := signed.MarshalBinary()
 
-	domainTx, err := convertTransaction(ethb, []byte("block-hash"), 42, 3, "fabric-tx-456", 1, 0, nil)
+	logIndex := int64(0)
+	domainTx, err := convertTransaction(ethb, []byte("block-hash"), 42, 3, "fabric-tx-456", 1, 0, nil, &logIndex)
 
 	require.NoError(t, err)
 	assert.Nil(t, domainTx.ToAddress)
@@ -180,7 +182,8 @@ func TestConvertTransaction_InvalidSignature(t *testing.T) {
 	)
 	ethb, _ := ethTx.MarshalBinary()
 
-	_, err := convertTransaction(ethb, []byte("block-hash"), 42, 1, "fabric-tx-789", 1, 0, nil)
+	logIndex := int64(0)
+	_, err := convertTransaction(ethb, []byte("block-hash"), 42, 1, "fabric-tx-789", 1, 0, nil, &logIndex)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid sender")
@@ -204,7 +207,8 @@ func TestConvertTransaction_ValidationCodes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			domainTx, err := convertTransaction(ethb, []byte("bh"), 42, 1, "tx", tt.ethStatus, tt.validationCode, nil)
+			logIndex := int64(0)
+			domainTx, err := convertTransaction(ethb, []byte("bh"), 42, 1, "tx", tt.ethStatus, tt.validationCode, nil, &logIndex)
 			require.NoError(t, err)
 			assert.Equal(t, tt.ethStatus, domainTx.Status)
 			assert.Equal(t, tt.validationCode, domainTx.FabricTxStatus)

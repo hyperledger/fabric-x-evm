@@ -8,6 +8,7 @@ package api
 
 import (
 	"encoding/json"
+	"math"
 	"math/big"
 	"testing"
 
@@ -51,10 +52,11 @@ func TestBlockNumberToUint64(t *testing.T) {
 	}{
 		{"zero", 0, 0},
 		{"positive", 100, 100},
-		{"negative", -1, 0},
-		{"large negative", -100, 0},
-		{"pending", rpc.PendingBlockNumber, 0},
-		{"latest", rpc.LatestBlockNumber, 0},
+		{"negative", -1, math.MaxUint64},
+		{"large negative", -100, math.MaxUint64},
+		{"pending", rpc.PendingBlockNumber, math.MaxUint64},
+		{"latest", rpc.LatestBlockNumber, math.MaxUint64},
+		{"earliest", rpc.EarliestBlockNumber, 0},
 	}
 
 	for _, tt := range tests {

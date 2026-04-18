@@ -94,6 +94,7 @@ func receipt(r *domain.Transaction) *rpcReceipt {
 // This includes the transaction itself plus block metadata.
 type RPCTransaction struct {
 	tx               *types.Transaction // not exported, won't be marshaled
+	From             common.Address     `json:"from"`
 	BlockHash        *common.Hash       `json:"blockHash"`
 	BlockNumber      *hexutil.Big       `json:"blockNumber"`
 	TransactionIndex *hexutil.Uint64    `json:"transactionIndex"`
@@ -116,7 +117,8 @@ func (r *RPCTransaction) MarshalJSON() ([]byte, error) {
 	// Remove internal go-ethereum fields that shouldn't be exposed
 	delete(m, "ignore")
 
-	// Add block metadata - these override any fields from the transaction
+	// Add block metadata and sender - these override any fields from the transaction
+	m["from"] = r.From
 	m["blockHash"] = r.BlockHash
 	m["blockNumber"] = r.BlockNumber
 	m["transactionIndex"] = r.TransactionIndex
@@ -164,6 +166,7 @@ func rpcTransaction(tx *domain.Transaction) *RPCTransaction {
 
 	return &RPCTransaction{
 		tx:               ethTx,
+		From:             common.BytesToAddress(tx.FromAddress),
 		BlockHash:        &blockHash,
 		BlockNumber:      &blockNumber,
 		TransactionIndex: &txIndex,
@@ -192,6 +195,7 @@ func rpcBlock(b *domain.Block, full bool) *RPCBlock {
 				txIndex := hexutil.Uint64(tx.TxIndex)
 				rpcTx := &RPCTransaction{
 					tx:               ethTx,
+					From:             common.BytesToAddress(tx.FromAddress),
 					BlockHash:        &blockHash,
 					BlockNumber:      &blockNumber,
 					TransactionIndex: &txIndex,
