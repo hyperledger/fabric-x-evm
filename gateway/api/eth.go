@@ -8,6 +8,7 @@ package api
 
 import (
 	"context"
+	"math"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum"
@@ -334,6 +335,7 @@ func domainLogToTypesLog(l domain.Log) *types.Log {
 		Topics:      topics,
 		Data:        l.Data,
 		BlockNumber: l.BlockNumber,
+		BlockHash:   common.BytesToHash(l.BlockHash),
 		TxHash:      common.BytesToHash(l.TxHash),
 		TxIndex:     uint(l.TxIndex),
 		Index:       uint(l.LogIndex),
@@ -376,7 +378,14 @@ func argsToCallMsg(args map[string]any) (ethereum.CallMsg, error) {
 		msg.Value = val
 	}
 
-	if v, ok := args["input"]; ok {
+	// "input" is the canonical field; "data" is the legacy alias (used by Blockscout and others)
+	inputKey := "input"
+	if _, ok := args["input"]; !ok {
+		if _, ok := args["data"]; ok {
+			inputKey = "data"
+		}
+	}
+	if v, ok := args[inputKey]; ok {
 		data, err := hexutil.Decode(v.(string))
 		if err != nil {
 			return msg, err
@@ -421,10 +430,15 @@ func rpcBlockNumberToBigInt(num rpc.BlockNumber) *big.Int {
 	return big.NewInt(num.Int64())
 }
 
+// blockNumberToUint64 converts an rpc.BlockNumber to a uint64.
+// "earliest" maps to 0 (genesis). All other negative sentinels (latest, pending,
+// safe, finalized) map to math.MaxUint64, which the backend interprets as "latest".
 func blockNumberToUint64(num rpc.BlockNumber) uint64 {
-	n := uint64(0)
-	if num > 0 {
-		n = uint64(num)
+	if num == rpc.EarliestBlockNumber {
+		return 0
 	}
-	return n
+	if num < 0 {
+		return math.MaxUint64
+	}
+	return uint64(num)
 }

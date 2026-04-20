@@ -47,7 +47,7 @@ start-x:
 
 .PHONY: test-x
 test-x:
-	@go test -timeout 360s -v -run ^TestFabricX$$ ./integration
+	@go test -timeout 30s -v -run ^TestFabricX$$ ./integration
 
 .PHONY: stop-x
 stop-x:
@@ -78,11 +78,11 @@ stop-3:
 
 .PHONY: test-local
 test-local:
-	@go test -timeout 360s -v -run ^TestLocal$$ ./integration
+	@go test -timeout 30s -v -run ^TestLocal$$ ./integration
 
 .PHONY: test-local-x
 test-local-x:
-	@go test -timeout 360s -v -run ^TestLocalX$$ ./integration
+	@go test -timeout 30s -v -run ^TestLocalX$$ ./integration
 
 .PHONY: eth-tests
 eth-tests:

@@ -131,13 +131,18 @@ func (s *Store) InsertBlock(ctx context.Context, block domain.Block) error {
 }
 
 func toStorageLog(l domain.Log) InsertLogParams {
+	data := l.Data
+	if data == nil {
+		data = []byte{}
+	}
 	params := InsertLogParams{
 		BlockNumber: int64(l.BlockNumber),
+		BlockHash:   l.BlockHash,
 		TxHash:      l.TxHash,
 		TxIndex:     l.TxIndex,
 		LogIndex:    l.LogIndex,
 		Address:     l.Address,
-		Data:        l.Data,
+		Data:        data,
 	}
 	if len(l.Topics) > 0 {
 		params.Topic0 = l.Topics[0]
@@ -286,6 +291,7 @@ func (s *Store) LatestBlock(ctx context.Context, full bool) (*domain.Block, erro
 func toDomainLog(l Log) domain.Log {
 	log := domain.Log{
 		BlockNumber: uint64(l.BlockNumber),
+		BlockHash:   l.BlockHash,
 		TxHash:      l.TxHash,
 		TxIndex:     l.TxIndex,
 		LogIndex:    l.LogIndex,
@@ -310,7 +316,7 @@ func (s *Store) GetLogs(ctx context.Context, filter domain.LogFilter) ([]domain.
 	var query strings.Builder
 	var args []any
 
-	query.WriteString(`SELECT block_number, tx_hash, tx_index, log_index, address, topic0, topic1, topic2, topic3, data FROM logs WHERE 1=1`)
+	query.WriteString(`SELECT block_number, block_hash, tx_hash, tx_index, log_index, address, topic0, topic1, topic2, topic3, data FROM logs WHERE 1=1`)
 
 	// Block filtering: either by hash or by range (mutually exclusive)
 	if filter.BlockHash != nil {
@@ -383,6 +389,7 @@ func (s *Store) GetLogs(ctx context.Context, filter domain.LogFilter) ([]domain.
 		var l Log
 		if err := rows.Scan(
 			&l.BlockNumber,
+			&l.BlockHash,
 			&l.TxHash,
 			&l.TxIndex,
 			&l.LogIndex,

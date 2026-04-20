@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"math"
 	"math/big"
 	"sync"
 
@@ -158,9 +159,9 @@ func (g *Gateway) BlockNumber(ctx context.Context) (uint64, error) {
 
 // GetBlockByNumber returns the block at the specified number.
 // If full is true, the block includes transactions.
-// num == 0 means "latest" (blocks start at 1 since they map directly to Fabric block numbers).
+// num == math.MaxUint64 means "latest".
 func (g *Gateway) GetBlockByNumber(ctx context.Context, num uint64, full bool) (*domain.Block, error) {
-	if num == 0 {
+	if num == math.MaxUint64 {
 		return g.store.LatestBlock(ctx, full)
 	}
 	return g.store.GetBlockByNumber(ctx, num, full)

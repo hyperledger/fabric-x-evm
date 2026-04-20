@@ -159,6 +159,7 @@ ORDER BY
 INSERT INTO
     logs (
         block_number,
+        block_hash,
         tx_hash,
         tx_index,
         log_index,
@@ -170,7 +171,7 @@ INSERT INTO
         data
     )
 VALUES
-    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (tx_hash, log_index) DO NOTHING;
+    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (tx_hash, log_index) DO NOTHING;
 
 -- name: GetLogsByTxHash :many
 SELECT

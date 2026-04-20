@@ -77,8 +77,8 @@ func (c *Chain) Handle(ctx context.Context, b blocks.Block) error {
 		return err // irrecoverable
 	}
 	ebl.StateRoot = stateRoot.Bytes()
-	// TODO: use proper headers. We now add some mock values to make sure we're not violating unique constraints.
-	ebl.ParentHash = ebl.BlockHash
+	ebl.ParentHash = c.prevHash.Bytes()
+	c.prevHash = common.BytesToHash(ebl.BlockHash)
 
 	if err := c.Store.InsertBlock(ctx, ebl); err != nil {
 		return err
@@ -104,19 +104,20 @@ func convertToDomain(b blocks.Block) domain.Block {
 		Transactions: make([]domain.Transaction, 0),
 	}
 
+	logIndex := int64(0) // logIndex is the index of the log in the block
 	for _, tx := range b.Transactions {
 		// TODO: filter on namespace?
 
 		// retrieve the Ethereum transaction from the chaincode invocation
 		if len(tx.InputArgs) < 2 {
-			continue // TBD
+			continue
 		}
 		status := uint8(0)
 		if tx.Valid {
 			status = 1
 		}
 
-		etx, err := convertTransaction(tx.InputArgs[1], b.Hash, b.Number, tx.Number, tx.ID, status, tx.Status, tx.Events)
+		etx, err := convertTransaction(tx.InputArgs[1], b.Hash, b.Number, tx.Number, tx.ID, status, tx.Status, tx.Events, &logIndex)
 		if err != nil {
 			continue // ?
 		}
@@ -128,7 +129,7 @@ func convertToDomain(b blocks.Block) domain.Block {
 }
 
 // convertTransaction converts an Ethereum transaction to a domain.Transaction.
-func convertTransaction(ethTxBytes []byte, blockHash []byte, blockNumber uint64, txIndex int64, txID string, ethStatus uint8, validationCode int, events []byte) (domain.Transaction, error) {
+func convertTransaction(ethTxBytes []byte, blockHash []byte, blockNumber uint64, txIndex int64, txID string, ethStatus uint8, validationCode int, events []byte, logIndex *int64) (domain.Transaction, error) {
 	ethTx := &types.Transaction{}
 	if err := ethTx.UnmarshalBinary(ethTxBytes); err != nil {
 		return domain.Transaction{}, fmt.Errorf("invalid tx: %w", err)
@@ -166,16 +167,18 @@ func convertTransaction(ethTxBytes []byte, blockHash []byte, blockNumber uint64,
 
 		// Convert common.Log to domain.Log with full context
 		logs = []domain.Log{}
-		for i, l := range rawLogs {
+		for _, l := range rawLogs {
 			logs = append(logs, domain.Log{
 				BlockNumber: blockNumber,
+				BlockHash:   blockHash,
 				TxHash:      hash,
 				TxIndex:     txIndex,
-				LogIndex:    int64(i),
+				LogIndex:    *logIndex,
 				Address:     l.Address,
 				Topics:      l.Topics,
 				Data:        l.Data,
 			})
+			*logIndex++
 		}
 	}
 
@@ -191,5 +194,6 @@ func convertTransaction(ethTxBytes []byte, blockHash []byte, blockNumber uint64,
 		Status:          ethStatus,
 		FabricTxID:      txID,
 		FabricTxStatus:  validationCode,
+		Logs:            logs,
 	}, nil
 }

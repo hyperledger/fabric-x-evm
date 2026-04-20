@@ -61,6 +61,7 @@ func (t *Transaction) TxType() uint8 {
 // Log represents an ethereum log entry.
 type Log struct {
 	BlockNumber uint64
+	BlockHash   []byte
 	TxHash      []byte
 	TxIndex     int64
 	LogIndex    int64

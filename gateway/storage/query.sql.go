@@ -156,7 +156,7 @@ func (q *Queries) GetFullTransactionByHash(ctx context.Context, txHash []byte) (
 
 const getLogsByTxHash = `-- name: GetLogsByTxHash :many
 SELECT
-    block_number, tx_hash, tx_index, log_index, address, topic0, topic1, topic2, topic3, data
+    block_number, block_hash, tx_hash, tx_index, log_index, address, topic0, topic1, topic2, topic3, data
 FROM
     logs
 WHERE
@@ -176,6 +176,7 @@ func (q *Queries) GetLogsByTxHash(ctx context.Context, txHash []byte) ([]Log, er
 		var i Log
 		if err := rows.Scan(
 			&i.BlockNumber,
+			&i.BlockHash,
 			&i.TxHash,
 			&i.TxIndex,
 			&i.LogIndex,
@@ -433,6 +434,7 @@ const insertLog = `-- name: InsertLog :exec
 INSERT INTO
     logs (
         block_number,
+        block_hash,
         tx_hash,
         tx_index,
         log_index,
@@ -444,11 +446,12 @@ INSERT INTO
         data
     )
 VALUES
-    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (tx_hash, log_index) DO NOTHING
+    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (tx_hash, log_index) DO NOTHING
 `
 
 type InsertLogParams struct {
 	BlockNumber int64
+	BlockHash   []byte
 	TxHash      []byte
 	TxIndex     int64
 	LogIndex    int64
@@ -463,6 +466,7 @@ type InsertLogParams struct {
 func (q *Queries) InsertLog(ctx context.Context, arg InsertLogParams) error {
 	_, err := q.db.ExecContext(ctx, insertLog,
 		arg.BlockNumber,
+		arg.BlockHash,
 		arg.TxHash,
 		arg.TxIndex,
 		arg.LogIndex,
