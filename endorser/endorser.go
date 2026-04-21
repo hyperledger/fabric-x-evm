@@ -15,9 +15,8 @@ import (
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/core"
-	ethstate "github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/params"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/utils"
@@ -36,44 +35,39 @@ type PeerConf struct {
 
 // Endorser implements the ProcessProposal API to simulate the execution of ethereum transaction
 type Endorser struct {
-	engine         *EVMEngine
-	builder        endorsement.Builder
-	ethChainConfig *params.ChainConfig
+	engine    *EVMEngine
+	builder   endorsement.Builder
+	ethSigner types.Signer
 }
 
 // New returns a new Endorser.
 //
 // Arguments:
-//   - `engine`:         Manages EVM execution and state reads.
-//   - `builder`:        Creates the signed ProposalResponse.
-//   - `ethChainConfig`: Ethereum chain configuration (can be nil to use default).
-func New(engine *EVMEngine, builder endorsement.Builder, ethChainConfig *params.ChainConfig) (*Endorser, error) {
-	if ethChainConfig == nil {
-		ethChainConfig = common.ChainConfig
-	}
-
+//   - `engine`:  Manages EVM execution and state reads.
+//   - `builder`: Creates the signed ProposalResponse.
+//   - `chainID`: Ethereum chain ID used to validate transaction signatures.
+func New(engine *EVMEngine, builder endorsement.Builder, chainID int64) (*Endorser, error) {
 	return &Endorser{
-		engine:         engine,
-		builder:        builder,
-		ethChainConfig: ethChainConfig,
+		engine:    engine,
+		builder:   builder,
+		ethSigner: types.LatestSignerForChainID(big.NewInt(chainID)),
 	}, nil
 }
 
 // SetEthStateDB sets the ethStateDB on the underlying EVMEngine.
-func (f *Endorser) SetEthStateDB(ethStateDB *ethstate.StateDB) {
+func (f *Endorser) SetEthStateDB(ethStateDB *state.StateDB) {
 	f.engine.SetEthStateDB(ethStateDB)
 }
 
 // GetEthStateDB returns the ethStateDB from the underlying EVMEngine.
-func (f *Endorser) GetEthStateDB() *ethstate.StateDB {
+func (f *Endorser) GetEthStateDB() *state.StateDB {
 	return f.engine.GetEthStateDB()
 }
 
 // ProcessEVMTransaction processes an Ethereum transaction and returns a signed proposal response
 func (f *Endorser) ProcessEVMTransaction(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction, blockInfo *utils.BlockInfo) (*peer.ProposalResponse, error) {
 	// Validate the ethereum transaction signature
-	ethSigner := types.LatestSigner(f.ethChainConfig)
-	if _, err := types.Sender(ethSigner, ethTx); err != nil {
+	if _, err := types.Sender(f.ethSigner, ethTx); err != nil {
 		return nil, fmt.Errorf("invalid ethereum signature: %w", err)
 	}
 

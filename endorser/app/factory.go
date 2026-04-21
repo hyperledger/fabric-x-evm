@@ -46,7 +46,7 @@ func NewEndorser(
 		return nil, nil, fmt.Errorf("failed to initialize store: %w", err)
 	}
 
-	evmConfig := &endorser.EVMConfig{
+	evmConfig := endorser.EVMConfig{
 		ChainConfig: common.BuildChainConfig(network.ChainID),
 		FreeGas:     true,
 	}
@@ -70,7 +70,7 @@ func NewEndorser(
 	end, err := endorser.New(
 		endorser.NewEVMEngine(network.Namespace, readDB, evmConfig, monotonicVersions),
 		builder,
-		evmConfig.ChainConfig,
+		network.ChainID,
 	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create endorser: %w", err)

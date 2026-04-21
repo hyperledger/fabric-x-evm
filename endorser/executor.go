@@ -21,7 +21,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/params"
-	cmn "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/utils"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
@@ -45,11 +44,11 @@ type EVMEngine struct {
 	monotonicVersions bool
 	db                ReadStore
 	ethStateDB        *ethstate.StateDB
-	evmConfig         *EVMConfig
+	evmConfig         EVMConfig
 }
 
 // NewEVMEngine creates a new EVMEngine.
-func NewEVMEngine(namespace string, db ReadStore, evmConfig *EVMConfig, monotonicVersions bool) *EVMEngine {
+func NewEVMEngine(namespace string, db ReadStore, evmConfig EVMConfig, monotonicVersions bool) *EVMEngine {
 	return &EVMEngine{
 		namespace:         namespace,
 		db:                db,
@@ -95,7 +94,7 @@ func (e *EVMEngine) Execute(blockInfo *utils.BlockInfo, tx *types.Transaction) (
 
 // Call executes a read-only call (eth_call semantics) against the state at blockNumber
 // (0 / nil = latest). The EVM block context is not reconstructed for historical blocks —
-// with AllEthashProtocolChanges fixed from block 0 this is harmless.
+// with all forks enabled from block 0 this is harmless.
 func (e *EVMEngine) Call(msg ethereum.CallMsg, blockNumber *big.Int) ([]byte, error) {
 	stateBlock := uint64(0)
 	if blockNumber != nil {
@@ -147,7 +146,7 @@ func (e *EVMEngine) newExecutor(blockInfo *utils.BlockInfo, stateBlockNum uint64
 	if err != nil {
 		return nil, err
 	}
-	return newExecutor(stateDB, blockInfo, e.evmConfig, e.ethStateDB), nil
+	return newExecutor(stateDB, blockInfo, e.evmConfig, e.ethStateDB)
 }
 
 // newSnapshotAt returns an ExtendedStateDB over the state at the given Fabric block height (0 = latest).
@@ -167,7 +166,6 @@ func (e *EVMEngine) newSnapshotAt(blockNumber *big.Int) (ExtendedStateDB, error)
 // callers outside this package interact with EVMEngine instead.
 type executor struct {
 	state    ExtendedStateDB
-	chainID  *big.Int
 	chainCfg *params.ChainConfig
 	blockCtx vm.BlockContext
 	vmConfig vm.Config
@@ -176,11 +174,14 @@ type executor struct {
 
 // newExecutor creates an executor with the provided StateDB.
 // If blockInfo is not provided, the store's current version is used as the block number.
-// If evmConfig is provided, it overrides the default BlockContext, ChainConfig, and VMConfig.
-func newExecutor(stateDB *StateDB, blockInfo *utils.BlockInfo, evmConfig *EVMConfig, ethStateDB *ethstate.StateDB) *executor {
+// evmConfig.ChainConfig must be set.
+func newExecutor(stateDB *StateDB, blockInfo *utils.BlockInfo, evmConfig EVMConfig, ethStateDB *ethstate.StateDB) (*executor, error) {
+	if evmConfig.ChainConfig == nil {
+		return nil, fmt.Errorf("evmConfig.ChainConfig must be set")
+	}
 	if blockInfo == nil {
 		// Note: stateDB.Version() is a Fabric block number, not an Ethereum block number — these are
-		// separate namespaces. With AllEthashProtocolChanges active from block 0 this is harmless,
+		// separate namespaces. With all forks active from block 0 this is harmless,
 		// but callers executing real transactions should always supply blockInfo explicitly.
 		blockInfo = &utils.BlockInfo{
 			BlockNumber: new(big.Int).SetUint64(stateDB.Version()),
@@ -197,28 +198,21 @@ func newExecutor(stateDB *StateDB, blockInfo *utils.BlockInfo, evmConfig *EVMCon
 		Coinbase:    common.HexToAddress("0x0"),
 		BlockNumber: blockInfo.BlockNumber,
 		Time:        blockInfo.BlockTime,
-		Difficulty:  big.NewInt(1),
+		Difficulty:  big.NewInt(0),  // disabled post-merge
+		Random:      &common.Hash{}, // Warning: PREVRANDAO stub must not be relied on by smart contracts.
 		GasLimit:    blockInfo.GasLimit,
 		BaseFee:     big.NewInt(0),
 	}
-
-	// Default Chain Config
-	ethChainConfig := params.AllEthashProtocolChanges
 
 	// Default VM config
 	vmConfig := vm.Config{}
 
 	// Override with custom config if provided
-	if evmConfig != nil {
-		if evmConfig.BlockContext != nil {
-			blockCtx = *evmConfig.BlockContext
-		}
-		if evmConfig.ChainConfig != nil {
-			ethChainConfig = evmConfig.ChainConfig
-		}
-		if evmConfig.VMConfig != nil {
-			vmConfig = *evmConfig.VMConfig
-		}
+	if evmConfig.BlockContext != nil {
+		blockCtx = *evmConfig.BlockContext
+	}
+	if evmConfig.VMConfig != nil {
+		vmConfig = *evmConfig.VMConfig
 	}
 
 	// if we have been given a non-nil ethStateDB instance, it means that we are meant
@@ -234,12 +228,11 @@ func newExecutor(stateDB *StateDB, blockInfo *utils.BlockInfo, evmConfig *EVMCon
 
 	return &executor{
 		state:    finalStateDB,
-		chainID:  cmn.ChainConfig.ChainID,
-		chainCfg: ethChainConfig,
+		chainCfg: evmConfig.ChainConfig,
 		blockCtx: blockCtx,
 		vmConfig: vmConfig,
-		freeGas:  evmConfig != nil && evmConfig.FreeGas,
-	}
+		freeGas:  evmConfig.FreeGas,
+	}, nil
 }
 
 // CallMsgToMessage converts an ethereum.CallMsg into a core.Message.

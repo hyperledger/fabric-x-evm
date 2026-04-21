@@ -10,12 +10,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/params"
 
 	fc "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
@@ -70,7 +68,7 @@ func NewChain(dbConnStr, triePath string) (*Chain, error) {
 // Handle implements blocks.BlockHandler. It commits the block's write sets to the trie,
 // then persists the block and its transactions to the database.
 func (c *Chain) Handle(ctx context.Context, b blocks.Block) error {
-	ebl := convertToDomain(b)
+	ebl := c.convertToDomain(b)
 
 	stateRoot, err := c.ts.Commit(ctx, b)
 	if err != nil {
@@ -95,7 +93,7 @@ func (c *Chain) Close() error {
 
 // convertToDomain maps a Fabric SDK block to the gateway domain model,
 // extracting and decoding the embedded Ethereum transactions.
-func convertToDomain(b blocks.Block) domain.Block {
+func (c *Chain) convertToDomain(b blocks.Block) domain.Block {
 	ebl := domain.Block{
 		BlockNumber:  b.Number,
 		BlockHash:    b.Hash,
@@ -135,14 +133,7 @@ func convertTransaction(ethTxBytes []byte, blockHash []byte, blockNumber uint64,
 		return domain.Transaction{}, fmt.Errorf("invalid tx: %w", err)
 	}
 
-	var config *params.ChainConfig
-	if ethTx.ChainId().Int64() != 0 {
-		config = fc.BuildChainConfig(ethTx.ChainId().Int64())
-	} else {
-		config = fc.ChainConfig
-	}
-
-	signer := types.MakeSigner(config, new(big.Int).SetUint64(blockNumber), 0)
+	signer := types.LatestSignerForChainID(ethTx.ChainId())
 	from, err := types.Sender(signer, ethTx)
 	if err != nil {
 		return domain.Transaction{}, fmt.Errorf("invalid sender: %w", err)

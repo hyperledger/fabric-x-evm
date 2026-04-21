@@ -285,7 +285,11 @@ func (sp *StatePrimer) fakeEthTx() (*types.Transaction, []byte, error) {
 		Data:  b,
 	})
 
-	ethSigner := types.LatestSignerForChainID(lc.ChainConfig.ChainID)
+	chainID, err := sp.gw.ChainID(context.TODO())
+	if err != nil {
+		return nil, nil, err
+	}
+	ethSigner := types.LatestSignerForChainID(chainID)
 
 	signedTx, err := types.SignTx(tx, ethSigner, sp.priv)
 	if err != nil {

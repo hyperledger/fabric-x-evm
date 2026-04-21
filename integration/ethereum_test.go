@@ -241,7 +241,7 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 	st.Close()
 
 	// Create EVMConfig to pass to test harness
-	evmConfig := &endorser.EVMConfig{
+	evmConfig := endorser.EVMConfig{
 		BlockContext: &context,
 		ChainConfig:  config,
 		VMConfig:     &vmConfig,
@@ -381,7 +381,7 @@ func verifyTrieRoot(t *testing.T, genesisRWS, txRWS blocks.ReadWriteSet, blockNu
 }
 
 // newEthereumTestHarness creates a test harness with pre-state primed from ethereum test format
-func newEthereumTestHarness(t *testing.T, evmConfig *endorser.EVMConfig, pre types.GenesisAlloc) (*TestHarness, error) {
+func newEthereumTestHarness(t *testing.T, evmConfig endorser.EVMConfig, pre types.GenesisAlloc) (*TestHarness, error) {
 	t.Helper()
 
 	th, err := newLocalTestHarness(t, TestLogger{T: t}, evmConfig, "", "bypass", nil)

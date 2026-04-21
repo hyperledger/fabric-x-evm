@@ -187,12 +187,12 @@ func (th *TestHarness) PrimeStateFromJSON(ctx context.Context, jsonFilePath stri
 //
 // Sync goroutines are started in the background using ctx. The returned synchronizers
 // can be used by callers that need to wait for the initial sync to complete.
-func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmConfig *endorser.EVMConfig, primeDBPath string, bypass bool) (*TestHarness, []*network.Synchronizer, error) {
+func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmConfig endorser.EVMConfig, primeDBPath string, bypass bool) (*TestHarness, []*network.Synchronizer, error) {
 	t.Helper()
 
-	var ethChainConfig *params.ChainConfig
-	if evmConfig != nil {
-		ethChainConfig = evmConfig.ChainConfig
+	// Derive ChainConfig from cfg.Network.ChainID when not explicitly provided.
+	if evmConfig.ChainConfig == nil {
+		evmConfig.ChainConfig = common.BuildChainConfig(cfg.Network.ChainID)
 	}
 
 	// Build all endorsers.
@@ -223,7 +223,7 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 		gwSigner = localSigner{}
 	}
 
-	ec, err := core.NewEndorsementClient(ends, gwSigner, cfg.Network.Channel, cfg.Network.Namespace, cfg.Network.NsVersion, ethChainConfig)
+	ec, err := core.NewEndorsementClient(ends, gwSigner, cfg.Network.Channel, cfg.Network.Namespace, cfg.Network.NsVersion)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -282,7 +282,7 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 	th := &TestHarness{
 		gateways:       []*core.Gateway{gw},
 		endorsers:      ends,
-		ethChainConfig: ethChainConfig,
+		ethChainConfig: evmConfig.ChainConfig,
 		primer:         primer,
 	}
 
@@ -332,7 +332,7 @@ func applyConfigOverrides(cfg *config.Config, overrides map[string]any) error {
 
 // newLocalTestHarness commits updates directly to the DB, bypassing peers and orderers.
 // Exported for use by eth-tests package.
-func newLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig *endorser.EVMConfig, primeDbPath, networkType string, configOverrides map[string]any) (*TestHarness, error) {
+func newLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath, networkType string, configOverrides map[string]any) (*TestHarness, error) {
 	bypass := networkType == "bypass"
 
 	orderer := &common.Endpoint{Host: "127.0.0.1", Port: 1337}
@@ -383,10 +383,6 @@ func newLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig *endorser.EV
 			},
 		},
 	}
-	if evmConfig != nil && evmConfig.ChainConfig != nil {
-		cfg.Network.ChainID = evmConfig.ChainConfig.ChainID.Int64()
-	}
-
 	if err := applyConfigOverrides(&cfg, configOverrides); err != nil {
 		return nil, err
 	}
@@ -402,7 +398,7 @@ func newLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig *endorser.EV
 // newFabricTestHarness returns a client for integration testing with access to a peer, orderer and local committer.
 // It follows the directory structure of a fabric samples test network.
 // Exported for use by eth-tests package.
-func newFabricTestHarness(t *testing.T, logger sdk.Logger, ethChainConfig *params.ChainConfig, primeDbPath string, configOverrides map[string]any) (*TestHarness, error) {
+func newFabricTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any) (*TestHarness, error) {
 	// Use TESTDATA environment variable if set, otherwise find project root
 	var testdataDir string
 	if envTestdata := os.Getenv("TESTDATA"); envTestdata != "" {
@@ -418,15 +414,12 @@ func newFabricTestHarness(t *testing.T, logger sdk.Logger, ethChainConfig *param
 	}
 
 	cfg := FabricSamplesConfig(testdataDir)
-	if ethChainConfig != nil {
-		cfg.Network.ChainID = ethChainConfig.ChainID.Int64()
-	}
 
 	if err := applyConfigOverrides(&cfg, configOverrides); err != nil {
 		return nil, err
 	}
 
-	th, syncs, err := buildTestHarness(t, logger, cfg, &endorser.EVMConfig{ChainConfig: ethChainConfig}, primeDbPath, false)
+	th, syncs, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false)
 	if err != nil {
 		return nil, err
 	}
@@ -441,17 +434,14 @@ func newFabricTestHarness(t *testing.T, logger sdk.Logger, ethChainConfig *param
 // newFabricXTestHarness returns a client for integration testing with access to a peer, orderer and local committer.
 // It follows the directory structure of a fabric samples test network.
 // Exported for use by eth-tests package.
-func newFabricXTestHarness(t *testing.T, logger sdk.Logger, ethChainConfig *params.ChainConfig, primeDbPath string, configOverrides map[string]any) (*TestHarness, error) {
+func newFabricXTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any) (*TestHarness, error) {
 	cfg := XTestCommitterConfig()
-	if ethChainConfig != nil {
-		cfg.Network.ChainID = ethChainConfig.ChainID.Int64()
-	}
 
 	if err := applyConfigOverrides(&cfg, configOverrides); err != nil {
 		return nil, err
 	}
 
-	th, _, err := buildTestHarness(t, logger, cfg, &endorser.EVMConfig{ChainConfig: ethChainConfig}, primeDbPath, false)
+	th, _, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false)
 	if err != nil {
 		return nil, err
 	}
@@ -459,7 +449,7 @@ func newFabricXTestHarness(t *testing.T, logger sdk.Logger, ethChainConfig *para
 	return th, nil
 }
 
-func newEndorser(t *testing.T, logger sdk.Logger, cfg econf.Endorser, channel, namespace string, evmConfig *endorser.EVMConfig, protocol string) (*state.VersionedDB, endorsement.Builder, *endorser.Endorser, *network.Synchronizer) {
+func newEndorser(t *testing.T, logger sdk.Logger, cfg econf.Endorser, channel, namespace string, evmConfig endorser.EVMConfig, protocol string) (*state.VersionedDB, endorsement.Builder, *endorser.Endorser, *network.Synchronizer) {
 	t.Helper()
 
 	var signer sdk.Signer
@@ -507,7 +497,7 @@ func newEndorser(t *testing.T, logger sdk.Logger, cfg econf.Endorser, channel, n
 	end, err := endorser.New(
 		endorser.NewEVMEngine(namespace, writeDB, evmConfig, monotonicVersions),
 		builder,
-		evmConfig.ChainConfig,
+		evmConfig.ChainConfig.ChainID.Int64(),
 	)
 	if err != nil {
 		t.Fatalf("endorser.New: %v", err)
