@@ -133,7 +133,12 @@ func convertTransaction(ethTxBytes []byte, blockHash []byte, blockNumber uint64,
 		return domain.Transaction{}, fmt.Errorf("invalid tx: %w", err)
 	}
 
-	signer := types.LatestSignerForChainID(ethTx.ChainId())
+	var signer types.Signer
+	if id := ethTx.ChainId(); id.Sign() > 0 {
+		signer = types.LatestSignerForChainID(id)
+	} else {
+		signer = types.HomesteadSigner{}
+	}
 	from, err := types.Sender(signer, ethTx)
 	if err != nil {
 		return domain.Transaction{}, fmt.Errorf("invalid sender: %w", err)
