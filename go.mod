@@ -1,6 +1,6 @@
 module github.com/hyperledger/fabric-x-evm
 
-go 1.26
+go 1.26.2
 
 tool (
 	github.com/ethereum/go-ethereum/cmd/abigen
@@ -14,9 +14,9 @@ tool (
 require (
 	github.com/ethereum/go-ethereum v1.16.7
 	github.com/holiman/uint256 v1.3.2
-	github.com/hyperledger/fabric v1.4.0-rc1.0.20240918034325-94590aa4332b
 	github.com/hyperledger/fabric-lib-go v1.1.3
 	github.com/hyperledger/fabric-protos-go-apiv2 v0.3.7
+	github.com/hyperledger/fabric-x-common v0.1.1-0.20260219094834-26c5a49ed548
 	github.com/hyperledger/fabric-x-sdk v0.0.0-20260415085836-ee298db39297
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/crypto v0.50.0
@@ -96,10 +96,10 @@ require (
 	github.com/huin/goupnp v1.3.0 // indirect
 	github.com/hyperledger-labs/SmartBFT v0.0.0-20250503203013-eb005eef8866 // indirect
 	github.com/hyperledger/aries-bbs-go v0.0.0-20240528084656-761671ea73bc // indirect
+	github.com/hyperledger/fabric v1.4.0-rc1.0.20240918034325-94590aa4332b // indirect
 	github.com/hyperledger/fabric-amcl v0.0.0-20230602173724-9e02669dceb2 // indirect
 	github.com/hyperledger/fabric-x v0.0.14 // indirect
 	github.com/hyperledger/fabric-x-committer v0.1.9 // indirect
-	github.com/hyperledger/fabric-x-common v0.1.1-0.20260219094834-26c5a49ed548 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/influxdata/influxdb-client-go/v2 v2.4.0 // indirect
 	github.com/influxdata/influxdb1-client v0.0.0-20220302092344-a9ab5670611c // indirect
