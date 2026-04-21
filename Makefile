@@ -100,3 +100,18 @@ eth-tests-slow:
 .PHONY: eth-tests-slow-legacy
 eth-tests-slow-legacy:
 	@go test -test.fullpath=true -timeout 10000s -run ^TestEthereumTests$$ github.com/hyperledger/fabric-x-evm/integration -very_slow -legacy
+
+.PHONY: hardhat-poc
+hardhat-poc: ## Run proof-of-concept Hardhat test (sanity test - fast)
+	@./scripts/run_hardhat_test.sh sanity.test.js fabricevm
+
+.PHONY: hardhat-erc20
+hardhat-erc20: ## Run full ERC20 Hardhat test suite (slow)
+	@./scripts/run_hardhat_test.sh test/token/ERC20/ERC20.test.js fabricevm
+
+.PHONY: hardhat-tests
+hardhat-tests: hardhat-erc20 ## Alias for hardhat-erc20
+
+.PHONY: hardhat-tests-all
+hardhat-tests-all:
+	@cd testdata/openzeppelin-contracts && npx hardhat test --network fabricevm

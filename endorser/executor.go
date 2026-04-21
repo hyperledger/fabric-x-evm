@@ -190,6 +190,7 @@ func newExecutor(stateDB *StateDB, blockInfo *utils.BlockInfo, evmConfig *EVMCon
 	}
 
 	// Default block context
+	// Set post-merge flags (Random != nil, Difficulty = 0) to enable Shanghai/Cancun
 	blockCtx := vm.BlockContext{
 		CanTransfer: core.CanTransfer,
 		Transfer:    core.Transfer,
@@ -197,7 +198,8 @@ func newExecutor(stateDB *StateDB, blockInfo *utils.BlockInfo, evmConfig *EVMCon
 		Coinbase:    common.HexToAddress("0x0"),
 		BlockNumber: blockInfo.BlockNumber,
 		Time:        blockInfo.BlockTime,
-		Difficulty:  big.NewInt(1),
+		Difficulty:  big.NewInt(0),      // Post-merge: difficulty is 0
+		Random:      &common.Hash{},     // Post-merge: random is set (even if zero)
 		GasLimit:    blockInfo.GasLimit,
 		BaseFee:     big.NewInt(0),
 	}

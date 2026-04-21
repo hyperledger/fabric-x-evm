@@ -103,5 +103,6 @@ func NewWeb3API() *Web3API {
 
 // web3_clientVersion
 func (api *Web3API) ClientVersion() string {
-	return "fabric-evm/0.1.0"
+	// Return HardhatNetwork for compatibility with Hardhat's network detection
+	return "HardhatNetwork/fabric-evm/0.1.0"
 }

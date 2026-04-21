@@ -98,8 +98,10 @@ func FabricSamplesConfig(testdataDir string) config.Config {
 				MspID:  "Org1MSP",
 				MSPDir: path.Join(user, "msp"),
 			},
-			DbConnStr:  "file:gateway.db?mode=memory&cache=shared",
-			TrieDBPath: filepath.Join(testdataDir, "triedb"),
+			DbConnStr:        "file:gateway.db?mode=memory&cache=shared",
+			TrieDBPath:       filepath.Join(testdataDir, "triedb"),
+			EnableTestRPC:    true,
+			TestAccountsPath: filepath.Join(testdataDir, "test_accounts.json"),
 		},
 		Endorsers: []econf.Endorser{
 			{
@@ -186,8 +188,10 @@ func XTestCommitterConfig() config.Config {
 				MspID:  "Org1MSP",
 				MSPDir: path.Join(user, "msp"),
 			},
-			DbConnStr:  "file:gateway.db?mode=memory&cache=shared",
-			TrieDBPath: filepath.Join(testdataDir, "triedb"),
+			DbConnStr:        "file:gateway.db?mode=memory&cache=shared",
+			TrieDBPath:       filepath.Join(testdataDir, "triedb"),
+			EnableTestRPC:    true,
+			TestAccountsPath: filepath.Join(testdataDir, "test_accounts.json"),
 			// DbConnStr:      "file:../testdata/blocks.db",
 		},
 		Endorsers: []econf.Endorser{

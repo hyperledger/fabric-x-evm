@@ -8,7 +8,6 @@ package common
 
 import (
 	"fmt"
-	"math"
 	"math/big"
 	"os"
 	"strconv"
@@ -29,6 +28,8 @@ func BuildChainConfig(chainID int64) *params.ChainConfig {
 		}
 	}
 
+	// Enable Shanghai and Cancun from genesis (time 0) for PUSH0 opcode support
+	zero := uint64(0)
 	return &params.ChainConfig{
 		ChainID:                 big.NewInt(chainID),
 		HomesteadBlock:          big.NewInt(0),
@@ -46,10 +47,10 @@ func BuildChainConfig(chainID int64) *params.ChainConfig {
 		LondonBlock:             big.NewInt(0),
 		ArrowGlacierBlock:       big.NewInt(0),
 		GrayGlacierBlock:        big.NewInt(0),
-		TerminalTotalDifficulty: big.NewInt(math.MaxInt64),
+		TerminalTotalDifficulty: big.NewInt(0), // Set to 0 to indicate post-merge
 		MergeNetsplitBlock:      nil,
-		ShanghaiTime:            nil,
-		CancunTime:              nil,
+		ShanghaiTime:            &zero, // Enable Shanghai from genesis
+		CancunTime:              &zero, // Enable Cancun from genesis
 		PragueTime:              nil,
 		OsakaTime:               nil,
 		VerkleTime:              nil,
