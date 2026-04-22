@@ -2,13 +2,13 @@
 # Copyright IBM Corp. All Rights Reserved.
 #
 # SPDX-License-Identifier: Apache-2.0
-# Shared functions for Fabric test scripts
+# Shared functions for Fabric test scripts using Fablo
 
 # Configuration
-REFERENCE_VERSION="v3.1.3"
-FABRIC_SAMPLES_PATH="./testdata/fabric-samples/"
-PEER_PATH="${FABRIC_SAMPLES_PATH}bin/peer"
-NETWORK_PATH="${FABRIC_SAMPLES_PATH}test-network/network.sh"
+FABLO_DIR="./testdata/fablo"
+FABLO_PATH="$FABLO_DIR/fablo"
+FABLO_CONFIG="$FABLO_DIR/fablo-config.json"
+FABLO_TARGET="$FABLO_DIR/fablo-target"
 NETWORK_STARTED=false
 
 # Parse verbose flag from environment or command line
@@ -36,63 +36,53 @@ ensure_testdata_dir() {
     fi
 }
 
-# Function to check and download fabric-samples if needed
-check_and_download_fabric_samples() {
-    local found=false
-
-    # Check if peer executable exists
-    if [[ -x "$PEER_PATH" ]]; then
-        echo "peer executable found at $PEER_PATH"
-
-        # Extract version string
-        VERSION_OUTPUT=$("$PEER_PATH" version 2>/dev/null)
-        CURRENT_VERSION=$(echo "$VERSION_OUTPUT" | grep -E '^ Version:' | awk '{print $2}')
-
-        echo "Current peer version: $CURRENT_VERSION"
-
-        # Compare with reference version
-        if [[ "$CURRENT_VERSION" == "$REFERENCE_VERSION" ]]; then
-            echo "Version matches reference ($REFERENCE_VERSION). No action needed."
-            found=true
-        else
-            echo "Version mismatch. Expected $REFERENCE_VERSION, found $CURRENT_VERSION."
-            rm -rf "$FABRIC_SAMPLES_PATH"
-        fi
+# Function to verify Fablo binary and config exist
+check_fablo_setup() {
+    if [[ ! -x "$FABLO_PATH" ]]; then
+        echo "Error: Fablo binary not found at $FABLO_PATH"
+        exit 1
     fi
-
-    # Download if not present or wrong version
-    if [[ "$found" = false ]]; then
-        echo "Downloading fabric samples..."
-
-        pushd ./testdata || { echo "Failed to enter ./testdata"; exit 1; }
-
-        echo "Downloading and running install-fabric.sh..."
-        curl -sSLO https://raw.githubusercontent.com/hyperledger/fabric/main/scripts/install-fabric.sh && chmod +x install-fabric.sh
-        ./install-fabric.sh --fabric-version "${REFERENCE_VERSION#v}"
-
-        popd
+    if [[ ! -f "$FABLO_CONFIG" ]]; then
+        echo "Error: Fablo config not found at $FABLO_CONFIG"
+        exit 1
     fi
+    echo "✓ Fablo binary and config verified"
 }
 
-# Function to start network and deploy chaincode
+# Function to start network with Fablo
 start_network_and_deploy_chaincode() {
-    echo "Starting Fabric network and deploying chaincode..."
-    "$NETWORK_PATH" up createChannel -i "${REFERENCE_VERSION#v}"
+    echo "Starting Fabric network with Fablo..."
+
+    check_fablo_setup
+
+    # Clean up any previous fablo-target
+    echo "Stopping any previously running Fablo network..."
+    cd "$FABLO_DIR" || { echo "Failed to enter fablo dir for cleanup"; exit 1; }
+    ./fablo down || true
+    cd - > /dev/null || exit 1
+
+    if [[ -d "$FABLO_TARGET" ]]; then
+        echo "Cleaning up previous fablo-target..."
+        rm -rf "$FABLO_TARGET"
+    fi
+
+    # Bring up the network (generates artifacts, creates channel, deploys chaincode)
+    echo "Bringing up network with Fablo..."
+    cd "$FABLO_DIR" || { echo "Failed to enter fablo dir"; exit 1; }
+    ./fablo up fablo-config.json || { echo "Failed to start network"; exit 1; }
+    cd - > /dev/null || exit 1
+
     NETWORK_STARTED=true
-    "$NETWORK_PATH" deployCCAAS -ccn basic -ccp "$(realpath "${FABRIC_SAMPLES_PATH}/asset-transfer-basic/chaincode-external")"
+    echo "✓ Network started successfully"
 }
 
 # Cleanup function to bring down the network if started
 cleanup_network() {
     if [[ "$NETWORK_STARTED" = true ]]; then
         echo "Cleaning up: Bringing down Fabric network..."
-        if [[ -f "$NETWORK_PATH" ]]; then
-            "$NETWORK_PATH" down
-        fi
-        docker kill peer0org2_basic_ccaas peer0org1_basic_ccaas 2>/dev/null || true
-        if [[ -f "$NETWORK_PATH" ]]; then
-            "$NETWORK_PATH" down
-        fi
+        cd "$FABLO_DIR" || { echo "Failed to enter fablo dir for cleanup"; return; }
+        ./fablo down || true
+        cd - > /dev/null || true
     fi
 }
 
