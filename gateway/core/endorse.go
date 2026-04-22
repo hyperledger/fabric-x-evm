@@ -14,7 +14,6 @@ import (
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/params"
 	fabCommon "github.com/hyperledger/fabric-protos-go-apiv2/common"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-common/protoutil"
@@ -36,22 +35,20 @@ type Endorser interface {
 // EndorsementClient forwards ethereum-style transactions and calls
 // to the endorsers and returns their signed fabric-style responses.
 type EndorsementClient struct {
-	endorsers      []*endorser.Endorser
-	signer         Signer
-	channel        string
-	namespace      string
-	nsVersion      string
-	ethChainConfig *params.ChainConfig
+	endorsers []*endorser.Endorser
+	signer    Signer
+	channel   string
+	namespace string
+	nsVersion string
 }
 
-func NewEndorsementClient(endorsers []*endorser.Endorser, signer Signer, channel, namespace, nsVersion string, ethChainConfig *params.ChainConfig) (*EndorsementClient, error) {
+func NewEndorsementClient(endorsers []*endorser.Endorser, signer Signer, channel, namespace, nsVersion string) (*EndorsementClient, error) {
 	return &EndorsementClient{
-		endorsers:      endorsers,
-		signer:         signer,
-		channel:        channel,
-		namespace:      namespace,
-		nsVersion:      nsVersion,
-		ethChainConfig: ethChainConfig,
+		endorsers: endorsers,
+		signer:    signer,
+		channel:   channel,
+		namespace: namespace,
+		nsVersion: nsVersion,
 	}, nil
 }
 
