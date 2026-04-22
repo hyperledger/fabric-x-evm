@@ -10,6 +10,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"sync"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -67,14 +68,35 @@ func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Tra
 		return sdk.Endorsement{}, err
 	}
 
-	// TODO: request endorsement in parallel
-	res := []*peer.ProposalResponse{}
-	for _, end := range e.endorsers {
-		pResp, err := end.ProcessEVMTransaction(ctx, inv, tx, blockInfo)
+	// Derive a cancellable context so goroutines can stop early on error
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	res := make([]*peer.ProposalResponse, len(e.endorsers))
+	errs := make([]error, len(e.endorsers)) // indexed — deterministic error order
+
+	for i, end := range e.endorsers {
+		wg.Add(1)
+		go func(index int, endorser *endorser.Endorser) {
+			defer wg.Done()
+			pResp, err := endorser.ProcessEVMTransaction(ctx, inv, tx, blockInfo)
+			if err != nil {
+				errs[index] = fmt.Errorf("process EVM transaction: %w", err)
+				cancel() // signal other goroutines to stop early
+				return
+			}
+			res[index] = pResp
+		}(i, end)
+	}
+
+	wg.Wait()
+
+	// Return first error in slice order — stable and deterministic
+	for _, err := range errs {
 		if err != nil {
-			return sdk.Endorsement{}, fmt.Errorf("process EVM transaction: %w", err)
+			return sdk.Endorsement{}, err
 		}
-		res = append(res, pResp)
 	}
 
 	return sdk.Endorsement{
