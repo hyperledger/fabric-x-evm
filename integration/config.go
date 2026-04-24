@@ -150,6 +150,9 @@ func XTestCommitterConfig() config.Config {
 			testdataDir = filepath.Join(projectRoot, testdataDir)
 		}
 	}
+	// COMMITTER_HOST overrides the committer hostname (useful when running in Docker Compose).
+	committerHost := cmp.Or(os.Getenv("COMMITTER_HOST"), "127.0.0.1")
+
 	org1 := path.Join(testdataDir, "crypto", "peerOrganizations", "Org1")
 	committer := path.Join(org1, "peers", "committer.org1.example.com")
 	endorser := path.Join(org1, "peers", "endorser.org1.example.com")
@@ -165,7 +168,7 @@ func XTestCommitterConfig() config.Config {
 		},
 		Gateway: config.Gateway{
 			Orderers: []common.ClientConfig{{
-				Endpoint: &common.Endpoint{Host: "127.0.0.1", Port: 7050},
+				Endpoint: &common.Endpoint{Host: committerHost, Port: 7050},
 				TLS: common.TLSConfig{
 					Mode:        network.TLSModeMTLS,
 					CertPath:    path.Join(user, "tls", "client.crt"),
@@ -174,7 +177,7 @@ func XTestCommitterConfig() config.Config {
 				},
 			}},
 			Committer: common.ClientConfig{
-				Endpoint: &common.Endpoint{Host: "127.0.0.1", Port: 4001},
+				Endpoint: &common.Endpoint{Host: committerHost, Port: 4001},
 				TLS: common.TLSConfig{
 					Mode:        network.TLSModeMTLS,
 					CertPath:    path.Join(user, "tls", "client.crt"),
@@ -195,7 +198,7 @@ func XTestCommitterConfig() config.Config {
 				Name: "org1",
 				Committer: common.ClientConfig{
 					Endpoint: &common.Endpoint{
-						Host: "127.0.0.1",
+						Host: committerHost,
 						Port: 4001,
 					},
 					TLS: common.TLSConfig{

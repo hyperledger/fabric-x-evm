@@ -12,9 +12,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/ethereum/go-ethereum/rpc"
@@ -202,18 +199,6 @@ func (a *App) Run(ctx context.Context) error {
 		<-gctx.Done()
 		return a.Shutdown()
 	})
-
-	// Signal → cancel → triggers shutdown goroutine
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		select {
-		case sig := <-sigCh:
-			log.Printf("signal %v received, initiating graceful shutdown...", sig)
-			cancel()
-		case <-gctx.Done():
-		}
-	}()
 
 	return g.Wait()
 }
