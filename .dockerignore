@@ -1,0 +1,28 @@
+# Build artifacts
+bin/
+fxevm
+
+# Dependencies / caches
+.gomodcache/
+node_modules/
+
+# Test data (large; not needed to build the binary)
+testdata/
+
+# Editor / IDE
+.vscode/
+*.un~
+*.swp
+
+# Repo metadata
+.git/
+*.md
+docs/
+
+# Compose / local dev
+compose.yml
+Makefile
+blockscout.env
+scripts/
+solidity/
+fablo-target/
