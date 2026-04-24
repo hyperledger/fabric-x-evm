@@ -132,7 +132,7 @@ cast wallet new
 
 Follow instructions
 [here](https://support.metamask.io/configure/networks/how-to-add-a-custom-network-rpc)
-to add a custom network with RPC URL http://localhost:8545 and chain id 31337.
+to add a custom network with RPC URL http://localhost:8545 and chain id 4011.
 
 > [!IMPORTANT]
 > If you have used the wallet before and start with a clean network, reset the
@@ -168,7 +168,7 @@ export METAMASK=0x123
 Deploy the smart contract and remember the address:
 
 ```shell
-export CONTRACT_ADDRESS=$(cast send --rpc-url http://localhost:8545 --chain-id 31337 --private-key $PRIVATE_KEY \
+export CONTRACT_ADDRESS=$(cast send --rpc-url http://localhost:8545 --chain-id 4011 --private-key $PRIVATE_KEY \
   --create "$(cat bin/GLDToken/GLDToken.bin)$(cast abi-encode 'constructor(uint256)' 1000000000000000000000 | sed 's/^0x//')" \
   | awk '/contractAddress/ {print $2}')
 ```
@@ -176,7 +176,7 @@ export CONTRACT_ADDRESS=$(cast send --rpc-url http://localhost:8545 --chain-id 3
 Transfer 100 tokens to the metamask wallet:
 
 ```shell
-cast send --rpc-url http://localhost:8545 --chain-id 31337 --private-key $PRIVATE_KEY $CONTRACT_ADDRESS "transfer(address,uint256)" $METAMASK "100000000000000000000"
+cast send --rpc-url http://localhost:8545 --chain-id 4011 --private-key $PRIVATE_KEY $CONTRACT_ADDRESS "transfer(address,uint256)" $METAMASK "100000000000000000000"
 ```
 
 Go to your browser and verify that you can see the tokens. Copy the address of

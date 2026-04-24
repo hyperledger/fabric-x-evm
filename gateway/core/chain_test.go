@@ -24,7 +24,7 @@ import (
 func createTestEthTx(t *testing.T, key *ecdsa.PrivateKey, to common.Address, value *big.Int) *types.Transaction {
 	t.Helper()
 	tx := types.NewTransaction(0, to, value, 21000, big.NewInt(1000), []byte("test data"))
-	signer := types.NewEIP155Signer(big.NewInt(31337))
+	signer := types.NewEIP155Signer(big.NewInt(4011))
 	signed, err := types.SignTx(tx, signer, key)
 	require.NoError(t, err)
 	return signed
@@ -165,7 +165,7 @@ func TestConvertTransaction_ContractCreation(t *testing.T) {
 	require.NoError(t, err)
 
 	ethTx := types.NewContractCreation(0, big.NewInt(0), 1000000, big.NewInt(1000), []byte("contract code"))
-	signer := types.NewEIP155Signer(big.NewInt(31337))
+	signer := types.NewEIP155Signer(big.NewInt(4011))
 	signed, err := types.SignTx(ethTx, signer, key)
 	require.NoError(t, err)
 	ethb, _ := signed.MarshalBinary()

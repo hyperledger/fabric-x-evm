@@ -362,7 +362,7 @@ func newLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVM
 			Channel:   "mychannel",
 			Namespace: "basic",
 			NsVersion: "1.0",
-			ChainID:   31337,
+			ChainID:   4011,
 		},
 		Gateway: config.Gateway{
 			DbConnStr:   filepath.Join(dir, tname+"gateway.db"),

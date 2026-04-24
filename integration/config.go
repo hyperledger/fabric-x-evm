@@ -77,7 +77,7 @@ func FabricSamplesConfig(testdataDir string) config.Config {
 			Channel:   "mychannel",
 			Namespace: "basic",
 			NsVersion: "1.0",
-			ChainID:   31337,
+			ChainID:   4011,
 		},
 		Gateway: config.Gateway{
 			Orderers: []common.ClientConfig{{
@@ -161,7 +161,7 @@ func XTestCommitterConfig() config.Config {
 			Channel:   "mychannel",
 			Namespace: "basic",
 			NsVersion: "1.0",
-			ChainID:   31337,
+			ChainID:   4011,
 		},
 		Gateway: config.Gateway{
 			Orderers: []common.ClientConfig{{

@@ -163,7 +163,7 @@ func (m *mockBackend) SendTransaction(_ context.Context, tx *types.Transaction) 
 }
 
 func (m *mockBackend) ChainID(_ context.Context) (*big.Int, error) {
-	return big.NewInt(31337), nil
+	return big.NewInt(4011), nil
 }
 
 func (m *mockBackend) NonceAt(_ context.Context, account common.Address, blockNumber *big.Int) (uint64, error) {
