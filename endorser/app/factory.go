@@ -36,8 +36,6 @@ func NewEndorser(
 		return nil, nil, fmt.Errorf("failed to create signer: %w", err)
 	}
 
-	// Create LightKVS for in-memory versioned state
-	// TODO: when we have it with persistence, instantiate from config
 	kvs := endorser.NewLightKVS()
 
 	evmConfig := endorser.EVMConfig{

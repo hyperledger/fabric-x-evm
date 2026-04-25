@@ -11,8 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"os"
-	"path"
+	"math/rand/v2"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -133,7 +132,7 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 		return nil, nil, err
 	}
 
-	chain, err := core.NewChain(cfg.Gateway.DbConnStr, cfg.Gateway.TrieDBPath, false)
+	chain, err := core.NewChain(cfg.Gateway.Database.ConnString, cfg.Gateway.Database.TriePath, false)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -296,8 +295,10 @@ func newLocalTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig e
 			ChainID:   4011,
 		},
 		Gateway: config.Gateway{
-			DbConnStr:   filepath.Join(dir, tname+"gateway.db"),
-			TrieDBPath:  filepath.Join(dir, tname+"triedb.db"),
+			Database: config.DB{
+				ConnString: filepath.Join(dir, tname+"gateway.db"),
+				TriePath:   filepath.Join(dir, tname+"triedb.db"),
+			},
 			SyncTimeout: 2 * time.Second,
 			Orderers: []common.ClientConfig{
 				{Endpoint: orderer},
@@ -310,7 +311,9 @@ func newLocalTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig e
 			{
 				Committer: common.ClientConfig{Endpoint: peer},
 				Name:      "endorser1",
-				DbConnStr: filepath.Join(dir, tname+"endorser1.db"),
+				Database: econf.DB{
+					ConnString: filepath.Join(dir, tname+"endorser1.db"),
+				},
 			},
 		},
 	}
@@ -347,21 +350,15 @@ func newLocalTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig e
 // newFabricTestHarness returns a client for integration testing with access to a peer, orderer and local committer.
 // It follows the directory structure of a Fablo test network.
 func newFabricTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any) (*TestHarness, error) {
-	// Use TESTDATA environment variable if set, otherwise find project root
-	var testdataDir string
-	if envTestdata := os.Getenv("TESTDATA"); envTestdata != "" {
-		testdataDir = path.Join(envTestdata, "fablo")
-	} else {
-		projectRoot, err := findProjectRoot()
-		if err != nil {
-			cwd, _ := os.Getwd()
-			testdataDir = path.Join(cwd, "..", "testdata", "fablo")
-		} else {
-			testdataDir = path.Join(projectRoot, "testdata", "fablo")
-		}
+	cfg, err := config.Load("fablo.yaml")
+	if err != nil {
+		return nil, fmt.Errorf("load config: %w", err)
 	}
 
-	cfg := FabloConfig(testdataDir)
+	x := rand.Int64()
+	for i := range cfg.Endorsers {
+		cfg.Endorsers[i].Database.ConnString = fmt.Sprintf("file:endorser%d-%d.db?mode=memory&cache=shared", i, x)
+	}
 
 	if err := applyConfigOverrides(&cfg, configOverrides); err != nil {
 		return nil, err
@@ -389,7 +386,10 @@ func newFabricTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EV
 // It follows the directory structure of a fabric samples test network.
 // Exported for use by eth-tests package.
 func NewFabricXTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any) (*TestHarness, error) {
-	cfg := XTestCommitterConfig()
+	cfg, err := config.Load("fabx.yaml")
+	if err != nil {
+		return nil, fmt.Errorf("load config: %w", err)
+	}
 
 	if err := applyConfigOverrides(&cfg, configOverrides); err != nil {
 		return nil, err
@@ -425,10 +425,7 @@ func newEndorser(t *testing.T, cfg econf.Endorser, channel, namespace string, ev
 		}
 	}
 
-	// Create LightKVS for versioned key-value storage with snapshot isolation
 	lightKVS := endorser.NewLightKVS()
-
-	// Cleanup is a no-op for LightKVS
 	t.Cleanup(func() { lightKVS.Close() })
 
 	// the shape of endorsements and blocks differs per protocol.
