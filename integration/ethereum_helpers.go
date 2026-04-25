@@ -263,9 +263,10 @@ func buildBlockInfo(env *stEnv) (*utils.BlockInfo, error) {
 	blockTime := env.Timestamp
 
 	return &utils.BlockInfo{
-		BlockNumber: blockNum,
-		BlockTime:   blockTime,
-		GasLimit:    env.GasLimit,
+		BlockNumber:   blockNum,
+		BlockTime:     blockTime,
+		GasLimit:      env.GasLimit,
+		ExcessBlobGas: env.ExcessBlobGas,
 	}, nil
 }
 

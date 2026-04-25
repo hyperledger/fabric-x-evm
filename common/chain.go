@@ -36,10 +36,11 @@ func BuildChainConfig(chainID int64) *params.ChainConfig {
 		TerminalTotalDifficulty: big.NewInt(0), // shanghai is post-fork (mining is disabled)
 		MergeNetsplitBlock:      nil,
 		ShanghaiTime:            new(uint64(0)),
-		CancunTime:              nil,
+		CancunTime:              new(uint64(0)),
 		PragueTime:              nil,
 		OsakaTime:               nil,
 		VerkleTime:              nil,
+		BlobScheduleConfig:      params.DefaultBlobSchedule,
 		Ethash:                  new(params.EthashConfig),
 		Clique:                  nil,
 	}

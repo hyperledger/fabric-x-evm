@@ -16,6 +16,7 @@ import (
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
 	"github.com/ethereum/go-ethereum/core"
 	ethstate "github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -202,6 +203,16 @@ func newExecutor(stateDB *StateDB, blockInfo *utils.BlockInfo, evmConfig EVMConf
 		Random:      &common.Hash{}, // Warning: PREVRANDAO stub must not be relied on by smart contracts.
 		GasLimit:    blockInfo.GasLimit,
 		BaseFee:     big.NewInt(0),
+	}
+
+	// Cancun requires a non-nil BlobBaseFee; state_transition.go dereferences it directly
+	// for blob transactions. Calculate from ExcessBlobGas (0 → 1 wei minimum).
+	if evmConfig.ChainConfig.IsCancun(blockInfo.BlockNumber, blockInfo.BlockTime) {
+		excess := uint64(0)
+		if blockInfo.ExcessBlobGas != nil {
+			excess = *blockInfo.ExcessBlobGas
+		}
+		blockCtx.BlobBaseFee = eip4844.CalcBlobFee(evmConfig.ChainConfig, &types.Header{ExcessBlobGas: &excess})
 	}
 
 	// Default VM config
