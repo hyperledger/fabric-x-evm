@@ -150,28 +150,26 @@ section).
 
 ## EVM execution differences
 
-**Snapshot / revert is a no-op** :`Snapshot()` always returns 0; `RevertToSnapshot()` does nothing.
-In geth, the EVM takes a snapshot before every sub-call and rolls it back if the sub-call reverts.
-Here, **state writes from a reverted sub-call persist**. Any inner `CALL`, `STATICCALL`,
-`DELEGATECALL`, or `CREATE` that fails will have already mutated the parent state irrevocably.
+**Fork-level opcodes and precompiles**: All EVM opcodes through Osaka are active. This includes
+`MCOPY` (EIP-5656), `TLOAD`/`TSTORE` (EIP-1153, transient storage is fully implemented with
+snapshot/journal support), `BLOBHASH`/`BLOBBASEFEE` (EIP-4844), and BLS12-381 precompiles
+(EIP-2537). Blob transactions (type 3) are accepted and executed; KZG proof validation is
+skipped (no DA layer). EIP-7702 set-code transactions (type 4) are accepted and processed —
+EOA code is set via the standard `SetCode` path.
 
-Impact: contracts with error-handling patterns (`try/catch` in Solidity, value-transfer guards,
-re-entrancy locks that rely on revert isolation) may exhibit incorrect state.
+**Snapshot / revert is implemented**: `Snapshot()` and `RevertToSnapshot()` use a journal-based
+mechanism that correctly rolls back all in-memory state changes (balances, nonces, code, storage,
+transient storage, logs, self-destruct flags). Sub-call reverts isolate state as expected.
 
-**Transient storage (EIP-1153) not implemented** :`SetTransientState` and `GetTransientState` are 
-no-ops. The `TSTORE` and `TLOAD` opcodes silently store/read nothing. Contracts that use transient 
-storage for reentrancy guards or transient data will not work correctly.
+**`SELFDESTRUCT` is a no-op** (EIP-6780, active from Osaka): With EIP-6780 active, the EVM always
+calls `SelfDestruct6780`. Our implementation returns `(0, false)` — it does nothing: no balance
+transfer to the beneficiary, no code removal, no storage clearing, and `HasSelfDestructed` always
+returns `false`. Previously (Shanghai), `SelfDestruct()` at least zeroed the account balance. That
+no longer happens either. Contracts that depend on SELFDESTRUCT for cleanup, ETH recovery, or
+reentrancy detection via `HasSelfDestructed` will not work correctly.
 
-
-**`SELFDESTRUCT` does not clear state** `SelfDestruct()` only sets an in-memory flag 
-(`HasSelfDestructed` works correctly within one transaction). Code, storage slots, and balance of 
-the destructed account are **not removed** from the DB. `SelfDestruct6780` always returns 
-`(0, false)`.
-
-Implementation note: clearing balance and code is straightforward. Clearing all storage slots requires
-deeper investigation: the keys must be enumerated (non-trivial) and deleting them all via the
-ledger read-write set may produce an impractically large RWSet for contracts with extensive
-storage.
+Implementation note: clearing storage slots requires enumerating all keys for the address
+(non-trivial) and may produce an impractically large RWSet for contracts with many storage entries.
 
 **Native ETH balances not funded**: balances are implemented but unused. Accounts have zero ETH 
 balance by default. Value transfers inside the EVM (`CALL` with value, `SELFDESTRUCT` beneficiary, 
@@ -199,8 +197,9 @@ network values.
 | --------------------------- | ------------------------------------------------- | --------------------------- |
 | `BLOCKHASH(n)`              | always `0x000…`                                   | hash of block `n`           |
 | `COINBASE`                  | `0x000…`                                          | block proposer address      |
-| `DIFFICULTY` / `PREVRANDAO` | `1`                                               | current random / difficulty |
-| `BASEFEE`                   | `1`                                               | actual EIP-1559 base fee    |
+| `DIFFICULTY` / `PREVRANDAO` | `0x000…` (stub — do not rely on for randomness)   | current random / difficulty |
+| `BASEFEE`                   | `0`                                               | actual EIP-1559 base fee    |
+| `BLOBBASEFEE`               | ~1 wei (calculated from `ExcessBlobGas = 0`)      | actual EIP-4844 blob fee    |
 | `TIMESTAMP`                 | `1_000_000` (when blockInfo not supplied)         | actual Unix timestamp       |
 | `NUMBER`                    | Fabric block number (when blockInfo not supplied) | Ethereum block number       |
 
