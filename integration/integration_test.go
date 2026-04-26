@@ -11,8 +11,8 @@ import (
 	"io"
 	"math/big"
 	"os"
+	"sync"
 	"testing"
-	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/tests"
@@ -479,11 +479,11 @@ func testTetherTokenParallel(t *testing.T, th *TestHarness) {
 	//   User B: 130,000 USDT (-20,000)
 	//   User C:  30,000 USDT (+30,000)
 	//   User D:  20,000 USDT (+20,000)
-	go submit(t, node1, env1)
-	submit(t, node2, env2)
-
-	// ensure some slack for the background tx to be committed.
-	time.Sleep(200 * time.Millisecond)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); submit(t, node1, env1) }()
+	go func() { defer wg.Done(); submit(t, node2, env2) }()
+	wg.Wait()
 
 	toB = toB.Sub(toB, toBD)
 	toA = toA.Sub(toA, toAC)
