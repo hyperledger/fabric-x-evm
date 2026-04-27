@@ -98,8 +98,10 @@ func FabricSamplesConfig(testdataDir string) config.Config {
 				MspID:  "Org1MSP",
 				MSPDir: path.Join(user, "msp"),
 			},
-			DbConnStr:  "file:gateway.db?mode=memory&cache=shared",
-			TrieDBPath: "",
+			DbConnStr:        "file:gateway.db?mode=memory&cache=shared",
+			TrieDBPath:       filepath.Join(testdataDir, "triedb"),
+			TestAccountsPath: filepath.Join(testdataDir, "test_accounts.json"),
+			EnableTestRPC:    true,
 		},
 		Endorsers: []econf.Endorser{
 			{

@@ -165,3 +165,7 @@ demo-transfer:
 	    $(TO) "$(AMOUNT)000000000000000000" \
 	    | awk '/^transactionHash/ {print $$2}') && \
 	  printf '\nTransferred %s tokens to %s: %s/tx/%s\n\n' "$(AMOUNT)" "$(TO)" "$(DEMO_EXPLORER)" "$$TX"
+
+.PHONY: hardhat-tests
+hardhat-tests:
+	@./scripts/run_hardhat_test.sh test/token/ERC20/ERC20.test.js
