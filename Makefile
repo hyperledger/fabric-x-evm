@@ -93,3 +93,7 @@ eth-tests-slow:
 .PHONY: eth-tests-slow-legacy
 eth-tests-slow-legacy:
 	@go test -test.fullpath=true -timeout 10000s -run ^TestEthereumTests$$ github.com/hyperledger/fabric-x-evm/integration -very_slow -legacy
+
+.PHONY: hardhat-tests
+hardhat-tests:
+	@./scripts/run_hardhat_test.sh test/token/ERC20/ERC20.test.js
