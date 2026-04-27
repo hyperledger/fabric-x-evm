@@ -255,7 +255,7 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 	defer th.Stop()
 
 	// Execute transaction through gateway
-	env, execErr := th.gateways[0].ExecuteEthTx(t.Context(), tx, blockInfo)
+	env, execErr := th.Gateways[0].ExecuteEthTx(t.Context(), tx, blockInfo)
 
 	// Get expected root from post-state
 	expectedRoot := common.Hash(post.Root)
@@ -301,7 +301,7 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 		if err != nil {
 			t.Fatalf("extract tx RWS from endorsement: %v", err)
 		}
-		verifyTrieRoot(t, th.primer.Writes(), txRWS, blockInfo.BlockNumber.Uint64(), expectedRoot)
+		verifyTrieRoot(t, th.Primer.Writes(), txRWS, blockInfo.BlockNumber.Uint64(), expectedRoot)
 	}
 }
 
@@ -384,7 +384,7 @@ func verifyTrieRoot(t *testing.T, genesisRWS, txRWS blocks.ReadWriteSet, blockNu
 func newEthereumTestHarness(t *testing.T, evmConfig endorser.EVMConfig, pre types.GenesisAlloc) (*TestHarness, error) {
 	t.Helper()
 
-	th, err := newLocalTestHarness(t, TestLogger{T: t}, evmConfig, "", "bypass", nil)
+	th, err := NewLocalTestHarness(t, TestLogger{T: t}, evmConfig, "", "bypass", nil)
 	if err != nil {
 		return nil, err
 	}

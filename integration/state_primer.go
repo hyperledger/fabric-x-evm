@@ -309,7 +309,7 @@ func (sp *StatePrimer) commitAndWait(end sdk.Endorsement, tx *types.Transaction,
 		return err
 	}
 
-	ec, err := newNativeEthClient(sp.gw)
+	ec, err := NewNativeEthClient(sp.gw)
 	if err != nil {
 		return err
 	}
