@@ -19,6 +19,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/holiman/uint256"
 	cmn "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/stretchr/testify/require"
 )
@@ -46,7 +47,6 @@ func (f *fakeState) BalanceAt(_ context.Context, _ common.Address, _ *big.Int) (
 	return new(big.Int).Set(f.balance), nil
 }
 
-// validTxOpts builds a fully valid signed legacy tx with EIP-155 protection.
 type validTxOpts struct {
 	nonce uint64
 	gas   uint64
@@ -74,10 +74,9 @@ func newValidTx(t *testing.T, key *ecdsa.PrivateKey, opts validTxOpts) *types.Tr
 	return signed
 }
 
-func chainCtx(t *testing.T) (*big.Int, *params.ChainConfig, types.Signer) {
+func chainCtx(t *testing.T) (*params.ChainConfig, types.Signer) {
 	t.Helper()
-	cid := big.NewInt(testChainID)
-	return cid, cmn.BuildChainConfig(testChainID), types.LatestSignerForChainID(cid)
+	return cmn.BuildChainConfig(testChainID), types.LatestSignerForChainID(big.NewInt(testChainID))
 }
 
 func newKey(t *testing.T) *ecdsa.PrivateKey {
@@ -89,43 +88,46 @@ func newKey(t *testing.T) *ecdsa.PrivateKey {
 
 func TestValidateTx_Valid(t *testing.T) {
 	key := newKey(t)
-	cid, cfg, signer := chainCtx(t)
+	cfg, signer := chainCtx(t)
 
 	tx := newValidTx(t, key, validTxOpts{nonce: 5})
 	state := &fakeState{nonce: 5, balance: big.NewInt(1_000_000)}
 
-	require.NoError(t, validateTx(context.Background(), tx, cid, cfg, signer, state))
+	require.NoError(t, validateTx(context.Background(), tx, cfg, signer, state))
 }
 
 func TestValidateTx_UnprotectedRejected(t *testing.T) {
 	key := newKey(t)
-	cid, cfg, signer := chainCtx(t)
+	cfg, signer := chainCtx(t)
 
 	to := common.HexToAddress("0x1111111111111111111111111111111111111111")
 	raw := types.NewTransaction(0, to, big.NewInt(0), 21_000, big.NewInt(1), nil)
 	tx, err := types.SignTx(raw, types.HomesteadSigner{}, key) // pre-EIP-155 → unprotected
 	require.NoError(t, err)
 
-	err = validateTx(context.Background(), tx, cid, cfg, signer, &fakeState{})
+	err = validateTx(context.Background(), tx, cfg, signer, &fakeState{})
 	require.ErrorIs(t, err, errUnprotectedTx)
 }
 
 func TestValidateTx_ChainIDMismatch(t *testing.T) {
+	// Geth's signer recovery rejects a protected legacy tx whose embedded chain
+	// id does not match the configured one; the txpool surfaces this through
+	// ErrInvalidSender (wrapping ErrInvalidChainId).
 	key := newKey(t)
-	cid, cfg, signer := chainCtx(t)
+	cfg, signer := chainCtx(t)
 
 	to := common.HexToAddress("0x1111111111111111111111111111111111111111")
 	raw := types.NewTransaction(0, to, big.NewInt(0), 21_000, big.NewInt(1), nil)
 	tx, err := types.SignTx(raw, types.NewEIP155Signer(big.NewInt(testChainID+1)), key)
 	require.NoError(t, err)
 
-	err = validateTx(context.Background(), tx, cid, cfg, signer, &fakeState{})
-	require.ErrorContains(t, err, "invalid chain id")
+	err = validateTx(context.Background(), tx, cfg, signer, &fakeState{})
+	require.ErrorIs(t, err, txpool.ErrInvalidSender)
 }
 
 func TestValidateTx_TipAboveFeeCap(t *testing.T) {
 	key := newKey(t)
-	cid, cfg, signer := chainCtx(t)
+	cfg, signer := chainCtx(t)
 
 	to := common.HexToAddress("0x1111111111111111111111111111111111111111")
 	raw := types.NewTx(&types.DynamicFeeTx{
@@ -140,61 +142,82 @@ func TestValidateTx_TipAboveFeeCap(t *testing.T) {
 	tx, err := types.SignTx(raw, signer, key)
 	require.NoError(t, err)
 
-	err = validateTx(context.Background(), tx, cid, cfg, signer, &fakeState{})
+	err = validateTx(context.Background(), tx, cfg, signer, &fakeState{})
 	require.ErrorIs(t, err, ethcore.ErrTipAboveFeeCap)
 }
 
 func TestValidateTx_IntrinsicGasTooLow(t *testing.T) {
 	key := newKey(t)
-	cid, cfg, signer := chainCtx(t)
+	cfg, signer := chainCtx(t)
 
 	tx := newValidTx(t, key, validTxOpts{gas: 20_000}) // below 21_000
-	err := validateTx(context.Background(), tx, cid, cfg, signer, &fakeState{})
+	err := validateTx(context.Background(), tx, cfg, signer, &fakeState{})
 	require.ErrorIs(t, err, ethcore.ErrIntrinsicGas)
 }
 
 func TestValidateTx_NonceTooLow(t *testing.T) {
 	key := newKey(t)
-	cid, cfg, signer := chainCtx(t)
+	cfg, signer := chainCtx(t)
 
 	tx := newValidTx(t, key, validTxOpts{nonce: 3})
 	state := &fakeState{nonce: 7, balance: big.NewInt(1_000_000)}
 
-	err := validateTx(context.Background(), tx, cid, cfg, signer, state)
+	err := validateTx(context.Background(), tx, cfg, signer, state)
 	require.ErrorIs(t, err, ethcore.ErrNonceTooLow)
 }
 
 func TestValidateTx_InsufficientFunds(t *testing.T) {
 	key := newKey(t)
-	cid, cfg, signer := chainCtx(t)
+	cfg, signer := chainCtx(t)
 
 	tx := newValidTx(t, key, validTxOpts{nonce: 0, value: big.NewInt(1_000_000)})
 	state := &fakeState{nonce: 0, balance: big.NewInt(1)} // far less than 21_000*1 + 1_000_000
 
-	err := validateTx(context.Background(), tx, cid, cfg, signer, state)
+	err := validateTx(context.Background(), tx, cfg, signer, state)
 	require.ErrorIs(t, err, ethcore.ErrInsufficientFunds)
 }
 
 func TestValidateTx_InitCodeTooLarge(t *testing.T) {
 	key := newKey(t)
-	cid, cfg, signer := chainCtx(t)
+	cfg, signer := chainCtx(t)
 
 	oversized := make([]byte, params.MaxInitCodeSize+1)
 	raw := types.NewContractCreation(0, big.NewInt(0), 30_000_000, big.NewInt(1), oversized)
 	tx, err := types.SignTx(raw, types.NewEIP155Signer(big.NewInt(testChainID)), key)
 	require.NoError(t, err)
 
-	err = validateTx(context.Background(), tx, cid, cfg, signer, &fakeState{nonce: 0, balance: big.NewInt(0)})
+	err = validateTx(context.Background(), tx, cfg, signer, &fakeState{nonce: 0, balance: big.NewInt(0)})
 	require.ErrorIs(t, err, ethcore.ErrMaxInitCodeSizeExceeded)
 }
 
-func TestValidateTx_NegativeValue(t *testing.T) {
-	// types.SignTx rejects negative values via RLP encoding round-trip, so we
-	// build a tx by signing first, then patching the inner data is not feasible.
-	// Instead, exercise the check through types.NewTx with a manually-constructed
-	// inner. A fresh DynamicFeeTx allows arbitrary big.Int values.
+func TestValidateTx_BlobTxTypeRejected(t *testing.T) {
+	// We deliberately do not accept blob (EIP-4844) transactions; geth's
+	// ValidateTransaction surfaces this through ErrTxTypeNotSupported.
 	key := newKey(t)
-	cid, cfg, signer := chainCtx(t)
+	cfg, signer := chainCtx(t)
+
+	to := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	raw := types.NewTx(&types.BlobTx{
+		ChainID:    uint256.MustFromBig(big.NewInt(testChainID)),
+		Nonce:      0,
+		GasTipCap:  uint256.NewInt(1),
+		GasFeeCap:  uint256.NewInt(1),
+		Gas:        21_000,
+		To:         to,
+		Value:      uint256.NewInt(0),
+		BlobFeeCap: uint256.NewInt(1),
+		BlobHashes: []common.Hash{{}},
+	})
+	tx, err := types.SignTx(raw, signer, key)
+	require.NoError(t, err)
+
+	err = validateTx(context.Background(), tx, cfg, signer, &fakeState{})
+	require.ErrorIs(t, err, ethcore.ErrTxTypeNotSupported)
+}
+
+func TestValidateTx_NegativeValue(t *testing.T) {
+	key := newKey(t)
+	cfg, signer := chainCtx(t)
 
 	to := common.HexToAddress("0x1111111111111111111111111111111111111111")
 	raw := types.NewTx(&types.DynamicFeeTx{
@@ -208,23 +231,21 @@ func TestValidateTx_NegativeValue(t *testing.T) {
 	})
 	tx, err := types.SignTx(raw, signer, key)
 	if err != nil {
-		// Some signers refuse negative values up-front; in that case the geth
-		// stack itself shields us and the validator never sees this tx.
 		t.Skip("signer rejects negative value at sign time:", err)
 	}
 
-	err = validateTx(context.Background(), tx, cid, cfg, signer, &fakeState{})
+	err = validateTx(context.Background(), tx, cfg, signer, &fakeState{})
 	require.ErrorIs(t, err, txpool.ErrNegativeValue)
 }
 
 func TestValidateTx_StateLookupErrorPropagates(t *testing.T) {
 	key := newKey(t)
-	cid, cfg, signer := chainCtx(t)
+	cfg, signer := chainCtx(t)
 
 	tx := newValidTx(t, key, validTxOpts{nonce: 0})
 	boom := errors.New("ledger unavailable")
 	state := &fakeState{nonceErr: boom}
 
-	err := validateTx(context.Background(), tx, cid, cfg, signer, state)
+	err := validateTx(context.Background(), tx, cfg, signer, state)
 	require.ErrorIs(t, err, boom)
 }

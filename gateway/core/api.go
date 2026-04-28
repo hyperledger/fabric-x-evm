@@ -131,7 +131,7 @@ func (g *Gateway) processTx(ctx context.Context, tx *types.Transaction) error {
 // signature, intrinsic gas, nonce, balance, ...) so that callers see geth-style
 // errors before the transaction enters the async endorse/submit pipeline.
 func (g *Gateway) SendTransaction(ctx context.Context, tx *types.Transaction) error {
-	if err := validateTx(ctx, tx, g.chainID, g.chainConfig, g.signer, g); err != nil {
+	if err := validateTx(ctx, tx, g.chainConfig, g.signer, g); err != nil {
 		return err
 	}
 	g.txQueue.Enqueue(tx)
