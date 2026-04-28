@@ -102,6 +102,7 @@ func FabricSamplesConfig(testdataDir string) config.Config {
 			TrieDBPath:       filepath.Join(testdataDir, "triedb"),
 			TestAccountsPath: filepath.Join(testdataDir, "test_accounts.json"),
 			EnableTestRPC:    true,
+			WorkerCount:      4, // Number of worker goroutines for processing transactions
 		},
 		Endorsers: []econf.Endorser{
 			{

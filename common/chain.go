@@ -13,8 +13,9 @@ import (
 )
 
 // BuildChainConfig creates an Ethereum chain configuration with the specified chain ID.
-// We support Shanghai and Cancun forks. Note that having a fork enabled doesn't mean
-// full compatibility; see COMPATIBILITY.md.
+// We are currently on Cancun (2024), which includes support for transient storage (EIP-1153)
+// and MCOPY opcode (EIP-5656). Note that having the fork enabled doesn't mean that we
+// automatically are fully compatible; see COMPATIBILITY.md.
 func BuildChainConfig(chainID int64) *params.ChainConfig {
 	zero := uint64(0)
 	return &params.ChainConfig{
@@ -34,10 +35,10 @@ func BuildChainConfig(chainID int64) *params.ChainConfig {
 		LondonBlock:             big.NewInt(0),
 		ArrowGlacierBlock:       big.NewInt(0),
 		GrayGlacierBlock:        big.NewInt(0),
-		TerminalTotalDifficulty: big.NewInt(0), // shanghai is post-fork (mining is disabled)
+		TerminalTotalDifficulty: big.NewInt(0), // post-merge (mining is disabled)
 		MergeNetsplitBlock:      nil,
 		ShanghaiTime:            &zero,
-		CancunTime:              &zero, // Enable Cancun for MCOPY, TSTORE, TLOAD opcodes
+		CancunTime:              &zero, // Enable Cancun for MCOPY, TSTORE, TLOAD support
 		PragueTime:              nil,
 		OsakaTime:               nil,
 		VerkleTime:              nil,
