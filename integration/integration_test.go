@@ -115,10 +115,10 @@ func TestLocalX(t *testing.T) {
 	}
 }
 
-// TestFabric requires the fabric samples network to be running.
-func TestFabric(t *testing.T) {
+// TestFablo requires a Fablo network to be running.
+func TestFablo(t *testing.T) {
 	if testing.Short() {
-		t.Skip("Skipping Fabric test in short mode")
+		t.Skip("Skipping Fablo test in short mode")
 	}
 	// silence GRPC logging
 	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr))

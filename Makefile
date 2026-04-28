@@ -53,29 +53,22 @@ test-x:
 stop-x:
 	@docker rm -f fabric-x-committer-test-node
 
-.PHONY: init-3
-init-3:
-	@cd testdata && \
-		curl -sSLO https://raw.githubusercontent.com/hyperledger/fabric/main/scripts/install-fabric.sh && \
-		chmod +x install-fabric.sh && \
-		./install-fabric.sh --fabric-version 3.1.3 && \
-		rm ./install-fabric.sh
+.PHONY: start-fablo
+start-fablo:
+	cd testdata/fablo && ./fablo up
 
+.PHONY: stop-fablo
+stop-fablo:
+	cd testdata/fablo && ./fablo down
 
-.PHONY: start-3
-start-3:
-	@./testdata/fabric-samples/test-network/network.sh up createChannel -i 3.1.3
-	@./testdata/fabric-samples/test-network/network.sh deployCCAAS -ccn basic -ccp "$(PWD)/testdata/fabric-samples/asset-transfer-basic/chaincode-external"
+.PHONY: test-fablo
+test-fablo:
+	@go test -timeout 360s -run ^TestFablo$$ ./integration
 
-.PHONY: test-3
-test-3:
-	@go test -timeout 360s -v -run ^TestFabric$$ ./integration
-
-.PHONY: stop-3
-stop-3:
-	@./testdata/fabric-samples/test-network/network.sh down
-	@docker rm -f $$(docker ps -a -q --filter "ancestor=basic_ccaas_image") || true
-
+.PHONY: clean-fablo
+clean-fablo:
+	cd testdata/fablo && ./fablo prune || true
+	rm -rf testdata/fablo/snapshot.fablo.tar.gz
 .PHONY: test-local
 test-local:
 	@go test -timeout 30s -v -run ^TestLocal$$ ./integration

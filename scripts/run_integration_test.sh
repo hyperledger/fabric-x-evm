@@ -16,8 +16,10 @@ ensure_testdata_dir
 setup_cleanup_trap
 
 # Execute steps
-check_and_download_fabric_samples
 start_network_and_deploy_chaincode
 
 # Run integration tests
-go test $VERBOSE_FLAG -run 'Fabric$' ./integration/
+# Keep this configurable so callers can centralize timeout values and ensure
+# any outer wall timeout is greater than or equal to the Go test timeout.
+GO_TEST_TIMEOUT="${GO_TEST_TIMEOUT:-120s}"
+go test -timeout "$GO_TEST_TIMEOUT" $VERBOSE_FLAG -run '^TestFablo$' ./integration/

@@ -416,18 +416,18 @@ func newFabricTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EV
 	// Use TESTDATA environment variable if set, otherwise find project root
 	var testdataDir string
 	if envTestdata := os.Getenv("TESTDATA"); envTestdata != "" {
-		testdataDir = envTestdata
+		testdataDir = path.Join(envTestdata, "fablo")
 	} else {
 		projectRoot, err := findProjectRoot()
 		if err != nil {
 			cwd, _ := os.Getwd()
-			testdataDir = path.Join(cwd, "..", "testdata")
+			testdataDir = path.Join(cwd, "..", "testdata", "fablo")
 		} else {
-			testdataDir = path.Join(projectRoot, "testdata")
+			testdataDir = path.Join(projectRoot, "testdata", "fablo")
 		}
 	}
 
-	cfg := FabricSamplesConfig(testdataDir)
+	cfg := FabloConfig(testdataDir)
 
 	if err := applyConfigOverrides(&cfg, configOverrides); err != nil {
 		return nil, err
