@@ -25,14 +25,12 @@ import (
 	ethcommon "github.com/ethereum/go-ethereum/common"
 	ethstate "github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
-	"github.com/hyperledger/fabric-x-common/protoutil"
 	"github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/endorser"
 	econf "github.com/hyperledger/fabric-x-evm/endorser/config"
@@ -52,18 +50,8 @@ import (
 	nfab "github.com/hyperledger/fabric-x-sdk/network/fabric"
 	nfabx "github.com/hyperledger/fabric-x-sdk/network/fabricx"
 	"github.com/hyperledger/fabric-x-sdk/state"
+	"github.com/hyperledger/fabric/protoutil"
 )
-
-// GetERC20BalanceSlot computes the storage slot for a balance in an ERC-20 mapping(address => uint256).
-// This uses the Solidity storage layout: keccak256(abi.encodePacked(address, mappingPosition))
-func GetERC20BalanceSlot(account ethcommon.Address, mappingPosition uint64) ethcommon.Hash {
-	// Concatenate: address (32 bytes) + mapping position (32 bytes)
-	data := append(
-		ethcommon.LeftPadBytes(account.Bytes(), 32),
-		ethcommon.LeftPadBytes(new(big.Int).SetUint64(mappingPosition).Bytes(), 32)...,
-	)
-	return crypto.Keccak256Hash(data)
-}
 
 type localSigner struct{}
 
@@ -83,7 +71,7 @@ func (localSigner) Serialize() ([]byte, error) {
 //	primer, err := th.NewStatePrimer()
 //	err = primer.SetNonce(addr1, 5).SetCode(addr2, contractCode).Commit(ctx)
 func (th *TestHarness) NewStatePrimer() (*StatePrimer, error) {
-	return th.Primer.Reset()
+	return th.primer.Reset()
 }
 
 // PrimeGenesisAlloc primes ledger state from an Ethereum genesis allocation and
@@ -292,10 +280,10 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 	}
 
 	th := &TestHarness{
-		Gateways:       []*core.Gateway{gw},
+		gateways:       []*core.Gateway{gw},
 		endorsers:      ends,
 		ethChainConfig: evmConfig.ChainConfig,
-		Primer:         primer,
+		primer:         primer,
 	}
 
 	if err := th.PrimeStateFromJSON(t.Context(), primeDBPath, !bypass); err != nil {
@@ -344,7 +332,7 @@ func applyConfigOverrides(cfg *config.Config, overrides map[string]any) error {
 
 // newLocalTestHarness commits updates directly to the DB, bypassing peers and orderers.
 // Exported for use by eth-tests package.
-func NewLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath, networkType string, configOverrides map[string]any) (*TestHarness, error) {
+func newLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath, networkType string, configOverrides map[string]any) (*TestHarness, error) {
 	bypass := networkType == "bypass"
 
 	orderer := &common.Endpoint{Host: "127.0.0.1", Port: 1337}
@@ -374,7 +362,7 @@ func NewLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVM
 			Channel:   "mychannel",
 			Namespace: "basic",
 			NsVersion: "1.0",
-			ChainID:   4011,
+			ChainID:   31337,
 		},
 		Gateway: config.Gateway{
 			DbConnStr:   filepath.Join(dir, tname+"gateway.db"),
@@ -443,10 +431,10 @@ func newFabricTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EV
 	return th, nil
 }
 
-// NewFabricXTestHarness returns a client for integration testing with access to a peer, orderer and local committer.
+// newFabricXTestHarness returns a client for integration testing with access to a peer, orderer and local committer.
 // It follows the directory structure of a fabric samples test network.
 // Exported for use by eth-tests package.
-func NewFabricXTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any) (*TestHarness, error) {
+func newFabricXTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any) (*TestHarness, error) {
 	cfg := XTestCommitterConfig()
 
 	if err := applyConfigOverrides(&cfg, configOverrides); err != nil {
@@ -521,15 +509,15 @@ func newEndorser(t *testing.T, logger sdk.Logger, cfg econf.Endorser, channel, n
 // TestHarness provides access to gateways and endorsers for testing.
 // Exported for use by eth-tests package.
 type TestHarness struct {
-	Gateways       []*core.Gateway
+	gateways       []*core.Gateway
 	endorsers      []*endorser.Endorser
 	ethChainConfig *params.ChainConfig
-	Primer         *StatePrimer
+	primer         *StatePrimer
 }
 
 func (th *TestHarness) Stop() error {
 	errs := []error{}
-	for _, n := range th.Gateways {
+	for _, n := range th.gateways {
 		if err := n.Stop(); err != nil {
 			errs = append(errs, err)
 		}
@@ -550,7 +538,7 @@ func processCommon(t *testing.T, gw *core.Gateway, commit bool, tx *types.Transa
 			t.Fatal(err)
 		}
 
-		ec, err := NewNativeEthClient(gw)
+		ec, err := newNativeEthClient(gw)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -563,7 +551,7 @@ func processCommon(t *testing.T, gw *core.Gateway, commit bool, tx *types.Transa
 
 func getEndorsedTxForSmartContractCall(t *testing.T, client *EthClient, addr ethcommon.Address, gw *core.Gateway, method string, blockInfo *utils.BlockInfo, args ...any) sdk.Endorsement {
 	t.Helper()
-	tx, err := client.TxForCall(t.Context(), gw, &addr, method, blockInfo, args...)
+	tx, err := client.txForCall(t.Context(), gw, &addr, method, blockInfo, args...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -571,7 +559,7 @@ func getEndorsedTxForSmartContractCall(t *testing.T, client *EthClient, addr eth
 	return processCommon(t, gw, false, tx, blockInfo)
 }
 
-func NewNativeEthClient(gw *core.Gateway) (*ethclient.Client, error) {
+func newNativeEthClient(gw *core.Gateway) (*ethclient.Client, error) {
 	// Create production RPC server (no test accounts needed for integration tests)
 	rpcServer, err := gwapi.NewServer(gw)
 	if err != nil {
@@ -585,7 +573,7 @@ func NewNativeEthClient(gw *core.Gateway) (*ethclient.Client, error) {
 func deploySmartContract(t *testing.T, gw *core.Gateway, client *EthClient, args ...any) ethcommon.Address {
 	t.Helper()
 
-	ec, err := NewNativeEthClient(gw)
+	ec, err := newNativeEthClient(gw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -608,12 +596,12 @@ func deploySmartContract(t *testing.T, gw *core.Gateway, client *EthClient, args
 func callSmartContract(t *testing.T, client *EthClient, addr ethcommon.Address, gw *core.Gateway, method string, blockInfo *utils.BlockInfo, args ...any) {
 	t.Helper()
 
-	ec, err := NewNativeEthClient(gw)
+	ec, err := newNativeEthClient(gw)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	tx, err := client.TxForCall(t.Context(), gw, &addr, method, blockInfo, args...)
+	tx, err := client.txForCall(t.Context(), gw, &addr, method, blockInfo, args...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -629,7 +617,7 @@ func callSmartContract(t *testing.T, client *EthClient, addr ethcommon.Address, 
 func querySmartContract(t *testing.T, gw *core.Gateway, client *EthClient, addr ethcommon.Address, method string, params ...any) []any {
 	t.Helper()
 
-	ec, err := NewNativeEthClient(gw)
+	ec, err := newNativeEthClient(gw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -657,7 +645,7 @@ func querySmartContract(t *testing.T, gw *core.Gateway, client *EthClient, addr 
 
 // querySmartContractExpect queries all gateways in the test harness and expects the same result
 func querySmartContractExpect(t *testing.T, client *EthClient, addr ethcommon.Address, th *TestHarness, expected any, method string, params ...any) {
-	for _, gw := range th.Gateways {
+	for _, gw := range th.gateways {
 		res := querySmartContract(t, gw, client, addr, method, params...)
 		if len(res) == 0 {
 			t.Errorf("expected %v, got empty result", expected)
@@ -686,7 +674,7 @@ func submit(t *testing.T, gw *core.Gateway, end sdk.Endorsement) {
 		t.Error(err)
 	}
 
-	ec, err := NewNativeEthClient(gw)
+	ec, err := newNativeEthClient(gw)
 	if err != nil {
 		t.Error(err)
 	}
@@ -746,7 +734,7 @@ func waitForCommit(ctx context.Context, ec *ethclient.Client, tx *types.Transact
 
 	backoff := time.Duration(0)
 	iter := 0
-	step := 100
+	step := 40
 
 	for pending := true; pending; {
 		_, pending, err = ec.TransactionByHash(ctx, tx.Hash())
