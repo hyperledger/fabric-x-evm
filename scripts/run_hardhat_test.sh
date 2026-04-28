@@ -89,9 +89,18 @@ init_openzeppelin() {
 
 # Start gateway (fresh instance, similar to integration tests)
 start_gateway() {
-    echo -e "${YELLOW}Starting fabric-evm gateway...${NC}"
+    echo -e "${YELLOW}Starting fabric-evm gateway with test RPC enabled...${NC}"
     
     cd "${PROJECT_ROOT}"
+    
+    # Kill any existing gateway processes on port 8545
+    echo "Checking for existing gateway processes..."
+    EXISTING_PID=$(lsof -ti :8545 || true)
+    if [ -n "${EXISTING_PID}" ]; then
+        echo "Killing existing process on port 8545 (PID: ${EXISTING_PID})"
+        kill ${EXISTING_PID} 2>/dev/null || true
+        sleep 2
+    fi
     
     # Clean up any existing triedb to ensure fresh start
     if [ -d "testdata/triedb" ]; then
@@ -99,31 +108,49 @@ start_gateway() {
         rm -rf testdata/triedb
     fi
     
-    # Start gateway with output to log file
+    # Start gateway with test RPC enabled
     echo "Starting gateway (logs: /tmp/gateway_$$.log)..."
-    go run ./cmd/fxevm start --protocol fabric > /tmp/gateway_$$.log 2>&1 &
+    go run ./cmd/fxevm start --protocol fabric \
+        --enable-test-rpc \
+        --test-accounts-path testdata/test_accounts.json \
+        > /tmp/gateway_$$.log 2>&1 &
     
     GATEWAY_PID=$!
     echo "Gateway PID: ${GATEWAY_PID}"
     
-    # Wait for gateway to be ready
+    # Wait for gateway to be ready and verify test RPC
     echo "Waiting for gateway to be ready..."
     MAX_RETRIES=30
     RETRY_COUNT=0
     
     while [ ${RETRY_COUNT} -lt ${MAX_RETRIES} ]; do
+        # Test both chainId and accounts to verify test RPC is working
         if curl -s -X POST -H "Content-Type: application/json" \
             --data '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' \
-            http://127.0.0.1:8545 > /dev/null 2>&1; then
-            echo -e "${GREEN}Gateway is ready!${NC}"
+            http://127.0.0.1:8545 2>/dev/null | grep -q "result" && \
+           curl -s -X POST -H "Content-Type: application/json" \
+            --data '{"jsonrpc":"2.0","method":"eth_accounts","params":[],"id":1}' \
+            http://127.0.0.1:8545 2>/dev/null | grep -q "result"; then
+            echo -e "${GREEN}Gateway is ready with test RPC enabled!${NC}"
+            
+            # Display test account count for verification
+            ACCOUNTS=$(curl -s -X POST -H "Content-Type: application/json" \
+                --data '{"jsonrpc":"2.0","method":"eth_accounts","params":[],"id":1}' \
+                http://127.0.0.1:8545 2>/dev/null | grep -o '"0x[^"]*"' | wc -l)
+            echo "Test accounts available: ${ACCOUNTS}"
+            
+            if [ "${ACCOUNTS}" -eq "0" ]; then
+                echo -e "${RED}Warning: No test accounts returned!${NC}"
+            fi
+            
             return 0
         fi
         
         # Check if gateway process is still running
         if ! kill -0 ${GATEWAY_PID} 2>/dev/null; then
             echo -e "\n${RED}Error: Gateway process died${NC}"
-            echo "Last 30 lines of gateway log:"
-            tail -30 /tmp/gateway_$$.log
+            echo "Last 50 lines of gateway log:"
+            tail -50 /tmp/gateway_$$.log
             exit 1
         fi
         
@@ -132,9 +159,9 @@ start_gateway() {
         sleep 1
     done
     
-    echo -e "\n${RED}Error: Gateway failed to start${NC}"
-    echo "Last 30 lines of gateway log:"
-    tail -30 /tmp/gateway_$$.log
+    echo -e "\n${RED}Error: Gateway failed to start or test RPC not responding${NC}"
+    echo "Last 50 lines of gateway log:"
+    tail -50 /tmp/gateway_$$.log
     exit 1
 }
 
