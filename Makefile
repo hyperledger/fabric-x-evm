@@ -63,12 +63,13 @@ stop-fablo:
 
 .PHONY: test-fablo
 test-fablo:
-	@go test -timeout 360s -run ^TestFablo$$ ./integration
+	@go test -timeout 30s -run ^TestFablo$$ ./integration
 
 .PHONY: clean-fablo
 clean-fablo:
 	cd testdata/fablo && ./fablo prune || true
 	rm -rf testdata/fablo/snapshot.fablo.tar.gz
+
 .PHONY: test-local
 test-local:
 	@go test -timeout 30s -v -run ^TestLocal$$ ./integration
