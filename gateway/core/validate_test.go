@@ -27,24 +27,12 @@ import (
 const testChainID int64 = 4011
 
 type fakeState struct {
-	nonce      uint64
-	balance    *big.Int
-	nonceErr   error
-	balanceErr error
+	nonce    uint64
+	nonceErr error
 }
 
 func (f *fakeState) NonceAt(_ context.Context, _ common.Address, _ *big.Int) (uint64, error) {
 	return f.nonce, f.nonceErr
-}
-
-func (f *fakeState) BalanceAt(_ context.Context, _ common.Address, _ *big.Int) (*big.Int, error) {
-	if f.balanceErr != nil {
-		return nil, f.balanceErr
-	}
-	if f.balance == nil {
-		return big.NewInt(0), nil
-	}
-	return new(big.Int).Set(f.balance), nil
 }
 
 type validTxOpts struct {
@@ -91,7 +79,7 @@ func TestValidateTx_Valid(t *testing.T) {
 	cfg, signer := chainCtx(t)
 
 	tx := newValidTx(t, key, validTxOpts{nonce: 5})
-	state := &fakeState{nonce: 5, balance: big.NewInt(1_000_000)}
+	state := &fakeState{nonce: 5}
 
 	require.NoError(t, validateTx(context.Background(), tx, cfg, signer, state))
 }
@@ -157,21 +145,10 @@ func TestValidateTx_NonceTooLow(t *testing.T) {
 	cfg, signer := chainCtx(t)
 
 	tx := newValidTx(t, key, validTxOpts{nonce: 3})
-	state := &fakeState{nonce: 7, balance: big.NewInt(1_000_000)}
+	state := &fakeState{nonce: 7}
 
 	err := validateTx(context.Background(), tx, cfg, signer, state)
 	require.ErrorIs(t, err, ethcore.ErrNonceTooLow)
-}
-
-func TestValidateTx_InsufficientFunds(t *testing.T) {
-	key := newKey(t)
-	cfg, signer := chainCtx(t)
-
-	tx := newValidTx(t, key, validTxOpts{nonce: 0, value: big.NewInt(1_000_000)})
-	state := &fakeState{nonce: 0, balance: big.NewInt(1)} // far less than 21_000*1 + 1_000_000
-
-	err := validateTx(context.Background(), tx, cfg, signer, state)
-	require.ErrorIs(t, err, ethcore.ErrInsufficientFunds)
 }
 
 func TestValidateTx_InitCodeTooLarge(t *testing.T) {
@@ -183,7 +160,7 @@ func TestValidateTx_InitCodeTooLarge(t *testing.T) {
 	tx, err := types.SignTx(raw, types.NewEIP155Signer(big.NewInt(testChainID)), key)
 	require.NoError(t, err)
 
-	err = validateTx(context.Background(), tx, cfg, signer, &fakeState{nonce: 0, balance: big.NewInt(0)})
+	err = validateTx(context.Background(), tx, cfg, signer, &fakeState{nonce: 0})
 	require.ErrorIs(t, err, ethcore.ErrMaxInitCodeSizeExceeded)
 }
 

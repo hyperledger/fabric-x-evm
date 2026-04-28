@@ -126,24 +126,25 @@ Here, because of execute-order-commit:
 
 ## Pre-flight transaction validation
 
-`eth_sendRawTransaction` runs the same stateless and stateful checks geth performs before a
-transaction enters its mempool, so callers see geth-style errors immediately rather than after
-endorsement. The gateway calls geth's exported `core/txpool.ValidateTransaction` and
-`core/txpool.ValidateTransactionWithState` directly (see `gateway/core/validate.go`) — when
-go-ethereum is upgraded, the validation set tracks upstream automatically.
+`eth_sendRawTransaction` runs geth's stateless validation before a transaction is enqueued for
+endorsement, so callers see geth-style errors immediately. The gateway calls
+`core/txpool.ValidateTransaction` directly (see `gateway/core/validate.go`); upgrading
+go-ethereum picks up upstream changes automatically.
 
-The stateful check builds an ephemeral `*state.StateDB` seeded with only the sender's nonce and
-balance fetched from the endorser; we don't share the endorser's persistent state DB.
+The only stateful check is **nonce-too-low**: we look up the sender's committed nonce from the
+endorser and reject the transaction if it is lower than expected. We do not call
+`txpool.ValidateTransactionWithState` — building a per-tx `*state.StateDB` for one nonce/balance
+lookup is too expensive — so the balance/cost check is skipped (gas is not metered anyway).
 
 **Deliberate deviations from geth's failure model:**
 
-- **Replacement transactions are not supported**: `ExistingCost` always returns `nil` and
-  `ExistingExpenditure` always returns `0`. This means the validator never bumps fee on a
-  replacement tx and never enforces nonce-account slot limits. The gateway has no mempool, so
-  there is nothing to replace; tracking this gap is open work.
-- **Nonce gaps are accepted**: `FirstNonceGap` is left nil, so a transaction with a nonce
-  arbitrarily higher than the account's current nonce is admitted. The endorser is responsible
-  for the eventual ordering check.
+- **Sender balance is not validated**: `txpool.ValidateTransactionWithState` would reject a tx
+  whose `gas × gasPrice + value` exceeds the sender balance. We skip this since gas is not
+  metered and balances are unfunded by default (see Gas and fees).
+- **Replacement transactions are not supported**: tracked in #62. The gateway has no mempool
+  today, so there is nothing to replace.
+- **Nonce gaps are accepted**: a transaction with a nonce higher than the account's current
+  nonce is admitted; the endorser enforces ordering at execution time.
 - **Blob transactions (EIP-4844, type 3) are rejected at submission**: the `Accept` bitmap
   excludes them and `MaxBlobCount` is `0`. They were previously accepted and executed without
   KZG proof validation; that path is no longer reachable through the JSON-RPC gateway.
@@ -261,15 +262,15 @@ read `block.number` or `block.timestamp` inside a view function will see inconsi
 
 Gas mechanics are intentionally not implemented.
 
-| Aspect                      | Fabric.                                      | Ethereum                            |
-| --------------------------- | -------------------------------------------- | ----------------------------------- |
-| `GASPRICE` opcode           | `0`                                          | actual tx gas price                 |
-| Sender balance check        | enforced at submission (`gas×price + value`) | must cover `gas × gasPrice + value` |
-| Intrinsic gas deduction     | enforced at submission, not deducted         | ~21 000 deducted before execution   |
-| Gas refund counter          | always `0`                                   | tracks SSTORE/SELFDESTRUCT refunds  |
-| Default gas per call/deploy | `5 000 000` if not specified                 | whatever the tx sets                |
-| Block gas limit             | `10 000 000`                                 | network-set limit                   |
-| Access list warmup          | not done                                     | sender, to, precompiles pre-warmed  |
+| Aspect                      | Fabric.                              | Ethereum                            |
+| --------------------------- | ------------------------------------ | ----------------------------------- |
+| `GASPRICE` opcode           | `0`                                  | actual tx gas price                 |
+| Sender balance check        | not performed                        | must cover `gas × gasPrice + value` |
+| Intrinsic gas deduction     | enforced at submission, not deducted | ~21 000 deducted before execution   |
+| Gas refund counter          | always `0`                           | tracks SSTORE/SELFDESTRUCT refunds  |
+| Default gas per call/deploy | `5 000 000` if not specified         | whatever the tx sets                |
+| Block gas limit             | `10 000 000`                         | network-set limit                   |
+| Access list warmup          | not done                             | sender, to, precompiles pre-warmed  |
 
 **JSON-RPC fee stubs**: `eth_estimateGas` always returns `0`; `eth_gasPrice` and
 `eth_maxPriorityFeePerGas` always return `1 wei`; `eth_feeHistory` returns all-zero arrays. Clients

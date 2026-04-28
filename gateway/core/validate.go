@@ -13,19 +13,14 @@ import (
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/rawdb"
-	"github.com/ethereum/go-ethereum/core/state"
-	"github.com/ethereum/go-ethereum/core/tracing"
+	ethcore "github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/triedb"
-	"github.com/holiman/uint256"
 )
 
 type stateReader interface {
 	NonceAt(ctx context.Context, account common.Address, blockNumber *big.Int) (uint64, error)
-	BalanceAt(ctx context.Context, account common.Address, blockNumber *big.Int) (*big.Int, error)
 }
 
 var errUnprotectedTx = errors.New("only replay-protected (EIP-155) transactions allowed over RPC")
@@ -37,8 +32,10 @@ const blockGasLimit uint64 = 30_000_000
 
 const acceptedTxTypes = (1 << types.LegacyTxType) | (1 << types.AccessListTxType) | (1 << types.DynamicFeeTxType)
 
-// validateTx delegates to geth's exported txpool helpers so the failure model
-// stays aligned with upstream. Deviations are documented in docs/COMPATIBILITY.md.
+// validateTx delegates stateless checks to geth's txpool.ValidateTransaction so
+// the failure model tracks upstream. The only stateful check is nonce-too-low,
+// inlined from txpool.ValidateTransactionWithState to avoid building a per-tx
+// StateDB. Deviations are documented in docs/COMPATIBILITY.md.
 func validateTx(
 	ctx context.Context,
 	tx *types.Transaction,
@@ -78,40 +75,8 @@ func validateTx(
 	if err != nil {
 		return fmt.Errorf("look up nonce: %w", err)
 	}
-	balance, err := state.BalanceAt(ctx, from, nil)
-	if err != nil {
-		return fmt.Errorf("look up balance: %w", err)
+	if nonce > tx.Nonce() {
+		return fmt.Errorf("%w: next nonce %d, tx nonce %d", ethcore.ErrNonceTooLow, nonce, tx.Nonce())
 	}
-
-	sdb, err := newEphemeralStateDB(from, nonce, balance)
-	if err != nil {
-		return fmt.Errorf("build state for validation: %w", err)
-	}
-
-	stateOpts := &txpool.ValidationOptionsWithState{
-		State:               sdb,
-		ExistingExpenditure: func(common.Address) *big.Int { return new(big.Int) },
-		ExistingCost:        func(common.Address, uint64) *big.Int { return nil },
-	}
-	return txpool.ValidateTransactionWithState(tx, signer, stateOpts)
-}
-
-// newEphemeralStateDB lets us hand a real *state.StateDB to
-// txpool.ValidateTransactionWithState without sharing the endorser's store.
-func newEphemeralStateDB(addr common.Address, nonce uint64, balance *big.Int) (*state.StateDB, error) {
-	tdb := triedb.NewDatabase(rawdb.NewMemoryDatabase(), nil)
-	sdb, err := state.New(types.EmptyRootHash, state.NewDatabase(tdb, nil))
-	if err != nil {
-		return nil, err
-	}
-	sdb.SetNonce(addr, nonce, tracing.NonceChangeUnspecified)
-	if balance == nil {
-		balance = new(big.Int)
-	}
-	bal, overflow := uint256.FromBig(balance)
-	if overflow {
-		return nil, fmt.Errorf("balance %s exceeds 256 bits", balance)
-	}
-	sdb.SetBalance(addr, bal, tracing.BalanceChangeUnspecified)
-	return sdb, nil
+	return nil
 }
