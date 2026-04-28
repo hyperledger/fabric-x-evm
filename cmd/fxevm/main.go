@@ -13,7 +13,6 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"path"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -68,11 +67,8 @@ func runStart(ctx context.Context, protocol string) error {
 	case "fabric-x", "":
 		cfg = integration.XTestCommitterConfig()
 	case "fabric":
-		cwd, err := os.Getwd()
-		if err != nil {
-			return err
-		}
-		cfg = integration.FabricSamplesConfig(path.Join(cwd, "..", "testdata"))
+		// Pass relative path - FabricSamplesConfig will resolve it from project root
+		cfg = integration.FabricSamplesConfig("testdata")
 	default:
 		return errors.New("start with --protocol fabric-x or --protocol fabric")
 	}
