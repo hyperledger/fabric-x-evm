@@ -13,9 +13,10 @@ import (
 )
 
 // BuildChainConfig creates an Ethereum chain configuration with the specified chain ID.
-// All forks through Osaka are active from block/time 0. Note that having a fork enabled
-// doesn't mean full compatibility; see COMPATIBILITY.md.
+// We support Shanghai and Cancun forks. Note that having a fork enabled doesn't mean
+// full compatibility; see COMPATIBILITY.md.
 func BuildChainConfig(chainID int64) *params.ChainConfig {
+	zero := uint64(0)
 	return &params.ChainConfig{
 		ChainID:                 big.NewInt(chainID),
 		HomesteadBlock:          big.NewInt(0),
@@ -35,13 +36,15 @@ func BuildChainConfig(chainID int64) *params.ChainConfig {
 		GrayGlacierBlock:        big.NewInt(0),
 		TerminalTotalDifficulty: big.NewInt(0), // shanghai is post-fork (mining is disabled)
 		MergeNetsplitBlock:      nil,
-		ShanghaiTime:            new(uint64(0)),
-		CancunTime:              new(uint64(0)),
-		PragueTime:              new(uint64(0)),
-		OsakaTime:               new(uint64(0)),
+		ShanghaiTime:            &zero,
+		CancunTime:              &zero, // Enable Cancun for MCOPY, TSTORE, TLOAD opcodes
+		PragueTime:              nil,
+		OsakaTime:               nil,
 		VerkleTime:              nil,
 		BlobScheduleConfig:      params.DefaultBlobSchedule,
 		Ethash:                  new(params.EthashConfig),
 		Clique:                  nil,
 	}
 }
+
+// Made with Bob
