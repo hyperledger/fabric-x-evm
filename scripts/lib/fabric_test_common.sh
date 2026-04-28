@@ -85,9 +85,13 @@ start_network_and_deploy_chaincode() {
 cleanup_network() {
     if [[ "$NETWORK_STARTED" = true ]]; then
         echo "Cleaning up: Bringing down Fabric network..."
-        cd "$FABLO_DIR" || { echo "Failed to enter fablo dir for cleanup"; return; }
-        ./fablo down || true
-        cd - > /dev/null || true
+        if [[ -d "$FABLO_DIR" ]]; then
+            cd "$FABLO_DIR" || { echo "Failed to enter fablo dir for cleanup"; return; }
+            ./fablo down || true
+            cd - > /dev/null || true
+        else
+            echo "Fablo directory not found, skipping network cleanup"
+        fi
     fi
 }
 

@@ -98,8 +98,14 @@ func FabricSamplesConfig(testdataDir string) config.Config {
 				MspID:  "Org1MSP",
 				MSPDir: path.Join(user, "msp"),
 			},
-			DbConnStr:  "file:gateway.db?mode=memory&cache=shared",
-			TrieDBPath: "",
+			DbConnStr:        "file:gateway.db?mode=memory&cache=shared",
+			TrieDBPath:       filepath.Join(testdataDir, "triedb"),
+			TestAccountsPath: filepath.Join(testdataDir, "test_accounts.json"),
+			EnableTestRPC:    true,
+			// WorkerCount: Number of concurrent workers processing transactions from the queue.
+			// Set to 4 for test environments to balance throughput and resource usage.
+			// In production, consider tuning based on workload and available CPU cores.
+			WorkerCount: 4,
 		},
 		Endorsers: []econf.Endorser{
 			{
@@ -137,6 +143,32 @@ func FabricSamplesConfig(testdataDir string) config.Config {
 			Bind: "0.0.0.0:8545",
 		},
 	}
+}
+
+// TestNodeConfig returns configuration optimized for running test nodes.
+// This configuration uses in-memory storage for both block DB and trie DB
+// to avoid leaving stale state between test runs.
+func TestNodeConfig(protocol string, testdataDir string) config.Config {
+	var cfg config.Config
+
+	switch protocol {
+	case "fabric-x", "":
+		cfg = XTestCommitterConfig()
+	case "fabric":
+		// Use FabloConfig for Fablo-managed networks
+		// Pass testdata/fablo as the base directory
+		cfg = FabloConfig(filepath.Join(testdataDir, "fablo"))
+	default:
+		// Return empty config, caller should handle error
+		return config.Config{}
+	}
+
+	// Override with test-specific settings
+	cfg.Gateway.TrieDBPath = "" // Empty string = in-memory trie DB
+	cfg.Gateway.EnableTestRPC = true
+	cfg.Gateway.TestAccountsPath = filepath.Join(testdataDir, "test_accounts.json")
+
+	return cfg
 }
 
 // XTestCommitterConfig returns configuration for the Fabric X test committer.

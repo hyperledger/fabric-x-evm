@@ -8,6 +8,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"math/big"
@@ -17,12 +18,13 @@ import (
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 )
 
 type stateReader interface {
 	NonceAt(ctx context.Context, account common.Address, blockNumber *big.Int) (uint64, error)
 }
+
+var errUnprotectedTx = errors.New("only replay-protected (EIP-155) transactions allowed over RPC")
 
 // txMaxSize redeclares the unexported core/txpool/legacypool constant (4 * 32 KiB).
 const txMaxSize = 4 * 32 * 1024
@@ -45,7 +47,7 @@ func ValidateTx(
 	// Geth rejects this in internal/ethapi.SubmitTransaction, above the txpool —
 	// the txpool's signer recovery accepts Frontier-style signatures.
 	if !tx.Protected() {
-		return domain.ErrUnprotectedTx
+		return errUnprotectedTx
 	}
 
 	head := &types.Header{
@@ -72,7 +74,7 @@ func ValidateTx(
 
 	nonce, err := state.NonceAt(ctx, from, nil)
 	if err != nil {
-		return fmt.Errorf("%w: %w", domain.ErrNonceLookup, err)
+		return fmt.Errorf("look up nonce: %w", err)
 	}
 	if nonce > tx.Nonce() {
 		return fmt.Errorf("%w: next nonce %d, tx nonce %d", ethcore.ErrNonceTooLow, nonce, tx.Nonce())
