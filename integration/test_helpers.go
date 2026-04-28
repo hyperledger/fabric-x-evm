@@ -410,24 +410,23 @@ func NewLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVM
 }
 
 // newFabricTestHarness returns a client for integration testing with access to a peer, orderer and local committer.
-// It follows the directory structure of a fabric samples test network.
-// Exported for use by eth-tests package.
+// It follows the directory structure of a Fablo test network.
 func newFabricTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any) (*TestHarness, error) {
 	// Use TESTDATA environment variable if set, otherwise find project root
 	var testdataDir string
 	if envTestdata := os.Getenv("TESTDATA"); envTestdata != "" {
-		testdataDir = envTestdata
+		testdataDir = path.Join(envTestdata, "fablo")
 	} else {
 		projectRoot, err := findProjectRoot()
 		if err != nil {
 			cwd, _ := os.Getwd()
-			testdataDir = path.Join(cwd, "..", "testdata")
+			testdataDir = path.Join(cwd, "..", "testdata", "fablo")
 		} else {
-			testdataDir = path.Join(projectRoot, "testdata")
+			testdataDir = path.Join(projectRoot, "testdata", "fablo")
 		}
 	}
 
-	cfg := FabricSamplesConfig(testdataDir)
+	cfg := FabloConfig(testdataDir)
 
 	if err := applyConfigOverrides(&cfg, configOverrides); err != nil {
 		return nil, err

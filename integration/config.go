@@ -220,3 +220,95 @@ func XTestCommitterConfig() config.Config {
 		},
 	}
 }
+
+// FabloConfig returns default configuration for a Fablo-managed Fabric test network.
+// Fablo generates crypto material under fablo-target/fabric-config/crypto-config/
+// and uses different port assignments than fabric-samples.
+func FabloConfig(testdataDir string) config.Config {
+	if !filepath.IsAbs(testdataDir) {
+		if projectRoot, err := findProjectRoot(); err == nil {
+			testdataDir = filepath.Join(projectRoot, testdataDir)
+		}
+	}
+	cryptoDir := filepath.Join(testdataDir, "fablo-target", "fabric-config", "crypto-config")
+	org1 := path.Join(cryptoDir, "peerOrganizations", "org1.example.com")
+	org2 := path.Join(cryptoDir, "peerOrganizations", "org2.example.com")
+	// Fablo places orderer crypto under peerOrganizations (not ordererOrganizations)
+	orderer := path.Join(cryptoDir, "peerOrganizations", "orderer.example.com")
+
+	endorser1 := path.Join(org1, "peers", "peer0.org1.example.com")
+	endorser2 := path.Join(org2, "peers", "peer0.org2.example.com")
+	user := path.Join(org1, "users", "User1@org1.example.com")
+	x := rand.Int64()
+
+	return config.Config{
+		Network: common.Network{
+			Protocol:  "fabric",
+			Channel:   "mychannel",
+			Namespace: "basic",
+			NsVersion: "1.0",
+			ChainID:   31337,
+		},
+		Gateway: config.Gateway{
+			Orderers: []common.ClientConfig{{
+				Endpoint: &common.Endpoint{Host: "127.0.0.1", Port: 7030},
+				TLS: common.TLSConfig{
+					Mode:        network.TLSModeTLS,
+					ServerName:  "orderer0.group1.orderer.example.com",
+					CACertPaths: []string{path.Join(orderer, "tlsca", "tlsca.orderer.example.com-cert.pem")},
+				},
+			}},
+			Committer: common.ClientConfig{
+				Endpoint: &common.Endpoint{Host: "127.0.0.1", Port: 7041},
+				TLS: common.TLSConfig{
+					Mode:        network.TLSModeTLS,
+					ServerName:  "peer0.org1.example.com",
+					CACertPaths: []string{path.Join(endorser1, "tls", "ca.crt")},
+				},
+			},
+			Identity: common.IdentityConfig{
+				MspID:  "Org1MSP",
+				MSPDir: path.Join(user, "msp"),
+			},
+			DbConnStr:  "file:gateway.db?mode=memory&cache=shared",
+			TrieDBPath: filepath.Join(testdataDir, "triedb"),
+		},
+		Endorsers: []econf.Endorser{
+			{
+				Name: "org1",
+				Committer: common.ClientConfig{
+					Endpoint: &common.Endpoint{Host: "127.0.0.1", Port: 7041},
+					TLS: common.TLSConfig{
+						Mode:        network.TLSModeTLS,
+						ServerName:  "peer0.org1.example.com",
+						CACertPaths: []string{path.Join(endorser1, "tls", "ca.crt")},
+					},
+				},
+				Identity: common.IdentityConfig{
+					MspID:  "Org1MSP",
+					MSPDir: filepath.Join(endorser1, "msp"),
+				},
+				DbConnStr: fmt.Sprintf("file:endorser1%d.db?mode=memory&cache=shared", x),
+			},
+			{
+				Name: "org2",
+				Committer: common.ClientConfig{
+					Endpoint: &common.Endpoint{Host: "127.0.0.1", Port: 7061},
+					TLS: common.TLSConfig{
+						Mode:        network.TLSModeTLS,
+						ServerName:  "peer0.org2.example.com",
+						CACertPaths: []string{path.Join(endorser2, "tls", "ca.crt")},
+					},
+				},
+				Identity: common.IdentityConfig{
+					MspID:  "Org2MSP",
+					MSPDir: filepath.Join(endorser2, "msp"),
+				},
+				DbConnStr: fmt.Sprintf("file:endorser2%d.db?mode=memory&cache=shared", x),
+			},
+		},
+		Server: config.Server{
+			Bind: "0.0.0.0:8545",
+		},
+	}
+}

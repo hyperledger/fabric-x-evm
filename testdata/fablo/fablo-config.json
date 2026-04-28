@@ -1,0 +1,93 @@
+{
+  "$schema": "https://github.com/hyperledger-labs/fablo/releases/download/2.6.0/schema.json",
+  "global": {
+    "fabricVersion": "3.1.4",
+    "tls": true,
+    "peerDevMode": false,
+    "engine": "docker"
+  },
+  "orgs": [
+    {
+      "organization": {
+        "name": "Orderer",
+        "domain": "orderer.example.com",
+        "mspName": "OrdererMSP"
+      },
+      "ca": {
+        "prefix": "ca",
+        "db": "sqlite"
+      },
+      "orderers": [
+        {
+          "groupName": "group1",
+          "type": "BFT",
+          "instances": 2,
+          "prefix": "orderer"
+        }
+      ]
+    },
+    {
+      "organization": {
+        "name": "Org1",
+        "domain": "org1.example.com",
+        "mspName": "Org1MSP"
+      },
+      "ca": {
+        "prefix": "ca",
+        "db": "sqlite"
+      },
+      "orderers": [],
+      "peer": {
+        "instances": 1,
+        "db": "LevelDb",
+        "prefix": "peer"
+      }
+    },
+    {
+      "organization": {
+        "name": "Org2",
+        "domain": "org2.example.com",
+        "mspName": "Org2MSP"
+      },
+      "ca": {
+        "prefix": "ca",
+        "db": "sqlite"
+      },
+      "orderers": [],
+      "peer": {
+        "instances": 1,
+        "db": "LevelDb",
+        "prefix": "peer"
+      }
+    }
+  ],
+  "channels": [
+    {
+      "name": "mychannel",
+      "orgs": [
+        {
+          "name": "Org1",
+          "peers": [
+            "peer0"
+          ]
+        },
+        {
+          "name": "Org2",
+          "peers": [
+            "peer0"
+          ]
+        }
+      ]
+    }
+  ],
+  "chaincodes": [
+    {
+      "name": "basic",
+      "version": "1.0",
+      "lang": "golang",
+      "channel": "mychannel",
+      "directory": "./chaincode"
+    }
+  ],
+  "hooks": {}
+}

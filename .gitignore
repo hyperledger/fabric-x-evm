@@ -12,3 +12,9 @@ testdata/*
 !testdata/test_accounts.json
 *.un~
 *.swp
+!testdata/fablo
+!testdata/fablo/**
+!testdata/fablo/fablo
+!testdata/fablo/fablo-config.json
+testdata/fablo/fablo-target
+testdata/fablo/triedb
