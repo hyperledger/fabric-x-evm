@@ -4,39 +4,44 @@
 
 set -euo pipefail
 
+# Source shared functions
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/fabric_test_common.sh"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 OZ_DIR="${PROJECT_ROOT}/testdata/openzeppelin-contracts"
 GATEWAY_PID=""
-FABRIC_STARTED=false
 
 # Default test path
 TEST_PATH="${1:-test/token/ERC20/ERC20.test.js}"
 
-# Cleanup function
+# Enhanced cleanup function
 cleanup() {
     echo -e "\n${YELLOW}Cleaning up...${NC}"
     
     # Kill gateway if running
-    if [ -n "${GATEWAY_PID}" ]; then
-        echo "Stopping gateway (PID: ${GATEWAY_PID})..."
-        kill "${GATEWAY_PID}" 2>/dev/null || true
-        wait "${GATEWAY_PID}" 2>/dev/null || true
+    if [ -n "${GATEWAY_PID}" ] && kill -0 ${GATEWAY_PID} 2>/dev/null; then
+        echo "Stopping gateway (PID: ${GATEWAY_PID})"
+        kill ${GATEWAY_PID} 2>/dev/null || true
+        wait ${GATEWAY_PID} 2>/dev/null || true
     fi
     
-    # Stop Fabric if we started it
-    if [ "${FABRIC_STARTED}" = true ]; then
-        echo "Stopping Fabric network..."
-        cd "${PROJECT_ROOT}"
-        make stop-3 2>/dev/null || true
+    # Clean up triedb to avoid lock issues
+    if [ -d "${PROJECT_ROOT}/testdata/triedb" ]; then
+        echo "Removing triedb directory..."
+        rm -rf "${PROJECT_ROOT}/testdata/triedb"
     fi
+    
+    # Call shared cleanup for Fabric network
+    cleanup_network
     
     echo -e "${GREEN}Cleanup complete${NC}"
 }
@@ -48,42 +53,32 @@ trap cleanup EXIT INT TERM
 check_prerequisites() {
     echo -e "${YELLOW}Checking prerequisites...${NC}"
     
-    # Check for node/npm
-    if ! command -v node &> /dev/null; then
-        echo -e "${RED}Error: node is not installed${NC}"
-        exit 1
-    fi
-    
-    if ! command -v npm &> /dev/null; then
-        echo -e "${RED}Error: npm is not installed${NC}"
-        exit 1
-    fi
-    
-    # Check for Go
-    if ! command -v go &> /dev/null; then
-        echo -e "${RED}Error: go is not installed${NC}"
-        exit 1
-    fi
+    # Check for required commands
+    for cmd in node npx go docker; do
+        if ! command -v $cmd &> /dev/null; then
+            echo -e "${RED}Error: $cmd is not installed${NC}"
+            exit 1
+        fi
+    done
     
     echo -e "${GREEN}Prerequisites OK${NC}"
 }
 
-# Initialize OpenZeppelin submodule
+# Initialize OpenZeppelin contracts
 init_openzeppelin() {
     echo -e "${YELLOW}Initializing OpenZeppelin contracts...${NC}"
     
-    cd "${PROJECT_ROOT}"
-    
-    # Initialize submodule if not already done
-    if [ ! -f "${OZ_DIR}/package.json" ]; then
-        echo "Initializing git submodule..."
-        git submodule update --init --recursive testdata/openzeppelin-contracts
+    if [ ! -d "${OZ_DIR}" ]; then
+        echo -e "${RED}Error: OpenZeppelin contracts not found at ${OZ_DIR}${NC}"
+        echo "Please initialize the submodule: git submodule update --init --recursive"
+        exit 1
     fi
     
-    # Install dependencies
     cd "${OZ_DIR}"
+    
+    # Install dependencies if needed
     if [ ! -d "node_modules" ]; then
-        echo "Installing npm dependencies..."
+        echo "Installing dependencies..."
         npm install
     else
         echo "Dependencies already installed"
@@ -92,41 +87,24 @@ init_openzeppelin() {
     echo -e "${GREEN}OpenZeppelin contracts ready${NC}"
 }
 
-# Start Fabric network
-start_fabric() {
-    echo -e "${YELLOW}Starting Fabric network...${NC}"
-    
-    cd "${PROJECT_ROOT}"
-    
-    # Check if Fabric samples exist
-    if [ ! -d "testdata/fabric-samples" ]; then
-        echo "Fabric samples not found. Running make init-3..."
-        make init-3
-    fi
-    
-    # Start Fabric network
-    echo "Starting Fabric test network..."
-    make start-3
-    FABRIC_STARTED=true
-    
-    # Wait a bit for network to stabilize
-    echo "Waiting for network to stabilize..."
-    sleep 5
-    
-    echo -e "${GREEN}Fabric network started${NC}"
-}
-
-# Start gateway
+# Start gateway (fresh instance, similar to integration tests)
 start_gateway() {
     echo -e "${YELLOW}Starting fabric-evm gateway...${NC}"
     
-    cd "${PROJECT_ROOT}/gateway"
+    cd "${PROJECT_ROOT}"
     
-    # Start gateway (test RPC is enabled in FabricSamplesConfig)
-    echo "Starting gateway with test RPC enabled..."
-    go run . --protocol fabric &
+    # Clean up any existing triedb to ensure fresh start
+    if [ -d "testdata/triedb" ]; then
+        echo "Removing existing triedb directory..."
+        rm -rf testdata/triedb
+    fi
+    
+    # Start gateway with output to log file
+    echo "Starting gateway (logs: /tmp/gateway_$$.log)..."
+    go run ./cmd/fxevm start --protocol fabric > /tmp/gateway_$$.log 2>&1 &
     
     GATEWAY_PID=$!
+    echo "Gateway PID: ${GATEWAY_PID}"
     
     # Wait for gateway to be ready
     echo "Waiting for gateway to be ready..."
@@ -141,52 +119,80 @@ start_gateway() {
             return 0
         fi
         
+        # Check if gateway process is still running
+        if ! kill -0 ${GATEWAY_PID} 2>/dev/null; then
+            echo -e "\n${RED}Error: Gateway process died${NC}"
+            echo "Last 30 lines of gateway log:"
+            tail -30 /tmp/gateway_$$.log
+            exit 1
+        fi
+        
         RETRY_COUNT=$((RETRY_COUNT + 1))
         echo -n "."
         sleep 1
     done
     
     echo -e "\n${RED}Error: Gateway failed to start${NC}"
+    echo "Last 30 lines of gateway log:"
+    tail -30 /tmp/gateway_$$.log
     exit 1
 }
 
 # Run Hardhat tests
 run_tests() {
     echo -e "${YELLOW}Running Hardhat tests...${NC}"
-    echo -e "Test path: ${GREEN}${TEST_PATH}${NC}"
+    echo "Test path: ${GREEN}${TEST_PATH}${NC}"
     
     cd "${OZ_DIR}"
     
-    # Run tests against fabricevm network
+    # Run the tests
     echo "Executing: npx hardhat test ${TEST_PATH} --network fabricevm"
     npx hardhat test "${TEST_PATH}" --network fabricevm
-    
-    TEST_EXIT_CODE=$?
-    
-    if [ ${TEST_EXIT_CODE} -eq 0 ]; then
-        echo -e "\n${GREEN}✓ Tests passed!${NC}"
-    else
-        echo -e "\n${RED}✗ Tests failed with exit code ${TEST_EXIT_CODE}${NC}"
-    fi
-    
-    return ${TEST_EXIT_CODE}
 }
 
 # Main execution
 main() {
     echo -e "${GREEN}========================================${NC}"
     echo -e "${GREEN}Fabric-EVM Hardhat Integration Test${NC}"
-    echo -e "${GREEN}========================================${NC}\n"
+    echo -e "${GREEN}========================================${NC}"
+    echo ""
     
+    # Ensure we're in project root for all operations
+    cd "${PROJECT_ROOT}"
+    
+    # Parse arguments and validate environment
+    check_project_root "run_hardhat_test.sh"
+    ensure_testdata_dir
+    
+    # Clean up any existing network from previous runs
+    echo -e "${YELLOW}Cleaning up any existing Fabric network...${NC}"
+    if [[ -f "${NETWORK_PATH}" ]]; then
+        "${NETWORK_PATH}" down 2>/dev/null || true
+        docker kill peer0org2_basic_ccaas peer0org1_basic_ccaas 2>/dev/null || true
+    fi
+    
+    # Check prerequisites
     check_prerequisites
+    
+    # Initialize OpenZeppelin
     init_openzeppelin
-    start_fabric
+    
+    # Start Fabric network (must be in project root)
+    cd "${PROJECT_ROOT}"
+    echo -e "${YELLOW}Starting Fabric network...${NC}"
+    check_and_download_fabric_samples
+    start_network_and_deploy_chaincode
+    echo "Waiting for network to fully stabilize..."
+    sleep 10
+    echo -e "${GREEN}Fabric network started${NC}"
+    
+    # Start gateway (fresh instance for this test run)
     start_gateway
+    
+    # Run tests
     run_tests
     
-    echo -e "\n${GREEN}========================================${NC}"
-    echo -e "${GREEN}Test execution complete${NC}"
-    echo -e "${GREEN}========================================${NC}"
+    # Cleanup happens automatically via trap
 }
 
 # Run main function
