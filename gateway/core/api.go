@@ -125,11 +125,8 @@ func (g *Gateway) processTx(ctx context.Context, tx *types.Transaction) error {
 	return nil
 }
 
-// SendTransaction enqueues a signed ethereum transaction for processing.
-// As per standard ethereum APIs, it does not return the payload of executed transaction.
-// It runs the same pre-flight validation that go-ethereum performs (chain id,
-// signature, intrinsic gas, nonce, balance, ...) so that callers see geth-style
-// errors before the transaction enters the async endorse/submit pipeline.
+// SendTransaction runs geth-style pre-flight validation, then enqueues the tx
+// for async endorse/submit. Mirrors eth_sendRawTransaction's failure model.
 func (g *Gateway) SendTransaction(ctx context.Context, tx *types.Transaction) error {
 	if err := validateTx(ctx, tx, g.chainConfig, g.signer, g); err != nil {
 		return err

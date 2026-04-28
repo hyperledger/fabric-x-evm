@@ -23,38 +23,22 @@ import (
 	"github.com/holiman/uint256"
 )
 
-// stateReader is the subset of ledger state needed to perform stateful
-// pre-flight checks on a submitted transaction.
 type stateReader interface {
 	NonceAt(ctx context.Context, account common.Address, blockNumber *big.Int) (uint64, error)
 	BalanceAt(ctx context.Context, account common.Address, blockNumber *big.Int) (*big.Int, error)
 }
 
-// errUnprotectedTx mirrors geth's error from internal/ethapi.SubmitTransaction
-// when a non-EIP-155 transaction is offered over RPC.
 var errUnprotectedTx = errors.New("only replay-protected (EIP-155) transactions allowed over RPC")
 
-// txMaxSize matches the limit core/txpool/legacypool uses (4 * txSlotSize, 128KB).
-// The constant is unexported in geth, so we redeclare it here.
+// txMaxSize redeclares the unexported core/txpool/legacypool constant (4 * 32 KiB).
 const txMaxSize = 4 * 32 * 1024
 
-// blockGasLimit is the synthetic block gas cap used for stateless validation.
-// 30M is geth mainnet's traditional value and is well above any tx the gateway
-// is expected to accept; the per-tx ceiling is enforced separately by
-// params.MaxTxGas (Osaka rule, 16.7M) inside txpool.ValidateTransaction.
 const blockGasLimit uint64 = 30_000_000
 
-// acceptedTxTypes is the bitmap of transaction types eth_sendRawTransaction
-// will accept. We deliberately exclude EIP-4844 blob transactions and EIP-7702
-// set-code transactions; see docs/COMPATIBILITY.md for the rationale.
 const acceptedTxTypes = (1 << types.LegacyTxType) | (1 << types.AccessListTxType) | (1 << types.DynamicFeeTxType)
 
-// validateTx mirrors the validation that go-ethereum performs in
-// internal/ethapi.SubmitTransaction together with core/txpool.ValidateTransaction
-// and ValidateTransactionWithState. It calls those exported functions directly
-// so the failure modes stay aligned with upstream geth as it evolves.
-//
-// Deliberate deviations are documented in docs/COMPATIBILITY.md.
+// validateTx delegates to geth's exported txpool helpers so the failure model
+// stays aligned with upstream. Deviations are documented in docs/COMPATIBILITY.md.
 func validateTx(
 	ctx context.Context,
 	tx *types.Transaction,
@@ -62,10 +46,8 @@ func validateTx(
 	signer types.Signer,
 	state stateReader,
 ) error {
-	// internal/ethapi.SubmitTransaction rejects unprotected (pre-EIP-155)
-	// transactions before the txpool sees them. Geth's signer code happily
-	// recovers a sender from a Frontier-style signature, so this guard has to
-	// live above ValidateTransaction.
+	// Geth rejects this in internal/ethapi.SubmitTransaction, above the txpool —
+	// the txpool's signer recovery accepts Frontier-style signatures.
 	if !tx.Protected() {
 		return errUnprotectedTx
 	}
@@ -73,7 +55,7 @@ func validateTx(
 	head := &types.Header{
 		Number:     new(big.Int),
 		Time:       0,
-		Difficulty: new(big.Int), // Sign() == 0 ⇒ post-merge, matches our chain config.
+		Difficulty: new(big.Int), // Sign() == 0 ⇒ post-merge.
 		GasLimit:   blockGasLimit,
 	}
 	opts := &txpool.ValidationOptions{
@@ -87,7 +69,7 @@ func validateTx(
 		return err
 	}
 
-	from, err := types.Sender(signer, tx) // already validated above; recover for the state lookup
+	from, err := types.Sender(signer, tx)
 	if err != nil {
 		return fmt.Errorf("%w: %v", txpool.ErrInvalidSender, err)
 	}
@@ -107,21 +89,15 @@ func validateTx(
 	}
 
 	stateOpts := &txpool.ValidationOptionsWithState{
-		State: sdb,
-		// We do not maintain a mempool, so there are no pooled transactions to
-		// account for. ExistingExpenditure must be set; ExistingCost may
-		// return nil to signal "no replacement at this nonce". Replacement
-		// transactions are tracked separately — see docs/COMPATIBILITY.md.
+		State:               sdb,
 		ExistingExpenditure: func(common.Address) *big.Int { return new(big.Int) },
 		ExistingCost:        func(common.Address, uint64) *big.Int { return nil },
 	}
 	return txpool.ValidateTransactionWithState(tx, signer, stateOpts)
 }
 
-// newEphemeralStateDB builds an in-memory *state.StateDB seeded with a single
-// account (sender's nonce + balance). It exists so we can pass a real geth
-// StateDB to txpool.ValidateTransactionWithState without coupling the gateway
-// to the endorser's persistent state store.
+// newEphemeralStateDB lets us hand a real *state.StateDB to
+// txpool.ValidateTransactionWithState without sharing the endorser's store.
 func newEphemeralStateDB(addr common.Address, nonce uint64, balance *big.Int) (*state.StateDB, error) {
 	tdb := triedb.NewDatabase(rawdb.NewMemoryDatabase(), nil)
 	sdb, err := state.New(types.EmptyRootHash, state.NewDatabase(tdb, nil))

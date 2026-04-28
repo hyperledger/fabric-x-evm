@@ -110,9 +110,6 @@ func TestValidateTx_UnprotectedRejected(t *testing.T) {
 }
 
 func TestValidateTx_ChainIDMismatch(t *testing.T) {
-	// Geth's signer recovery rejects a protected legacy tx whose embedded chain
-	// id does not match the configured one; the txpool surfaces this through
-	// ErrInvalidSender (wrapping ErrInvalidChainId).
 	key := newKey(t)
 	cfg, signer := chainCtx(t)
 
@@ -191,8 +188,6 @@ func TestValidateTx_InitCodeTooLarge(t *testing.T) {
 }
 
 func TestValidateTx_BlobTxTypeRejected(t *testing.T) {
-	// We deliberately do not accept blob (EIP-4844) transactions; geth's
-	// ValidateTransaction surfaces this through ErrTxTypeNotSupported.
 	key := newKey(t)
 	cfg, signer := chainCtx(t)
 
