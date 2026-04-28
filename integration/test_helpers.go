@@ -775,6 +775,12 @@ func waitForCommit(ctx context.Context, ec *ethclient.Client, tx *types.Transact
 		}
 	}
 
+	// Give the endorser synchronizers a moment to process the same block that the
+	// gateway sync just confirmed. The gateway sync and endorser syncs run
+	// independently; without this pause the next NonceAt or state query can read
+	// stale state from an endorser that hasn't applied the block yet.
+	time.Sleep(100 * time.Millisecond)
+
 	return nil
 }
 
