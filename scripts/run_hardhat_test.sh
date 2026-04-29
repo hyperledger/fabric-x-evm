@@ -193,18 +193,10 @@ main() {
     
     # Clean up any existing network from previous runs
     echo -e "${YELLOW}Cleaning up any existing Fabric network...${NC}"
-    
-    # Stop Fablo network
-    cd "${PROJECT_ROOT}/testdata/fablo" 2>/dev/null && ./fablo down 2>/dev/null || true
-    cd "${PROJECT_ROOT}"
-    
-    # Force remove any lingering containers
-    echo "Removing any lingering Fabric containers..."
-    docker ps -a --filter "name=peer0.org1.example.com" --filter "name=peer0.org2.example.com" \
-        --filter "name=orderer" --filter "name=ca." --format "{{.ID}}" | xargs -r docker rm -f 2>/dev/null || true
-    
-    # Clean up any orphaned networks
-    docker network ls --filter "name=fablo" --format "{{.ID}}" | xargs -r docker network rm 2>/dev/null || true
+    if [[ -f "${NETWORK_PATH}" ]]; then
+        "${NETWORK_PATH}" down 2>/dev/null || true
+        docker kill peer0org2_basic_ccaas peer0org1_basic_ccaas 2>/dev/null || true
+    fi
     
     # Check prerequisites
     check_prerequisites
@@ -212,10 +204,10 @@ main() {
     # Initialize OpenZeppelin
     init_openzeppelin
     
-    # Start Fabric network with Fablo
+    # Start Fabric network (must be in project root)
     cd "${PROJECT_ROOT}"
-    echo -e "${YELLOW}Starting Fabric network with Fablo...${NC}"
-    check_fablo_setup
+    echo -e "${YELLOW}Starting Fabric network...${NC}"
+    check_and_download_fabric_samples
     start_network_and_deploy_chaincode
     echo "Waiting for network to fully stabilize..."
     sleep 10
