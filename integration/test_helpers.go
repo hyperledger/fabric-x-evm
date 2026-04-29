@@ -41,6 +41,7 @@ import (
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
 	"github.com/hyperledger/fabric-x-evm/utils"
 	sdk "github.com/hyperledger/fabric-x-sdk"
+	"github.com/hyperledger/fabric-x-sdk/blocks"
 	bfab "github.com/hyperledger/fabric-x-sdk/blocks/fabric"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	efab "github.com/hyperledger/fabric-x-sdk/endorsement/fabric"
@@ -199,7 +200,7 @@ func (th *TestHarness) PrimeStateFromJSON(ctx context.Context, jsonFilePath stri
 //
 // Sync goroutines are started in the background using ctx. The returned synchronizers
 // can be used by callers that need to wait for the initial sync to complete.
-func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmConfig endorser.EVMConfig, primeDBPath string, bypass bool) (*TestHarness, []*network.Synchronizer, error) {
+func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmConfig endorser.EVMConfig, primeDBPath string, bypass bool) (*TestHarness, *network.Synchronizer, error) {
 	t.Helper()
 
 	// Derive ChainConfig from cfg.Network.ChainID when not explicitly provided.
@@ -211,16 +212,8 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 	dbs := make([]*state.VersionedDB, len(cfg.Endorsers))
 	builders := make([]endorsement.Builder, len(cfg.Endorsers))
 	ends := make([]*endorser.Endorser, len(cfg.Endorsers))
-	syncs := make([]*network.Synchronizer, len(cfg.Endorsers))
 	for i, ecfg := range cfg.Endorsers {
-		dbs[i], builders[i], ends[i], syncs[i] = newEndorser(t, logger, ecfg, cfg.Network.Channel, cfg.Network.Namespace, evmConfig, cfg.Network.Protocol)
-	}
-
-	// Start sync goroutines; they run until the test context is cancelled.
-	if !bypass {
-		for _, s := range syncs {
-			go s.Start(t.Context())
-		}
+		dbs[i], builders[i], ends[i] = newEndorser(t, logger, ecfg, cfg.Network.Channel, cfg.Network.Namespace, evmConfig, cfg.Network.Protocol)
 	}
 
 	// Build gateway signer.
@@ -253,17 +246,26 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 	}
 
 	var submitter core.Submitter
-	var gwSync *network.Synchronizer
+	var sync *network.Synchronizer
 	var err1 error
 	if bypass {
 		submitter = local.NewLocalSubmitter(dbs[0], cfg.Network.Channel, cfg.Network.Namespace, nfab.NewTxPackager(gwSigner), bfab.NewBlockParser(logger), false)
 	} else {
+		handlers := make([]blocks.BlockHandler, 0, len(dbs)+1)
+		for _, db := range dbs {
+			handlers = append(handlers, db)
+		}
+		// by adding `chain` as last handler, we're sure that by the time the
+		// gateway sees the transaction as committed, all endorsers will have
+		// updated their ledger state
+		handlers = append(handlers, chain)
+
 		switch cfg.Network.Protocol {
 		case "fabric":
-			gwSync, err = nfab.NewSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, chain)
+			sync, err = nfab.NewSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, handlers...)
 			submitter, err1 = nfab.NewSubmitter(orderers, gwSigner, 0, logger)
 		case "fabric-x", "":
-			gwSync, err = nfabx.NewSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, chain)
+			sync, err = nfabx.NewSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, handlers...)
 			submitter, err1 = nfabx.NewSubmitter(orderers, gwSigner, 0, logger)
 		default:
 			return nil, nil, fmt.Errorf("unsupported protocol: %q", cfg.Network.Protocol)
@@ -279,7 +281,7 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 	}
 
 	if !bypass {
-		go func() error { return gwSync.Start(t.Context()) }()
+		go func() error { return sync.Start(t.Context()) }()
 	}
 
 	// Start gateway worker pool for tests
@@ -302,7 +304,7 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 		return nil, nil, err
 	}
 
-	return th, syncs, nil
+	return th, sync, nil
 }
 
 // applyConfigOverrides applies overrides from a map to a config struct using reflection.
@@ -431,14 +433,12 @@ func newFabricTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EV
 		return nil, err
 	}
 
-	th, syncs, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false)
+	th, sync, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false)
 	if err != nil {
 		return nil, err
 	}
 
-	for _, s := range syncs {
-		waitUntilSynced(t, s, 10*time.Second)
-	}
+	waitUntilSynced(t, sync, 10*time.Second)
 
 	return th, nil
 }
@@ -461,7 +461,7 @@ func NewFabricXTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.E
 	return th, nil
 }
 
-func newEndorser(t *testing.T, logger sdk.Logger, cfg econf.Endorser, channel, namespace string, evmConfig endorser.EVMConfig, protocol string) (*state.VersionedDB, endorsement.Builder, *endorser.Endorser, *network.Synchronizer) {
+func newEndorser(t *testing.T, logger sdk.Logger, cfg econf.Endorser, channel, namespace string, evmConfig endorser.EVMConfig, protocol string) (*state.VersionedDB, endorsement.Builder, *endorser.Endorser) {
 	t.Helper()
 
 	var signer sdk.Signer
@@ -489,15 +489,12 @@ func newEndorser(t *testing.T, logger sdk.Logger, cfg econf.Endorser, channel, n
 
 	// the shape of endorsements and blocks differs per protocol.
 	var builder endorsement.Builder
-	var sync *network.Synchronizer
 	var monotonicVersions bool
 	switch protocol {
 	case "fabric", "":
 		builder = efab.NewEndorsementBuilder(signer)
-		sync, err = nfab.NewSynchronizer(readDB, channel, cfg.Committer.ToPeerConf(), signer, logger, writeDB)
 	case "fabric-x":
 		builder = efabx.NewEndorsementBuilder(signer)
-		sync, err = nfabx.NewSynchronizer(readDB, channel, cfg.Committer.ToPeerConf(), signer, logger, writeDB)
 		monotonicVersions = true
 	default:
 		t.Fatalf("unsupported protocol: %q", protocol)
@@ -515,7 +512,7 @@ func newEndorser(t *testing.T, logger sdk.Logger, cfg econf.Endorser, channel, n
 		t.Fatalf("endorser.New: %v", err)
 	}
 
-	return writeDB, builder, end, sync
+	return writeDB, builder, end
 }
 
 // TestHarness provides access to gateways and endorsers for testing.
