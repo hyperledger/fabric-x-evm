@@ -8,9 +8,11 @@ package integration
 
 import (
 	"bufio"
+	"context"
 	"flag"
 	"fmt"
 	"io"
+	"math/big"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -19,12 +21,14 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/hyperledger/fabric-protos-go-apiv2/ledger/rwset"
 	"github.com/hyperledger/fabric-protos-go-apiv2/ledger/rwset/kvrwset"
 	"github.com/hyperledger/fabric-x-common/protoutil"
 	"github.com/hyperledger/fabric-x-evm/endorser"
+	"github.com/hyperledger/fabric-x-evm/gateway/core"
 	"github.com/hyperledger/fabric-x-evm/gateway/storage/trie"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
@@ -192,6 +196,15 @@ func runSingleEthereumTest(t *testing.T, stateTest *StateTest) {
 	}
 }
 
+type nonceReader struct {
+	db *state.StateDB
+}
+
+func (n *nonceReader) NonceAt(ctx context.Context, account common.Address, blockNumber *big.Int) (uint64, error) {
+	nonce := n.db.GetNonce(account)
+	return nonce, nil
+}
+
 // runEthereumTestConfig executes a specific test configuration
 func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubtest, snapshotter bool, scheme string) {
 	// Build block info from test environment
@@ -254,6 +267,9 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 	}
 	defer th.Stop()
 
+	// run the tx through the pre-execution validation steps
+	preExecErr := core.ValidateTx(t.Context(), tx, config, signerForTx(tx), &nonceReader{th.endorsers[0].GetEthStateDB()})
+
 	// Execute transaction through gateway
 	env, execErr := th.Gateways[0].ExecuteEthTx(t.Context(), tx, blockInfo)
 
@@ -274,6 +290,15 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 			}
 
 			actualRoot = root
+		}
+	}
+
+	if tx.Type() != types.BlobTxType && // our pre-execution validation doesn't support blob txes yet
+		tx.Protected() { // our pre-execution validation only support protected transactions
+
+		// err out if we got a pre-validation error which we wouldn't get again when endorsing
+		if preExecErr != nil && execErr == nil {
+			t.Fatalf("unexpected pre-validation error %q", preExecErr)
 		}
 	}
 

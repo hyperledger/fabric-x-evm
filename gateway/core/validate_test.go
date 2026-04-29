@@ -81,7 +81,7 @@ func TestValidateTx_Valid(t *testing.T) {
 	tx := newValidTx(t, key, validTxOpts{nonce: 5})
 	state := &fakeState{nonce: 5}
 
-	require.NoError(t, validateTx(context.Background(), tx, cfg, signer, state))
+	require.NoError(t, ValidateTx(context.Background(), tx, cfg, signer, state))
 }
 
 func TestValidateTx_UnprotectedRejected(t *testing.T) {
@@ -93,7 +93,7 @@ func TestValidateTx_UnprotectedRejected(t *testing.T) {
 	tx, err := types.SignTx(raw, types.HomesteadSigner{}, key) // pre-EIP-155 → unprotected
 	require.NoError(t, err)
 
-	err = validateTx(context.Background(), tx, cfg, signer, &fakeState{})
+	err = ValidateTx(context.Background(), tx, cfg, signer, &fakeState{})
 	require.ErrorIs(t, err, errUnprotectedTx)
 }
 
@@ -106,7 +106,7 @@ func TestValidateTx_ChainIDMismatch(t *testing.T) {
 	tx, err := types.SignTx(raw, types.NewEIP155Signer(big.NewInt(testChainID+1)), key)
 	require.NoError(t, err)
 
-	err = validateTx(context.Background(), tx, cfg, signer, &fakeState{})
+	err = ValidateTx(context.Background(), tx, cfg, signer, &fakeState{})
 	require.ErrorIs(t, err, txpool.ErrInvalidSender)
 }
 
@@ -127,7 +127,7 @@ func TestValidateTx_TipAboveFeeCap(t *testing.T) {
 	tx, err := types.SignTx(raw, signer, key)
 	require.NoError(t, err)
 
-	err = validateTx(context.Background(), tx, cfg, signer, &fakeState{})
+	err = ValidateTx(context.Background(), tx, cfg, signer, &fakeState{})
 	require.ErrorIs(t, err, ethcore.ErrTipAboveFeeCap)
 }
 
@@ -136,7 +136,7 @@ func TestValidateTx_IntrinsicGasTooLow(t *testing.T) {
 	cfg, signer := chainCtx(t)
 
 	tx := newValidTx(t, key, validTxOpts{gas: 20_000}) // below 21_000
-	err := validateTx(context.Background(), tx, cfg, signer, &fakeState{})
+	err := ValidateTx(context.Background(), tx, cfg, signer, &fakeState{})
 	require.ErrorIs(t, err, ethcore.ErrIntrinsicGas)
 }
 
@@ -147,7 +147,7 @@ func TestValidateTx_NonceTooLow(t *testing.T) {
 	tx := newValidTx(t, key, validTxOpts{nonce: 3})
 	state := &fakeState{nonce: 7}
 
-	err := validateTx(context.Background(), tx, cfg, signer, state)
+	err := ValidateTx(context.Background(), tx, cfg, signer, state)
 	require.ErrorIs(t, err, ethcore.ErrNonceTooLow)
 }
 
@@ -160,7 +160,7 @@ func TestValidateTx_InitCodeTooLarge(t *testing.T) {
 	tx, err := types.SignTx(raw, types.NewEIP155Signer(big.NewInt(testChainID)), key)
 	require.NoError(t, err)
 
-	err = validateTx(context.Background(), tx, cfg, signer, &fakeState{nonce: 0})
+	err = ValidateTx(context.Background(), tx, cfg, signer, &fakeState{nonce: 0})
 	require.ErrorIs(t, err, ethcore.ErrMaxInitCodeSizeExceeded)
 }
 
@@ -183,7 +183,7 @@ func TestValidateTx_BlobTxTypeRejected(t *testing.T) {
 	tx, err := types.SignTx(raw, signer, key)
 	require.NoError(t, err)
 
-	err = validateTx(context.Background(), tx, cfg, signer, &fakeState{})
+	err = ValidateTx(context.Background(), tx, cfg, signer, &fakeState{})
 	require.ErrorIs(t, err, ethcore.ErrTxTypeNotSupported)
 }
 
@@ -206,7 +206,7 @@ func TestValidateTx_NegativeValue(t *testing.T) {
 		t.Skip("signer rejects negative value at sign time:", err)
 	}
 
-	err = validateTx(context.Background(), tx, cfg, signer, &fakeState{})
+	err = ValidateTx(context.Background(), tx, cfg, signer, &fakeState{})
 	require.ErrorIs(t, err, txpool.ErrNegativeValue)
 }
 
@@ -218,6 +218,6 @@ func TestValidateTx_StateLookupErrorPropagates(t *testing.T) {
 	boom := errors.New("ledger unavailable")
 	state := &fakeState{nonceErr: boom}
 
-	err := validateTx(context.Background(), tx, cfg, signer, state)
+	err := ValidateTx(context.Background(), tx, cfg, signer, state)
 	require.ErrorIs(t, err, boom)
 }

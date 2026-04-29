@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -28,15 +29,15 @@ var errUnprotectedTx = errors.New("only replay-protected (EIP-155) transactions 
 // txMaxSize redeclares the unexported core/txpool/legacypool constant (4 * 32 KiB).
 const txMaxSize = 4 * 32 * 1024
 
-const blockGasLimit uint64 = 30_000_000
+const blockGasLimit uint64 = math.MaxUint64
 
 const acceptedTxTypes = (1 << types.LegacyTxType) | (1 << types.AccessListTxType) | (1 << types.DynamicFeeTxType)
 
-// validateTx delegates stateless checks to geth's txpool.ValidateTransaction so
+// ValidateTx delegates stateless checks to geth's txpool.ValidateTransaction so
 // the failure model tracks upstream. The only stateful check is nonce-too-low,
 // inlined from txpool.ValidateTransactionWithState to avoid building a per-tx
 // StateDB. Deviations are documented in docs/COMPATIBILITY.md.
-func validateTx(
+func ValidateTx(
 	ctx context.Context,
 	tx *types.Transaction,
 	chainConfig *params.ChainConfig,
