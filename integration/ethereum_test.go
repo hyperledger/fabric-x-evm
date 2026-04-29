@@ -119,10 +119,6 @@ func filterSlowTests(files []string, slow map[string]struct{}, want_very_slow bo
 //
 // This follows the same approach as Besu, Geth, and other Ethereum clients.
 func TestEthereumTests(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping ethereum/tests corpus in short mode")
-	}
-
 	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr)) // disable grpc logging
 
 	// Load slow
@@ -137,7 +133,7 @@ func TestEthereumTests(t *testing.T) {
 	// 1) GeneralStateTests
 	testsDir := filepath.Join("..", "testdata", "ethereum-tests", "GeneralStateTests")
 	if _, err := os.Stat(testsDir); os.IsNotExist(err) {
-		t.Skipf("ethereum/tests corpus not found at %s; run `git submodule update --init --recursive`", testsDir)
+		t.Fatalf("ethereum/tests corpus not found at %s; run `git submodule update --init --recursive`", testsDir)
 	}
 	allFiles, err := findJSONFiles(testsDir)
 	if err != nil {
