@@ -71,7 +71,6 @@ func (c ClientConfig) ToPeerConf() network.PeerConf {
 			CertPath:    c.TLS.CertPath,
 			KeyPath:     c.TLS.KeyPath,
 			CACertPaths: c.TLS.CACertPaths,
-			ServerName:  c.TLS.ServerName,
 		},
 	}
 }
@@ -85,7 +84,6 @@ func (c ClientConfig) ToOrdererConf() network.OrdererConf {
 			CertPath:    c.TLS.CertPath,
 			KeyPath:     c.TLS.KeyPath,
 			CACertPaths: c.TLS.CACertPaths,
-			ServerName:  c.TLS.ServerName,
 		},
 	}
 }
@@ -102,6 +100,4 @@ type TLSConfig struct {
 	// KeyPath is the path to the key file (private key).
 	KeyPath     string   `mapstructure:"key-path"`
 	CACertPaths []string `mapstructure:"ca-cert-paths"`
-	// ServerName is the server name for TLS certificate validation (SNI).
-	ServerName string `mapstructure:"server-name"`
 }

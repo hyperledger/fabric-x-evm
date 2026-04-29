@@ -63,14 +63,31 @@ make stop-x
 
 The container does not keep state.
 
-### Fablo
+### Fabric 3
 
-Start the network, run the integration tests, and stop it again:
+To run the integration tests against a Fabric 3 network, get the fabric
+samples. This downloads the binaries, test network and docker images.
 
 ```shell
-make start-fablo
-make test-fablo
-make stop-fablo
+make init-3
+```
+
+> Or manually:
+>
+> ```shell
+> cd testdata
+> curl -sSLO https://raw.githubusercontent.com/hyperledger/fabric/main/scripts/> install-fabric.sh && chmod +x install-fabric.sh
+> ./install-fabric.sh --fabric-version 3.1.3
+> rm ./install-fabric.sh
+> ```
+
+Start the network and create the namespace, run the integration tests against
+it, and stop it again:
+
+```shell
+make start-3
+make test-3
+make stop-3
 ```
 
 ## Interacting with the system
@@ -125,7 +142,7 @@ to add a custom network with RPC URL http://localhost:8545 and chain id 4011.
 #### Start Fabric
 
 ```shell
-make start-fablo
+make start-3
 ```
 
 ### Running the application
