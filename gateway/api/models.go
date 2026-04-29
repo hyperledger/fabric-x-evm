@@ -160,17 +160,21 @@ func rpcTransaction(tx *domain.Transaction) *RPCTransaction {
 		return nil
 	}
 
-	blockHash := common.Hash(tx.BlockHash)
-	blockNumber := hexutil.Big(*big.NewInt(int64(tx.BlockNumber)))
-	txIndex := hexutil.Uint64(tx.TxIndex)
-
-	return &RPCTransaction{
-		tx:               ethTx,
-		From:             common.BytesToAddress(tx.FromAddress),
-		BlockHash:        &blockHash,
-		BlockNumber:      &blockNumber,
-		TransactionIndex: &txIndex,
+	out := &RPCTransaction{
+		tx:   ethTx,
+		From: common.BytesToAddress(tx.FromAddress),
 	}
+	// Pending txs (no committed block yet) leave block metadata nil so eth
+	// clients see isPending=true.
+	if len(tx.BlockHash) == common.HashLength {
+		blockHash := common.Hash(tx.BlockHash)
+		blockNumber := hexutil.Big(*big.NewInt(int64(tx.BlockNumber)))
+		txIndex := hexutil.Uint64(tx.TxIndex)
+		out.BlockHash = &blockHash
+		out.BlockNumber = &blockNumber
+		out.TransactionIndex = &txIndex
+	}
+	return out
 }
 
 // rpcBlock returns a block in the form the RPC API can return. Some values are mocked.

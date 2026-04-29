@@ -17,6 +17,7 @@ import (
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
 	cmn "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
@@ -46,9 +47,16 @@ type Gateway struct {
 	chainConfig *params.ChainConfig
 	signer      types.Signer
 	txQueue     *TxQueue
+	pendingTxs  sync.Map // common.Hash -> pendingTx
 	workerCount int
 	wg          sync.WaitGroup
 	stopOnce    sync.Once
+}
+
+// pendingTx is the data we keep about a tx accepted by SendTransaction but not yet committed.
+type pendingTx struct {
+	tx   *types.Transaction
+	from common.Address
 }
 
 type Store interface {
@@ -131,6 +139,11 @@ func (g *Gateway) SendTransaction(ctx context.Context, tx *types.Transaction) er
 	if err := ValidateTx(ctx, tx, g.chainConfig, g.signer, g); err != nil {
 		return err
 	}
+	from, err := types.Sender(g.signer, tx)
+	if err != nil {
+		return err
+	}
+	g.pendingTxs.Store(tx.Hash(), pendingTx{tx: tx, from: from})
 	g.txQueue.Enqueue(tx)
 	return nil
 }
@@ -246,25 +259,48 @@ func (g *Gateway) NonceAt(ctx context.Context, account common.Address, blockNumb
 
 // Transactions
 
-// TransactionByHash retrieves a past transaction data from local storage, reconstructs a Transaction object and returns it.
-// We always return false for "is pending".
+// TransactionByHash returns isPending=true for a tx that was accepted by
+// SendTransaction but is not yet visible in a committed block, and
+// isPending=false once the local store has indexed it.
 func (g *Gateway) TransactionByHash(ctx context.Context, hash common.Hash) (*domain.Transaction, bool, error) {
 	tx, err := g.store.GetTransactionByHash(ctx, hash.Bytes())
 	if err != nil {
 		return nil, false, err
 	}
-	if tx == nil {
-		return nil, false, nil
+	if tx != nil {
+		// Lazy cleanup so the pending map doesn't grow forever.
+		g.pendingTxs.Delete(hash)
+
+		logs, err := g.store.GetLogsByTxHash(ctx, hash.Bytes())
+		if err != nil {
+			return nil, false, err
+		}
+		tx.Logs = logs
+		return tx, false, nil
 	}
 
-	// Fetch logs for the transaction (needed for receipts)
-	logs, err := g.store.GetLogsByTxHash(ctx, hash.Bytes())
-	if err != nil {
-		return nil, false, err
+	if v, ok := g.pendingTxs.Load(hash); ok {
+		p := v.(pendingTx)
+		return pendingDomainTx(p.tx, p.from), true, nil
 	}
-	tx.Logs = logs
+	return nil, false, nil
+}
 
-	return tx, false, nil
+// pendingDomainTx synthesises a domain.Transaction for a queued-but-uncommitted
+// tx. Block-context fields (BlockHash/Number, TxIndex, Status, Logs) are zero.
+func pendingDomainTx(tx *types.Transaction, from common.Address) *domain.Transaction {
+	raw, _ := tx.MarshalBinary()
+	d := &domain.Transaction{
+		TxHash:      tx.Hash().Bytes(),
+		RawTx:       raw,
+		FromAddress: from.Bytes(),
+	}
+	if to := tx.To(); to != nil {
+		d.ToAddress = to.Bytes()
+	} else {
+		d.ContractAddress = crypto.CreateAddress(from, tx.Nonce()).Bytes()
+	}
+	return d
 }
 
 // GetTransactionByBlockHashAndIndex retrieves a transaction based on block hash in the transaction index in that block.
