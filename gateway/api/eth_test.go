@@ -126,12 +126,9 @@ func TestBlockNumberOrHashToBlockNumber_HashNotFound(t *testing.T) {
 	hash := common.HexToHash("0xabcd")
 	api := NewEthAPI(&stubBackend{})
 
-	got, err := api.blockNumberOrHashToBlockNumber(context.Background(), rpc.BlockNumberOrHashWithHash(hash, false))
-	if err != nil {
-		t.Fatalf("blockNumberOrHashToBlockNumber() error = %v", err)
-	}
-	if got != nil {
-		t.Fatalf("blockNumberOrHashToBlockNumber() = %v, want nil", got)
+	_, err := api.blockNumberOrHashToBlockNumber(context.Background(), rpc.BlockNumberOrHashWithHash(hash, false))
+	if !errors.Is(err, ethereum.NotFound) {
+		t.Fatalf("blockNumberOrHashToBlockNumber() error = %v, want %v", err, ethereum.NotFound)
 	}
 }
 

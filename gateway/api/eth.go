@@ -449,7 +449,7 @@ func (api *EthAPI) blockNumberOrHashToBlockNumber(ctx context.Context, numOrHash
 		return nil, err
 	}
 	if blk == nil {
-		return nil, nil
+		return nil, ethereum.NotFound
 	}
 	return new(big.Int).SetUint64(blk.BlockNumber), nil
 }
