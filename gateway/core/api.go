@@ -17,6 +17,7 @@ import (
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/params"
 	cmn "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	"github.com/hyperledger/fabric-x-evm/utils"
@@ -42,6 +43,8 @@ type Gateway struct {
 	endorsers   *EndorsementClient
 	store       Store
 	chainID     *big.Int
+	chainConfig *params.ChainConfig
+	signer      types.Signer
 	txQueue     *TxQueue
 	workerCount int
 	wg          sync.WaitGroup
@@ -69,11 +72,14 @@ func New(ec *EndorsementClient, submitter Submitter, store Store, chainID int64,
 		workerCount = 1
 	}
 
+	cid := big.NewInt(chainID)
 	return &Gateway{
 		endorsers:   ec,
 		submitter:   submitter,
 		store:       store,
-		chainID:     big.NewInt(chainID),
+		chainID:     cid,
+		chainConfig: cmn.BuildChainConfig(chainID),
+		signer:      types.LatestSignerForChainID(cid),
 		txQueue:     NewTxQueue(),
 		workerCount: workerCount,
 	}, nil
@@ -121,10 +127,12 @@ func (g *Gateway) processTx(ctx context.Context, tx *types.Transaction) error {
 	return nil
 }
 
-// SendTransaction enqueues the transaction for async processing.
-// As per standard ethereum APIs, it does not return the payload of executed transaction.
+// SendTransaction runs geth-style pre-flight validation, then enqueues the tx
+// for async endorse/submit. Mirrors eth_sendRawTransaction's failure model.
 func (g *Gateway) SendTransaction(ctx context.Context, tx *types.Transaction) error {
-	// Enqueue the transaction for async processing
+	if err := ValidateTx(ctx, tx, g.chainConfig, g.signer, g); err != nil {
+		return err
+	}
 	g.txQueue.Enqueue(tx)
 	return nil
 }
