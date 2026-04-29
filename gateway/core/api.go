@@ -17,7 +17,6 @@ import (
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/params"
 	cmn "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	"github.com/hyperledger/fabric-x-evm/utils"
@@ -43,8 +42,6 @@ type Gateway struct {
 	endorsers   *EndorsementClient
 	store       Store
 	chainID     *big.Int
-	chainConfig *params.ChainConfig
-	signer      types.Signer
 	txQueue     *TxQueue
 	workerCount int
 	wg          sync.WaitGroup
@@ -72,14 +69,11 @@ func New(ec *EndorsementClient, submitter Submitter, store Store, chainID int64,
 		workerCount = 1
 	}
 
-	cid := big.NewInt(chainID)
 	return &Gateway{
 		endorsers:   ec,
 		submitter:   submitter,
 		store:       store,
-		chainID:     cid,
-		chainConfig: cmn.BuildChainConfig(chainID),
-		signer:      types.LatestSignerForChainID(cid),
+		chainID:     big.NewInt(chainID),
 		txQueue:     NewTxQueue(),
 		workerCount: workerCount,
 	}, nil
@@ -127,14 +121,10 @@ func (g *Gateway) processTx(ctx context.Context, tx *types.Transaction) error {
 	return nil
 }
 
-// SendTransaction runs geth-style pre-flight validation, then enqueues the tx
-// for async endorse/submit. Validation errors carry domain sentinels
-// (domain.ErrUnprotectedTx, domain.ErrNonceLookup, geth txpool errors) so the
-// API layer can map them to JSON-RPC codes.
+// SendTransaction enqueues the transaction for async processing.
+// As per standard ethereum APIs, it does not return the payload of executed transaction.
 func (g *Gateway) SendTransaction(ctx context.Context, tx *types.Transaction) error {
-	if err := ValidateTx(ctx, tx, g.chainConfig, g.signer, g); err != nil {
-		return err
-	}
+	// Enqueue the transaction for async processing
 	g.txQueue.Enqueue(tx)
 	return nil
 }
