@@ -122,5 +122,3 @@ func (api *EvmAPI) SetNextBlockTimestamp(ctx context.Context, timestamp hexutil.
 	// In a full implementation, this would set the timestamp for the next block
 	return true, nil
 }
-
-// Made with Bob

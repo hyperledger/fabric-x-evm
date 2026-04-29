@@ -47,5 +47,3 @@ func BuildChainConfig(chainID int64) *params.ChainConfig {
 		Clique:                  nil,
 	}
 }
-
-// Made with Bob
