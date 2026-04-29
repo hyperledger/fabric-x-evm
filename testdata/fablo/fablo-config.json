@@ -85,6 +85,7 @@
       "name": "basic",
       "version": "1.0",
       "lang": "golang",
+      "image": "ghcr.io/hyperledger/fabric-ccenv:3.1.4",
       "channel": "mychannel",
       "directory": "./chaincode"
     }
