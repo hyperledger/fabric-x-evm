@@ -21,6 +21,10 @@ import (
 // TestSingleAdd11 runs only the add11.json test from LegacyTests/Constantinople/GeneralStateTests/stExample
 // This test is ported from go-ethereum's tests/state_test.go
 func TestSingleAdd11(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping ethereum state test in short mode")
+	}
+
 	// Adjust the path to point to the ethereum-tests directory in this repo
 	// Original path in go-ethereum: ./testdata/LegacyTests/Constantinople/GeneralStateTests/stExample/add11.json
 	// Path in this repo: ../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stExample/add11.json
@@ -29,6 +33,9 @@ func TestSingleAdd11(t *testing.T) {
 	// Load the test file
 	file, err := os.Open(testPath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			t.Skipf("ethereum test file not found at %s; run `git submodule update --init --recursive`", testPath)
+		}
 		t.Fatal(err)
 	}
 	defer file.Close()

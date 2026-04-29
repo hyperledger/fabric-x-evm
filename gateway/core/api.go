@@ -53,6 +53,7 @@ type Gateway struct {
 
 type Store interface {
 	BlockNumber(ctx context.Context) (uint64, error)
+	BlockNumberByHash(ctx context.Context, hash []byte) (*uint64, error)
 	LatestBlock(ctx context.Context, full bool) (*domain.Block, error)
 	GetBlockByNumber(ctx context.Context, num uint64, full bool) (*domain.Block, error)
 	GetBlockByHash(ctx context.Context, hash []byte, full bool) (*domain.Block, error)
@@ -163,6 +164,11 @@ func (g *Gateway) ChainID(ctx context.Context) (*big.Int, error) {
 // BlockNumber is the current blockheight as observed by this gateway.
 func (g *Gateway) BlockNumber(ctx context.Context) (uint64, error) {
 	return g.store.BlockNumber(ctx)
+}
+
+// BlockNumberByHash resolves a block hash to a block number.
+func (g *Gateway) BlockNumberByHash(ctx context.Context, hash common.Hash) (*uint64, error) {
+	return g.store.BlockNumberByHash(ctx, hash.Bytes())
 }
 
 // GetBlockByNumber returns the block at the specified number.

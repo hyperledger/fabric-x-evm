@@ -168,6 +168,19 @@ func (s *Store) BlockNumber(ctx context.Context) (uint64, error) {
 	return uint64(num), err
 }
 
+// BlockNumberByHash resolves a block hash to its block number.
+func (s *Store) BlockNumberByHash(ctx context.Context, blockHash []byte) (*uint64, error) {
+	num, err := s.queries.BlockNumberByHash(ctx, blockHash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	res := uint64(num)
+	return &res, nil
+}
+
 // GetBlockByNumber retrieves a block by its number.
 // Always loads transactions so the API layer can return either hashes or full objects.
 func (s *Store) GetBlockByNumber(ctx context.Context, blockNumber uint64, full bool) (*domain.Block, error) {

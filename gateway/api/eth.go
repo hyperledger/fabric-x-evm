@@ -29,6 +29,7 @@ type Backend interface {
 	// Blocks
 	GetBlockByNumber(ctx context.Context, num uint64, full bool) (*domain.Block, error)
 	GetBlockByHash(ctx context.Context, hash common.Hash, full bool) (*domain.Block, error)
+	BlockNumberByHash(ctx context.Context, hash common.Hash) (*uint64, error)
 	GetBlockTxCountByHash(ctx context.Context, hash common.Hash) (int64, error)
 	GetBlockTxCountByNumber(ctx context.Context, num uint64) (int64, error)
 
@@ -444,14 +445,14 @@ func (api *EthAPI) blockNumberOrHashToBlockNumber(ctx context.Context, numOrHash
 		return nil, nil
 	}
 
-	blk, err := api.b.GetBlockByHash(ctx, hash, false)
+	num, err := api.b.BlockNumberByHash(ctx, hash)
 	if err != nil {
 		return nil, err
 	}
-	if blk == nil {
+	if num == nil {
 		return nil, ethereum.NotFound
 	}
-	return new(big.Int).SetUint64(blk.BlockNumber), nil
+	return new(big.Int).SetUint64(*num), nil
 }
 
 // rpcBlockNumberToBigInt converts rpc.BlockNumber to *big.Int

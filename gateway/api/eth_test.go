@@ -243,6 +243,20 @@ func (s *stubBackend) GetBlockByHash(ctx context.Context, hash common.Hash, full
 	}
 	return s.blockByHash[hash], nil
 }
+func (s *stubBackend) BlockNumberByHash(ctx context.Context, hash common.Hash) (*uint64, error) {
+	if s.getBlockErr != nil {
+		return nil, s.getBlockErr
+	}
+	if s.blockByHash == nil {
+		return nil, nil
+	}
+	blk := s.blockByHash[hash]
+	if blk == nil {
+		return nil, nil
+	}
+	num := blk.BlockNumber
+	return &num, nil
+}
 func (s *stubBackend) GetBlockTxCountByHash(ctx context.Context, hash common.Hash) (int64, error) {
 	return 0, nil
 }
@@ -274,7 +288,9 @@ func (s *stubBackend) GetTransactionByBlockHashAndIndex(ctx context.Context, has
 func (s *stubBackend) GetTransactionByBlockNumberAndIndex(ctx context.Context, num uint64, idx int64) (*domain.Transaction, error) {
 	return nil, nil
 }
-func (s *stubBackend) GetLogs(ctx context.Context, query domain.LogFilter) ([]domain.Log, error) { return nil, nil }
+func (s *stubBackend) GetLogs(ctx context.Context, query domain.LogFilter) ([]domain.Log, error) {
+	return nil, nil
+}
 
 var (
 	_ Backend = (*stubBackend)(nil)
