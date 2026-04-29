@@ -27,10 +27,6 @@ type NonceProvider interface {
 	NonceAt(ctx context.Context, account common.Address, blockNumber *big.Int) (uint64, error)
 }
 
-// defaultGas is set explicitly so the gateway's intrinsic-gas check passes;
-// matches the endorser's default (executor.go).
-const defaultGas uint64 = 5_000_000
-
 // EthClient is used in testing to generate ethereum artefacts
 // (e.g. signed transactions or arguments to call a smart contract)
 type EthClient struct {
@@ -133,8 +129,8 @@ func (e *EthClient) txForDeploy(ctx context.Context, nonceProvider NonceProvider
 		Nonce: nonce,
 		To:    nil, // Nil for a deploy
 		Data:  callData,
-		Gas:   defaultGas,
 		// Value:    value,
+		// Gas:      gasLimit,
 		// GasPrice: gasPrice,
 	})
 
@@ -198,8 +194,8 @@ func (e *EthClient) TxForCall(ctx context.Context, nonceProvider NonceProvider, 
 		Nonce: nonce,
 		To:    addr,
 		Data:  data,
-		Gas:   defaultGas,
 		// Value:    value,
+		// Gas:      gasLimit,
 		// GasPrice: gasPrice,
 	})
 
@@ -213,8 +209,6 @@ func (e *EthClient) TxForCall(ctx context.Context, nonceProvider NonceProvider, 
 	return signedTx, nil
 }
 
-// GetCtxForSigner returns a non-nil block number so types.MakeSigner picks an
-// EIP-155 signer; otherwise the gateway rejects the tx as unprotected.
 func GetCtxForSigner() (blockNumber *big.Int, blockTime uint64) {
-	return big.NewInt(0), 0
+	return
 }
