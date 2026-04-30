@@ -248,9 +248,9 @@ func (api *EthAPI) Call(ctx context.Context, args map[string]any, block rpc.Bloc
 
 // eth_estimateGas
 func (api *EthAPI) EstimateGas(ctx context.Context, args map[string]any, block *rpc.BlockNumberOrHash) (*hexutil.Uint64, error) {
-	// Gas is not metered; return a constant that always satisfies the intrinsic-gas
-	// check in ValidateTx. Matches the endorser's own zero-gas fallback.
-	u := hexutil.Uint64(5_000_000)
+	// TODO: Implement proper gas estimation by simulating the transaction
+	// For now, return 0 to indicate gas estimation is not implemented
+	u := hexutil.Uint64(0)
 	return &u, nil
 }
 

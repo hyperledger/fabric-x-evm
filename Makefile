@@ -168,4 +168,4 @@ demo-transfer:
 
 .PHONY: hardhat-tests
 hardhat-tests:
-	@./scripts/run_hardhat_test.sh test/token/ERC20/ERC20.test.js
+	@./scripts/run_hardhat_test.sh
