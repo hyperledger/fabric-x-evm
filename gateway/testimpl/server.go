@@ -47,7 +47,7 @@ func NewTestServer(b api.Backend, testAccounts []common.Address, testAccountKeys
 	if err := srv.RegisterName("net", api.NewNetAPI(chainID.String())); err != nil {
 		return nil, err
 	}
-	
+
 	// Register Web3 API with Hardhat-compatible client version
 	if err := srv.RegisterName("web3", NewTestWeb3API()); err != nil {
 		return nil, err

@@ -64,7 +64,7 @@ func newStartCmd() *cobra.Command {
 		"Enable test RPC methods (eth_accounts, eth_sendTransaction) - UNSAFE for production")
 	cmd.Flags().StringVar(&testAccountsPath, "test-accounts-path", "testdata/test_accounts.json",
 		"Path to JSON file containing test accounts with private keys")
-	
+
 	return cmd
 }
 

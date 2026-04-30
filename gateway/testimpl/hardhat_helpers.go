@@ -24,9 +24,7 @@ import (
 //
 // SECURITY WARNING: These methods are for testing only and should NEVER
 // be enabled in production environments.
-type HardhatAPI struct {
-	mu sync.Mutex
-}
+type HardhatAPI struct{}
 
 // NewHardhatAPI creates a new Hardhat API instance.
 func NewHardhatAPI() *HardhatAPI {
