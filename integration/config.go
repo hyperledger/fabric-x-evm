@@ -102,7 +102,10 @@ func FabricSamplesConfig(testdataDir string) config.Config {
 			TrieDBPath:       filepath.Join(testdataDir, "triedb"),
 			TestAccountsPath: filepath.Join(testdataDir, "test_accounts.json"),
 			EnableTestRPC:    true,
-			WorkerCount:      4, // Number of worker goroutines for processing transactions
+			// WorkerCount: Number of concurrent workers processing transactions from the queue.
+			// Set to 4 for test environments to balance throughput and resource usage.
+			// In production, consider tuning based on workload and available CPU cores.
+			WorkerCount: 4,
 		},
 		Endorsers: []econf.Endorser{
 			{

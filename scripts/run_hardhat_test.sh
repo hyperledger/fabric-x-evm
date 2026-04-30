@@ -172,25 +172,23 @@ run_tests() {
     
     cd "${OZ_DIR}"
     
-    # Skip tests that expect reverts (they timeout on Fabric-EVM)
-    # Fabric doesn't report transaction reverts the same way Ethereum does,
-    # causing tests expecting revert errors to timeout waiting for responses.
+    # Fabric-EVM limitation: Transaction reverts are not reported like Ethereum.
+    # Tests expecting revert errors will timeout. Skip these tests and related
+    # test suites that share beforeEach hooks executing transactions.
     #
-    # We skip entire test suites that contain revert tests because:
-    # 1. Tests with "reverts" in the name expect revert errors
-    # 2. Tests in describe blocks with revert tests often share beforeEach hooks
-    #    that execute transactions which may fail, causing timeouts
+    # KNOWN LIMITATION: This skip pattern is brittle and specific to OpenZeppelin's
+    # ERC20 test suite. It will need updates if:
+    # - OpenZeppelin changes test descriptions
+    # - Testing other contracts with different test naming
+    # - New revert-related test patterns are added
     #
-    # Pattern excludes: "reverts", "rejects", "overflow", and describe blocks
-    # containing these tests like "when the spender has enough allowance"
+    # Future improvement: Consider a configuration file approach or accept timeouts
+    # and document the limitation instead of trying to skip specific tests.
     SKIP_PATTERN="^(?!.*(reverts|rejects|overflow|when the spender has enough allowance|when the spender has unlimited allowance|when the spender does not have enough allowance|for entire balance|for less value than balance|when the sender transfers all balance|executes with balance))"
     
-    echo -e "${YELLOW}Note: Skipping tests that expect reverts and related test suites (Fabric-EVM limitation)${NC}"
-    echo "Excluding patterns related to revert testing"
+    echo -e "${YELLOW}Note: Skipping revert-related tests (Fabric-EVM limitation)${NC}"
     echo ""
     
-    # Run the tests with grep to exclude revert-related tests
-    # Using negative lookahead regex pattern supported by Mocha
     echo "Executing: npx hardhat test ${TEST_PATH} --network fabricevm --grep \"${SKIP_PATTERN}\""
     npx hardhat test "${TEST_PATH}" --network fabricevm --grep "${SKIP_PATTERN}"
 }
