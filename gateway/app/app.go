@@ -129,40 +129,24 @@ func buildApp(cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorse
 	var rpcServer *rpc.Server
 	if cfg.Gateway.EnableTestRPC {
 		// UNSAFE: Test RPC methods enabled - load test accounts
-		log.Println("========================================")
-		log.Println("WARNING: Test RPC methods enabled")
-		log.Println("WARNING: Server-side signing is UNSAFE")
-		log.Println("WARNING: NEVER use in production")
-		log.Println("========================================")
+		log.Println("WARNING: Test RPC methods enabled (eth_accounts, eth_sendTransaction)")
+		log.Println("WARNING: Server-side signing is UNSAFE and should NEVER be used in production")
 
 		testAccountMgr, err := testimpl.LoadTestAccounts(cfg.Gateway.TestAccountsPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load test accounts: %w", err)
 		}
 
-		log.Printf("Loaded %d test accounts from %s", len(testAccountMgr.Addresses), cfg.Gateway.TestAccountsPath)
-		for i, addr := range testAccountMgr.Addresses {
-			if i < 3 { // Show first 3 accounts
-				log.Printf("  Account %d: %s", i, addr.Hex())
-			}
-		}
-		if len(testAccountMgr.Addresses) > 3 {
-			log.Printf("  ... and %d more accounts", len(testAccountMgr.Addresses)-3)
-		}
-
 		rpcServer, err = testimpl.NewTestServer(gateway, testAccountMgr.Addresses, testAccountMgr.PrivateKeys)
 		if err != nil {
 			return nil, err
 		}
-		log.Println("Test RPC server initialized successfully")
-		log.Println("Available methods: eth_accounts, eth_sendTransaction, hardhat_*, evm_*")
 	} else {
 		// Production server without test methods
 		rpcServer, err = api.NewServer(gateway)
 		if err != nil {
 			return nil, err
 		}
-		log.Println("Production RPC server initialized (test methods disabled)")
 	}
 
 	return &App{

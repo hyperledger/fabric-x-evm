@@ -106,11 +106,10 @@ func (g *Gateway) worker(ctx context.Context) {
 
 		// Process the transaction (old SendTransaction logic)
 		if err := g.processTx(ctx, tx); err != nil {
-			// Log the error for debugging
-			fmt.Printf("[gateway] ERROR processing transaction %s: %v\n", tx.Hash().Hex(), err)
+			// TODO: Add proper error handling/logging
+			// For now, we just continue processing
 			continue
 		}
-		fmt.Printf("[gateway] Successfully processed transaction %s\n", tx.Hash().Hex())
 	}
 }
 
