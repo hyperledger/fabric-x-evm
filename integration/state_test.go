@@ -29,6 +29,9 @@ func TestSingleAdd11(t *testing.T) {
 	// Load the test file
 	file, err := os.Open(testPath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			t.Fatalf("ethereum test file not found at %s; run `git submodule update --init --recursive`", testPath)
+		}
 		t.Fatal(err)
 	}
 	defer file.Close()

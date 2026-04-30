@@ -34,6 +34,14 @@ make unit-tests
 
 ## Integration tests
 
+Some integration tests rely on the `ethereum/tests` corpus vendored as a git
+submodule under `testdata/ethereum-tests`. Initialize it once before running
+those tests:
+
+```shell
+git submodule update --init --recursive
+```
+
 ### Local
 
 The simplest integration tests don't require a Fabric network, but still

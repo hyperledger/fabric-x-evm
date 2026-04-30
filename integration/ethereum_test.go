@@ -132,6 +132,9 @@ func TestEthereumTests(t *testing.T) {
 
 	// 1) GeneralStateTests
 	testsDir := filepath.Join("..", "testdata", "ethereum-tests", "GeneralStateTests")
+	if _, err := os.Stat(testsDir); os.IsNotExist(err) {
+		t.Fatalf("ethereum/tests corpus not found at %s; run `git submodule update --init --recursive`", testsDir)
+	}
 	allFiles, err := findJSONFiles(testsDir)
 	if err != nil {
 		t.Fatalf("Failed to find test files: %v", err)

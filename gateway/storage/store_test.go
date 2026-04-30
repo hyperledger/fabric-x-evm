@@ -406,6 +406,32 @@ func TestBlockNumber(t *testing.T) {
 	}
 }
 
+func TestBlockNumberByHash(t *testing.T) {
+	store := setupTestDB(t)
+
+	blockHash := makeHash(0xBC)
+	insertTestBlock(t, store, 77, blockHash)
+
+	num, err := store.BlockNumberByHash(t.Context(), blockHash)
+	if err != nil {
+		t.Fatalf("BlockNumberByHash error: %v", err)
+	}
+	if num == nil {
+		t.Fatal("expected block number, got nil")
+	}
+	if *num != 77 {
+		t.Errorf("expected block number 77, got %d", *num)
+	}
+
+	missing, err := store.BlockNumberByHash(t.Context(), makeHash(0xFF))
+	if err != nil {
+		t.Fatalf("BlockNumberByHash (missing) error: %v", err)
+	}
+	if missing != nil {
+		t.Errorf("expected nil for missing hash, got %d", *missing)
+	}
+}
+
 func TestGetBlockByNumber(t *testing.T) {
 	store := setupTestDB(t)
 

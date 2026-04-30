@@ -29,6 +29,7 @@ type Backend interface {
 	// Blocks
 	GetBlockByNumber(ctx context.Context, num uint64, full bool) (*domain.Block, error)
 	GetBlockByHash(ctx context.Context, hash common.Hash, full bool) (*domain.Block, error)
+	BlockNumberByHash(ctx context.Context, hash common.Hash) (*uint64, error)
 	GetBlockTxCountByHash(ctx context.Context, hash common.Hash) (int64, error)
 	GetBlockTxCountByNumber(ctx context.Context, num uint64) (int64, error)
 
@@ -128,7 +129,11 @@ func (api *EthAPI) GetBlockTransactionCountByNumber(ctx context.Context, num rpc
 
 // eth_getBalance
 func (api *EthAPI) GetBalance(ctx context.Context, address common.Address, block rpc.BlockNumberOrHash) (*hexutil.Big, error) {
-	b, err := api.b.BalanceAt(ctx, address, blockNumberOrHashToBlockNumber(block))
+	blockNum, err := api.blockNumberOrHashToBlockNumber(ctx, block)
+	if err != nil {
+		return nil, err
+	}
+	b, err := api.b.BalanceAt(ctx, address, blockNum)
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +142,11 @@ func (api *EthAPI) GetBalance(ctx context.Context, address common.Address, block
 
 // eth_getCode
 func (api *EthAPI) GetCode(ctx context.Context, addr common.Address, block rpc.BlockNumberOrHash) (hexutil.Bytes, error) {
-	code, err := api.b.CodeAt(ctx, addr, blockNumberOrHashToBlockNumber(block))
+	blockNum, err := api.blockNumberOrHashToBlockNumber(ctx, block)
+	if err != nil {
+		return nil, err
+	}
+	code, err := api.b.CodeAt(ctx, addr, blockNum)
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +155,11 @@ func (api *EthAPI) GetCode(ctx context.Context, addr common.Address, block rpc.B
 
 // eth_getStorageAt
 func (api *EthAPI) GetStorageAt(ctx context.Context, addr common.Address, slot common.Hash, block rpc.BlockNumberOrHash) (hexutil.Bytes, error) {
-	data, err := api.b.StorageAt(ctx, addr, slot, blockNumberOrHashToBlockNumber(block))
+	blockNum, err := api.blockNumberOrHashToBlockNumber(ctx, block)
+	if err != nil {
+		return nil, err
+	}
+	data, err := api.b.StorageAt(ctx, addr, slot, blockNum)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +168,11 @@ func (api *EthAPI) GetStorageAt(ctx context.Context, addr common.Address, slot c
 
 // eth_getTransactionCount
 func (api *EthAPI) GetTransactionCount(ctx context.Context, address common.Address, blockNrOrHash rpc.BlockNumberOrHash) (*hexutil.Uint64, error) {
-	nonce, err := api.b.NonceAt(ctx, address, blockNumberOrHashToBlockNumber(blockNrOrHash))
+	blockNum, err := api.blockNumberOrHashToBlockNumber(ctx, blockNrOrHash)
+	if err != nil {
+		return nil, err
+	}
+	nonce, err := api.b.NonceAt(ctx, address, blockNum)
 	if err != nil {
 		return nil, err
 	}
@@ -219,7 +236,10 @@ func (api *EthAPI) Call(ctx context.Context, args map[string]any, block rpc.Bloc
 	if err != nil {
 		return nil, err
 	}
-	blockNum := blockNumberOrHashToBlockNumber(block)
+	blockNum, err := api.blockNumberOrHashToBlockNumber(ctx, block)
+	if err != nil {
+		return nil, err
+	}
 	return api.b.CallContract(ctx, callMsg, blockNum)
 }
 
@@ -413,13 +433,26 @@ func argsToCallMsg(args map[string]any) (ethereum.CallMsg, error) {
 	return msg, nil
 }
 
-// blockNumberOrHashToBlockNumber converts rpc.BlockNumberOrHash to *big.Int
-func blockNumberOrHashToBlockNumber(numOrHash rpc.BlockNumberOrHash) *big.Int {
+// blockNumberOrHashToBlockNumber converts rpc.BlockNumberOrHash to *big.Int.
+// If a block hash is provided, it resolves the hash to a block number.
+func (api *EthAPI) blockNumberOrHashToBlockNumber(ctx context.Context, numOrHash rpc.BlockNumberOrHash) (*big.Int, error) {
 	if num, ok := numOrHash.Number(); ok {
-		return rpcBlockNumberToBigInt(num)
+		return rpcBlockNumberToBigInt(num), nil
 	}
-	// TODO: For block hash, we now return nil (latest).
-	return nil
+
+	hash, ok := numOrHash.Hash()
+	if !ok {
+		return nil, nil
+	}
+
+	num, err := api.b.BlockNumberByHash(ctx, hash)
+	if err != nil {
+		return nil, err
+	}
+	if num == nil {
+		return nil, ethereum.NotFound
+	}
+	return new(big.Int).SetUint64(*num), nil
 }
 
 // rpcBlockNumberToBigInt converts rpc.BlockNumber to *big.Int
