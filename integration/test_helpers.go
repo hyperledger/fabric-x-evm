@@ -52,7 +52,6 @@ import (
 	"github.com/hyperledger/fabric-x-sdk/network"
 	nfab "github.com/hyperledger/fabric-x-sdk/network/fabric"
 	nfabx "github.com/hyperledger/fabric-x-sdk/network/fabricx"
-	"github.com/hyperledger/fabric-x-sdk/state"
 )
 
 // GetERC20BalanceSlot computes the storage slot for a balance in an ERC-20 mapping(address => uint256).
@@ -200,22 +199,7 @@ func (th *TestHarness) PrimeStateFromJSON(ctx context.Context, jsonFilePath stri
 //
 // Sync goroutines are started in the background using ctx. The returned synchronizers
 // can be used by callers that need to wait for the initial sync to complete.
-func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmConfig endorser.EVMConfig, primeDBPath string, bypass bool) (*TestHarness, *network.Synchronizer, error) {
-	t.Helper()
-
-	// Derive ChainConfig from cfg.Network.ChainID when not explicitly provided.
-	if evmConfig.ChainConfig == nil {
-		evmConfig.ChainConfig = common.BuildChainConfig(cfg.Network.ChainID)
-	}
-
-	// Build all endorsers.
-	dbs := make([]*state.VersionedDB, len(cfg.Endorsers))
-	builders := make([]endorsement.Builder, len(cfg.Endorsers))
-	ends := make([]*endorser.Endorser, len(cfg.Endorsers))
-	for i, ecfg := range cfg.Endorsers {
-		dbs[i], builders[i], ends[i] = newEndorser(t, ecfg, cfg.Network.Channel, cfg.Network.Namespace, evmConfig, cfg.Network.Protocol)
-	}
-
+func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmConfig endorser.EVMConfig, primeDBPath string, bypass bool, ends []*endorser.Endorser, dbs []*endorser.LightKVS, builders []endorsement.Builder) (*TestHarness, *network.Synchronizer, error) {
 	// Build gateway signer.
 	var gwSigner sdk.Signer
 	if cfg.Gateway.Identity.MSPDir != "" {
@@ -298,6 +282,7 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 		endorsers:      ends,
 		ethChainConfig: evmConfig.ChainConfig,
 		Primer:         primer,
+		DBs:            dbs,
 	}
 
 	if err := th.PrimeStateFromJSON(t.Context(), primeDBPath, !bypass); err != nil {
@@ -352,16 +337,6 @@ func NewLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVM
 	orderer := &common.Endpoint{Host: "127.0.0.1", Port: 1337}
 	peer := &common.Endpoint{Host: "127.0.0.1", Port: 1337}
 
-	if !bypass {
-		nw, err := fabrictest.Start("basic", networkType, fabrictest.Config{})
-		if err != nil {
-			t.Fatalf("fabrictest.Start: %v", err)
-		}
-		t.Cleanup(nw.Stop)
-		orderer.Port = nw.OrdererPort
-		peer.Port = nw.PeerPort
-	}
-
 	// bypass mode uses Fabric block format
 	protocol := networkType
 	if bypass {
@@ -401,7 +376,31 @@ func NewLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVM
 		return nil, err
 	}
 
-	th, _, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, bypass)
+	// Derive ChainConfig from cfg.Network.ChainID when not explicitly provided.
+	if evmConfig.ChainConfig == nil {
+		evmConfig.ChainConfig = common.BuildChainConfig(cfg.Network.ChainID)
+	}
+
+	// Build all endorsers.
+	dbs := make([]*endorser.LightKVS, len(cfg.Endorsers))
+	builders := make([]endorsement.Builder, len(cfg.Endorsers))
+	ends := make([]*endorser.Endorser, len(cfg.Endorsers))
+	for i, ecfg := range cfg.Endorsers {
+		// this function now returns our new lightkvs
+		dbs[i], builders[i], ends[i] = newEndorser(t, ecfg, cfg.Network.Channel, cfg.Network.Namespace, evmConfig, cfg.Network.Protocol)
+	}
+
+	if !bypass {
+		nw, err := fabrictest.Start("basic", networkType, fabrictest.Config{}, dbs[0])
+		if err != nil {
+			t.Fatalf("fabrictest.Start: %v", err)
+		}
+		t.Cleanup(nw.Stop)
+		orderer.Port = nw.OrdererPort
+		peer.Port = nw.PeerPort
+	}
+
+	th, _, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, bypass, ends, dbs, builders)
 	if err != nil {
 		return nil, err
 	}
@@ -432,7 +431,21 @@ func newFabricTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EV
 		return nil, err
 	}
 
-	th, sync, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false)
+	// Derive ChainConfig from cfg.Network.ChainID when not explicitly provided.
+	if evmConfig.ChainConfig == nil {
+		evmConfig.ChainConfig = common.BuildChainConfig(cfg.Network.ChainID)
+	}
+
+	// Build all endorsers.
+	dbs := make([]*endorser.LightKVS, len(cfg.Endorsers))
+	builders := make([]endorsement.Builder, len(cfg.Endorsers))
+	ends := make([]*endorser.Endorser, len(cfg.Endorsers))
+	for i, ecfg := range cfg.Endorsers {
+		// this function now returns our new lightkvs
+		dbs[i], builders[i], ends[i] = newEndorser(t, ecfg, cfg.Network.Channel, cfg.Network.Namespace, evmConfig, cfg.Network.Protocol)
+	}
+
+	th, sync, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false, ends, dbs, builders)
 	if err != nil {
 		return nil, err
 	}
@@ -452,7 +465,21 @@ func NewFabricXTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.E
 		return nil, err
 	}
 
-	th, _, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false)
+	// Derive ChainConfig from cfg.Network.ChainID when not explicitly provided.
+	if evmConfig.ChainConfig == nil {
+		evmConfig.ChainConfig = common.BuildChainConfig(cfg.Network.ChainID)
+	}
+
+	// Build all endorsers.
+	dbs := make([]*endorser.LightKVS, len(cfg.Endorsers))
+	builders := make([]endorsement.Builder, len(cfg.Endorsers))
+	ends := make([]*endorser.Endorser, len(cfg.Endorsers))
+	for i, ecfg := range cfg.Endorsers {
+		// this function now returns our new lightkvs
+		dbs[i], builders[i], ends[i] = newEndorser(t, ecfg, cfg.Network.Channel, cfg.Network.Namespace, evmConfig, cfg.Network.Protocol)
+	}
+
+	th, _, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false, ends, dbs, builders)
 	if err != nil {
 		return nil, err
 	}
@@ -460,7 +487,7 @@ func NewFabricXTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.E
 	return th, nil
 }
 
-func newEndorser(t *testing.T, cfg econf.Endorser, channel, namespace string, evmConfig endorser.EVMConfig, protocol string) (*state.VersionedDB, endorsement.Builder, *endorser.Endorser) {
+func newEndorser(t *testing.T, cfg econf.Endorser, channel, namespace string, evmConfig endorser.EVMConfig, protocol string) (*endorser.LightKVS, endorsement.Builder, *endorser.Endorser) {
 	t.Helper()
 
 	var signer sdk.Signer
@@ -474,11 +501,11 @@ func newEndorser(t *testing.T, cfg econf.Endorser, channel, namespace string, ev
 		}
 	}
 
-	endorserDB, err := state.NewWriteDB(channel, cfg.DbConnStr)
-	if err != nil {
-		t.Fatalf("NewWriteDB: %v", err)
-	}
-	t.Cleanup(func() { endorserDB.Close() })
+	// Create LightKVS for versioned key-value storage with snapshot isolation
+	lightKVS := endorser.NewLightKVS()
+
+	// Cleanup is a no-op for LightKVS
+	t.Cleanup(func() { lightKVS.Close() })
 
 	// the shape of endorsements and blocks differs per protocol.
 	var builder endorsement.Builder
@@ -492,12 +519,9 @@ func newEndorser(t *testing.T, cfg econf.Endorser, channel, namespace string, ev
 	default:
 		t.Fatalf("unsupported protocol: %q", protocol)
 	}
-	if err != nil {
-		t.Fatalf("NewSynchronizer: %v", err)
-	}
 
 	end, err := endorser.New(
-		endorser.NewEVMEngine(namespace, endorserDB, evmConfig, monotonicVersions),
+		endorser.NewEVMEngine(namespace, lightKVS, evmConfig, monotonicVersions),
 		builder,
 		evmConfig.ChainConfig.ChainID.Int64(),
 	)
@@ -505,12 +529,13 @@ func newEndorser(t *testing.T, cfg econf.Endorser, channel, namespace string, ev
 		t.Fatalf("endorser.New: %v", err)
 	}
 
-	return endorserDB, builder, end
+	return lightKVS, builder, end
 }
 
 // TestHarness provides access to gateways and endorsers for testing.
 // Exported for use by eth-tests package.
 type TestHarness struct {
+	DBs            []*endorser.LightKVS
 	Gateways       []*core.Gateway
 	endorsers      []*endorser.Endorser
 	ethChainConfig *params.ChainConfig
