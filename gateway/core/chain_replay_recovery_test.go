@@ -150,7 +150,7 @@ func captureReplaySnapshot(t *testing.T, chain *Chain, blockCount int, txHashes 
 	return snapshot
 }
 
-func TestReplayFromGenesisMatchesContinuousGatewayState(t *testing.T) {
+func TestReplayFromGenesisMatchesPersistedContinuousGatewayState(t *testing.T) {
 	key1, err := crypto.GenerateKey()
 	require.NoError(t, err)
 	key2, err := crypto.GenerateKey()
@@ -263,11 +263,28 @@ func TestReplayFromGenesisMatchesContinuousGatewayState(t *testing.T) {
 		},
 	}
 
-	continuous := newReplayChain(t, filepath.Join(t.TempDir(), "continuous"))
-	defer continuous.Close()
+	continuousDir := filepath.Join(t.TempDir(), "continuous")
+	continuous := newReplayChain(t, continuousDir)
 	for _, block := range history {
 		require.NoError(t, continuous.Handle(t.Context(), block))
 	}
+
+	continuousRoot := continuous.ts.Root()
+	continuousSnapshot := captureReplaySnapshot(t, continuous, len(history), [][]byte{txHash1, txHash2, txHash3, txHash4})
+	continuousHeight, err := continuous.BlockNumber(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, continuous.Close())
+
+	reopened := newReplayChain(t, continuousDir)
+	defer reopened.Close()
+
+	require.Equal(t, continuousRoot, reopened.ts.Root())
+	reopenedHeight, err := reopened.BlockNumber(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, continuousHeight, reopenedHeight)
+
+	reopenedSnapshot := captureReplaySnapshot(t, reopened, len(history), [][]byte{txHash1, txHash2, txHash3, txHash4})
+	require.Equal(t, continuousSnapshot, reopenedSnapshot)
 
 	rebuilt := newReplayChain(t, filepath.Join(t.TempDir(), "rebuilt"))
 	defer rebuilt.Close()
@@ -275,15 +292,12 @@ func TestReplayFromGenesisMatchesContinuousGatewayState(t *testing.T) {
 		require.NoError(t, rebuilt.Handle(t.Context(), block))
 	}
 
-	require.Equal(t, continuous.ts.Root(), rebuilt.ts.Root())
+	require.Equal(t, continuousRoot, rebuilt.ts.Root())
 
-	continuousSnapshot := captureReplaySnapshot(t, continuous, len(history), [][]byte{txHash1, txHash2, txHash3, txHash4})
 	rebuiltSnapshot := captureReplaySnapshot(t, rebuilt, len(history), [][]byte{txHash1, txHash2, txHash3, txHash4})
-	require.Equal(t, continuousSnapshot, rebuiltSnapshot)
+	require.Equal(t, reopenedSnapshot, rebuiltSnapshot)
 
-	continuousHeight, err := continuous.BlockNumber(t.Context())
-	require.NoError(t, err)
 	rebuiltHeight, err := rebuilt.BlockNumber(t.Context())
 	require.NoError(t, err)
-	require.Equal(t, continuousHeight, rebuiltHeight)
+	require.Equal(t, reopenedHeight, rebuiltHeight)
 }
