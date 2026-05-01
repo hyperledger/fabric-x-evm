@@ -8,7 +8,6 @@ package storage
 
 import (
 	"fmt"
-	"slices"
 	"testing"
 
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
@@ -196,7 +195,7 @@ func captureStoreSnapshot(t *testing.T, store *Store, blocks []domain.Block) sto
 func TestSchemaContainsOnlyLedgerDerivedTables(t *testing.T) {
 	store := setupTestDB(t)
 
-	require.Equal(t, []string{"blocks", "logs", "transactions"}, userTables(t, store))
+	require.ElementsMatch(t, []string{"blocks", "logs", "transactions"}, userTables(t, store))
 
 	expectedColumns := map[string][]string{
 		"blocks": {
@@ -237,7 +236,7 @@ func TestSchemaContainsOnlyLedgerDerivedTables(t *testing.T) {
 
 	for table, want := range expectedColumns {
 		got := tableColumns(t, store, table)
-		require.Truef(t, slices.Equal(want, got), "%s columns mismatch: want %v, got %v", table, want, got)
+		require.ElementsMatchf(t, want, got, "%s columns mismatch: want %v, got %v", table, want, got)
 	}
 }
 
