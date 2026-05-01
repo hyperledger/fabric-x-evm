@@ -213,7 +213,7 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 	builders := make([]endorsement.Builder, len(cfg.Endorsers))
 	ends := make([]*endorser.Endorser, len(cfg.Endorsers))
 	for i, ecfg := range cfg.Endorsers {
-		dbs[i], builders[i], ends[i] = newEndorser(t, logger, ecfg, cfg.Network.Channel, cfg.Network.Namespace, evmConfig, cfg.Network.Protocol)
+		dbs[i], builders[i], ends[i] = newEndorser(t, ecfg, cfg.Network.Channel, cfg.Network.Namespace, evmConfig, cfg.Network.Protocol)
 	}
 
 	// Build gateway signer.
@@ -461,7 +461,7 @@ func NewFabricXTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.E
 	return th, nil
 }
 
-func newEndorser(t *testing.T, logger sdk.Logger, cfg econf.Endorser, channel, namespace string, evmConfig endorser.EVMConfig, protocol string) (*state.VersionedDB, endorsement.Builder, *endorser.Endorser) {
+func newEndorser(t *testing.T, cfg econf.Endorser, channel, namespace string, evmConfig endorser.EVMConfig, protocol string) (*state.VersionedDB, endorsement.Builder, *endorser.Endorser) {
 	t.Helper()
 
 	var signer sdk.Signer
@@ -475,17 +475,11 @@ func newEndorser(t *testing.T, logger sdk.Logger, cfg econf.Endorser, channel, n
 		}
 	}
 
-	writeDB, err := state.NewWriteDB(channel, cfg.DbConnStr)
+	endorserDB, err := state.NewWriteDB(channel, cfg.DbConnStr)
 	if err != nil {
 		t.Fatalf("NewWriteDB: %v", err)
 	}
-	t.Cleanup(func() { writeDB.Close() })
-
-	readDB, err := state.NewReadDB(channel, cfg.DbConnStr)
-	if err != nil {
-		t.Fatalf("NewReadDB: %v", err)
-	}
-	t.Cleanup(func() { readDB.Close() })
+	t.Cleanup(func() { endorserDB.Close() })
 
 	// the shape of endorsements and blocks differs per protocol.
 	var builder endorsement.Builder
@@ -504,7 +498,7 @@ func newEndorser(t *testing.T, logger sdk.Logger, cfg econf.Endorser, channel, n
 	}
 
 	end, err := endorser.New(
-		endorser.NewEVMEngine(namespace, writeDB, evmConfig, monotonicVersions),
+		endorser.NewEVMEngine(namespace, endorserDB, evmConfig, monotonicVersions),
 		builder,
 		evmConfig.ChainConfig.ChainID.Int64(),
 	)
@@ -512,7 +506,7 @@ func newEndorser(t *testing.T, logger sdk.Logger, cfg econf.Endorser, channel, n
 		t.Fatalf("endorser.New: %v", err)
 	}
 
-	return writeDB, builder, end
+	return endorserDB, builder, end
 }
 
 // TestHarness provides access to gateways and endorsers for testing.
