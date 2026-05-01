@@ -24,7 +24,10 @@ type stateReader interface {
 	NonceAt(ctx context.Context, account common.Address, blockNumber *big.Int) (uint64, error)
 }
 
-var errUnprotectedTx = errors.New("only replay-protected (EIP-155) transactions allowed over RPC")
+var (
+	errUnprotectedTx = errors.New("only replay-protected (EIP-155) transactions allowed over RPC")
+	errNonceLookup   = errors.New("look up nonce")
+)
 
 // txMaxSize redeclares the unexported core/txpool/legacypool constant (4 * 32 KiB).
 const txMaxSize = 4 * 32 * 1024
@@ -74,7 +77,7 @@ func ValidateTx(
 
 	nonce, err := state.NonceAt(ctx, from, nil)
 	if err != nil {
-		return fmt.Errorf("look up nonce: %w", err)
+		return fmt.Errorf("%w: %w", errNonceLookup, err)
 	}
 	if nonce > tx.Nonce() {
 		return fmt.Errorf("%w: next nonce %d, tx nonce %d", ethcore.ErrNonceTooLow, nonce, tx.Nonce())

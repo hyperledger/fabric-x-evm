@@ -127,10 +127,12 @@ func (g *Gateway) processTx(ctx context.Context, tx *types.Transaction) error {
 }
 
 // SendTransaction runs geth-style pre-flight validation, then enqueues the tx
-// for async endorse/submit. Mirrors eth_sendRawTransaction's failure model.
+// for async endorse/submit. Mirrors eth_sendRawTransaction's failure model:
+// validation failures surface as typed JSON-RPC errors (-32003 for tx
+// rejections, -32603 for internal lookup faults).
 func (g *Gateway) SendTransaction(ctx context.Context, tx *types.Transaction) error {
 	if err := ValidateTx(ctx, tx, g.chainConfig, g.signer, g); err != nil {
-		return err
+		return classifyValidationError(err)
 	}
 	g.txQueue.Enqueue(tx)
 	return nil

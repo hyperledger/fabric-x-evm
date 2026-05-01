@@ -334,3 +334,46 @@ func (s *stubBackend) GetLogs(ctx context.Context, query domain.LogFilter) ([]do
 var (
 	_ Backend = (*stubBackend)(nil)
 )
+
+func TestSendRawTransaction_InvalidPayloadIsInvalidParams(t *testing.T) {
+	api := NewEthAPI(&stubBackend{})
+
+	_, err := api.SendRawTransaction(context.Background(), []byte{0xff, 0xff})
+
+	var rpcErr rpc.Error
+	if !errors.As(err, &rpcErr) {
+		t.Fatalf("expected rpc.Error, got %T (%v)", err, err)
+	}
+	if rpcErr.ErrorCode() != -32602 {
+		t.Errorf("code = %d, want -32602 (InvalidParams)", rpcErr.ErrorCode())
+	}
+}
+
+func TestArgsToCallMsg_BadHexFieldsAreInvalidParams(t *testing.T) {
+	cases := []struct {
+		name  string
+		field string
+		bad   string
+	}{
+		{"gas", "gas", "not-hex"},
+		{"gasPrice", "gasPrice", "not-hex"},
+		{"value", "value", "not-hex"},
+		{"input", "input", "not-hex"},
+		{"data", "data", "not-hex"},
+		{"maxFeePerGas", "maxFeePerGas", "not-hex"},
+		{"maxPriorityFeePerGas", "maxPriorityFeePerGas", "not-hex"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := argsToCallMsg(map[string]any{c.field: c.bad})
+
+			var rpcErr rpc.Error
+			if !errors.As(err, &rpcErr) {
+				t.Fatalf("expected rpc.Error for bad %s, got %T (%v)", c.field, err, err)
+			}
+			if rpcErr.ErrorCode() != -32602 {
+				t.Errorf("code = %d, want -32602 (InvalidParams)", rpcErr.ErrorCode())
+			}
+		})
+	}
+}
