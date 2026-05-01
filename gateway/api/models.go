@@ -9,7 +9,6 @@ package api
 import (
 	"encoding/json"
 	"math/big"
-	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -131,14 +130,14 @@ type RPCBlock struct {
 	Hash             common.Hash    `json:"hash"`
 	ParentHash       common.Hash    `json:"parentHash"`
 	Sha3Uncles       common.Hash    `json:"sha3Uncles"`
-	LogsBloom        string         `json:"logsBloom"`
+	LogsBloom        hexutil.Bytes  `json:"logsBloom"`
 	TransactionsRoot common.Hash    `json:"transactionsRoot"`
 	StateRoot        common.Hash    `json:"stateRoot"`
 	ReceiptsRoot     common.Hash    `json:"receiptsRoot"`
 	Miner            common.Address `json:"miner"`
 	Difficulty       hexutil.Big    `json:"difficulty"`
 	TotalDifficulty  hexutil.Big    `json:"totalDifficulty"`
-	ExtraData        string         `json:"extraData"`
+	ExtraData        hexutil.Bytes  `json:"extraData"`
 	Size             hexutil.Uint64 `json:"size"`
 	GasLimit         hexutil.Uint64 `json:"gasLimit"`
 	GasUsed          hexutil.Uint64 `json:"gasUsed"`
@@ -220,14 +219,14 @@ func rpcBlock(b *domain.Block, full bool) *RPCBlock {
 		Hash:             (common.Hash)(b.BlockHash),
 		ParentHash:       (common.Hash)(b.ParentHash),
 		Sha3Uncles:       common.Hash{},
-		LogsBloom:        "" + strings.Repeat("0", 512),
+		LogsBloom:        make(hexutil.Bytes, types.BloomByteLength),
 		TransactionsRoot: common.Hash{},
 		StateRoot:        common.BytesToHash(b.StateRoot),
 		ReceiptsRoot:     common.Hash{},
 		Miner:            common.Address{}, // b.Miner
 		Difficulty:       hexutil.Big(*big.NewInt(0)),
 		TotalDifficulty:  hexutil.Big(*big.NewInt(0)),
-		ExtraData:        "",
+		ExtraData:        hexutil.Bytes{},
 		Size:             0,
 		GasLimit:         hexutil.Uint64(0),
 		GasUsed:          hexutil.Uint64(0),

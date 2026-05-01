@@ -12,6 +12,7 @@ import (
 	"errors"
 	"math"
 	"math/big"
+	"strings"
 	"testing"
 
 	"github.com/ethereum/go-ethereum"
@@ -219,6 +220,44 @@ func TestRPCReceiptMarshalJSON(t *testing.T) {
 			tt.checkTo(t, m)
 			tt.checkFields(t, m)
 		})
+	}
+}
+
+func TestRPCBlockMarshalJSON(t *testing.T) {
+	b := &domain.Block{
+		BlockNumber: 7,
+		BlockHash:   common.HexToHash("0xaa").Bytes(),
+		ParentHash:  common.HexToHash("0xbb").Bytes(),
+		StateRoot:   common.HexToHash("0xcc").Bytes(),
+		Timestamp:   1700000000,
+	}
+
+	data, err := json.Marshal(rpcBlock(b, false))
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+
+	bloom, ok := m["logsBloom"].(string)
+	if !ok {
+		t.Fatalf("logsBloom missing or not a string: %v", m["logsBloom"])
+	}
+	// Empty bloom is 256 bytes of zeros, hex-encoded as 0x + 512 zero chars.
+	wantBloom := "0x" + strings.Repeat("0", 512)
+	if bloom != wantBloom {
+		t.Errorf("logsBloom = %q, want %q", bloom, wantBloom)
+	}
+
+	extra, ok := m["extraData"].(string)
+	if !ok {
+		t.Fatalf("extraData missing or not a string: %v", m["extraData"])
+	}
+	if extra != "0x" {
+		t.Errorf("extraData = %q, want %q", extra, "0x")
 	}
 }
 
