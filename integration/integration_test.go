@@ -83,6 +83,11 @@ var cases = []testCase{
 		fn:    testQueryValidation,
 		nodes: 2,
 	},
+	{
+		name:  "precompile_support",
+		fn:    testPrecompileSupport,
+		nodes: 2,
+	},
 }
 
 // TestLocal tests a good portion of the fabric functionality, with the difference that
