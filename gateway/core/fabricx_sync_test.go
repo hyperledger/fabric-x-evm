@@ -7,10 +7,14 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package core
 
 import (
+	"context"
+	"sync"
 	"testing"
 
 	cb "github.com/hyperledger/fabric-protos-go-apiv2/common"
 	"github.com/hyperledger/fabric-x-common/api/applicationpb"
+	"github.com/hyperledger/fabric-x-sdk/blocks"
+	"github.com/hyperledger/fabric-x-sdk/network"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
@@ -39,6 +43,37 @@ func TestFabricXCompatParserSetsStatusAndValidity(t *testing.T) {
 	require.Equal(t, 2, got.Transactions[0].Status)
 	require.True(t, got.Transactions[0].Valid)
 
+	require.Equal(t, 3, got.Transactions[1].Status)
+	require.False(t, got.Transactions[1].Valid)
+}
+
+func TestNewFabricXSynchronizerWithPeerUsesCompatParser(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	handler := &captureBlockHandler{}
+	peer := &fakeSyncPeer{
+		cancel: cancel,
+		block: buildFabricXTestBlock(t,
+			[]byte{2, 3},
+			buildFabricXTestEnvelope(t, "tx-0"),
+			buildFabricXTestEnvelope(t, "tx-1"),
+		),
+	}
+	db := fakeBlockHeightReader(0)
+
+	syncer, err := newFabricXSynchronizerWithPeer(db, peer, sdk.NoOpLogger{}, handler)
+	require.NoError(t, err)
+	require.NotNil(t, syncer)
+
+	err = syncer.Start(ctx)
+	require.NoError(t, err)
+
+	require.Equal(t, 1, handler.blocksSeen())
+	got := handler.last()
+	require.Len(t, got.Transactions, 2)
+	require.Equal(t, 2, got.Transactions[0].Status)
+	require.True(t, got.Transactions[0].Valid)
 	require.Equal(t, 3, got.Transactions[1].Status)
 	require.False(t, got.Transactions[1].Valid)
 }
@@ -96,3 +131,52 @@ func buildFabricXTestBlock(t *testing.T, txFilter []byte, envelopes ...*cb.Envel
 	}
 }
 
+type fakeSyncPeer struct {
+	cancel func()
+	block  *cb.Block
+}
+
+func (f *fakeSyncPeer) SubscribeBlocks(ctx context.Context, _ uint64, p network.BlockProcessor) error {
+	if f.block != nil {
+		if err := p.ProcessBlock(ctx, f.block); err != nil {
+			return err
+		}
+	}
+	if f.cancel != nil {
+		f.cancel()
+	}
+	return nil
+}
+
+func (f *fakeSyncPeer) BlockHeight(context.Context) (uint64, error) { return 1, nil }
+func (f *fakeSyncPeer) Close() error                                { return nil }
+
+type fakeBlockHeightReader uint64
+
+func (f fakeBlockHeightReader) BlockNumber(context.Context) (uint64, error) {
+	return uint64(f), nil
+}
+
+type captureBlockHandler struct {
+	mu     sync.Mutex
+	blocks []blocks.Block
+}
+
+func (c *captureBlockHandler) Handle(_ context.Context, b blocks.Block) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.blocks = append(c.blocks, b)
+	return nil
+}
+
+func (c *captureBlockHandler) blocksSeen() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.blocks)
+}
+
+func (c *captureBlockHandler) last() blocks.Block {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.blocks[len(c.blocks)-1]
+}

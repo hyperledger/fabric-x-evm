@@ -31,6 +31,15 @@ func NewFabricXSynchronizer(
 		return nil, err
 	}
 
+	return newFabricXSynchronizerWithPeer(db, peer, logger, handlers...)
+}
+
+func newFabricXSynchronizerWithPeer(
+	db network.BlockHeightReader,
+	peer network.SyncPeer,
+	logger sdk.Logger,
+	handlers ...blocks.BlockHandler,
+) (*network.Synchronizer, error) {
 	processor := blocks.NewProcessor(newFabricXCompatParser(logger), handlers)
 	return network.NewSynchronizer(db, peer, processor, logger)
 }
