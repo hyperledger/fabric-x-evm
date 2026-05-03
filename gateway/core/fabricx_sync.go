@@ -83,7 +83,9 @@ func (p *fabricXCompatParser) Parse(b *cb.Block) (blocks.Block, error) {
 func isFabricXCommittedStatus(status int) bool {
 	const legacyCommittedStatusV2 = 2
 	// Compatibility across committer status encodings:
-	// - legacy: COMMITTED=0
+	// - legacy: committed was encoded as numeric 0.
+	//   In newer protobuf enums, value 0 is named STATUS_UNSPECIFIED.
+	//   We intentionally treat 0 as committed for backward compatibility.
 	// - current: COMMITTED=1
 	// - some deployed test committers: COMMITTED=2
 	return status == int(committerpb.Status_STATUS_UNSPECIFIED) ||

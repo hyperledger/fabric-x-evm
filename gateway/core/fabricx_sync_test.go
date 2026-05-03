@@ -70,12 +70,30 @@ func TestNewFabricXSynchronizerWithPeerUsesCompatParser(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, 1, handler.blocksSeen())
-	got := handler.last()
+	got, ok := handler.last()
+	require.True(t, ok)
 	require.Len(t, got.Transactions, 2)
 	require.Equal(t, 2, got.Transactions[0].Status)
 	require.True(t, got.Transactions[0].Valid)
 	require.Equal(t, 3, got.Transactions[1].Status)
 	require.False(t, got.Transactions[1].Valid)
+}
+
+func TestNewFabricXSynchronizerWithPeerCancellationWithoutBlocks(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	handler := &captureBlockHandler{}
+	peer := &fakeSyncPeer{cancel: cancel}
+	db := fakeBlockHeightReader(0)
+
+	syncer, err := newFabricXSynchronizerWithPeer(db, peer, sdk.NoOpLogger{}, handler)
+	require.NoError(t, err)
+	require.NotNil(t, syncer)
+
+	err = syncer.Start(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 0, handler.blocksSeen())
 }
 
 func buildFabricXTestEnvelope(t *testing.T, txID string) *cb.Envelope {
@@ -175,8 +193,11 @@ func (c *captureBlockHandler) blocksSeen() int {
 	return len(c.blocks)
 }
 
-func (c *captureBlockHandler) last() blocks.Block {
+func (c *captureBlockHandler) last() (blocks.Block, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.blocks[len(c.blocks)-1]
+	if len(c.blocks) == 0 {
+		return blocks.Block{}, false
+	}
+	return c.blocks[len(c.blocks)-1], true
 }
