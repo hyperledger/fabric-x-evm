@@ -198,8 +198,8 @@ func (th *TestHarness) PrimeStateFromJSON(ctx context.Context, jsonFilePath stri
 //   - cfg.Gateway.SignerMSPDir set → MSP-based signer; empty → local mock
 //   - cfg.Endorsers[0].MspDir set → FabricDeserializer; empty → local mock
 //
-// Sync goroutines are started in the background using ctx. The returned synchronizers
-// can be used by callers that need to wait for the initial sync to complete.
+// For non-bypass runs, this function starts the synchronizer and waits until it
+// is ready before returning.
 func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmConfig endorser.EVMConfig, primeDBPath string, bypass bool) (*TestHarness, *network.Synchronizer, error) {
 	t.Helper()
 
@@ -281,8 +281,11 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 	}
 
 	if !bypass {
-		go func() error { return sync.Start(t.Context()) }()
-		waitUntilSynced(t, sync, 10*time.Second)
+		startErr := make(chan error, 1)
+		go func() {
+			startErr <- sync.Start(t.Context())
+		}()
+		waitUntilSynced(t, sync, 10*time.Second, startErr)
 	}
 
 	// Start gateway worker pool for tests
@@ -434,12 +437,10 @@ func newFabricTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EV
 		return nil, err
 	}
 
-	th, sync, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false)
+	th, _, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false)
 	if err != nil {
 		return nil, err
 	}
-
-	waitUntilSynced(t, sync, 10*time.Second)
 
 	return th, nil
 }
@@ -816,18 +817,30 @@ func (tl TestLogger) Errorf(format string, v ...any) {
 	tl.T.Logf(tl.ID+" > [ERROR] "+format, v...)
 }
 
-func waitUntilSynced(t *testing.T, sync *network.Synchronizer, timeout time.Duration) {
+func waitUntilSynced(t *testing.T, sync *network.Synchronizer, timeout time.Duration, startErr <-chan error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), timeout)
 	defer cancel()
 
 	for {
+		select {
+		case err := <-startErr:
+			if err != nil && !errors.Is(err, context.Canceled) {
+				t.Fatalf("synchronizer failed to start: %v", err)
+			}
+		default:
+		}
+
 		if err := sync.Ready(); err == nil {
 			break
 		}
 		select {
 		case <-ctx.Done():
 			t.Fatal("timeout waiting for sync")
+		case err := <-startErr:
+			if err != nil && !errors.Is(err, context.Canceled) {
+				t.Fatalf("synchronizer failed before ready: %v", err)
+			}
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
