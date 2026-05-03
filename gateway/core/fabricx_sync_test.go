@@ -13,9 +13,9 @@ import (
 
 	cb "github.com/hyperledger/fabric-protos-go-apiv2/common"
 	"github.com/hyperledger/fabric-x-common/api/applicationpb"
+	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/network"
-	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 )
