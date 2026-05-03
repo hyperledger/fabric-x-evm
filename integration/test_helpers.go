@@ -265,7 +265,7 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 			sync, err = nfab.NewSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, handlers...)
 			submitter, err1 = nfab.NewSubmitter(orderers, gwSigner, 0, logger)
 		case "fabric-x", "":
-			sync, err = nfabx.NewSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, handlers...)
+			sync, err = core.NewFabricXSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, handlers...)
 			submitter, err1 = nfabx.NewSubmitter(orderers, gwSigner, 0, logger)
 		default:
 			return nil, nil, fmt.Errorf("unsupported protocol: %q", cfg.Network.Protocol)
@@ -282,6 +282,7 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 
 	if !bypass {
 		go func() error { return sync.Start(t.Context()) }()
+		waitUntilSynced(t, sync, 10*time.Second)
 	}
 
 	// Start gateway worker pool for tests
