@@ -56,6 +56,7 @@ func (q *TxQueue) Dequeue() (*types.Transaction, bool) {
 	}
 
 	tx := q.pendingQueue[0]
+	q.pendingQueue[0] = nil
 	q.pendingQueue = q.pendingQueue[1:]
 	q.inProgressMap[tx.Hash()] = tx
 	return tx, true
@@ -68,4 +69,11 @@ func (q *TxQueue) Close() {
 
 	q.done = true
 	q.cond.Broadcast() // Wake up all waiting workers
+}
+
+// Complete removes a transaction from the in-progress map
+func (q *TxQueue) Complete(hash common.Hash) {
+        q.mu.Lock()
+        defer q.mu.Unlock()
+        delete(q.inProgressMap, hash)
 }
