@@ -26,6 +26,101 @@ tooling in a permissioned, enterprise blockchain setting.
 
 [Here](docs/ARCHITECTURE.md)
 
+## Quick start
+
+Stand up a full Fabric-X EVM network with a block explorer in two commands:
+
+```shell
+make init-x   # generate crypto material (one-time)
+make start    # start the network + Blockscout explorer
+```
+
+Once the stack is up, open the block explorer at **http://localhost:8000** and
+point any Ethereum tooling to **http://localhost:8545** (chain ID `4011`).
+You can now use the system as any other EVM-style chain! Backed by Fabric-X.
+
+> [!NOTE]
+> `make start` builds the gateway image locally, so the first run takes a
+> minute or two. Subsequent starts are fast. To run without the block explorer,
+> use `make start-node` instead.
+
+### Deploy a token and interact via MetaMask
+
+You'll need:
+- [cast](https://book.getfoundry.sh/getting-started/installation) (part of Foundry)
+- [MetaMask](https://metamask.io/) browser extension
+
+The commands below use built-in test accounts — gas is free so no prefunding is
+needed. Substitute any address or private key if you prefer your own accounts.
+
+To use MetaMask with the test wallet, import this private key
+([instructions](https://support.metamask.io/start/use-an-existing-wallet/#import-using-a-private-key)):
+open the extension → your account → Add Wallet → Private Key, and enter
+`0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80`.
+
+> [!WARNING]
+> This is the well-known Hardhat account #0. **Never use it on a public
+> network** — it will be drained instantly.
+
+> [!IMPORTANT]
+> If you've used MetaMask with this network before and restarted with a clean
+> state, reset the account: Settings → Developer tools → Delete activity and nonce data.
+
+#### Deploy a token
+
+Deploy an ERC-20 token by choosing a name and symbol:
+
+```shell
+make demo-deploy NAME="Digital Euro" SYMBOL=DEUR
+```
+
+The explorer URL is printed immediately:
+
+```
+Deployed Digital Euro (DEUR): http://localhost:8000/address/0x...
+```
+
+Open the URL. Scroll to the bottom and click **"Add Fabric-X EVM"** 
+to add the network to MetaMask (only needed once):
+
+![Add Fabric-X EVM](docs/add_network.png)
+
+Then click the MetaMask logo next to the token contract address to add the
+token to your wallet:
+
+![Add token to MetaMask](docs/add_to_metamask.png)
+
+#### Transfer tokens
+
+Copy your MetaMask address and run:
+
+```shell
+make demo-transfer TO=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 AMOUNT=500
+```
+
+The transaction URL is printed immediately:
+
+```
+Transferred 500 tokens to 0x...: http://localhost:8000/tx/0x...
+```
+
+Switch to MetaMask and confirm the tokens arrived. Try sending some back —
+there's no gas cost, so experimenting is free.
+
+**You're now running your own Fabric-X EVM network.** Deploy your own contracts
+with tooling you're familiar with, or explore the [architecture](./docs/ARCHITECTURE.md)
+and [compatibility](./docs/COMPATIBILITY.md) docs to learn more.
+
+To stop the network and delete the ledger, do:
+
+```shell
+make stop
+```
+
+Reset your Metamask wallet in Settings → Developer tools → Delete activity and nonce data.
+
+# Testing
+
 ## Unit tests
 
 ```shell
@@ -81,98 +176,20 @@ make test-fablo
 make stop-fablo
 ```
 
-## Interacting with the system
+## Compile other smart contracts
 
-Follow this guide to deploy a smart contract and interact with it.
+Example contracts are provided in the `solidity/` directory. Requires [solc](https://docs.soliditylang.org/en/latest/installing-solidity.html) (`brew install solidity`).
 
-### Prerequisites
-
-- [solc](https://docs.soliditylang.org/en/latest/installing-solidity.html) - Solidity compiler (`brew install solidity`)
-- [cast](https://book.getfoundry.sh/getting-started/installation) - Foundry CLI
-- [Metamask](https://metamask.io/) (optional) - browser wallet extension
-
-### Preparation
-
-#### Install dependencies and compile the ERC-20 smart contract
-
-The smart contracts are already provided in the `solidity/` directory. Install
-the OpenZeppelin dependencies and compile:
+To recompile the `Token` contract used by `make demo-deploy`:
 
 ```shell
-cd solidity/OzepERC20
-npm install
-cd ../..
+cd solidity/OzepERC20 && npm install && cd ../..
 
-solc --bin --abi --storage-layout --overwrite --evm-version paris \
-    -o bin/GLDToken \
-    --base-path solidity/OzepERC20 \
-    --include-path solidity/OzepERC20/node_modules \
-    solidity/OzepERC20/GLDToken.sol
+solc --bin --overwrite -o testdata \
+  --base-path solidity/OzepERC20 \
+  --include-path solidity/OzepERC20/node_modules \
+  solidity/OzepERC20/Token.sol
 ```
-
-#### Generate a wallet
-
-Copy the address and private key, they will be the deployer / admin wallet for
-the contract.
-
-```shell
-cast wallet new
-```
-
-#### Configure Metamask
-
-Follow instructions
-[here](https://support.metamask.io/configure/networks/how-to-add-a-custom-network-rpc)
-to add a custom network with RPC URL http://localhost:8545 and chain id 4011.
-
-> [!IMPORTANT]
-> If you have used the wallet before and start with a clean network, reset the
-> nonce of the wallet by going to Settings -> Advanced -> Clear activity tab
-> data.
-
-#### Start Fabric
-
-```shell
-make start-fablo
-```
-
-### Running the application
-
-Start the application:
-
-```shell
-cd gateway
-go run .
-```
-
-#### Export environment variables
-
-In another terminal, export the addresses and keys.
-
-```shell
-export ADMIN_ADDRESS=0xabc
-export PRIVATE_KEY=0xdef
-
-export METAMASK=0x123
-```
-
-Deploy the smart contract and remember the address:
-
-```shell
-export CONTRACT_ADDRESS=$(cast send --rpc-url http://localhost:8545 --chain-id 4011 --private-key $PRIVATE_KEY \
-  --create "$(cat bin/GLDToken/GLDToken.bin)$(cast abi-encode 'constructor(uint256)' 1000000000000000000000 | sed 's/^0x//')" \
-  | awk '/contractAddress/ {print $2}')
-```
-
-Transfer 100 tokens to the metamask wallet:
-
-```shell
-cast send --rpc-url http://localhost:8545 --chain-id 4011 --private-key $PRIVATE_KEY $CONTRACT_ADDRESS "transfer(address,uint256)" $METAMASK "100000000000000000000"
-```
-
-Go to your browser and verify that you can see the tokens. Copy the address of
-the admin and send some Gold back.
-
 
 ## License
 

@@ -1,5 +1,13 @@
 # Configuration
 FABRIC_VERSION ?= 3.1.4
+UID := $(shell id -u)
+GID := $(shell id -g)
+export UID
+export GID
+
+.PHONY: build
+build:
+	go build -o bin/fxevm ./cmd/fxevm
 
 .PHONY: checks
 checks:
@@ -22,6 +30,7 @@ integration-tests: pre-pull-images
 
 .PHONY: init-x
 init-x:
+	@rm -rf testdata/crypto
 	@go tool cryptogen generate --config testdata/crypto-config.yaml --output testdata/crypto
 	@cd testdata && go tool configtxgen --channelID mychannel --profile OrgsChannel --outputBlock crypto/sc-genesis-block.proto.bin
 
@@ -31,6 +40,7 @@ clean-x:
 
 .PHONY: start-x
 start-x:
+	@if nc -z localhost 7050 2>/dev/null; then echo "Error: port 7050 is already in use — stop any running Fabric orderer before starting."; exit 1; fi
 	@docker run -d --rm -it --name fabric-x-committer-test-node \
 		-p 4001:4001 -p 2110:2110 -p 2114:2114 -p 2117:2117 -p 7001:7001 -p 7050:7050 -p 5433:5433 \
 		-v "$(PWD)/testdata/crypto:/root/config/crypto" \
@@ -62,6 +72,7 @@ stop-x:
 
 .PHONY: start-fablo
 start-fablo:
+	@if nc -z localhost 7030 2>/dev/null; then echo "Error: port 7030 is already in use — stop any running Fabric orderer before starting."; exit 1; fi
 	cd testdata/fablo && ./fablo up
 
 .PHONY: stop-fablo
@@ -100,3 +111,57 @@ eth-tests-slow:
 .PHONY: eth-tests-slow-legacy
 eth-tests-slow-legacy:
 	@go test -test.fullpath=true -timeout 10000s -run ^TestEthereumTests$$ github.com/hyperledger/fabric-x-evm/integration -very_slow -legacy
+
+.PHONY: start-node
+start-node:
+	@if nc -z localhost 7050 2>/dev/null; then echo "Error: port 7050 is already in use — stop any running Fabric orderer before starting."; exit 1; fi
+	@docker compose --env-file blockscout.env up -d --build
+
+.PHONY: start
+start: blockscout.env
+	@if nc -z localhost 7050 2>/dev/null; then echo "Error: port 7050 is already in use — stop any running Fabric orderer before starting."; exit 1; fi
+	@docker compose --profile explorer --env-file blockscout.env up -d --build
+	@echo "Visit the block explorer at http://localhost:8000/ (might take a minute to load)"
+
+.PHONY: stop
+stop: blockscout.env
+	@docker compose --profile explorer --env-file blockscout.env down -v
+
+blockscout.env:
+	@echo "Generating $@..."
+	@printf 'POSTGRES_PASSWORD=%s\nSECRET_KEY_BASE=%s\n' \
+		"$$(openssl rand -hex 32)" \
+		"$$(openssl rand -hex 64)" > blockscout.env
+
+## Targets to interact with the local dev network
+
+DEMO_RPC_URL   := http://localhost:8545
+DEMO_CHAIN_ID  := 4011
+DEMO_ADMIN_KEY := 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
+DEMO_EXPLORER  := http://localhost:8000
+NAME           ?= My Token
+SYMBOL         ?= TKN
+SUPPLY         ?= 1000000
+AMOUNT         ?= 100
+
+.PHONY: demo-deploy
+demo-deploy:
+	@CONTRACT=$$(cast send --rpc-url $(DEMO_RPC_URL) --chain-id $(DEMO_CHAIN_ID) \
+	  --private-key $(DEMO_ADMIN_KEY) \
+	  --create "$$(cat testdata/Token.bin)$$(cast abi-encode 'constructor(string,string,uint256)' '$(NAME)' '$(SYMBOL)' '$(SUPPLY)000000000000000000' | sed 's/^0x//')" \
+	  | awk '/contractAddress/ {print $$2}') && \
+	  echo $$CONTRACT > .demo-contract && \
+	  printf '\nDeployed %s (%s): %s/address/%s\n\n' "$(NAME)" "$(SYMBOL)" "$(DEMO_EXPLORER)" "$$CONTRACT"
+
+CONTRACT ?= $(shell cat .demo-contract 2>/dev/null)
+
+.PHONY: demo-transfer
+demo-transfer:
+	@test -n "$(TO)" || (echo "Usage: make demo-transfer TO=0x... [AMOUNT=100] [CONTRACT=0x...]"; exit 1)
+	@test -n "$(CONTRACT)" || (echo "No contract address. Run 'make demo-deploy' first or pass CONTRACT=0x..."; exit 1)
+	@TX=$$(cast send --rpc-url $(DEMO_RPC_URL) --chain-id $(DEMO_CHAIN_ID) \
+	    --private-key $(DEMO_ADMIN_KEY) \
+	    $(CONTRACT) "transfer(address,uint256)" \
+	    $(TO) "$(AMOUNT)000000000000000000" \
+	    | awk '/^transactionHash/ {print $$2}') && \
+	  printf '\nTransferred %s tokens to %s: %s/tx/%s\n\n' "$(AMOUNT)" "$(TO)" "$(DEMO_EXPLORER)" "$$TX"

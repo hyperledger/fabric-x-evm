@@ -1,0 +1,295 @@
+name: fabric-x-evm
+
+# Local Fabric-X EVM stack.
+#
+# Core (fabric-x node + namespace init):
+#   make start-node
+#
+# With block explorer (adds Blockscout at http://localhost:8000):
+#   make start
+#
+# Stop and remove volumes:
+#   make stop
+
+services:
+  # for local development, we use the Fabric-X test committer. For a real deployment, consider
+  # https://github.com/LF-Decentralized-Trust-labs/fabric-x-ansible-collection
+  test-committer:
+    image: docker.io/hyperledger/fabric-x-committer-test-node:0.1.9
+    pull_policy: missing
+    restart: unless-stopped
+    container_name: test-committer
+    command: run db orderer committer
+    ports:
+      - "4001:4001"
+      - "2110:2110"
+      - "2114:2114"
+      - "2117:2117"
+      - "7001:7001"
+      - "7050:7050"
+      - "5433:5433"
+    volumes:
+      - ./testdata/crypto:/root/config/crypto
+      - ./testdata/crypto/sc-genesis-block.proto.bin:/root/config/sc-genesis-block.proto.bin
+      - ./testdata/crypto/sc-genesis-block.proto.bin:/root/artifacts/config-block.pb.bin
+      - ./testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.crt:/server-certs/public-key.pem
+      - ./testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.key:/server-certs/private-key.pem
+      - ./testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/ca.crt:/server-certs/ca-certificate.pem
+      - ./testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.crt:/client-certs/public-key.pem
+      - ./testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.key:/client-certs/private-key.pem
+      - ./testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/ca.crt:/client-certs/ca-certificate.pem
+    environment:
+      SC_SIDECAR_ORDERER_IDENTITY_MSP_DIR: /root/config/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/msp
+      SC_SIDECAR_ORDERER_IDENTITY_MSP_ID: Org1MSP
+      SC_SIDECAR_ORDERER_CHANNEL_ID: mychannel
+      SC_SIDECAR_ORDERER_SIGNED_ENVELOPES: "true"
+      SC_QUERY_SERVICE_SERVER_ENDPOINT: ":7001"
+      SC_ORDERER_BLOCK_SIZE: "1"
+    healthcheck:
+      test: [ "CMD-SHELL", "nc -z localhost 7001" ]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    networks:
+      default:
+        aliases:
+          - committer # matches the TLS certificate SAN
+
+  # Creates the EVM namespace.
+  fxconfig-init:
+    image: docker.io/hyperledger/fabric-x-tools:latest
+    pull_policy: missing
+    container_name: fxconfig-init
+    user: "${UID:-1000}:${GID:-1000}"
+    entrypoint:
+      - fxconfig
+      - namespace
+      - create
+      - basic
+      - --policy=OR('Org1MSP.member')
+      - --endorse
+      - --submit
+      - --wait
+      - --config=/testdata/fxconfig-docker.yaml
+    volumes:
+      - ./testdata/fxconfig-docker.yaml:/testdata/fxconfig-docker.yaml:ro,Z
+      - ./testdata/crypto:/testdata/crypto:ro,Z
+    depends_on:
+      test-committer:
+        condition: service_healthy
+    restart: "no"
+
+  gateway:
+    build: .
+    pull_policy: build
+    restart: unless-stopped
+    container_name: gateway
+    user: "${UID:-1000}:${GID:-1000}"
+    command: [ "start" ]
+    ports:
+      - "8545:8545"
+    volumes:
+      - ./testdata/crypto:/testdata/crypto:ro,Z
+    environment:
+      TESTDATA: /testdata
+      COMMITTER_HOST: committer
+    depends_on:
+      fxconfig-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [ "CMD-SHELL", "nc -z localhost 8545" ]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # Blockscout block explorer — started with `make start` (profile: explorer)
+  # ---------------------------------------------------------------------------
+
+  db:
+    profiles: [ explorer ]
+    image: postgres:17
+    shm_size: 256m
+    restart: unless-stopped
+    container_name: db
+    command: postgres -c 'max_connections=200' -c
+      'client_connection_check_interval=60000'
+    environment:
+      POSTGRES_DB: blockscout
+      POSTGRES_USER: blockscout
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U blockscout -d blockscout" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis-db:
+    profiles: [ explorer ]
+    image: redis:alpine
+    container_name: redis-db
+    command: redis-server
+    restart: unless-stopped
+
+  backend:
+    profiles: [ explorer ]
+    image: ghcr.io/blockscout/blockscout:9.0.2
+    pull_policy: missing
+    restart: unless-stopped
+    stop_grace_period: 10s
+    container_name: backend
+    command: sh -c "bin/blockscout eval
+      \"Elixir.Explorer.ReleaseTasks.create_and_migrate()\" && bin/blockscout
+      start"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis-db:
+        condition: service_started
+      gateway:
+        condition: service_healthy
+    environment:
+      CHAIN_ID: "4011"
+      DATABASE_URL: postgresql://blockscout:${POSTGRES_PASSWORD}@db:5432/blockscout
+      ECTO_USE_SSL: "false"
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+      ETHEREUM_JSONRPC_HTTP_URL: http://gateway:8545
+      ETHEREUM_JSONRPC_TRACE_URL: http://gateway:8545
+      INDEXER_INTERNAL_TRANSACTIONS_TRACER_TYPE: opcode
+      INDEXER_DISABLE_INTERNAL_TRANSACTIONS_FETCHER: "true"
+      INDEXER_DISABLE_PENDING_TRANSACTIONS_FETCHER: "true"
+      INDEXER_CATCHUP_BLOCKS_BATCH_SIZE: "5"
+      INDEXER_CATCHUP_BLOCKS_CONCURRENCY: "1"
+      INDEXER_DISABLE_USER_OPS_FETCHER: "true"
+      INDEXER_DISABLE_ADDRESS_COIN_BALANCE_FETCHER: "true"
+      INDEXER_DISABLE_BLOCK_REWARD_FETCHER: "true"
+      INDEXER_DISABLE_TOKEN_INSTANCE_ERC_721_SANITIZE_FETCHER: "true"
+      INDEXER_DISABLE_TOKEN_INSTANCE_ERC_1155_SANITIZE_FETCHER: "true"
+      INDEXER_DISABLE_TOKEN_INSTANCE_REALTIME_FETCHER: "true"
+      INDEXER_DISABLE_TOKEN_INSTANCE_REFETCH_FETCHER: "true"
+      INDEXER_DISABLE_TOKEN_INSTANCE_RETRY_FETCHER: "true"
+      INDEXER_DISABLE_TOKEN_INSTANCE_SANITIZE_FETCHER: "true"
+      DISABLE_MARKET: "true"
+      DISABLE_FILE_LOGGING: "true"
+      MICROSERVICE_SIG_PROVIDER_ENABLED: "true"
+      MICROSERVICE_SIG_PROVIDER_URL: http://sig-provider:8050/
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -fs http://localhost:4000/api/health || exit 1" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  sig-provider:
+    profiles: [ explorer ]
+    image: ghcr.io/blockscout/sig-provider:v1.1.1
+    platform: linux/amd64
+    pull_policy: missing
+    restart: unless-stopped
+    container_name: sig-provider
+
+  frontend:
+    profiles: [ explorer ]
+    image: ghcr.io/blockscout/frontend:v2.3.5
+    pull_policy: missing
+    restart: unless-stopped
+    container_name: frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      NEXT_PUBLIC_API_HOST: localhost
+      NEXT_PUBLIC_API_PORT: "8000"
+      NEXT_PUBLIC_API_PROTOCOL: http
+      NEXT_PUBLIC_API_WEBSOCKET_PROTOCOL: ws
+      NEXT_PUBLIC_APP_HOST: localhost
+      NEXT_PUBLIC_APP_PORT: "8000"
+      NEXT_PUBLIC_APP_PROTOCOL: http
+      NEXT_PUBLIC_NETWORK_ID: 4011
+      NEXT_PUBLIC_NETWORK_NAME: Fabric-X EVM
+      NEXT_PUBLIC_NETWORK_SHORT_NAME: FxEVM
+      FAVICON_MASTER_URL: https://cdn.jsdelivr.net/gh/callback-io/allogo@main/public/logos/hyperledger/icon.svg
+      NEXT_PUBLIC_NETWORK_ICON: https://cdn.jsdelivr.net/gh/callback-io/allogo@main/public/logos/hyperledger/icon.svg
+      NEXT_PUBLIC_NETWORK_LOGO: https://cdn.jsdelivr.net/gh/callback-io/allogo@main/public/logos/hyperledger/icon.svg
+      NEXT_PUBLIC_NETWORK_RPC_URL: http://localhost:8545 # Used for "add to metamask".
+      NEXT_PUBLIC_NETWORK_CURRENCY_NAME: "Fabric-X Token"
+      NEXT_PUBLIC_NETWORK_CURRENCY_SYMBOL: "FAB"
+      NEXT_PUBLIC_NETWORK_CURRENCY_DECIMALS: "18"
+      NEXT_PUBLIC_IS_TESTNET: "true"
+      NEXT_PUBLIC_HOMEPAGE_CHARTS: "[]"
+      NEXT_PUBLIC_COLOR_PRIMARY: #00A3FF
+      NEXT_PUBLIC_COLOR_SECONDARY: #0F172A
+      NEXT_PUBLIC_HOMEPAGE_HERO_BANNER_CONFIG: "{\"background\":[\"linear-gradient(13\
+        5deg, #0F172A 0%, #1E293B 50%, #0EA5E9 100%)\"]}"
+      NEXT_PUBLIC_FOOTER_LINKS: "[{\"title\":\"Fabric-X\",\"links\":[{\"text\":\"fabr\
+        ic-x\",\"url\":\"https://www.github.com/hyperledger/fabric-x\"},{\"text\
+        \":\"fabric-x-evm\",\"url\":\"https://www.github.com/hyperledger/fabric\
+        -x-evm\"}]},{\"title\":\"LF Decentralized
+        Trust\",\"links\":[{\"text\":\"lfdecentralizedtrust.org\",\"url\":\"htt\
+        ps://www.lfdecentralizedtrust.org/\"}]}]"
+      NEXT_PUBLIC_VIEWS_TX_HIDDEN_FIELDS: "[\"value\", \"fee_currency\",
+        \"gas_price\", \"tx_fee\", \"gas_fees\", \"burnt_fees\", \"L1_status\",
+        \"batch\"]"
+      NEXT_PUBLIC_GAS_TRACKER_ENABLED: "false"
+      NEXT_PUBLIC_HAS_USER_OPS: "false"
+      NEXT_PUBLIC_HAS_BEACON_CHAIN: "false"
+      NEXT_PUBLIC_MARKETPLACE_ENABLED: "false"
+      NEXT_PUBLIC_VIEWS_BLOCK_HIDDEN_FIELDS: "[\"burnt_fees\",\"total_reward\"]"
+
+  proxy:
+    profiles: [ explorer ]
+    image: docker.io/nginx:1.29.8
+    pull_policy: missing
+    container_name: proxy
+    restart: unless-stopped
+    depends_on:
+      - backend
+      - frontend
+    configs:
+      - source: nginx
+        target: /etc/nginx/conf.d/default.conf
+    ports:
+      - "8000:80"
+
+configs:
+  nginx:
+    content: |
+      map $$http_upgrade $$connection_upgrade {
+        default upgrade;
+        ''      close;
+      }
+      server {
+        listen 80;
+        proxy_http_version 1.1;
+
+        error_page 502 @starting;
+        location @starting {
+          default_type text/html;
+          return 502 '<html><head><title>Starting up</title><style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0F172A;font-family:sans-serif;color:#e2e8f0}.box{text-align:center}h1{color:#00A3FF;margin-bottom:.5rem}p{margin:.25rem 0;color:#94a3b8}button{margin-top:1.5rem;padding:.6rem 1.8rem;background:#00A3FF;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:1rem}</style></head><body><div class="box"><h1>Block Explorer is starting up, this may take a minute.</p><p>Please refresh the page in a moment.</p><button onclick="location.reload()">Refresh</button></div></body></html>';
+        }
+
+        location ~ ^/(api(?!-docs$$)|socket|sitemap.xml|auth/auth0|auth/auth0/callback|auth/logout) {
+          proxy_pass         http://backend:4000;
+          proxy_set_header   Host $$host;
+          proxy_set_header   X-Real-IP $$remote_addr;
+          proxy_set_header   X-Forwarded-For $$proxy_add_x_forwarded_for;
+          proxy_set_header   Upgrade $$http_upgrade;
+          proxy_set_header   Connection $$connection_upgrade;
+        }
+        location / {
+          proxy_pass         http://frontend:3000;
+          proxy_set_header   Host $$host;
+          proxy_set_header   X-Real-IP $$remote_addr;
+          proxy_set_header   X-Forwarded-For $$proxy_add_x_forwarded_for;
+          proxy_set_header   Upgrade $$http_upgrade;
+          proxy_set_header   Connection $$connection_upgrade;
+        }
+      }
+
+volumes:
+  pgdata:
