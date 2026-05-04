@@ -9,21 +9,24 @@ package core
 import (
 	"sync"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 )
 
 // TxQueue is a simple in-memory FIFO queue for transactions
 type TxQueue struct {
-	mu    sync.Mutex
-	cond  *sync.Cond
-	queue []*types.Transaction
-	done  bool
+	mu            sync.Mutex
+	cond          *sync.Cond
+	pendingQueue  []*types.Transaction
+	inProgressMap map[common.Hash]*types.Transaction
+	done          bool
 }
 
 // NewTxQueue creates a new transaction queue
 func NewTxQueue() *TxQueue {
 	q := &TxQueue{
-		queue: make([]*types.Transaction, 0),
+		pendingQueue:  make([]*types.Transaction, 0),
+		inProgressMap: make(map[common.Hash]*types.Transaction),
 	}
 	q.cond = sync.NewCond(&q.mu)
 	return q
@@ -34,7 +37,7 @@ func (q *TxQueue) Enqueue(tx *types.Transaction) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	q.queue = append(q.queue, tx)
+	q.pendingQueue = append(q.pendingQueue, tx)
 	q.cond.Signal() // Wake up one waiting worker
 }
 
@@ -44,16 +47,17 @@ func (q *TxQueue) Dequeue() (*types.Transaction, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	for len(q.queue) == 0 && !q.done {
+	for len(q.pendingQueue) == 0 && !q.done {
 		q.cond.Wait()
 	}
 
-	if q.done && len(q.queue) == 0 {
+	if q.done && len(q.pendingQueue) == 0 {
 		return nil, false
 	}
 
-	tx := q.queue[0]
-	q.queue = q.queue[1:]
+	tx := q.pendingQueue[0]
+	q.pendingQueue = q.pendingQueue[1:]
+	q.inProgressMap[tx.Hash()] = tx
 	return tx, true
 }
 
