@@ -586,8 +586,8 @@ func testUniswapFactory(t *testing.T, th *TestHarness) {
 
 	var pairAddrStr string
 	for _, w := range rws.Writes {
-		if strings.HasPrefix(w.Key, "acc:") && strings.HasSuffix(w.Key, ":code") && !strings.Contains(strings.ToLower(w.Key), strings.ToLower(factoryAddr.Hex())) {
-			parts := strings.Split(w.Key, ":")
+		parts := strings.SplitN(w.Key, ":", 3)
+		if len(parts) == 3 && parts[0] == "acc" && parts[2] == "code" && !strings.EqualFold(parts[1], factoryAddr.Hex()) {
 			pairAddrStr = parts[1]
 			break
 		}
@@ -1064,8 +1064,8 @@ func testProxyFactory(t *testing.T, th *TestHarness) {
 
 	var childAddrHex string
 	for _, w := range rws.Writes {
-		if strings.HasPrefix(w.Key, "acc:") && strings.HasSuffix(w.Key, ":code") && !strings.Contains(strings.ToLower(w.Key), strings.ToLower(factoryAddr.Hex())) {
-			parts := strings.Split(w.Key, ":")
+		parts := strings.SplitN(w.Key, ":", 3)
+		if len(parts) == 3 && parts[0] == "acc" && parts[2] == "code" && !strings.EqualFold(parts[1], factoryAddr.Hex()) {
 			childAddrHex = parts[1]
 			break
 		}
