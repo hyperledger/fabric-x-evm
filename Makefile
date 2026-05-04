@@ -36,6 +36,7 @@ clean-x:
 
 .PHONY: start-x
 start-x:
+	@if nc -z localhost 7050 2>/dev/null; then echo "Error: port 7050 is already in use — stop any running Fabric orderer before starting."; exit 1; fi
 	@docker run -d --rm -it --name fabric-x-committer-test-node \
 		-p 4001:4001 -p 2110:2110 -p 2114:2114 -p 2117:2117 -p 7001:7001 -p 7050:7050 -p 5433:5433 \
 		-v "$(PWD)/testdata/crypto:/root/config/crypto" \
@@ -67,6 +68,7 @@ stop-x:
 
 .PHONY: start-fablo
 start-fablo:
+	@if nc -z localhost 7030 2>/dev/null; then echo "Error: port 7030 is already in use — stop any running Fabric orderer before starting."; exit 1; fi
 	cd testdata/fablo && ./fablo up
 
 .PHONY: stop-fablo
@@ -108,10 +110,12 @@ eth-tests-slow-legacy:
 
 .PHONY: start-node
 start-node:
+	@if nc -z localhost 7050 2>/dev/null; then echo "Error: port 7050 is already in use — stop any running Fabric orderer before starting."; exit 1; fi
 	@docker compose --env-file blockscout.env up -d --build
 
 .PHONY: start
 start: blockscout.env
+	@if nc -z localhost 7050 2>/dev/null; then echo "Error: port 7050 is already in use — stop any running Fabric orderer before starting."; exit 1; fi
 	@docker compose --profile explorer --env-file blockscout.env up -d --build
 	@echo "Visit the block explorer at http://localhost:8000/ (might take a minute to load)"
 
