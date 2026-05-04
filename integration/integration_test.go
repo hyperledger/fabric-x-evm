@@ -597,7 +597,7 @@ func testUniswapFactory(t *testing.T, th *TestHarness) {
 		for _, w := range rws.Writes {
 			t.Logf("RWS Write: %s", w.Key)
 		}
-		if strings.Contains(t.Name(), "TestLocalX") {
+		if th.Protocol == "fabric-x" {
 			t.Skip("skipping missing code write in RWS for fabric-x mode")
 		} else {
 			t.Fatal("expected child contract code write in RWS for UniswapV2Pair")
@@ -1077,7 +1077,7 @@ func testProxyFactory(t *testing.T, th *TestHarness) {
 		}
 		t.Logf("RWS writes: %+v", rws.Writes)
 		// skip the assertion if fabric-x mode because we know it doesn't give us standard read-set keys.
-		if strings.Contains(t.Name(), "TestLocalX") {
+		if th.Protocol == "fabric-x" {
 			t.Skip("skipping missing code write in RWS for fabric-x mode")
 		} else {
 			t.Fatal("expected child contract code write in RWS")
