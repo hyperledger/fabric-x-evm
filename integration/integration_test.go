@@ -645,7 +645,7 @@ func testUniswapFactory(t *testing.T, th *TestHarness) {
 	if pairAddr == (common.Address{}) {
 		t.Fatal("pair address is zero")
 	}
-	if strings.ToLower(pairAddr.Hex()) != strings.ToLower(pairAddrStr) {
+	if !strings.EqualFold(pairAddr.Hex(), pairAddrStr) {
 		t.Fatalf("pair address mismatch between RWS and query: rws=%s query=%s", pairAddrStr, pairAddr.Hex())
 	}
 
