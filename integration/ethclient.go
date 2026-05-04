@@ -18,7 +18,9 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/hyperledger/fabric-x-evm/gateway/core"
 	"github.com/hyperledger/fabric-x-evm/utils"
+	sdk "github.com/hyperledger/fabric-x-sdk"
 )
 
 // NonceProvider is an interface for getting account nonces.
@@ -217,4 +219,32 @@ func (e *EthClient) TxForCall(ctx context.Context, nonceProvider NonceProvider, 
 // EIP-155 signer; otherwise the gateway rejects the tx as unprotected.
 func GetCtxForSigner() (blockNumber *big.Int, blockTime uint64) {
 	return big.NewInt(0), 0
+}
+
+// EndorseTransact creates and endorses a state-changing method call.
+func (e *EthClient) EndorseTransact(ctx context.Context, gw *core.Gateway, addr common.Address, method string, args ...any) (sdk.Endorsement, error) {
+	tx, err := e.TxForCall(ctx, gw, &addr, method, nil, args...)
+	if err != nil {
+		return sdk.Endorsement{}, err
+	}
+	return gw.ExecuteEthTx(ctx, tx, nil)
+}
+
+// Broadcast submits an endorsement and waits for the transaction to be committed.
+func (e *EthClient) Broadcast(ctx context.Context, gw *core.Gateway, env sdk.Endorsement) error {
+	if err := gw.SubmitFabricTx(ctx, env); err != nil {
+		return err
+	}
+
+	tx, err := extractEthTxFromProposal(env.Proposal)
+	if err != nil {
+		return err
+	}
+
+	ec, err := NewNativeEthClient(gw)
+	if err != nil {
+		return err
+	}
+
+	return waitForCommit(ctx, ec, tx)
 }
