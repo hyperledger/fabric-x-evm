@@ -73,7 +73,7 @@ func (q *TxQueue) Close() {
 
 // Complete removes a transaction from the in-progress map
 func (q *TxQueue) Complete(hash common.Hash) {
-        q.mu.Lock()
-        defer q.mu.Unlock()
-        delete(q.inProgressMap, hash)
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	delete(q.inProgressMap, hash)
 }
