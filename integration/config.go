@@ -99,7 +99,7 @@ func FabricSamplesConfig(testdataDir string) config.Config {
 				MSPDir: path.Join(user, "msp"),
 			},
 			DbConnStr:  "file:gateway.db?mode=memory&cache=shared",
-			TrieDBPath: filepath.Join(testdataDir, "triedb"),
+			TrieDBPath: "",
 		},
 		Endorsers: []econf.Endorser{
 			{
@@ -190,8 +190,7 @@ func XTestCommitterConfig() config.Config {
 				MSPDir: path.Join(user, "msp"),
 			},
 			DbConnStr:  "file:gateway.db?mode=memory&cache=shared",
-			TrieDBPath: filepath.Join(testdataDir, "triedb"),
-			// DbConnStr:      "file:../testdata/blocks.db",
+			TrieDBPath: "",
 		},
 		Endorsers: []econf.Endorser{
 			{
@@ -247,7 +246,7 @@ func FabloConfig(testdataDir string) config.Config {
 			Channel:   "mychannel",
 			Namespace: "basic",
 			NsVersion: "1.0",
-			ChainID:   31337,
+			ChainID:   4011,
 		},
 		Gateway: config.Gateway{
 			Orderers: []common.ClientConfig{{

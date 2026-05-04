@@ -231,7 +231,7 @@ func rpcBlock(b *domain.Block, full bool) *RPCBlock {
 		TransactionsRoot: txRoot,
 		StateRoot:        common.BytesToHash(b.StateRoot),
 		ReceiptsRoot:     types.EmptyRootHash,
-		Miner:            common.Address{}, // b.Miner
+		Miner:            common.HexToAddress("0x0000000000000000000000000000000000000F4B"),
 		Difficulty:       hexutil.Big(*big.NewInt(0)),
 		TotalDifficulty:  hexutil.Big(*big.NewInt(0)),
 		ExtraData:        hexutil.Bytes{},

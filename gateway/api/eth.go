@@ -17,6 +17,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/eth/filters"
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/hyperledger/fabric-x-evm/gateway/api/rpcerr"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 )
 
@@ -186,10 +187,10 @@ func (api *EthAPI) GetTransactionCount(ctx context.Context, address common.Addre
 func (api *EthAPI) SendRawTransaction(ctx context.Context, input hexutil.Bytes) (common.Hash, error) {
 	tx := new(types.Transaction)
 	if err := tx.UnmarshalBinary(input); err != nil {
-		return common.Hash{}, err
+		return common.Hash{}, rpcerr.InvalidParams("invalid raw transaction: %v", err)
 	}
 	if err := api.b.SendTransaction(ctx, tx); err != nil {
-		return common.Hash{}, err
+		return common.Hash{}, classifyValidationError(err)
 	}
 	return tx.Hash(), nil
 }
@@ -247,7 +248,9 @@ func (api *EthAPI) Call(ctx context.Context, args map[string]any, block rpc.Bloc
 
 // eth_estimateGas
 func (api *EthAPI) EstimateGas(ctx context.Context, args map[string]any, block *rpc.BlockNumberOrHash) (*hexutil.Uint64, error) {
-	u := hexutil.Uint64(0)
+	// Gas is not metered; return a constant that always satisfies the intrinsic-gas
+	// check in ValidateTx. Matches the endorser's own zero-gas fallback.
+	u := hexutil.Uint64(5_000_000)
 	return &u, nil
 }
 
@@ -377,7 +380,7 @@ func argsToCallMsg(args map[string]any) (ethereum.CallMsg, error) {
 	if v, ok := args["gas"]; ok {
 		gas, err := hexutil.DecodeUint64(v.(string))
 		if err != nil {
-			return msg, err
+			return msg, rpcerr.InvalidParams("invalid gas: %v", err)
 		}
 		msg.Gas = gas
 	}
@@ -385,7 +388,7 @@ func argsToCallMsg(args map[string]any) (ethereum.CallMsg, error) {
 	if v, ok := args["gasPrice"]; ok {
 		gp, err := hexutil.DecodeBig(v.(string))
 		if err != nil {
-			return msg, err
+			return msg, rpcerr.InvalidParams("invalid gasPrice: %v", err)
 		}
 		msg.GasPrice = gp
 	}
@@ -393,7 +396,7 @@ func argsToCallMsg(args map[string]any) (ethereum.CallMsg, error) {
 	if v, ok := args["value"]; ok {
 		val, err := hexutil.DecodeBig(v.(string))
 		if err != nil {
-			return msg, err
+			return msg, rpcerr.InvalidParams("invalid value: %v", err)
 		}
 		msg.Value = val
 	}
@@ -408,7 +411,7 @@ func argsToCallMsg(args map[string]any) (ethereum.CallMsg, error) {
 	if v, ok := args[inputKey]; ok {
 		data, err := hexutil.Decode(v.(string))
 		if err != nil {
-			return msg, err
+			return msg, rpcerr.InvalidParams("invalid %s: %v", inputKey, err)
 		}
 		msg.Data = data
 	}
@@ -417,7 +420,7 @@ func argsToCallMsg(args map[string]any) (ethereum.CallMsg, error) {
 	if v, ok := args["maxFeePerGas"]; ok {
 		fee, err := hexutil.DecodeBig(v.(string))
 		if err != nil {
-			return msg, err
+			return msg, rpcerr.InvalidParams("invalid maxFeePerGas: %v", err)
 		}
 		msg.GasFeeCap = fee
 	}
@@ -425,7 +428,7 @@ func argsToCallMsg(args map[string]any) (ethereum.CallMsg, error) {
 	if v, ok := args["maxPriorityFeePerGas"]; ok {
 		tip, err := hexutil.DecodeBig(v.(string))
 		if err != nil {
-			return msg, err
+			return msg, rpcerr.InvalidParams("invalid maxPriorityFeePerGas: %v", err)
 		}
 		msg.GasTipCap = tip
 	}
