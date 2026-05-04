@@ -12,6 +12,7 @@ import (
 	"io"
 	"math/big"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 
@@ -67,6 +68,11 @@ var cases = []testCase{
 		fork:        "Byzantium",                                 // replaying against the latest forks causes out of gas error
 		overrides:   map[string]any{"Network.ChainID": int64(1)}, // mainnet chain ID which was used in the signature
 		primeDbPath: "../testdata/alloc_tether_replay.json",
+	},
+	{
+		name:  "proxy_factory",
+		fn:    testProxyFactory,
+		nodes: 2,
 	},
 	{
 		name:  "uniswap_factory",
@@ -504,6 +510,10 @@ func testTetherTokenParallel(t *testing.T, th *TestHarness) {
 
 func testUniswapFactory(t *testing.T, th *TestHarness) {
 	node := th.Gateways[0]
+	ec, err := NewNativeEthClient(node)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// -------------------- clients --------------------
 	erc20A, err := NewEthClient(contracts.GenericERC20MetaData, th.ethChainConfig)
@@ -560,16 +570,60 @@ func testUniswapFactory(t *testing.T, th *TestHarness) {
 	)
 
 	// -------------------- create pair --------------------
-	callSmartContract(
-		t,
-		factoryClient,
-		factoryAddr,
-		node,
-		"createPair",
-		nil,
-		tokenAAddr,
-		tokenBAddr,
-	)
+	env, err := factoryClient.EndorseTransact(t.Context(), node, factoryAddr, "createPair", tokenAAddr, tokenBAddr)
+	if err != nil {
+		t.Fatalf("failed to endorse createPair: %v", err)
+	}
+	createPairTx, err := extractEthTxFromProposal(env.Proposal)
+	if err != nil {
+		t.Fatalf("failed to extract createPair tx from proposal: %v", err)
+	}
+
+	rws, err := endorsementToRWS(env)
+	if err != nil {
+		t.Fatalf("failed to unmarshal rws: %v", err)
+	}
+
+	var pairAddrStr string
+	for _, w := range rws.Writes {
+		parts := strings.SplitN(w.Key, ":", 3)
+		if len(parts) == 3 && parts[0] == "acc" && parts[2] == "code" && !strings.EqualFold(parts[1], factoryAddr.Hex()) {
+			pairAddrStr = parts[1]
+			break
+		}
+	}
+	if pairAddrStr == "" {
+		t.Logf("RWS Write length in %s: %d", t.Name(), len(rws.Writes))
+		for _, w := range rws.Writes {
+			t.Logf("RWS Write: %s", w.Key)
+		}
+		if th.Protocol == "fabric-x" {
+			t.Skip("skipping missing code write in RWS for fabric-x mode")
+		} else {
+			t.Fatal("expected child contract code write in RWS for UniswapV2Pair")
+		}
+	}
+
+	if err := factoryClient.Broadcast(t.Context(), node, env); err != nil {
+		t.Fatalf("failed to commit factory createPair: %v", err)
+	}
+
+	var storageWriteCount int
+	var pairNonceWrite bool
+	for _, w := range rws.Writes {
+		if strings.HasPrefix(strings.ToLower(w.Key), "acc:"+strings.ToLower(pairAddrStr)+":nonce") && !w.IsDelete {
+			pairNonceWrite = true
+		}
+		if strings.HasPrefix(strings.ToLower(w.Key), "str:"+strings.ToLower(pairAddrStr)) && !w.IsDelete {
+			storageWriteCount++
+		}
+	}
+	if !pairNonceWrite {
+		t.Fatal("expected nonce write to child address in RWS")
+	}
+	if storageWriteCount < 1 {
+		t.Fatalf("expected storage writes to child address in RWS, got %d", storageWriteCount)
+	}
 
 	// -------------------- fetch pair address --------------------
 	res := querySmartContract(
@@ -591,6 +645,25 @@ func testUniswapFactory(t *testing.T, th *TestHarness) {
 	if pairAddr == (common.Address{}) {
 		t.Fatal("pair address is zero")
 	}
+	if !strings.EqualFold(pairAddr.Hex(), pairAddrStr) {
+		t.Fatalf("pair address mismatch between RWS and query: rws=%s query=%s", pairAddrStr, pairAddr.Hex())
+	}
+
+	receipt, err := ec.TransactionReceipt(t.Context(), createPairTx.Hash())
+	if err != nil {
+		t.Fatalf("failed to retrieve createPair receipt: %v", err)
+	}
+	if receipt.ContractAddress != (common.Address{}) {
+		t.Fatalf("factory call must not set receipt.ContractAddress, got %s", receipt.ContractAddress.Hex())
+	}
+
+	gotTx, _, err := ec.TransactionByHash(t.Context(), createPairTx.Hash())
+	if err != nil {
+		t.Fatalf("failed to retrieve createPair tx by hash: %v", err)
+	}
+	if gotTx == nil || gotTx.To() == nil || *gotTx.To() != factoryAddr {
+		t.Fatalf("expected createPair tx recipient to be factory address %s", factoryAddr.Hex())
+	}
 
 	// Verify symmetric lookup
 	querySmartContractExpect(
@@ -603,6 +676,21 @@ func testUniswapFactory(t *testing.T, th *TestHarness) {
 		tokenBAddr,
 		tokenAAddr,
 	)
+
+	// -------------------- failed duplicate CREATE2 --------------------
+	failedEnv, failedErr := factoryClient.EndorseTransact(t.Context(), node, factoryAddr, "createPair", tokenAAddr, tokenBAddr)
+	if failedErr != nil {
+		t.Fatalf("duplicate CREATE2 should fail during execution, not pre-validation: %v", failedErr)
+	}
+	if len(failedEnv.Responses) == 0 || failedEnv.Responses[0] == nil || failedEnv.Responses[0].Response == nil {
+		t.Fatal("duplicate CREATE2 endorsement did not include a proposal response")
+	}
+	if failedEnv.Responses[0].Response.Status != 500 {
+		t.Fatalf("duplicate CREATE2 must surface execution failure status, got %d", failedEnv.Responses[0].Response.Status)
+	}
+	if !strings.Contains(strings.ToLower(failedEnv.Responses[0].Response.Message), "revert") {
+		t.Fatalf("duplicate CREATE2 should include revert error, got message: %q", failedEnv.Responses[0].Response.Message)
+	}
 
 	// -------------------- validate pair state --------------------
 	token0 := querySmartContract(
@@ -643,6 +731,50 @@ func testUniswapFactory(t *testing.T, th *TestHarness) {
 
 	if allPairsLength.Cmp(big.NewInt(1)) != 0 {
 		t.Fatalf("expected 1 pair, got %s", allPairsLength.String())
+	}
+
+	pairCreatedTopic := crypto.Keccak256Hash([]byte("PairCreated(address,address,address,uint256)"))
+	filteredLogs, err := ec.FilterLogs(t.Context(), ethereum.FilterQuery{
+		FromBlock: receipt.BlockNumber,
+		ToBlock:   receipt.BlockNumber,
+		Addresses: []common.Address{factoryAddr},
+		Topics:    [][]common.Hash{{pairCreatedTopic}},
+	})
+	if err != nil {
+		t.Fatalf("eth_getLogs for PairCreated failed: %v", err)
+	}
+	if len(filteredLogs) == 0 {
+		t.Fatal("expected PairCreated log in gateway index")
+	}
+	factoryFilterer, err := contracts.NewUniswapV2FactoryFilterer(factoryAddr, ec)
+	if err != nil {
+		t.Fatalf("failed to create factory filterer: %v", err)
+	}
+	var sawPairCreated bool
+	for _, l := range filteredLogs {
+		if l.TxHash != createPairTx.Hash() {
+			continue
+		}
+		evt, err := factoryFilterer.ParsePairCreated(l)
+		if err != nil {
+			t.Fatalf("failed to parse PairCreated log: %v", err)
+		}
+		if evt.Pair != pairAddr {
+			t.Fatalf("PairCreated event pair mismatch: got %s want %s", evt.Pair.Hex(), pairAddr.Hex())
+		}
+		sawPairCreated = true
+		break
+	}
+	if !sawPairCreated {
+		t.Fatalf("expected PairCreated log for tx %s", createPairTx.Hash().Hex())
+	}
+
+	pairCode, err := ec.CodeAt(t.Context(), pairAddr, nil)
+	if err != nil {
+		t.Fatalf("failed to query pair code: %v", err)
+	}
+	if len(pairCode) == 0 {
+		t.Fatal("expected deployed pair code to be indexed and queryable")
 	}
 
 	// -------------------- approve tokens for pair --------------------
@@ -889,5 +1021,134 @@ func testQueryValidation(t *testing.T, th *TestHarness) {
 	}
 	if isPending {
 		t.Error("expected isPending=false for unknown hash")
+	}
+}
+
+func testProxyFactory(t *testing.T, th *TestHarness) {
+	node := th.Gateways[0]
+	ec, err := NewNativeEthClient(node)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	factoryClient, err := NewEthClient(contracts.ProxyFactoryMetaData, th.ethChainConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	factoryAddr := deploySmartContract(
+		t,
+		node,
+		factoryClient,
+	)
+
+	counterClient, err := NewEthClient(contracts.CounterMetaData, th.ethChainConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bytecode := common.FromHex(contracts.CounterMetaData.Bin)
+
+	env, err := factoryClient.EndorseTransact(t.Context(), node, factoryAddr, "createContract", bytecode)
+	if err != nil {
+		t.Fatalf("failed to endorse createContract: %v", err)
+	}
+	createContractTx, err := extractEthTxFromProposal(env.Proposal)
+	if err != nil {
+		t.Fatalf("failed to extract createContract tx from proposal: %v", err)
+	}
+
+	rws, err := endorsementToRWS(env)
+	if err != nil {
+		t.Fatalf("failed to unmarshal rws: %v", err)
+	}
+
+	var childAddrHex string
+	for _, w := range rws.Writes {
+		parts := strings.SplitN(w.Key, ":", 3)
+		if len(parts) == 3 && parts[0] == "acc" && parts[2] == "code" && !strings.EqualFold(parts[1], factoryAddr.Hex()) {
+			childAddrHex = parts[1]
+			break
+		}
+	}
+	if childAddrHex == "" {
+		t.Logf("RWS Write length in %s: %d", t.Name(), len(rws.Writes))
+		for _, w := range rws.Writes {
+			t.Logf("RWS Write in %s: %s", t.Name(), w.Key)
+		}
+		t.Logf("RWS writes: %+v", rws.Writes)
+		// skip the assertion if fabric-x mode because we know it doesn't give us standard read-set keys.
+		if th.Protocol == "fabric-x" {
+			t.Skip("skipping missing code write in RWS for fabric-x mode")
+		} else {
+			t.Fatal("expected child contract code write in RWS")
+		}
+	}
+
+	if err := factoryClient.Broadcast(t.Context(), node, env); err != nil {
+		t.Fatalf("failed to commit ProxyFactory: %v", err)
+	}
+
+	var writeCount int
+	childAddr := common.HexToAddress(childAddrHex)
+	var sawCodeWrite bool
+	var sawNonceWrite bool
+	for _, w := range rws.Writes {
+		if strings.HasPrefix(strings.ToLower(w.Key), "acc:"+strings.ToLower(childAddrHex)) && !w.IsDelete {
+			writeCount++
+		}
+		if strings.EqualFold(w.Key, "acc:"+childAddrHex+":code") && !w.IsDelete {
+			sawCodeWrite = true
+		}
+		if strings.EqualFold(w.Key, "acc:"+childAddrHex+":nonce") && !w.IsDelete {
+			sawNonceWrite = true
+		}
+	}
+	if writeCount < 2 {
+		t.Fatalf("expected writes to child address in RWS, got %d", writeCount)
+	}
+	if !sawCodeWrite || !sawNonceWrite {
+		t.Fatalf("expected code+nonce writes for child contract, saw code=%t nonce=%t", sawCodeWrite, sawNonceWrite)
+	}
+
+	receipt, err := ec.TransactionReceipt(t.Context(), createContractTx.Hash())
+	if err != nil {
+		t.Fatalf("failed to retrieve createContract receipt: %v", err)
+	}
+	if receipt.ContractAddress != (common.Address{}) {
+		t.Fatalf("factory call must not set receipt.ContractAddress, got %s", receipt.ContractAddress.Hex())
+	}
+
+	gotTx, _, err := ec.TransactionByHash(t.Context(), createContractTx.Hash())
+	if err != nil {
+		t.Fatalf("failed to retrieve createContract tx by hash: %v", err)
+	}
+	if gotTx == nil || gotTx.To() == nil || *gotTx.To() != factoryAddr {
+		t.Fatalf("expected createContract tx recipient to be factory address %s", factoryAddr.Hex())
+	}
+
+	childCode, err := ec.CodeAt(t.Context(), childAddr, nil)
+	if err != nil {
+		t.Fatalf("failed to query child code: %v", err)
+	}
+	if len(childCode) == 0 {
+		t.Fatal("expected child contract code to be queryable after factory deployment")
+	}
+
+	callSmartContract(t, counterClient, childAddr, node, "increment", nil)
+	querySmartContractExpect(t, counterClient, childAddr, th, big.NewInt(1), "count")
+
+	// CREATE failure path should be an execution error (revert), not txpool-style pre-validation rejection.
+	failedEnv, failedErr := factoryClient.EndorseTransact(t.Context(), node, factoryAddr, "createContract", []byte{})
+	if failedErr != nil {
+		t.Fatalf("empty bytecode CREATE should fail during execution, not pre-validation: %v", failedErr)
+	}
+	if len(failedEnv.Responses) == 0 || failedEnv.Responses[0] == nil || failedEnv.Responses[0].Response == nil {
+		t.Fatal("empty bytecode CREATE endorsement did not include a proposal response")
+	}
+	if failedEnv.Responses[0].Response.Status != 500 {
+		t.Fatalf("empty bytecode CREATE must surface execution failure status, got %d", failedEnv.Responses[0].Response.Status)
+	}
+	if !strings.Contains(strings.ToLower(failedEnv.Responses[0].Response.Message), "revert") {
+		t.Fatalf("empty bytecode CREATE should include revert error, got message: %q", failedEnv.Responses[0].Response.Message)
 	}
 }
