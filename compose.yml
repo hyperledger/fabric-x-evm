@@ -151,7 +151,7 @@ services:
       gateway:
         condition: service_healthy
     environment:
-      CHAIN_ID: "31337"
+      CHAIN_ID: "4011"
       DATABASE_URL: postgresql://blockscout:${POSTGRES_PASSWORD}@db:5432/blockscout
       ECTO_USE_SSL: "false"
       SECRET_KEY_BASE: ${SECRET_KEY_BASE}
