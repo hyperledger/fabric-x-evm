@@ -1046,7 +1046,7 @@ func testProxyFactory(t *testing.T, th *TestHarness) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bytecode := counterClient.bytecode
+	bytecode := common.FromHex(contracts.CounterMetaData.Bin)
 
 	env, err := factoryClient.EndorseTransact(t.Context(), node, factoryAddr, "createContract", bytecode)
 	if err != nil {
