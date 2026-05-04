@@ -98,7 +98,7 @@ services:
       fxconfig-init:
         condition: service_completed_successfully
     healthcheck:
-      test: [ "CMD-SHELL", "nc -z localhost 8545" ]
+      test: [ "CMD", "fxevm", "healthcheck" ]
       interval: 2s
       timeout: 3s
       retries: 30
