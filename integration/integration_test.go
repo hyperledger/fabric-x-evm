@@ -874,8 +874,8 @@ func testQueryValidation(t *testing.T, th *TestHarness) {
 			}
 
 			// byHash.Hash() is recomputed from RLP, so it diverges from the
-			// gateway-side hash. Real Ethereum-style header hashes are a
-			// separate piece of work; this PR only validates shape.
+			// gateway-side hash. Real Ethereum-style header hashes will be
+			// added later.
 			byHash, err := ec.BlockByHash(t.Context(), receipt.BlockHash)
 			if err != nil {
 				t.Fatalf("BlockByHash: %v", err)
