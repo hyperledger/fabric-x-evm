@@ -1,5 +1,9 @@
 # Configuration
 FABRIC_VERSION ?= 3.1.4
+UID := $(shell id -u)
+GID := $(shell id -g)
+export UID
+export GID
 
 .PHONY: build
 build:

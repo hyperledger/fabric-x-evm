@@ -61,6 +61,7 @@ services:
     image: docker.io/hyperledger/fabric-x-tools:latest
     pull_policy: missing
     container_name: fxconfig-init
+    user: "${UID:-1000}:${GID:-1000}"
     entrypoint:
       - fxconfig
       - namespace
@@ -72,7 +73,8 @@ services:
       - --wait
       - --config=/testdata/fxconfig-docker.yaml
     volumes:
-      - ./testdata:/testdata
+      - ./testdata/fxconfig-docker.yaml:/testdata/fxconfig-docker.yaml:ro,Z
+      - ./testdata/crypto:/testdata/crypto:ro,Z
     depends_on:
       test-committer:
         condition: service_healthy
@@ -83,11 +85,12 @@ services:
     pull_policy: build
     restart: unless-stopped
     container_name: gateway
+    user: "${UID:-1000}:${GID:-1000}"
     command: [ "start" ]
     ports:
       - "8545:8545"
     volumes:
-      - ./testdata:/testdata
+      - ./testdata/crypto:/testdata/crypto:ro,Z
     environment:
       TESTDATA: /testdata
       COMMITTER_HOST: committer
