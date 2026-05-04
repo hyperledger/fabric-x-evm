@@ -21,6 +21,7 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/holiman/uint256"
 	cmn "github.com/hyperledger/fabric-x-evm/common"
+	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	"github.com/stretchr/testify/require"
 )
 
@@ -94,7 +95,7 @@ func TestValidateTx_UnprotectedRejected(t *testing.T) {
 	require.NoError(t, err)
 
 	err = ValidateTx(context.Background(), tx, cfg, signer, &fakeState{})
-	require.ErrorIs(t, err, errUnprotectedTx)
+	require.ErrorIs(t, err, domain.ErrUnprotectedTx)
 }
 
 func TestValidateTx_ChainIDMismatch(t *testing.T) {
