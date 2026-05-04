@@ -126,25 +126,27 @@ func (r *RPCTransaction) MarshalJSON() ([]byte, error) {
 }
 
 type RPCBlock struct {
-	Number           hexutil.Uint64 `json:"number"`
-	Hash             common.Hash    `json:"hash"`
-	ParentHash       common.Hash    `json:"parentHash"`
-	Sha3Uncles       common.Hash    `json:"sha3Uncles"`
-	LogsBloom        hexutil.Bytes  `json:"logsBloom"`
-	TransactionsRoot common.Hash    `json:"transactionsRoot"`
-	StateRoot        common.Hash    `json:"stateRoot"`
-	ReceiptsRoot     common.Hash    `json:"receiptsRoot"`
-	Miner            common.Address `json:"miner"`
-	Difficulty       hexutil.Big    `json:"difficulty"`
-	TotalDifficulty  hexutil.Big    `json:"totalDifficulty"`
-	ExtraData        hexutil.Bytes  `json:"extraData"`
-	Size             hexutil.Uint64 `json:"size"`
-	GasLimit         hexutil.Uint64 `json:"gasLimit"`
-	GasUsed          hexutil.Uint64 `json:"gasUsed"`
-	BaseFeePerGas    hexutil.Big    `json:"baseFeePerGas"`
-	Timestamp        hexutil.Uint64 `json:"timestamp"`
-	Transactions     []any          `json:"transactions"`
-	Uncles           []common.Hash  `json:"uncles"`
+	Number           hexutil.Uint64   `json:"number"`
+	Hash             common.Hash      `json:"hash"`
+	ParentHash       common.Hash      `json:"parentHash"`
+	Sha3Uncles       common.Hash      `json:"sha3Uncles"`
+	LogsBloom        hexutil.Bytes    `json:"logsBloom"`
+	TransactionsRoot common.Hash      `json:"transactionsRoot"`
+	StateRoot        common.Hash      `json:"stateRoot"`
+	ReceiptsRoot     common.Hash      `json:"receiptsRoot"`
+	Miner            common.Address   `json:"miner"`
+	Difficulty       hexutil.Big      `json:"difficulty"`
+	TotalDifficulty  hexutil.Big      `json:"totalDifficulty"`
+	ExtraData        hexutil.Bytes    `json:"extraData"`
+	Size             hexutil.Uint64   `json:"size"`
+	GasLimit         hexutil.Uint64   `json:"gasLimit"`
+	GasUsed          hexutil.Uint64   `json:"gasUsed"`
+	BaseFeePerGas    hexutil.Big      `json:"baseFeePerGas"`
+	Timestamp        hexutil.Uint64   `json:"timestamp"`
+	Transactions     []any            `json:"transactions"`
+	Uncles           []common.Hash    `json:"uncles"`
+	MixHash          common.Hash      `json:"mixHash"`
+	Nonce            types.BlockNonce `json:"nonce"`
 }
 
 // rpcTransaction converts a domain.Transaction to an RPCTransaction with block metadata.
