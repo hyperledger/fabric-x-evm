@@ -982,8 +982,8 @@ github.com/hyperledger/fabric-x-committer v0.1.9 h1:3lgl1g3FkONogjJraRzhrD7gr89X
 github.com/hyperledger/fabric-x-committer v0.1.9/go.mod h1:MjD6yyRfnCk3QjmwbKySoApvQerfnR++f0exQyFcZNw=
 github.com/hyperledger/fabric-x-common v0.1.1-0.20260219094834-26c5a49ed548 h1:KTmH/ZtM43z39lcLxGm7G3I5iC7J7iZSVHqbCFcUUNo=
 github.com/hyperledger/fabric-x-common v0.1.1-0.20260219094834-26c5a49ed548/go.mod h1:+VPYRRCGAZo7+rlT55yK3aRmUbRJwQGlWg7lz0SLdMY=
-github.com/hyperledger/fabric-x-sdk v0.0.0-20260422070946-52f2faebbaff h1:ZpG2bdMGl1Ews34rDbWDxf4sfVRuuznLwTCVRcG7B5o=
-github.com/hyperledger/fabric-x-sdk v0.0.0-20260422070946-52f2faebbaff/go.mod h1:fOMpy5+efegUsET0d7RMH+CENyTpjZOD5D1bpZBWzos=
+github.com/hyperledger/fabric-x-sdk v0.0.0-20260504131414-b5072a94e1c9 h1:ltUyAZRIoxTdpRwUF8zI87Fz1ZGpMahQQDe9CYdNSeQ=
+github.com/hyperledger/fabric-x-sdk v0.0.0-20260504131414-b5072a94e1c9/go.mod h1:fOMpy5+efegUsET0d7RMH+CENyTpjZOD5D1bpZBWzos=
 github.com/iancoleman/strcase v0.2.0/go.mod h1:iwCmte+B7n89clKwxIoIXy/HfoL7AsD47ZCWhYzw7ho=
 github.com/ianlancetaylor/demangle v0.0.0-20181102032728-5e5cf60278f6/go.mod h1:aSSvb/t6k1mPoxDqO4vJh6VOCGPwU4O0C2/Eqndh1Sc=
 github.com/ianlancetaylor/demangle v0.0.0-20200824232613-28f6c0f3b639/go.mod h1:aSSvb/t6k1mPoxDqO4vJh6VOCGPwU4O0C2/Eqndh1Sc=

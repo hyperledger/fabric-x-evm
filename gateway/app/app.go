@@ -23,7 +23,6 @@ import (
 	"golang.org/x/sync/errgroup"
 	_ "modernc.org/sqlite"
 
-	"github.com/hyperledger/fabric-x-evm/endorser"
 	eapp "github.com/hyperledger/fabric-x-evm/endorser/app"
 	"github.com/hyperledger/fabric-x-evm/gateway/api"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
@@ -62,7 +61,7 @@ func NewWithSigner(cfg config.Config, gwSigner sdk.Signer) (*App, error) {
 	logger := sdk.NewStdLogger("gateway")
 
 	// Create endorsers and their synchronizers.
-	endorsers := make([]*endorser.Endorser, 0, len(cfg.Endorsers))
+	endorsers := make([]core.Endorser, 0, len(cfg.Endorsers))
 	endorserSyncs := make([]*network.Synchronizer, 0, len(cfg.Endorsers))
 	for i, ecfg := range cfg.Endorsers {
 		end, sync, err := eapp.NewEndorser(ecfg, cfg.Network, logger, false)
@@ -78,7 +77,7 @@ func NewWithSigner(cfg config.Config, gwSigner sdk.Signer) (*App, error) {
 
 // buildApp wires up the gateway from pre-built endorsers. Used by NewWithSigner
 // and directly by integration tests that manage their own endorsers.
-func buildApp(cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorsers []*endorser.Endorser, endorserSyncs []*network.Synchronizer) (*App, error) {
+func buildApp(cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorsers []core.Endorser, endorserSyncs []*network.Synchronizer) (*App, error) {
 	ec, err := core.NewEndorsementClient(endorsers, gwSigner, cfg.Network.Channel, cfg.Network.Namespace, cfg.Network.NsVersion)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create endorsement client: %w", err)

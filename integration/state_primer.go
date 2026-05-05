@@ -31,12 +31,17 @@ import (
 	"github.com/hyperledger/fabric-x-sdk/network"
 )
 
+type KVSSnapshotter interface {
+	NewSnapshot() endorser.ReadStore
+}
+
 // StatePrimer provides a builder pattern for priming ledger state.
 // It allows setting nonces, code, balances, and storage for addresses,
 // then commits all changes in a single transaction.
 type StatePrimer struct {
 	gw                *core.Gateway
-	db                endorser.ReadStore
+	kvs               KVSSnapshotter
+	reader            endorser.ReadStore
 	namespace         string
 	signer            sdk.Signer
 	builders          []endorsement.Builder
@@ -53,7 +58,7 @@ type StatePrimer struct {
 // NewStatePrimer creates a new state primer builder.
 func NewStatePrimer(
 	gw *core.Gateway,
-	db endorser.ReadStore,
+	db KVSSnapshotter,
 	namespace string,
 	signer sdk.Signer,
 	builders []endorsement.Builder,
@@ -62,7 +67,8 @@ func NewStatePrimer(
 	monotonicVersions bool,
 ) (*StatePrimer, error) {
 	// Create a DualStateDB with both Fabric and Ethereum state tracking
-	stateDB, err := endorser.NewStateDBWithDualState(context.TODO(), db, namespace, 0, monotonicVersions, nil)
+	store := db.NewSnapshot()
+	stateDB, err := endorser.NewStateDBWithDualState(context.TODO(), store, namespace, 0, monotonicVersions, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +80,8 @@ func NewStatePrimer(
 
 	return &StatePrimer{
 		gw:                gw,
-		db:                db,
+		reader:            store,
+		kvs:               db,
 		namespace:         namespace,
 		signer:            signer,
 		builders:          builders,
@@ -210,6 +217,8 @@ func (sp *StatePrimer) LoadFromJSON(jsonFilePath string) (*StatePrimer, error) {
 // Commit applies all state changes to the ledger by creating a proposal,
 // endorsing it, and submitting it through the normal Fabric commit flow.
 func (sp *StatePrimer) Commit(ctx context.Context, wait bool) error {
+	defer sp.reader.Close()
+
 	// create a fake ethereum tx so we can use it to track priming
 	tx, ethTxBytes, err := sp.fakeEthTx()
 	if err != nil {
@@ -257,7 +266,9 @@ func (sp *StatePrimer) Writes() blocks.ReadWriteSet {
 
 // Reset creates a new DualStateDB, discarding all uncommitted changes.
 func (sp *StatePrimer) Reset() (*StatePrimer, error) {
-	stateDB, err := endorser.NewStateDBWithDualState(context.TODO(), sp.db, sp.namespace, 0, sp.monotonicVersions, nil)
+	sp.reader.Close() // just in case
+	sp.reader = sp.kvs.NewSnapshot()
+	stateDB, err := endorser.NewStateDBWithDualState(context.TODO(), sp.reader, sp.namespace, 0, sp.monotonicVersions, nil)
 	if err != nil {
 		return nil, err
 	}

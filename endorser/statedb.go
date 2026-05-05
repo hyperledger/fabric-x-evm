@@ -63,8 +63,8 @@ type Log struct {
 
 // ReadStore is the read interface required to back a StateDB.
 type ReadStore interface {
-	Get(namespace, key string, lastBlock uint64) (*blocks.WriteRecord, error)
-	BlockNumber(ctx context.Context) (uint64, error)
+	Get(namespace, key string) (*blocks.WriteRecord, error)
+	Close() error
 }
 
 // revision represents a snapshot point in the journal.
@@ -197,7 +197,6 @@ type accessListAddSlotEntry struct {
 type StateDB struct {
 	namespace         string
 	store             ReadStore
-	blockNum          uint64
 	logs              []Log
 	monotonicVersions bool // if true, KVRead.Version is built from WriteRecord.Version (fabric-x MVCC semantics)
 
@@ -218,17 +217,9 @@ type StateDB struct {
 // monotonicVersions controls MVCC semantics: when true, KVRead versions use the per-key
 // monotonic version counter (Fabric-X); when false, they use (blockNum, txNum) (standard Fabric).
 func NewStateDB(ctx context.Context, store ReadStore, namespace string, blockNum uint64, monotonicVersions bool) (*StateDB, error) {
-	if blockNum == 0 {
-		var err error
-		blockNum, err = store.BlockNumber(ctx)
-		if err != nil {
-			return nil, err
-		}
-	}
 	return &StateDB{
 		namespace:         namespace,
 		store:             store,
-		blockNum:          blockNum,
 		monotonicVersions: monotonicVersions,
 		selfDestructed:    make(map[common.Address]struct{}),
 		accessList:        newAccessList(),
@@ -294,7 +285,7 @@ func (s *StateDB) getStateFromJournal(key string) ([]byte, bool) {
 // getStateFromStore reads from the underlying ReadStore and journals the read.
 // This creates an MVCC read dependency.
 func (s *StateDB) getStateFromStore(key string) ([]byte, error) {
-	record, err := s.store.Get(s.namespace, key, s.blockNum)
+	record, err := s.store.Get(s.namespace, key)
 	if err != nil {
 		return nil, err
 	}
@@ -497,7 +488,7 @@ func (s *StateDB) SetState(addr common.Address, slot common.Hash, value common.H
 		}
 	} else {
 		// Not in journal, read directly from store WITHOUT creating a read dependency
-		record, err := s.store.Get(s.namespace, key, s.blockNum)
+		record, err := s.store.Get(s.namespace, key)
 		if err != nil {
 			panic(fmt.Errorf("SetState failed to get previous value: %w", err))
 		}
@@ -705,11 +696,6 @@ func (s *StateDB) Result() blocks.ReadWriteSet {
 // Logs returns all non-reverted logs.
 func (s *StateDB) Logs() []Log {
 	return s.logs
-}
-
-// Version returns the block height of this snapshot.
-func (s *StateDB) Version() uint64 {
-	return s.blockNum
 }
 
 // -------------------- Stub implementations for unused methods --------------------
