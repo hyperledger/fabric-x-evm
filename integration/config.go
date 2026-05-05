@@ -150,7 +150,7 @@ func FabricSamplesConfig(testdataDir string) config.Config {
 // to avoid leaving stale state between test runs.
 func TestNodeConfig(protocol string, testdataDir string) config.Config {
 	var cfg config.Config
-	
+
 	switch protocol {
 	case "fabric-x", "":
 		cfg = XTestCommitterConfig()
@@ -162,12 +162,12 @@ func TestNodeConfig(protocol string, testdataDir string) config.Config {
 		// Return empty config, caller should handle error
 		return config.Config{}
 	}
-	
+
 	// Override with test-specific settings
 	cfg.Gateway.TrieDBPath = "" // Empty string = in-memory trie DB
 	cfg.Gateway.EnableTestRPC = true
 	cfg.Gateway.TestAccountsPath = filepath.Join(testdataDir, "test_accounts.json")
-	
+
 	return cfg
 }
 
