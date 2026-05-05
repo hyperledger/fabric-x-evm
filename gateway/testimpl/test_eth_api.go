@@ -20,6 +20,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/hyperledger/fabric-x-evm/gateway/api"
 )
 
@@ -138,4 +139,15 @@ func (api *TestEthAPI) SendTransaction(ctx context.Context, args TransactionArgs
 	}
 
 	return signedTx.Hash(), nil
+}
+
+// EstimateGas returns a fixed gas limit suitable for Hardhat/OpenZeppelin tests.
+// This test-only override returns 10M gas, which is sufficient for most contract
+// deployments and transactions in test environments.
+//
+// Production code (in gateway/api/eth.go) should implement proper gas estimation.
+func (api *TestEthAPI) EstimateGas(ctx context.Context, args map[string]any, block *rpc.BlockNumberOrHash) (*hexutil.Uint64, error) {
+	// Return a reasonable default gas limit for contract deployments and transactions
+	u := hexutil.Uint64(10000000) // 10M gas for test compatibility
+	return &u, nil
 }

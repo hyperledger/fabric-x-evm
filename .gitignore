@@ -4,6 +4,7 @@ node_modules
 .vscode
 testdata/*
 !testdata/ethereum-tests
+!testdata/openzeppelin-contracts
 !testdata/configtx.yaml
 !testdata/crypto-config.yaml
 !testdata/fxconfig.yaml
