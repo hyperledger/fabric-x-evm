@@ -108,10 +108,9 @@ start_gateway() {
         rm -rf testdata/triedb
     fi
     
-    # Start gateway with test RPC enabled
-    echo "Starting gateway (logs: /tmp/gateway_$$.log)..."
-    go run ./cmd/fxevm start --protocol fabric \
-        --enable-test-rpc \
+    # Start gateway in test node mode
+    echo "Starting test node (logs: /tmp/gateway_$$.log)..."
+    go run ./cmd/fxevm testnode --protocol fabric \
         --test-accounts-path testdata/test_accounts.json \
         > /tmp/gateway_$$.log 2>&1 &
     
@@ -209,10 +208,8 @@ main() {
     
     # Clean up any existing network from previous runs
     echo -e "${YELLOW}Cleaning up any existing Fabric network...${NC}"
-    if [[ -f "${NETWORK_PATH}" ]]; then
-        "${NETWORK_PATH}" down 2>/dev/null || true
-        docker kill peer0org2_basic_ccaas peer0org1_basic_ccaas 2>/dev/null || true
-    fi
+    cd "$FABLO_DIR" 2>/dev/null && ./fablo down 2>/dev/null || true
+    cd - > /dev/null || true
     
     # Check prerequisites
     check_prerequisites
@@ -223,7 +220,6 @@ main() {
     # Start Fabric network (must be in project root)
     cd "${PROJECT_ROOT}"
     echo -e "${YELLOW}Starting Fabric network...${NC}"
-    check_and_download_fabric_samples
     start_network_and_deploy_chaincode
     echo "Waiting for network to fully stabilize..."
     sleep 10

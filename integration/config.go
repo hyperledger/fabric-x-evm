@@ -145,6 +145,32 @@ func FabricSamplesConfig(testdataDir string) config.Config {
 	}
 }
 
+// TestNodeConfig returns configuration optimized for running test nodes.
+// This configuration uses in-memory storage for both block DB and trie DB
+// to avoid leaving stale state between test runs.
+func TestNodeConfig(protocol string, testdataDir string) config.Config {
+	var cfg config.Config
+	
+	switch protocol {
+	case "fabric-x", "":
+		cfg = XTestCommitterConfig()
+	case "fabric":
+		// Use FabloConfig for Fablo-managed networks
+		// Pass testdata/fablo as the base directory
+		cfg = FabloConfig(filepath.Join(testdataDir, "fablo"))
+	default:
+		// Return empty config, caller should handle error
+		return config.Config{}
+	}
+	
+	// Override with test-specific settings
+	cfg.Gateway.TrieDBPath = "" // Empty string = in-memory trie DB
+	cfg.Gateway.EnableTestRPC = true
+	cfg.Gateway.TestAccountsPath = filepath.Join(testdataDir, "test_accounts.json")
+	
+	return cfg
+}
+
 // XTestCommitterConfig returns configuration for the Fabric X test committer.
 // This configuration is used for integration testing with a local test network.
 func XTestCommitterConfig() config.Config {
