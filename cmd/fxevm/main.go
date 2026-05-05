@@ -13,7 +13,6 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"path"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -37,6 +36,7 @@ func main() {
 	}
 
 	root.AddCommand(newStartCmd())
+	root.AddCommand(newTestNodeCmd())
 
 	if err := root.ExecuteContext(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -59,6 +59,7 @@ func newStartCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&protocol, "protocol", "fabric-x", "Protocol to use: fabric-x or fabric")
+
 	return cmd
 }
 
@@ -68,14 +69,72 @@ func runStart(ctx context.Context, protocol string) error {
 	case "fabric-x", "":
 		cfg = integration.XTestCommitterConfig()
 	case "fabric":
-		cwd, err := os.Getwd()
-		if err != nil {
-			return err
-		}
-		cfg = integration.FabricSamplesConfig(path.Join(cwd, "..", "testdata"))
+		// Pass relative path - FabricSamplesConfig will resolve it from project root
+		cfg = integration.FabricSamplesConfig("testdata")
 	default:
 		return errors.New("start with --protocol fabric-x or --protocol fabric")
 	}
+
+	application, err := app.New(cfg)
+	if err != nil {
+		return err
+	}
+
+	return application.Run(ctx)
+}
+
+// newTestNodeCmd returns the command to start a test node with test RPC enabled.
+// This is a test-only mode that should NEVER be used in production.
+func newTestNodeCmd() *cobra.Command {
+	var protocol string
+	var testAccountsPath string
+
+	cmd := &cobra.Command{
+		Use:   "testnode",
+		Short: "Start a test node with test RPC enabled (UNSAFE - for testing only)",
+		Long: `Start a test node with test RPC methods enabled.
+
+WARNING: This mode enables server-side transaction signing and other
+test-only features that are UNSAFE for production use. Only use this
+for development and testing with Hardhat, OpenZeppelin tests, etc.
+
+This mode automatically:
+- Enables test RPC methods (eth_accounts, eth_sendTransaction)
+- Uses in-memory trie DB to avoid stale state between runs
+- Returns test-friendly gas estimates
+
+NEVER use this in production environments.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runTestNode(cmd.Context(), protocol, testAccountsPath)
+		},
+	}
+
+	cmd.Flags().StringVar(&protocol, "protocol", "fabric-x", "Protocol to use: fabric-x or fabric")
+	cmd.Flags().StringVar(&testAccountsPath, "test-accounts-path", "testdata/test_accounts.json",
+		"Path to JSON file containing test accounts with private keys")
+
+	return cmd
+}
+
+func runTestNode(ctx context.Context, protocol string, testAccountsPath string) error {
+	// Use test-specific configuration with in-memory trie DB
+	cfg := integration.TestNodeConfig(protocol, "testdata")
+	if cfg.Network.Protocol == "" {
+		return fmt.Errorf("testnode with --protocol fabric-x or --protocol fabric")
+	}
+
+	// Override test accounts path if specified
+	if testAccountsPath != "" {
+		cfg.Gateway.TestAccountsPath = testAccountsPath
+	}
+
+	fmt.Println("========================================")
+	fmt.Println("WARNING: Test node mode enabled")
+	fmt.Println("WARNING: Test RPC methods enabled")
+	fmt.Println("WARNING: Server-side signing is UNSAFE")
+	fmt.Println("WARNING: Using in-memory trie DB")
+	fmt.Println("WARNING: NEVER use in production")
+	fmt.Println("========================================")
 
 	application, err := app.New(cfg)
 	if err != nil {
