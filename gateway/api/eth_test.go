@@ -264,6 +264,7 @@ func TestRPCBlockMarshalJSON(t *testing.T) {
 type stubBackend struct {
 	blockByHash map[common.Hash]*domain.Block
 	getBlockErr error
+	callErr     error
 }
 
 func (s *stubBackend) ChainID(ctx context.Context) (*big.Int, error) { return big.NewInt(1), nil }
@@ -316,7 +317,7 @@ func (s *stubBackend) NonceAt(ctx context.Context, account common.Address, block
 }
 func (s *stubBackend) SendTransaction(ctx context.Context, tx *types.Transaction) error { return nil }
 func (s *stubBackend) CallContract(ctx context.Context, call ethereum.CallMsg, blockNumber *big.Int) ([]byte, error) {
-	return nil, nil
+	return nil, s.callErr
 }
 func (s *stubBackend) TransactionByHash(ctx context.Context, hash common.Hash) (*domain.Transaction, bool, error) {
 	return nil, false, nil
@@ -375,5 +376,48 @@ func TestArgsToCallMsg_BadHexFieldsAreInvalidParams(t *testing.T) {
 				t.Errorf("code = %d, want -32602 (InvalidParams)", rpcErr.ErrorCode())
 			}
 		})
+	}
+}
+
+func TestCall_RevertSurfacesAsExecutionReverted(t *testing.T) {
+	payload := []byte{0x08, 0xc3, 0x79, 0xa0, 0xde, 0xad, 0xbe, 0xef}
+	api := NewEthAPI(&stubBackend{
+		callErr: &domain.RevertError{
+			Reason: "execution reverted: out of stock",
+			Data:   payload,
+		},
+	})
+
+	_, err := api.Call(context.Background(), map[string]any{}, rpc.BlockNumberOrHashWithNumber(rpc.LatestBlockNumber))
+
+	var rpcErr rpc.Error
+	if !errors.As(err, &rpcErr) {
+		t.Fatalf("expected rpc.Error, got %T (%v)", err, err)
+	}
+	if rpcErr.ErrorCode() != -32000 {
+		t.Errorf("code = %d, want -32000 (ExecutionReverted)", rpcErr.ErrorCode())
+	}
+	var dataErr rpc.DataError
+	if !errors.As(err, &dataErr) {
+		t.Fatalf("revert must satisfy rpc.DataError")
+	}
+	if dataErr.ErrorData() != "0x08c379a0deadbeef" {
+		t.Errorf("ErrorData() = %v, want 0x08c379a0deadbeef", dataErr.ErrorData())
+	}
+}
+
+func TestCall_NonRevertBackendErrorIsInternal(t *testing.T) {
+	api := NewEthAPI(&stubBackend{
+		callErr: errors.New("endorser unreachable"),
+	})
+
+	_, err := api.Call(context.Background(), map[string]any{}, rpc.BlockNumberOrHashWithNumber(rpc.LatestBlockNumber))
+
+	var rpcErr rpc.Error
+	if !errors.As(err, &rpcErr) {
+		t.Fatalf("expected rpc.Error, got %T (%v)", err, err)
+	}
+	if rpcErr.ErrorCode() != -32603 {
+		t.Errorf("code = %d, want -32603 (Internal)", rpcErr.ErrorCode())
 	}
 }

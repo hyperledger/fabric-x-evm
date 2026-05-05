@@ -10,6 +10,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/ethereum/go-ethereum"
@@ -18,6 +19,7 @@ import (
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-common/protoutil"
 	"github.com/hyperledger/fabric-x-evm/common"
+	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	"github.com/hyperledger/fabric-x-evm/utils"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
@@ -104,16 +106,33 @@ func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Tra
 }
 
 // CallContract queries a smart contract and returns the value.
+// EVM reverts are surfaced as *domain.RevertError so the API layer can map
+// them to JSON-RPC -32000 with the raw revert payload as ErrorData.
 func (e *EndorsementClient) CallContract(ctx context.Context, args ethereum.CallMsg, blockInfo *utils.BlockInfo) ([]byte, error) {
 	res, err := e.endorsers[0].ProcessCall(ctx, &args, blockInfo)
 	if err != nil {
 		return nil, fmt.Errorf("process call: %w", err)
 	}
 	if res.Response.Status < 200 || res.Response.Status >= 400 {
+		if revert := classifyCallRevert(res.Response); revert != nil {
+			return nil, revert
+		}
 		return nil, fmt.Errorf("query response was not successful, error code %d, msg %s", res.Response.Status, res.Response.Message)
 	}
 
 	return res.Response.Payload, nil
+}
+
+// classifyCallRevert returns a *domain.RevertError when the endorser response
+// represents an EVM revert ("execution reverted" message prefix), else nil.
+// The endorser's formatRevert helper produces "execution reverted: <reason>"
+// on a decoded revert and "execution reverted" when the payload cannot be
+// ABI-unpacked; either form matches.
+func classifyCallRevert(resp *peer.Response) *domain.RevertError {
+	if resp == nil || !strings.HasPrefix(resp.Message, domain.ErrExecutionReverted.Error()) {
+		return nil
+	}
+	return &domain.RevertError{Reason: resp.Message, Data: resp.Payload}
 }
 
 // GetState returns ledger state.

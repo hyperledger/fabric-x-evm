@@ -135,11 +135,14 @@ func (f *Endorser) ProcessStateQuery(ctx context.Context, query common.StateQuer
 
 func response(res []byte, err error) *peer.ProposalResponse {
 	if err != nil {
+		// Carry res through on error so callers receive the EVM revert payload
+		// for ErrExecutionReverted; for non-revert errors res is empty.
 		return &peer.ProposalResponse{
 			Version: 1,
 			Response: &peer.Response{
 				Status:  500,
 				Message: err.Error(),
+				Payload: res,
 			},
 		}
 	}
