@@ -4,20 +4,6 @@ Copyright IBM Corp. All Rights Reserved.
 SPDX-License-Identifier: LGPL-3.0-or-later
 */
 
-// Package endorser implements a lightweight versioned key-value store (LightKVS)
-// with snapshot isolation for concurrent readers and a single writer.
-//
-// LightKVS uses structural sharing with atomic pointer swaps to provide:
-// - Lock-free reads with snapshot isolation
-// - Atomic batch updates
-// - Automatic garbage collection via Go's GC
-// - Space-efficient storage (only changed values are copied)
-//
-// Design:
-// - Each snapshot is a map[string]*ValueVersion
-// - Writer creates new snapshot by cloning the map and updating changed entries
-// - Readers hold references to their snapshot, preventing GC
-// - Go's GC automatically cleans up unreferenced snapshots and values
 package endorser
 
 import (
