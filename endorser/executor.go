@@ -18,7 +18,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
 	"github.com/ethereum/go-ethereum/core"
-	ethstate "github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/params"
@@ -49,9 +48,8 @@ type EVMEngine struct {
 	monotonicVersions bool
 
 	// LightKVS provides versioned storage with snapshot isolation
-	kvs        KVSSnapshotter
-	ethStateDB *ethstate.StateDB
-	evmConfig  EVMConfig
+	kvs       KVSSnapshotter
+	evmConfig EVMConfig
 }
 
 // NewEVMEngine creates a new EVMEngine.
@@ -61,18 +59,7 @@ func NewEVMEngine(namespace string, kvs KVSSnapshotter, evmConfig EVMConfig, mon
 		kvs:               kvs,
 		monotonicVersions: monotonicVersions,
 		evmConfig:         evmConfig,
-		ethStateDB:        nil, // Will be set when priming state
 	}
-}
-
-// SetEthStateDB sets the ethStateDB for the EVMEngine.
-func (e *EVMEngine) SetEthStateDB(ethStateDB *ethstate.StateDB) {
-	e.ethStateDB = ethStateDB
-}
-
-// GetEthStateDB returns the ethStateDB from the EVMEngine.
-func (e *EVMEngine) GetEthStateDB() *ethstate.StateDB {
-	return e.ethStateDB
 }
 
 // Execute runs a state-changing transaction and returns the EVM result,
@@ -86,7 +73,7 @@ func (e *EVMEngine) Execute(blockInfo *utils.BlockInfo, tx *types.Transaction) (
 	}
 	defer ex.Close()
 
-	ret, err := ex.send(tx)
+	ret, err := ex.Send(tx)
 	if err != nil {
 		return endorsement.ExecutionResult{}, err
 	}
@@ -115,7 +102,7 @@ func (e *EVMEngine) Call(msg ethereum.CallMsg, blockNumber *big.Int) ([]byte, er
 	}
 	defer ex.Close()
 
-	return ex.call(msg)
+	return ex.Call(msg)
 }
 
 func (e *EVMEngine) BalanceAt(_ context.Context, account common.Address, blockNumber *big.Int) (*big.Int, error) {
@@ -156,7 +143,7 @@ func (e *EVMEngine) NonceAt(_ context.Context, account common.Address, blockNumb
 
 // newExecutor creates a fresh executor with an isolated StateDB.
 // stateBlockNum selects the Fabric block height for the state snapshot (0 = latest).
-func (e *EVMEngine) newExecutor(blockInfo *utils.BlockInfo, stateBlockNum uint64) (*executor, error) {
+func (e *EVMEngine) newExecutor(blockInfo *utils.BlockInfo, stateBlockNum uint64) (*Executor, error) {
 	// Begin a new reader to get snapshot isolation
 	reader := e.kvs.NewSnapshot()
 
@@ -166,7 +153,7 @@ func (e *EVMEngine) newExecutor(blockInfo *utils.BlockInfo, stateBlockNum uint64
 		reader.Close()
 		return nil, err
 	}
-	return newExecutor(stateDB, reader, blockInfo, e.evmConfig, e.ethStateDB)
+	return NewExecutor(stateDB, reader, blockInfo, e.evmConfig)
 }
 
 // newSnapshotAt returns an ExtendedStateDB over the state at the given Fabric block height (0 = latest).
@@ -189,9 +176,8 @@ func (e *EVMEngine) newSnapshotAt(blockNumber *big.Int) (ExtendedStateDB, ReadSt
 	return stateDB, reader, nil
 }
 
-// executor is a per-transaction EVM execution context. It is an internal type;
-// callers outside this package interact with EVMEngine instead.
-type executor struct {
+// Executor is a per-transaction EVM execution context.
+type Executor struct {
 	state    ExtendedStateDB
 	reader   ReadStore // reader that must be closed when done
 	chainCfg *params.ChainConfig
@@ -200,11 +186,12 @@ type executor struct {
 	freeGas  bool
 }
 
-// newExecutor creates an executor with the provided StateDB and reader.
+// NewExecutor creates an Executor with the provided StateDB and reader.
 // If blockInfo is not provided, the store's current version is used as the block number.
 // evmConfig.ChainConfig must be set.
-// The caller is responsible for closing the reader when done with the executor.
-func newExecutor(stateDB *StateDB, reader ReadStore, blockInfo *utils.BlockInfo, evmConfig EVMConfig, ethStateDB *ethstate.StateDB) (*executor, error) {
+// The caller is responsible for closing the reader when done with the Executor.
+// The stateDB parameter accepts ExtendedStateDB interface to allow DualStateDB for testing.
+func NewExecutor(stateDB ExtendedStateDB, reader ReadStore, blockInfo *utils.BlockInfo, evmConfig EVMConfig) (*Executor, error) {
 	if evmConfig.ChainConfig == nil {
 		return nil, fmt.Errorf("evmConfig.ChainConfig must be set")
 	}
@@ -251,19 +238,8 @@ func newExecutor(stateDB *StateDB, reader ReadStore, blockInfo *utils.BlockInfo,
 		vmConfig = *evmConfig.VMConfig
 	}
 
-	// if we have been given a non-nil ethStateDB instance, it means that we are meant
-	// to instantiate a dual state DB that uses the ethStateDB instance alongside the
-	// fabric state DB to handle state updates so that we can track eth root state evolution
-	var finalStateDB ExtendedStateDB
-	if ethStateDB == nil {
-		finalStateDB = stateDB
-	} else {
-		// NOTE: this is only meant to be used in testing
-		finalStateDB = NewDualStateDB(ethStateDB, stateDB)
-	}
-
-	return &executor{
-		state:    finalStateDB,
+	return &Executor{
+		state:    stateDB,
 		reader:   reader,
 		chainCfg: evmConfig.ChainConfig,
 		blockCtx: blockCtx,
@@ -273,8 +249,8 @@ func newExecutor(stateDB *StateDB, reader ReadStore, blockInfo *utils.BlockInfo,
 }
 
 // Close releases the reader's snapshot reference.
-// This should be called when the executor is done to allow garbage collection.
-func (h *executor) Close() error {
+// This should be called when the Executor is done to allow garbage collection.
+func (h *Executor) Close() error {
 	if h.reader != nil {
 		return h.reader.Close()
 	}
@@ -360,18 +336,18 @@ func CallMsgToMessage(msg ethereum.CallMsg, baseFee *big.Int, skipNonceCheck, sk
 	}
 }
 
-// call executes a read-only call (eth_call semantics).
+// Call executes a read-only call (eth_call semantics).
 // An empty revert is treated as a non-error: many Ethereum tools probe contracts this way.
-func (h *executor) call(msg ethereum.CallMsg) ([]byte, error) {
-	ret, err := h.execute(CallMsgToMessage(msg, h.blockCtx.BaseFee, true, true))
+func (h *Executor) Call(msg ethereum.CallMsg) ([]byte, error) {
+	ret, err := h.Execute(CallMsgToMessage(msg, h.blockCtx.BaseFee, true, true))
 	if errors.Is(err, vm.ErrExecutionReverted) && len(ret) == 0 {
 		return nil, nil // empty revert on a call is not an error
 	}
 	return ret, formatRevert(ret, err)
 }
 
-// send executes a state-changing transaction, increments the sender nonce and returns the result.
-func (h *executor) send(tx *types.Transaction) ([]byte, error) {
+// Send executes a state-changing transaction, increments the sender nonce and returns the result.
+func (h *Executor) Send(tx *types.Transaction) ([]byte, error) {
 	signer := types.MakeSigner(h.chainCfg, h.blockCtx.BlockNumber, h.blockCtx.Time)
 
 	from, err := types.Sender(signer, tx)
@@ -393,7 +369,7 @@ func (h *executor) send(tx *types.Transaction) ([]byte, error) {
 		return nil, err
 	}
 
-	ret, err := h.execute(msg)
+	ret, err := h.Execute(msg)
 	if err != nil {
 		return nil, formatRevert(ret, err)
 	}
@@ -401,9 +377,9 @@ func (h *executor) send(tx *types.Transaction) ([]byte, error) {
 	return ret, nil
 }
 
-// execute dispatches a call or deployment to the EVM using ApplyMessage.
+// Execute dispatches a call or deployment to the EVM using ApplyMessage.
 // A nil value defaults to 0; zero gas defaults to 5_000_000.
-func (h *executor) execute(msg *core.Message) ([]byte, error) {
+func (h *Executor) Execute(msg *core.Message) ([]byte, error) {
 	// Default gas limit to 5_000_000 if not set
 	if msg.GasLimit == 0 {
 		msg.GasLimit = 5_000_000
