@@ -14,8 +14,8 @@ import (
 	"regexp"
 
 	"github.com/ethereum/go-ethereum"
+	ethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
-	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-evm/common"
@@ -35,9 +35,20 @@ type PeerConf struct {
 
 // Endorser implements the ProcessProposal API to simulate the execution of ethereum transaction
 type Endorser struct {
-	engine    *EVMEngine
+	Engine    EVMEngineInterface // Exported to allow injection of wrappers
 	builder   endorsement.Builder
 	ethSigner types.Signer
+}
+
+// EVMEngineInterface defines the interface for EVM execution engines.
+// This allows both *EVMEngine and *testimpl.EVMEngineWrapper to be used.
+type EVMEngineInterface interface {
+	Execute(blockInfo *utils.BlockInfo, tx *types.Transaction) (endorsement.ExecutionResult, error)
+	Call(msg ethereum.CallMsg, blockNumber *big.Int) ([]byte, error)
+	BalanceAt(ctx context.Context, account ethcommon.Address, blockNumber *big.Int) (*big.Int, error)
+	StorageAt(ctx context.Context, account ethcommon.Address, key ethcommon.Hash, blockNumber *big.Int) ([]byte, error)
+	CodeAt(ctx context.Context, account ethcommon.Address, blockNumber *big.Int) ([]byte, error)
+	NonceAt(ctx context.Context, account ethcommon.Address, blockNumber *big.Int) (uint64, error)
 }
 
 // New returns a new Endorser.
@@ -48,20 +59,10 @@ type Endorser struct {
 //   - `chainID`: Ethereum chain ID used to validate transaction signatures.
 func New(engine *EVMEngine, builder endorsement.Builder, chainID int64) (*Endorser, error) {
 	return &Endorser{
-		engine:    engine,
+		Engine:    engine,
 		builder:   builder,
 		ethSigner: types.LatestSignerForChainID(big.NewInt(chainID)),
 	}, nil
-}
-
-// SetEthStateDB sets the ethStateDB on the underlying EVMEngine.
-func (f *Endorser) SetEthStateDB(ethStateDB *state.StateDB) {
-	f.engine.SetEthStateDB(ethStateDB)
-}
-
-// GetEthStateDB returns the ethStateDB from the underlying EVMEngine.
-func (f *Endorser) GetEthStateDB() *state.StateDB {
-	return f.engine.GetEthStateDB()
 }
 
 // ProcessEVMTransaction processes an Ethereum transaction and returns a signed proposal response
@@ -72,7 +73,7 @@ func (f *Endorser) ProcessEVMTransaction(ctx context.Context, inv endorsement.In
 	}
 
 	// Execute the transaction
-	res, err := f.engine.Execute(blockInfo, ethTx)
+	res, err := f.Engine.Execute(blockInfo, ethTx)
 	if err != nil {
 		// Distinguish between pre-execution validation errors and execution errors.
 		// Pre-execution errors (from ApplyMessage) indicate the transaction is invalid
@@ -97,7 +98,7 @@ func (f *Endorser) ProcessCall(ctx context.Context, callMsg *ethereum.CallMsg, b
 	if blockInfo != nil {
 		blockNumber = blockInfo.BlockNumber
 	}
-	res, err := f.engine.Call(*callMsg, blockNumber)
+	res, err := f.Engine.Call(*callMsg, blockNumber)
 
 	return response(res, err), nil
 }
@@ -110,17 +111,17 @@ func (f *Endorser) ProcessStateQuery(ctx context.Context, query common.StateQuer
 
 	switch query.Type {
 	case common.QueryTypeBalance:
-		bal, balErr := f.engine.BalanceAt(ctx, query.Account, query.BlockNumber)
+		bal, balErr := f.Engine.BalanceAt(ctx, query.Account, query.BlockNumber)
 		if balErr != nil {
 			return response(nil, balErr), nil
 		}
 		res = bal.Bytes()
 	case common.QueryTypeCode:
-		res, err = f.engine.CodeAt(ctx, query.Account, query.BlockNumber)
+		res, err = f.Engine.CodeAt(ctx, query.Account, query.BlockNumber)
 	case common.QueryTypeStorage:
-		res, err = f.engine.StorageAt(ctx, query.Account, query.Key, query.BlockNumber)
+		res, err = f.Engine.StorageAt(ctx, query.Account, query.Key, query.BlockNumber)
 	case common.QueryTypeNonce:
-		nonce, nonceErr := f.engine.NonceAt(ctx, query.Account, query.BlockNumber)
+		nonce, nonceErr := f.Engine.NonceAt(ctx, query.Account, query.BlockNumber)
 		if nonceErr != nil {
 			return response(nil, nonceErr), nil
 		}
