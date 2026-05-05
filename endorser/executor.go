@@ -55,7 +55,6 @@ type EVMEngine struct {
 }
 
 // NewEVMEngine creates a new EVMEngine.
-// The db parameter should be a KVSSnapshotter to provide snapshot isolation.
 func NewEVMEngine(namespace string, kvs KVSSnapshotter, evmConfig EVMConfig, monotonicVersions bool) *EVMEngine {
 	return &EVMEngine{
 		namespace:         namespace,
