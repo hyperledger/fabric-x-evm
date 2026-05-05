@@ -36,7 +36,7 @@ type Chain struct {
 // block, and returns a ready Chain. dbConnStr uses the modernc SQLite DSN format;
 // triePath is the directory for the PebbleDB trie (empty string = in-memory).
 // The caller must register the SQLite driver (e.g. _ "modernc.org/sqlite") before calling.
-func NewChain(dbConnStr, triePath string) (*Chain, error) {
+func NewChain(dbConnStr, triePath string, withTrie bool) (*Chain, error) {
 	db, err := sqlite.Open(dbConnStr)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
@@ -56,10 +56,13 @@ func NewChain(dbConnStr, triePath string) (*Chain, error) {
 		prevHash = common.BytesToHash(latest.BlockHash)
 	}
 
-	ts, err := trie.New(triePath, initialRoot)
-	if err != nil {
-		db.Close()
-		return nil, fmt.Errorf("open trie store: %w", err)
+	var ts *trie.Store
+	if withTrie {
+		ts, err = trie.New(triePath, initialRoot)
+		if err != nil {
+			db.Close()
+			return nil, fmt.Errorf("open trie store: %w", err)
+		}
 	}
 
 	return &Chain{Store: blockStore, db: db, ts: ts, prevHash: prevHash}, nil
@@ -70,12 +73,17 @@ func NewChain(dbConnStr, triePath string) (*Chain, error) {
 func (c *Chain) Handle(ctx context.Context, b blocks.Block) error {
 	ebl := c.convertToDomain(b)
 
-	stateRoot, err := c.ts.Commit(ctx, b)
-	if err != nil {
-		return err // irrecoverable
+	if c.ts != nil {
+		stateRoot, err := c.ts.Commit(ctx, b)
+		if err != nil {
+			return err // irrecoverable
+		}
+		ebl.StateRoot = stateRoot.Bytes()
+		ebl.ParentHash = c.prevHash.Bytes()
+	} else {
+		ebl.StateRoot = types.EmptyRootHash[:]
+		ebl.ParentHash = types.EmptyRootHash[:]
 	}
-	ebl.StateRoot = stateRoot.Bytes()
-	ebl.ParentHash = c.prevHash.Bytes()
 	c.prevHash = common.BytesToHash(ebl.BlockHash)
 
 	if err := c.Store.InsertBlock(ctx, ebl); err != nil {
@@ -87,7 +95,9 @@ func (c *Chain) Handle(ctx context.Context, b blocks.Block) error {
 
 // Close releases the trie and database resources.
 func (c *Chain) Close() error {
-	c.ts.Close()
+	if c.ts != nil {
+		c.ts.Close()
+	}
 	return c.db.Close()
 }
 

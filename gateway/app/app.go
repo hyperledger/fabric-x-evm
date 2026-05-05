@@ -101,7 +101,7 @@ func buildApp(cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorse
 		return nil, fmt.Errorf("failed to create submitter: %w", err)
 	}
 
-	chain, err := core.NewChain(cfg.Gateway.DbConnStr, cfg.Gateway.TrieDBPath)
+	chain, err := core.NewChain(cfg.Gateway.DbConnStr, cfg.Gateway.TrieDBPath, false)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create chain: %w", err)
 	}
