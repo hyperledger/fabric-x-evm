@@ -49,27 +49,21 @@ func main() {
 // once we load the configuration from yaml files.
 func newStartCmd() *cobra.Command {
 	var protocol string
-	var enableTestRPC bool
-	var testAccountsPath string
 
 	cmd := &cobra.Command{
 		Use:   "start",
 		Short: "Start the EVM gateway with embedded endorsers (single-process mode)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runStart(cmd.Context(), protocol, enableTestRPC, testAccountsPath)
+			return runStart(cmd.Context(), protocol)
 		},
 	}
 
 	cmd.Flags().StringVar(&protocol, "protocol", "fabric-x", "Protocol to use: fabric-x or fabric")
-	cmd.Flags().BoolVar(&enableTestRPC, "enable-test-rpc", false,
-		"Enable test RPC methods (eth_accounts, eth_sendTransaction) - UNSAFE for production")
-	cmd.Flags().StringVar(&testAccountsPath, "test-accounts-path", "testdata/test_accounts.json",
-		"Path to JSON file containing test accounts with private keys")
 
 	return cmd
 }
 
-func runStart(ctx context.Context, protocol string, enableTestRPC bool, testAccountsPath string) error {
+func runStart(ctx context.Context, protocol string) error {
 	var cfg config.Config
 	switch protocol {
 	case "fabric-x", "":
@@ -79,17 +73,6 @@ func runStart(ctx context.Context, protocol string, enableTestRPC bool, testAcco
 		cfg = integration.FabricSamplesConfig("testdata")
 	default:
 		return errors.New("start with --protocol fabric-x or --protocol fabric")
-	}
-
-	// Override test RPC settings from CLI flags
-	if enableTestRPC {
-		cfg.Gateway.EnableTestRPC = true
-		cfg.Gateway.TestAccountsPath = testAccountsPath
-		fmt.Println("========================================")
-		fmt.Println("WARNING: Test RPC methods enabled")
-		fmt.Println("WARNING: Server-side signing is UNSAFE")
-		fmt.Println("WARNING: NEVER use in production")
-		fmt.Println("========================================")
 	}
 
 	application, err := app.New(cfg)
