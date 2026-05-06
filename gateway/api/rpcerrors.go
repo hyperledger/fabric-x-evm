@@ -9,6 +9,7 @@ package api
 import (
 	"errors"
 
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/hyperledger/fabric-x-evm/gateway/api/rpcerr"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 )
@@ -24,4 +25,19 @@ func classifyValidationError(err error) error {
 		return rpcerr.Internal(err)
 	}
 	return rpcerr.TxRejected(err)
+}
+
+// classifyCallError maps a Backend.CallContract error to a typed JSON-RPC
+// error. EVM reverts (*domain.RevertError) surface as -32000 with the raw
+// revert payload as ErrorData (geth eth_call contract); everything else is
+// an unexpected backend failure (-32603).
+func classifyCallError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var revert *domain.RevertError
+	if errors.As(err, &revert) {
+		return rpcerr.ExecutionReverted(revert.Reason, hexutil.Encode(revert.Data))
+	}
+	return rpcerr.Internal(err)
 }

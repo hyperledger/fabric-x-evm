@@ -21,6 +21,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/params"
+	fxcommon "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/utils"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
@@ -66,6 +67,7 @@ func NewEVMEngine(namespace string, kvs KVSSnapshotter, evmConfig EVMConfig, mon
 // the Fabric read-write set, and any EVM logs emitted.
 // State is always read from the latest block: endorsement must simulate against current state
 // so that the resulting read-write set passes MVCC validation at commit time.
+// Reverts produce a valid endorsement (Status 201 + revert event) instead of an error.
 func (e *EVMEngine) Execute(blockInfo *utils.BlockInfo, tx *types.Transaction) (endorsement.ExecutionResult, error) {
 	ex, err := e.newExecutor(blockInfo, 0)
 	if err != nil {
@@ -74,9 +76,23 @@ func (e *EVMEngine) Execute(blockInfo *utils.BlockInfo, tx *types.Transaction) (
 	defer ex.Close()
 
 	ret, err := ex.Send(tx)
-	if err != nil {
+	if err != nil && !errors.Is(err, vm.ErrExecutionReverted) {
 		return endorsement.ExecutionResult{}, err
 	}
+	if errors.Is(err, vm.ErrExecutionReverted) {
+		event, mErr := fxcommon.MarshalRevert(ret, "", tx.Hash().Hex())
+		if mErr != nil {
+			return endorsement.ExecutionResult{}, fmt.Errorf("marshal revert event: %w", mErr)
+		}
+		return endorsement.ExecutionResult{
+			RWS:     ex.state.Result(),
+			Event:   event,
+			Status:  201,
+			Message: err.Error(),
+			Payload: ret,
+		}, nil
+	}
+
 	var logs []byte
 	if l := ex.state.Logs(); len(l) > 0 {
 		logs, err = json.Marshal(l)

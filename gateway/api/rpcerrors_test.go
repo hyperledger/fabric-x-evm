@@ -74,3 +74,60 @@ func TestClassifyValidationError_PreservesMessage(t *testing.T) {
 		t.Errorf("message = %q, want %q", got.Error(), err.Error())
 	}
 }
+
+func TestClassifyCallError_NilReturnsNil(t *testing.T) {
+	if err := classifyCallError(nil); err != nil {
+		t.Errorf("classifyCallError(nil) = %v, want nil", err)
+	}
+}
+
+func TestClassifyCallError_RevertMapsToExecutionReverted(t *testing.T) {
+	payload := []byte{0x08, 0xc3, 0x79, 0xa0, 0xde, 0xad, 0xbe, 0xef}
+	got := classifyCallError(&domain.RevertError{
+		Reason: "execution reverted: out of stock",
+		Data:   payload,
+	})
+
+	var rpcErr rpc.Error
+	if !errors.As(got, &rpcErr) {
+		t.Fatalf("output must satisfy rpc.Error, got %T", got)
+	}
+	if rpcErr.ErrorCode() != rpcerr.CodeExecutionReverted {
+		t.Errorf("code = %d, want %d (ExecutionReverted)", rpcErr.ErrorCode(), rpcerr.CodeExecutionReverted)
+	}
+	if rpcErr.Error() != "execution reverted: out of stock" {
+		t.Errorf("message = %q", rpcErr.Error())
+	}
+
+	var dataErr rpc.DataError
+	if !errors.As(got, &dataErr) {
+		t.Fatalf("revert must satisfy rpc.DataError, got %T", got)
+	}
+	if dataErr.ErrorData() != "0x08c379a0deadbeef" {
+		t.Errorf("ErrorData() = %v, want 0x08c379a0deadbeef", dataErr.ErrorData())
+	}
+}
+
+func TestClassifyCallError_WrappedRevertStillMatches(t *testing.T) {
+	wrapped := fmt.Errorf("call: %w", &domain.RevertError{Reason: "execution reverted"})
+
+	var rpcErr rpc.Error
+	if !errors.As(classifyCallError(wrapped), &rpcErr) {
+		t.Fatalf("wrapped revert must satisfy rpc.Error")
+	}
+	if rpcErr.ErrorCode() != rpcerr.CodeExecutionReverted {
+		t.Errorf("code = %d, want %d", rpcErr.ErrorCode(), rpcerr.CodeExecutionReverted)
+	}
+}
+
+func TestClassifyCallError_NonRevertIsInternal(t *testing.T) {
+	got := classifyCallError(errors.New("endorser unreachable"))
+
+	var rpcErr rpc.Error
+	if !errors.As(got, &rpcErr) {
+		t.Fatalf("output must satisfy rpc.Error, got %T", got)
+	}
+	if rpcErr.ErrorCode() != rpcerr.CodeInternal {
+		t.Errorf("code = %d, want %d (Internal)", rpcErr.ErrorCode(), rpcerr.CodeInternal)
+	}
+}
