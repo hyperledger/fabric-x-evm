@@ -1,0 +1,87 @@
+# Copyright IBM Corp. All Rights Reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+---
+name: Release Fabric-X EVM Docker Image
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  docker-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract and validate version from tag
+        id: extract
+        run: |
+          if [[ "${GITHUB_REF}" =~ ^refs/tags/v([0-9]+\.[0-9]+\.[0-9]+.*)$ ]]; then
+            VERSION="${BASH_REMATCH[1]}"
+            echo "VERSION=$VERSION" >> $GITHUB_ENV
+            echo "✅ Tag validated: $VERSION"
+          else
+            echo "❌ Invalid tag format: ${GITHUB_REF}. Expected format: refs/tags/v<semver>"
+            exit 1
+          fi
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build cross-architecture binaries
+        run: make build-release
+
+      - name: Set image metadata
+        run: |
+          echo "CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_ENV
+          echo "REVISION=$(git rev-parse HEAD)" >> $GITHUB_ENV
+          if [ "$GITHUB_REPOSITORY_OWNER" == "hyperledger" ]; then
+            echo "IMAGE_PREFIX=hyperledger" >> $GITHUB_ENV
+          else
+            echo "IMAGE_PREFIX=${{ secrets.DOCKERHUB_USERNAME }}" >> $GITHUB_ENV
+          fi
+          echo "GHCR_PREFIX=$GITHUB_REPOSITORY_OWNER" >> $GITHUB_ENV
+
+      - name: Build and push multi-platform Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.release
+          platforms: linux/amd64,linux/arm64,linux/s390x
+          push: true
+          tags: |
+            docker.io/${{ env.IMAGE_PREFIX }}/fabric-x-evm:${{ env.VERSION }}
+            docker.io/${{ env.IMAGE_PREFIX }}/fabric-x-evm:latest
+            ghcr.io/${{ env.GHCR_PREFIX }}/fabric-x-evm:${{ env.VERSION }}
+            ghcr.io/${{ env.GHCR_PREFIX }}/fabric-x-evm:latest
+          build-args: |
+            VERSION=${{ env.VERSION }}
+            CREATED=${{ env.CREATED }}
+            REVISION=${{ env.REVISION }}
