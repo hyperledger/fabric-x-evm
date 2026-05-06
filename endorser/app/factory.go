@@ -20,7 +20,6 @@ import (
 	sdknet "github.com/hyperledger/fabric-x-sdk/network"
 	nfab "github.com/hyperledger/fabric-x-sdk/network/fabric"
 	nfabx "github.com/hyperledger/fabric-x-sdk/network/fabricx"
-	"github.com/hyperledger/fabric-x-sdk/state"
 )
 
 // NewEndorser creates a single endorser instance with its synchronizer.
@@ -37,14 +36,9 @@ func NewEndorser(
 		return nil, nil, fmt.Errorf("failed to create signer: %w", err)
 	}
 
-	writeDB, err := state.NewWriteDB(network.Channel, cfg.DbConnStr)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to initialize store: %w", err)
-	}
-	readDB, err := state.NewReadDB(network.Channel, cfg.DbConnStr)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to initialize store: %w", err)
-	}
+	// Create LightKVS for in-memory versioned state
+	// TODO: when we have it with persistence, instantiate from config
+	kvs := endorser.NewLightKVS()
 
 	evmConfig := endorser.EVMConfig{
 		ChainConfig: common.BuildChainConfig(network.ChainID),
@@ -56,10 +50,10 @@ func NewEndorser(
 	switch network.Protocol {
 	case "fabric-x":
 		builder = efabx.NewEndorsementBuilder(signer)
-		sync, err = nfabx.NewSynchronizer(readDB, network.Channel, cfg.Committer.ToPeerConf(), signer, logger, writeDB)
+		sync, err = nfabx.NewSynchronizer(kvs, network.Channel, cfg.Committer.ToPeerConf(), signer, logger, kvs)
 	default: // "fabric" or ""
 		builder = efab.NewEndorsementBuilder(signer)
-		sync, err = nfab.NewSynchronizer(readDB, network.Channel, cfg.Committer.ToPeerConf(), signer, logger, writeDB)
+		sync, err = nfab.NewSynchronizer(kvs, network.Channel, cfg.Committer.ToPeerConf(), signer, logger, kvs)
 	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create synchronizer: %w", err)
@@ -68,7 +62,7 @@ func NewEndorser(
 	// Executing transactions and signing the endorsement.
 	monotonicVersions := network.Protocol == "fabric-x"
 	end, err := endorser.New(
-		endorser.NewEVMEngine(network.Namespace, readDB, evmConfig, monotonicVersions),
+		endorser.NewEVMEngine(network.Namespace, kvs, evmConfig, monotonicVersions),
 		builder,
 		network.ChainID,
 	)
