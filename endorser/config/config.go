@@ -20,5 +20,6 @@ type Endorser struct {
 
 // DB holds the database path for an endorser.
 type DB struct {
+	Database   string `mapstructure:"database" yaml:"database" validate:"required"`
 	ConnString string `mapstructure:"connection-string" yaml:"connection-string"`
 }

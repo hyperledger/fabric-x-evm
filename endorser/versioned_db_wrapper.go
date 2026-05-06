@@ -70,3 +70,23 @@ func (s *VersionedDBSnapshot) Get(namespace, key string) (*blocks.WriteRecord, e
 func (s *VersionedDBSnapshot) Close() error {
 	return nil
 }
+
+// Get retrieves the value for a key as of the given block number.
+func (w *VersionedDBWrapper) Get(namespace, key string, lastBlock uint64) (*blocks.WriteRecord, error) {
+	return w.db.Get(namespace, key, lastBlock)
+}
+
+// Handle implements blocks.BlockHandler by delegating to the underlying VersionedDB.
+func (w *VersionedDBWrapper) Handle(ctx context.Context, b blocks.Block) error {
+	return w.db.Handle(ctx, b)
+}
+
+// BlockNumber returns the last processed block number.
+func (w *VersionedDBWrapper) BlockNumber(ctx context.Context) (uint64, error) {
+	return w.db.BlockNumber(ctx)
+}
+
+// Close closes the underlying VersionedDB.
+func (w *VersionedDBWrapper) Close() error {
+	return w.db.Close()
+}

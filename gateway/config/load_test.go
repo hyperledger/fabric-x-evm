@@ -13,7 +13,7 @@ import (
 )
 
 func TestLoadFabXSampleConfig(t *testing.T) {
-	cfg, err := config.Load("../../sampleconfig/fabx.yaml")
+	cfg, err := config.Load("../../integration/fabx.yaml")
 	if err != nil {
 		t.Fatalf("Load fabx.yaml: %v", err)
 	}
@@ -32,7 +32,7 @@ func TestLoadFabXSampleConfig(t *testing.T) {
 }
 
 func TestLoadFabricSamplesSampleConfig(t *testing.T) {
-	cfg, err := config.Load("../../sampleconfig/fabric-samples.yaml")
+	cfg, err := config.Load("../../integration/fablo.yaml")
 	if err != nil {
 		t.Fatalf("Load fabric-samples.yaml: %v", err)
 	}
