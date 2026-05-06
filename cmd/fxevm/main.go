@@ -37,6 +37,7 @@ func main() {
 
 	root.AddCommand(newStartCmd())
 	root.AddCommand(newTestNodeCmd())
+	root.AddCommand(newHealthcheckCmd())
 
 	if err := root.ExecuteContext(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)

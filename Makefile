@@ -1,5 +1,6 @@
 # Configuration
 FABRIC_VERSION ?= 3.1.4
+RELEASE_ARCHS  := amd64 arm64 s390x
 UID := $(shell id -u)
 GID := $(shell id -g)
 export UID
@@ -8,6 +9,25 @@ export GID
 .PHONY: build
 build:
 	go build -o bin/fxevm ./cmd/fxevm
+
+.PHONY: build-release
+build-release:
+	@for arch in $(RELEASE_ARCHS); do \
+		mkdir -p release/linux-$$arch && \
+		CGO_ENABLED=0 GOOS=linux GOARCH=$$arch go build -trimpath -ldflags '-w -s' \
+			-o release/linux-$$arch/fxevm ./cmd/fxevm || exit 1; \
+	done
+
+.PHONY: build-image
+build-image: build-release
+	docker buildx build \
+		--file Dockerfile.release \
+		--load \
+		--build-arg VERSION=dev \
+		--build-arg CREATED=$(shell date -u +%Y-%m-%dT%H:%M:%SZ) \
+		--build-arg REVISION=$(shell git rev-parse HEAD) \
+		--tag fabric-x-evm:dev \
+		.
 
 .PHONY: checks
 checks:
@@ -41,6 +61,7 @@ clean-x:
 .PHONY: start-x
 start-x:
 	@if nc -z localhost 7050 2>/dev/null; then echo "Error: port 7050 is already in use — stop any running Fabric orderer before starting."; exit 1; fi
+	@if [ ! -f testdata/crypto/sc-genesis-block.proto.bin ]; then echo "Please run 'make init-x' first."; exit 1; fi
 	@docker run -d --rm -it --name fabric-x-committer-test-node \
 		-p 4001:4001 -p 2110:2110 -p 2114:2114 -p 2117:2117 -p 7001:7001 -p 7050:7050 -p 5433:5433 \
 		-v "$(PWD)/testdata/crypto:/root/config/crypto" \
@@ -120,6 +141,7 @@ start-node:
 .PHONY: start
 start: blockscout.env
 	@if nc -z localhost 7050 2>/dev/null; then echo "Error: port 7050 is already in use — stop any running Fabric orderer before starting."; exit 1; fi
+	@if [ ! -f testdata/crypto/sc-genesis-block.proto.bin ]; then echo "Please run 'make init-x' first."; exit 1; fi
 	@docker compose --profile explorer --env-file blockscout.env up -d --build
 	@echo "Visit the block explorer at http://localhost:8000/ (might take a minute to load)"
 
