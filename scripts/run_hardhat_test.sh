@@ -76,6 +76,12 @@ init_openzeppelin() {
     
     cd "${OZ_DIR}"
     
+    # Clear Hardhat cache to ensure fresh config is loaded
+    if [ -d "cache" ]; then
+        echo "Clearing Hardhat cache..."
+        rm -rf cache
+    fi
+    
     # Install dependencies if needed
     if [ ! -d "node_modules" ]; then
         echo "Installing dependencies..."
