@@ -85,7 +85,7 @@ init_openzeppelin() {
     # Install dependencies if needed
     if [ ! -d "node_modules" ]; then
         echo "Installing dependencies..."
-        npm install
+        npm ci
     else
         echo "Dependencies already installed"
     fi
