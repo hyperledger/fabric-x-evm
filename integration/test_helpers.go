@@ -133,7 +133,7 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 		return nil, nil, err
 	}
 
-	chain, err := core.NewChain(cfg.Gateway.DbConnStr, cfg.Gateway.TrieDBPath)
+	chain, err := core.NewChain(cfg.Gateway.DbConnStr, cfg.Gateway.TrieDBPath, false)
 	if err != nil {
 		return nil, nil, err
 	}
