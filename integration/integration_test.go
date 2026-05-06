@@ -872,9 +872,25 @@ func testQueryValidation(t *testing.T, th *TestHarness) {
 			if byHashIdx == nil || byHashIdx.Hash() != c.tx.Hash() {
 				t.Errorf("by-(blockHash,index) lookup did not return the same tx")
 			}
-			// TODO: add ec.BlockByHash / ec.BlockByNumber assertions once the gateway
-			// returns header fields (logsBloom, extraData) as 0x-prefixed hex — today
-			// they are bare strings and go-ethereum's RPC decoder rejects them.
+
+			// byHash.Hash() is recomputed from RLP, so it diverges from the
+			// gateway-side hash. Real Ethereum-style header hashes will be
+			// added later.
+			byHash, err := ec.BlockByHash(t.Context(), receipt.BlockHash)
+			if err != nil {
+				t.Fatalf("BlockByHash: %v", err)
+			}
+			if byHash.NumberU64() != receipt.BlockNumber.Uint64() {
+				t.Errorf("BlockByHash number = %d, want %d", byHash.NumberU64(), receipt.BlockNumber.Uint64())
+			}
+
+			byNum, err := ec.BlockByNumber(t.Context(), receipt.BlockNumber)
+			if err != nil {
+				t.Fatalf("BlockByNumber: %v", err)
+			}
+			if byNum.NumberU64() != receipt.BlockNumber.Uint64() {
+				t.Errorf("BlockByNumber number = %d, want %d", byNum.NumberU64(), receipt.BlockNumber.Uint64())
+			}
 		})
 	}
 

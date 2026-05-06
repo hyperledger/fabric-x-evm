@@ -216,15 +216,21 @@ func rpcBlock(b *domain.Block, full bool) *RPCBlock {
 		transactions = []any{}
 	}
 
+	// ethclient cross-checks: EmptyUncleHash ↔ uncles=[], EmptyTxsHash ↔ txs=[].
+	txRoot := types.EmptyTxsHash
+	if len(transactions) > 0 {
+		txRoot = common.Hash{}
+	}
+
 	return &RPCBlock{
 		Number:           hexutil.Uint64(b.BlockNumber),
 		Hash:             (common.Hash)(b.BlockHash),
 		ParentHash:       (common.Hash)(b.ParentHash),
-		Sha3Uncles:       common.Hash{},
+		Sha3Uncles:       types.EmptyUncleHash,
 		LogsBloom:        make(hexutil.Bytes, types.BloomByteLength),
-		TransactionsRoot: common.Hash{},
+		TransactionsRoot: txRoot,
 		StateRoot:        common.BytesToHash(b.StateRoot),
-		ReceiptsRoot:     common.Hash{},
+		ReceiptsRoot:     types.EmptyRootHash,
 		Miner:            common.HexToAddress("0x0000000000000000000000000000000000000F4B"),
 		Difficulty:       hexutil.Big(*big.NewInt(0)),
 		TotalDifficulty:  hexutil.Big(*big.NewInt(0)),
