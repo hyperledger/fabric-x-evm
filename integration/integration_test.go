@@ -8,6 +8,7 @@ package integration
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -19,6 +20,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/tests"
 	"github.com/hyperledger/fabric-x-evm/endorser"
 	"github.com/hyperledger/fabric-x-evm/integration/contracts"
@@ -81,6 +83,11 @@ var cases = []testCase{
 	{
 		name:  "query_validation",
 		fn:    testQueryValidation,
+		nodes: 2,
+	},
+	{
+		name:  "revert_handling",
+		fn:    testRevertHandling,
 		nodes: 2,
 	},
 }
@@ -906,4 +913,77 @@ func testQueryValidation(t *testing.T, th *TestHarness) {
 	if isPending {
 		t.Error("expected isPending=false for unknown hash")
 	}
+}
+
+// testRevertHandling exercises both revert paths against an ERC-20 (TetherToken):
+// transferFrom without prior approval reverts. Via eth_call (CallContract) the
+// gateway must surface JSON-RPC -32000 with the revert payload as ErrorData.
+// Via eth_sendRawTransaction the tx must commit with receipt.Status=0.
+func testRevertHandling(t *testing.T, th *TestHarness) {
+	node := th.Gateways[0]
+	ec, err := NewNativeEthClient(node)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	owner, err := NewEthClient(contracts.TetherTokenMetaData, th.ethChainConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, err := NewEthClient(contracts.TetherTokenMetaData, th.ethChainConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	addr := deploySmartContract(t, node, owner, big.NewInt(100_000_000), "Tether USD", "USDT", big.NewInt(6))
+
+	// transferFrom without approval — both paths revert at the EVM.
+	amount := big.NewInt(1_000)
+
+	t.Run("eth_call_revert_returns_-32000", func(t *testing.T) {
+		args, err := user.argsForCall(&addr, "transferFrom", owner.Address(), user.Address(), amount)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = ec.CallContract(t.Context(), *args, nil)
+		if err == nil {
+			t.Fatal("expected revert error, got nil")
+		}
+
+		var rpcErr rpc.Error
+		if !errors.As(err, &rpcErr) {
+			t.Fatalf("expected rpc.Error, got %T (%v)", err, err)
+		}
+		if rpcErr.ErrorCode() != -32000 {
+			t.Errorf("code = %d, want -32000 (ExecutionReverted)", rpcErr.ErrorCode())
+		}
+
+		var dataErr rpc.DataError
+		if !errors.As(err, &dataErr) {
+			t.Fatalf("expected rpc.DataError, got %T", err)
+		}
+		data, ok := dataErr.ErrorData().(string)
+		if !ok || len(data) <= 2 {
+			t.Errorf("ErrorData() = %v, want non-empty hex string", dataErr.ErrorData())
+		}
+	})
+
+	t.Run("eth_sendRawTransaction_revert_commits_with_status_0", func(t *testing.T) {
+		tx, err := user.TxForCall(t.Context(), node, &addr, "transferFrom", nil, owner.Address(), user.Address(), amount)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := ec.SendTransaction(t.Context(), tx); err != nil {
+			t.Fatalf("SendTransaction: %v", err)
+		}
+		waitForCommitT(t, ec, tx)
+
+		receipt, err := ec.TransactionReceipt(t.Context(), tx.Hash())
+		if err != nil {
+			t.Fatalf("TransactionReceipt: %v", err)
+		}
+		if receipt.Status != types.ReceiptStatusFailed {
+			t.Errorf("receipt.Status = %d, want %d (failed)", receipt.Status, types.ReceiptStatusFailed)
+		}
+	})
 }
