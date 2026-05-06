@@ -142,6 +142,10 @@ start_gateway() {
                 echo -e "${RED}Warning: No test accounts returned!${NC}"
             fi
             
+            # Export gateway URL for Hardhat wrapper config
+            export FABRIC_EVM_URL="http://127.0.0.1:8545"
+            echo "Fabric-EVM URL: ${FABRIC_EVM_URL}"
+            
             return 0
         fi
         
@@ -169,6 +173,11 @@ run_tests() {
     echo -e "${YELLOW}Running Hardhat tests...${NC}"
     echo "Test path: ${GREEN}${TEST_PATH}${NC}"
     
+    # Copy wrapper config into OZ directory for Hardhat to use
+    echo "Copying wrapper config to OpenZeppelin directory..."
+    cp "${PROJECT_ROOT}/testdata/hardhat.wrapper.config.js" "${OZ_DIR}/hardhat.config.fabricevm.js"
+    
+    # Must run from OZ directory for Hardhat to find node_modules
     cd "${OZ_DIR}"
     
     # Fabric-EVM limitations:
@@ -191,8 +200,9 @@ run_tests() {
     echo -e "${YELLOW}Note: Skipping revert-related and balance-change tests (Fabric-EVM limitations)${NC}"
     echo ""
     
-    echo "Executing: npx hardhat test ${TEST_PATH} --network fabricevm --grep \"${SKIP_PATTERN}\""
-    npx hardhat test "${TEST_PATH}" --network fabricevm --grep "${SKIP_PATTERN}"
+    # Use wrapper config in OZ directory (relative path)
+    echo "Executing: npx hardhat test ${TEST_PATH} --config hardhat.config.fabricevm.js --network fabricevm --grep \"${SKIP_PATTERN}\""
+    npx hardhat test "${TEST_PATH}" --config hardhat.config.fabricevm.js --network fabricevm --grep "${SKIP_PATTERN}"
 }
 
 # Main execution
