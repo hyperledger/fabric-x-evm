@@ -55,6 +55,13 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: testdata/openzeppelin-contracts/package-lock.json
+
       - name: Ethereum tests
         run: make eth-tests
 
@@ -64,7 +71,7 @@ jobs:
       - name: Fabric integration tests
         run: make integration-tests
 
-      - name: Hardhad integration tests
+      - name: Hardhat integration tests
         run: make hardhat-tests
 
   optional-tests:
