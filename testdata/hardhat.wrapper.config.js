@@ -13,7 +13,7 @@ module.exports = {
   networks: {
     ...ozConfig.networks,
 
-    // Fabric-EVM network for integration testing
+    // Fabric-EVM network for integration testing.
     fabricevm: {
       url: process.env.FABRIC_EVM_URL || 'http://127.0.0.1:8545',
       timeout: 60000,
