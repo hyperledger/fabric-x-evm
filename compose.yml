@@ -86,14 +86,12 @@ services:
     restart: unless-stopped
     container_name: gateway
     user: "${UID:-1000}:${GID:-1000}"
-    command: [ "start" ]
+    command: [ "start", "--config", "/sampleconfig/fabx-docker.yaml" ]
     ports:
       - "8545:8545"
     volumes:
-      - ./testdata/crypto:/testdata/crypto:ro,Z
-    environment:
-      TESTDATA: /testdata
-      COMMITTER_HOST: committer
+      - ./testdata/crypto/peerOrganizations/Org1:/crypto:ro,Z
+      - ./sampleconfig/fabx-docker.yaml:/sampleconfig/fabx-docker.yaml:ro,Z
     depends_on:
       fxconfig-init:
         condition: service_completed_successfully

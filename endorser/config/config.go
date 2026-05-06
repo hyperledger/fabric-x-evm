@@ -10,10 +10,16 @@ import (
 	"github.com/hyperledger/fabric-x-evm/common"
 )
 
-// Endorser contains configuration for a single endorser peer.
+// Endorser contains configuration for a single embedded endorser peer.
 type Endorser struct {
-	Name      string
+	Name      string                `mapstructure:"name"      yaml:"name"`
+	Identity  common.IdentityConfig `mapstructure:"identity"  yaml:"identity"`
 	Committer common.ClientConfig   `mapstructure:"committer" yaml:"committer"`
-	Identity  common.IdentityConfig `mapstructure:"identity" yaml:"identity"`
-	DbConnStr string                // path to the sqlite database for blocks and transactions
+	Database  DB                    `mapstructure:"database"  yaml:"database"`
+}
+
+// DB holds the database path for an endorser.
+type DB struct {
+	Database   string `mapstructure:"database" yaml:"database" validate:"required"`
+	ConnString string `mapstructure:"connection-string" yaml:"connection-string"`
 }

@@ -11,8 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"os"
-	"path"
+	"math/rand/v2"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -49,6 +48,7 @@ import (
 	"github.com/hyperledger/fabric-x-sdk/network"
 	nfab "github.com/hyperledger/fabric-x-sdk/network/fabric"
 	nfabx "github.com/hyperledger/fabric-x-sdk/network/fabricx"
+	"github.com/hyperledger/fabric-x-sdk/state"
 )
 
 // GetERC20BalanceSlot computes the storage slot for a balance in an ERC-20 mapping(address => uint256).
@@ -115,7 +115,7 @@ func (th *TestHarness) PrimeStateFromJSON(ctx context.Context, jsonFilePath stri
 //
 // Sync goroutines are started in the background using ctx. The returned synchronizers
 // can be used by callers that need to wait for the initial sync to complete.
-func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmConfig endorser.EVMConfig, primeDBPath string, bypass bool, ends []core.Endorser, dbs []*endorser.LightKVS, builders []endorsement.Builder) (*TestHarness, *network.Synchronizer, error) {
+func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmConfig endorser.EVMConfig, primeDBPath string, bypass bool, ends []core.Endorser, dbs []endorser.KVS, builders []endorsement.Builder) (*TestHarness, *network.Synchronizer, error) {
 	// Build gateway signer.
 	var gwSigner sdk.Signer
 	if cfg.Gateway.Identity.MSPDir != "" {
@@ -133,7 +133,7 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 		return nil, nil, err
 	}
 
-	chain, err := core.NewChain(cfg.Gateway.DbConnStr, cfg.Gateway.TrieDBPath, false)
+	chain, err := core.NewChain(cfg.Gateway.Database.ConnString, cfg.Gateway.Database.TriePath, false)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -247,11 +247,11 @@ func applyConfigOverrides(cfg *config.Config, overrides map[string]any) error {
 
 // EndorserFactory is a function that creates an endorser along with its dependencies.
 // It returns core.Endorser interface which both *endorser.Endorser and *testimpl.EndorserWrapper implement.
-type EndorserFactory func(t *testing.T, ecfg econf.Endorser, channel, namespace string, evmConfig endorser.EVMConfig, protocol string) (*endorser.LightKVS, endorsement.Builder, core.Endorser)
+type EndorserFactory func(t *testing.T, ecfg econf.Endorser, channel, namespace string, evmConfig endorser.EVMConfig, protocol string) (endorser.KVS, endorsement.Builder, core.Endorser)
 
 // buildEndorsers creates endorsers using the provided factory function.
-func buildEndorsers(t *testing.T, cfg config.Config, evmConfig endorser.EVMConfig, factory EndorserFactory) ([]*endorser.LightKVS, []endorsement.Builder, []core.Endorser) {
-	dbs := make([]*endorser.LightKVS, len(cfg.Endorsers))
+func buildEndorsers(t *testing.T, cfg config.Config, evmConfig endorser.EVMConfig, factory EndorserFactory) ([]endorser.KVS, []endorsement.Builder, []core.Endorser) {
+	dbs := make([]endorser.KVS, len(cfg.Endorsers))
 	builders := make([]endorsement.Builder, len(cfg.Endorsers))
 	ends := make([]core.Endorser, len(cfg.Endorsers))
 	for i, ecfg := range cfg.Endorsers {
@@ -261,7 +261,7 @@ func buildEndorsers(t *testing.T, cfg config.Config, evmConfig endorser.EVMConfi
 }
 
 // defaultEndorserFactory creates regular endorsers without wrapping.
-func defaultEndorserFactory(t *testing.T, ecfg econf.Endorser, channel, namespace string, evmConfig endorser.EVMConfig, protocol string) (*endorser.LightKVS, endorsement.Builder, core.Endorser) {
+func defaultEndorserFactory(t *testing.T, ecfg econf.Endorser, channel, namespace string, evmConfig endorser.EVMConfig, protocol string) (endorser.KVS, endorsement.Builder, core.Endorser) {
 	db, builder, end := newEndorser(t, ecfg, channel, namespace, evmConfig, protocol)
 	return db, builder, end
 }
@@ -296,8 +296,10 @@ func newLocalTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig e
 			ChainID:   4011,
 		},
 		Gateway: config.Gateway{
-			DbConnStr:   filepath.Join(dir, tname+"gateway.db"),
-			TrieDBPath:  filepath.Join(dir, tname+"triedb.db"),
+			Database: config.DB{
+				ConnString: filepath.Join(dir, tname+"gateway.db"),
+				TriePath:   filepath.Join(dir, tname+"triedb.db"),
+			},
 			SyncTimeout: 2 * time.Second,
 			Orderers: []common.ClientConfig{
 				{Endpoint: orderer},
@@ -310,7 +312,9 @@ func newLocalTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig e
 			{
 				Committer: common.ClientConfig{Endpoint: peer},
 				Name:      "endorser1",
-				DbConnStr: filepath.Join(dir, tname+"endorser1.db"),
+				Database: econf.DB{
+					ConnString: filepath.Join(dir, tname+"endorser1.db"),
+				},
 			},
 		},
 	}
@@ -347,21 +351,15 @@ func newLocalTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig e
 // newFabricTestHarness returns a client for integration testing with access to a peer, orderer and local committer.
 // It follows the directory structure of a Fablo test network.
 func newFabricTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any) (*TestHarness, error) {
-	// Use TESTDATA environment variable if set, otherwise find project root
-	var testdataDir string
-	if envTestdata := os.Getenv("TESTDATA"); envTestdata != "" {
-		testdataDir = path.Join(envTestdata, "fablo")
-	} else {
-		projectRoot, err := findProjectRoot()
-		if err != nil {
-			cwd, _ := os.Getwd()
-			testdataDir = path.Join(cwd, "..", "testdata", "fablo")
-		} else {
-			testdataDir = path.Join(projectRoot, "testdata", "fablo")
-		}
+	cfg, err := config.Load("fablo.yaml")
+	if err != nil {
+		return nil, fmt.Errorf("load config: %w", err)
 	}
 
-	cfg := FabloConfig(testdataDir)
+	x := rand.Int64()
+	for i := range cfg.Endorsers {
+		cfg.Endorsers[i].Database.ConnString = fmt.Sprintf("file:endorser%d-%d.db?mode=memory&cache=shared", i, x)
+	}
 
 	if err := applyConfigOverrides(&cfg, configOverrides); err != nil {
 		return nil, err
@@ -389,7 +387,10 @@ func newFabricTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EV
 // It follows the directory structure of a fabric samples test network.
 // Exported for use by eth-tests package.
 func NewFabricXTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any) (*TestHarness, error) {
-	cfg := XTestCommitterConfig()
+	cfg, err := config.Load("fabx.yaml")
+	if err != nil {
+		return nil, fmt.Errorf("load config: %w", err)
+	}
 
 	if err := applyConfigOverrides(&cfg, configOverrides); err != nil {
 		return nil, err
@@ -411,7 +412,7 @@ func NewFabricXTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.E
 	return th, nil
 }
 
-func newEndorser(t *testing.T, cfg econf.Endorser, channel, namespace string, evmConfig endorser.EVMConfig, protocol string) (*endorser.LightKVS, endorsement.Builder, *endorser.Endorser) {
+func newEndorser(t *testing.T, cfg econf.Endorser, channel, namespace string, evmConfig endorser.EVMConfig, protocol string) (endorser.KVS, endorsement.Builder, *endorser.Endorser) {
 	t.Helper()
 
 	var signer sdk.Signer
@@ -425,11 +426,18 @@ func newEndorser(t *testing.T, cfg econf.Endorser, channel, namespace string, ev
 		}
 	}
 
-	// Create LightKVS for versioned key-value storage with snapshot isolation
-	lightKVS := endorser.NewLightKVS()
-
-	// Cleanup is a no-op for LightKVS
-	t.Cleanup(func() { lightKVS.Close() })
+	var db endorser.KVS
+	switch cfg.Database.Database {
+	case "sqlite":
+		writeDB, err := state.NewWriteDB(channel, cfg.Database.ConnString)
+		if err != nil {
+			t.Fatalf("NewWriteDB: %v", err)
+		}
+		db = endorser.NewVersionedDBWrapper(writeDB)
+	default:
+		db = endorser.NewLightKVS()
+	}
+	t.Cleanup(func() { db.Close() })
 
 	// the shape of endorsements and blocks differs per protocol.
 	var builder endorsement.Builder
@@ -445,7 +453,7 @@ func newEndorser(t *testing.T, cfg econf.Endorser, channel, namespace string, ev
 	}
 
 	end, err := endorser.New(
-		endorser.NewEVMEngine(namespace, lightKVS, evmConfig, monotonicVersions),
+		endorser.NewEVMEngine(namespace, db, evmConfig, monotonicVersions),
 		builder,
 		evmConfig.ChainConfig.ChainID.Int64(),
 	)
@@ -453,13 +461,13 @@ func newEndorser(t *testing.T, cfg econf.Endorser, channel, namespace string, ev
 		t.Fatalf("endorser.New: %v", err)
 	}
 
-	return lightKVS, builder, end
+	return db, builder, end
 }
 
 // TestHarness provides access to gateways and endorsers for testing.
 // Exported for use by eth-tests package.
 type TestHarness struct {
-	DBs            []*endorser.LightKVS
+	DBs            []endorser.KVS
 	Gateways       []*core.Gateway
 	endorsers      []core.Endorser
 	ethChainConfig *params.ChainConfig

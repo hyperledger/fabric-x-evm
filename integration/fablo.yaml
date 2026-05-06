@@ -1,0 +1,74 @@
+# Test configuration for integration tests against a Fablo-managed Fabric test network.
+# Paths are relative to the integration/ package directory (where go test runs).
+# Fablo places orderer crypto under peerOrganizations (not ordererOrganizations).
+
+network:
+  protocol: fabric
+  channel: mychannel
+  namespace: basic
+  ns-version: "1.0"
+  chain-id: 4011
+
+gateway:
+  listen: "0.0.0.0:8545"
+
+  identity:
+    msp-id: Org1MSP
+    msp-dir: ../testdata/fablo/fablo-target/fabric-config/crypto-config/peerOrganizations/org1.example.com/users/User1@org1.example.com/msp
+
+  database:
+    connection-string: "file:gateway.db?mode=memory&cache=shared"
+    trie-path: ""
+
+  orderers:
+    - endpoint:
+        host: 127.0.0.1
+        port: 7030
+      tls:
+        mode: tls
+        server-name: orderer0.group1.orderer.example.com
+        ca-cert-paths:
+          - ../testdata/fablo/fablo-target/fabric-config/crypto-config/peerOrganizations/orderer.example.com/tlsca/tlsca.orderer.example.com-cert.pem
+
+  committer:
+    endpoint:
+      host: 127.0.0.1
+      port: 7041
+    tls:
+      mode: tls
+      server-name: peer0.org1.example.com
+      ca-cert-paths:
+        - ../testdata/fablo/fablo-target/fabric-config/crypto-config/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt
+
+endorsers:
+  - name: org1
+    identity:
+      msp-id: Org1MSP
+      msp-dir: ../testdata/fablo/fablo-target/fabric-config/crypto-config/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/msp
+    committer:
+      endpoint:
+        host: 127.0.0.1
+        port: 7041
+      tls:
+        mode: tls
+        server-name: peer0.org1.example.com
+        ca-cert-paths:
+          - ../testdata/fablo/fablo-target/fabric-config/crypto-config/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt
+    database:
+      connection-string: "file:endorser-org1.db"
+
+  - name: org2
+    identity:
+      msp-id: Org2MSP
+      msp-dir: ../testdata/fablo/fablo-target/fabric-config/crypto-config/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/msp
+    committer:
+      endpoint:
+        host: 127.0.0.1
+        port: 7061
+      tls:
+        mode: tls
+        server-name: peer0.org2.example.com
+        ca-cert-paths:
+          - ../testdata/fablo/fablo-target/fabric-config/crypto-config/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/tls/ca.crt
+    database:
+      connection-string: "file:endorser-org2.db"

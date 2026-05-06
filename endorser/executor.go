@@ -22,6 +22,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/hyperledger/fabric-x-evm/utils"
+	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
 
@@ -40,6 +41,16 @@ type KVSSnapshotter interface {
 	NewSnapshot() ReadStore
 }
 
+// KVS is implemented by both LightKVS and VersionedDBWrapper.
+// It combines snapshot reads, block handling, and lifecycle management.
+type KVS interface {
+	KVSSnapshotter
+	blocks.BlockHandler
+	blocks.RecordGetter
+	BlockNumber(context.Context) (uint64, error)
+	Close() error
+}
+
 // EVMEngine manages EVM execution and state reads for an endorser.
 // It creates isolated per-transaction snapshots for execution and reads state directly
 // for ChainStateReader calls.
@@ -47,7 +58,7 @@ type EVMEngine struct {
 	namespace         string
 	monotonicVersions bool
 
-	// LightKVS provides versioned storage with snapshot isolation
+	// kvs provides versioned storage with snapshot isolation
 	kvs       KVSSnapshotter
 	evmConfig EVMConfig
 }

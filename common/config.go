@@ -96,12 +96,12 @@ func (c ClientConfig) ToOrdererConf() network.OrdererConf {
 // For example, If only server-side TLS is required, the certificate pool (certPool) is not built (for a server),
 // since the relevant certificates paths are defined in the YAML according to the selected mode.
 type TLSConfig struct {
-	Mode string `mapstructure:"mode"`
+	Mode string `mapstructure:"mode" yaml:"mode"`
 	// CertPath is the path to the certificate file (public key).
-	CertPath string `mapstructure:"cert-path"`
+	CertPath string `mapstructure:"cert-path" yaml:"cert-path"`
 	// KeyPath is the path to the key file (private key).
-	KeyPath     string   `mapstructure:"key-path"`
-	CACertPaths []string `mapstructure:"ca-cert-paths"`
+	KeyPath     string   `mapstructure:"key-path"      yaml:"key-path"`
+	CACertPaths []string `mapstructure:"ca-cert-paths" yaml:"ca-cert-paths"`
 	// ServerName is the server name for TLS certificate validation (SNI).
-	ServerName string `mapstructure:"server-name"`
+	ServerName string `mapstructure:"server-name" yaml:"server-name"`
 }

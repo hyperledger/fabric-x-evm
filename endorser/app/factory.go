@@ -20,6 +20,7 @@ import (
 	sdknet "github.com/hyperledger/fabric-x-sdk/network"
 	nfab "github.com/hyperledger/fabric-x-sdk/network/fabric"
 	nfabx "github.com/hyperledger/fabric-x-sdk/network/fabricx"
+	"github.com/hyperledger/fabric-x-sdk/state"
 )
 
 // NewEndorser creates a single endorser instance with its synchronizer.
@@ -36,9 +37,17 @@ func NewEndorser(
 		return nil, nil, fmt.Errorf("failed to create signer: %w", err)
 	}
 
-	// Create LightKVS for in-memory versioned state
-	// TODO: when we have it with persistence, instantiate from config
-	kvs := endorser.NewLightKVS()
+	var kvs endorser.KVS
+	switch cfg.Database.Database {
+	case "sqlite":
+		writeDB, err := state.NewWriteDB(network.Channel, cfg.Database.ConnString)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to initialize store: %w", err)
+		}
+		kvs = endorser.NewVersionedDBWrapper(writeDB)
+	default:
+		kvs = endorser.NewLightKVS()
+	}
 
 	evmConfig := endorser.EVMConfig{
 		ChainConfig: common.BuildChainConfig(network.ChainID),

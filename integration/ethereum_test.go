@@ -419,7 +419,7 @@ type ethereumTestHarness struct {
 }
 
 // wrappedEndorserFactory creates endorsers wrapped with testimpl wrappers for ethStateDB tracking.
-func wrappedEndorserFactory(t *testing.T, ecfg econf.Endorser, channel, namespace string, evmConfig endorser.EVMConfig, protocol string) (*endorser.LightKVS, endorsement.Builder, core.Endorser) {
+func wrappedEndorserFactory(t *testing.T, ecfg econf.Endorser, channel, namespace string, evmConfig endorser.EVMConfig, protocol string) (endorser.KVS, endorsement.Builder, core.Endorser) {
 	// Create the base endorser components
 	db, builder, end := newEndorser(t, ecfg, channel, namespace, evmConfig, protocol)
 

@@ -1,0 +1,61 @@
+# Configuration for running fxevm inside Docker Compose (compose.yml).
+# Paths are absolute as mounted in the container; host is the Docker service alias.
+# Using in-memory databases because the test-committer doesn't keep state either.
+
+network:
+  protocol: fabric-x
+  channel: mychannel
+  namespace: basic
+  ns-version: "1.0"
+  chain-id: 4011
+
+gateway:
+  listen: "0.0.0.0:8545"
+
+  identity:
+    msp-id: Org1MSP
+    msp-dir: /crypto/users/User1@org1.example.com/msp
+
+  database:
+    connection-string: "file:gateway.db?mode=memory&cache=shared"
+    trie-path: ""
+
+  orderers:
+    - endpoint:
+        host: committer
+        port: 7050
+      tls:
+        mode: mtls
+        cert-path: /crypto/users/User1@org1.example.com/tls/client.crt
+        key-path: /crypto/users/User1@org1.example.com/tls/client.key
+        ca-cert-paths:
+          - /crypto/peers/committer.org1.example.com/tls/ca.crt
+
+  committer:
+    endpoint:
+      host: committer
+      port: 4001
+    tls:
+      mode: mtls
+      cert-path: /crypto/users/User1@org1.example.com/tls/client.crt
+      key-path: /crypto/users/User1@org1.example.com/tls/client.key
+      ca-cert-paths:
+        - /crypto/peers/committer.org1.example.com/tls/ca.crt
+
+endorsers:
+  - name: org1
+    identity:
+      msp-id: Org1MSP
+      msp-dir: /crypto/peers/endorser.org1.example.com/msp
+    committer:
+      endpoint:
+        host: committer
+        port: 4001
+      tls:
+        mode: mtls
+        cert-path: /crypto/users/User1@org1.example.com/tls/client.crt
+        key-path: /crypto/users/User1@org1.example.com/tls/client.key
+        ca-cert-paths:
+          - /crypto/peers/committer.org1.example.com/tls/ca.crt
+    database:
+      connection-string: "file:endorser-org1.db?mode=memory&cache=shared"
