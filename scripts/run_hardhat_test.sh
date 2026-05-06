@@ -110,10 +110,11 @@ start_gateway() {
     
     # Start gateway in test node mode
     echo "Starting test node (logs: /tmp/gateway_$$.log)..."
-    go run ./cmd/fxevm testnode --protocol fabric \
-        --test-accounts-path testdata/test_accounts.json \
+    cd integration && go run ../cmd/fxevm testnode --config fablo.yaml \
+        --test-accounts-path ../testdata/test_accounts.json \
         > /tmp/gateway_$$.log 2>&1 &
-    
+    cd ..
+
     GATEWAY_PID=$!
     echo "Gateway PID: ${GATEWAY_PID}"
     
