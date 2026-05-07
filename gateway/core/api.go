@@ -41,6 +41,7 @@ type Submitter interface {
 type Gateway struct {
 	submitter   Submitter
 	endorsers   *EndorsementClient
+	chain       *Chain
 	store       Store
 	chainID     *big.Int
 	chainConfig *params.ChainConfig
@@ -67,22 +68,35 @@ type Store interface {
 }
 
 // New creates a new Ethereum Gateway.
-func New(ec *EndorsementClient, submitter Submitter, store Store, chainID int64, workerCount int) (*Gateway, error) {
+// It accepts a Chain instance which is used to register a callback for transaction completion notification.
+// This establishes the notification pipeline: when Chain commits a block, it calls the registered callback which removes completed transactions from the Gateway's queue.
+func New(ec *EndorsementClient, submitter Submitter, store Store, chain *Chain, chainID int64, workerCount int) (*Gateway, error) {
 	if workerCount <= 0 {
 		workerCount = 1
 	}
 
 	cid := big.NewInt(chainID)
-	return &Gateway{
+	g := &Gateway{
 		endorsers:   ec,
 		submitter:   submitter,
 		store:       store,
+		chain:       chain,
 		chainID:     cid,
 		chainConfig: cmn.BuildChainConfig(chainID),
 		signer:      types.LatestSignerForChainID(cid),
 		txQueue:     NewTxQueue(),
 		workerCount: workerCount,
-	}, nil
+	}
+
+	// Register callback with Chain to handle transaction completion notification.
+	// This callback is invoked when the Chain commits a block, allowing the Gateway to remove completed transactions from the pending queue.
+	chain.SetTxCompletionCallback(func(txHashes []common.Hash) {
+		for _, hash := range txHashes {
+			g.txQueue.Complete(hash)
+		}
+	})
+
+	return g, nil
 }
 
 // Start initializes the worker pool to process transactions from the queue

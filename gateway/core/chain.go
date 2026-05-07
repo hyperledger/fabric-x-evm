@@ -27,9 +27,10 @@ import (
 // (for block ingestion) and core.Store (via the embedded *storage.Store, for API queries).
 type Chain struct {
 	*storage.Store
-	db       *sql.DB
-	ts       *trie.Store
-	prevHash common.Hash // Ethereum hash of last committed block; seeded from DB on startup
+	db                   *sql.DB
+	ts                   *trie.Store
+	prevHash             common.Hash // Ethereum hash of last committed block; seeded from DB on startup
+	txCompletionCallback func([]common.Hash)
 }
 
 // NewChain opens the SQLite database and trie store, seeds state from the latest committed
@@ -70,6 +71,7 @@ func NewChain(dbConnStr, triePath string, withTrie bool) (*Chain, error) {
 
 // Handle implements blocks.BlockHandler. It commits the block's write sets to the trie,
 // then persists the block and its transactions to the database.
+// After successful persistence, it notifies any registered callback about the completed transactions.
 func (c *Chain) Handle(ctx context.Context, b blocks.Block) error {
 	ebl := c.convertToDomain(b)
 
@@ -90,6 +92,15 @@ func (c *Chain) Handle(ctx context.Context, b blocks.Block) error {
 		return err
 	}
 
+	// Notify callback about completed transactions
+	if c.txCompletionCallback != nil && len(ebl.Transactions) > 0 {
+		txHashes := make([]common.Hash, 0, len(ebl.Transactions))
+		for _, tx := range ebl.Transactions {
+			txHashes = append(txHashes, common.BytesToHash(tx.TxHash))
+		}
+		c.txCompletionCallback(txHashes)
+	}
+
 	return nil
 }
 
@@ -99,6 +110,12 @@ func (c *Chain) Close() error {
 		c.ts.Close()
 	}
 	return c.db.Close()
+}
+
+// SetTxCompletionCallback registers a callback that is invoked when a block with transactions is committed.
+// The callback is called with the list of transaction hashes from the committed block.
+func (c *Chain) SetTxCompletionCallback(callback func([]common.Hash)) {
+	c.txCompletionCallback = callback
 }
 
 // convertToDomain maps a Fabric SDK block to the gateway domain model,
