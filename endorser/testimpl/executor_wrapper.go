@@ -36,7 +36,10 @@ func NewExecutorWrapper(
 	ethStateDB *ethstate.StateDB,
 ) (*ExecutorWrapper, error) {
 	// Begin a new reader to get snapshot isolation
-	reader := kvs.NewSnapshot()
+	reader, err := kvs.NewSnapshot(stateBlockNum)
+	if err != nil {
+		return nil, err
+	}
 
 	// Create StateDB with the reader
 	stateDB, err := endorser.NewStateDB(context.TODO(), reader, namespace, stateBlockNum, monotonicVersions)

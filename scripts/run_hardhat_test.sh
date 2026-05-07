@@ -196,7 +196,7 @@ run_tests() {
     #
     # Future improvement: Consider a configuration file approach or accept timeouts
     # and document the limitation instead of trying to skip specific tests.
-    SKIP_PATTERN="^(?!.*(reverts|rejects|overflow|when the spender has enough allowance|when the spender has unlimited allowance|when the spender does not have enough allowance|for entire balance|for less value than balance|when the sender transfers all balance|executes with balance|increments recipient balance|from is the zero address|to is the zero address))"
+    SKIP_PATTERN="^(?!.*(reverts|rejects|overflow|when the spender has enough allowance|when the spender has unlimited allowance|when the spender does not have enough allowance|for entire balance|for less value than balance|when the sender transfers all balance|executes with balance))"
     
     echo -e "${YELLOW}Note: Skipping revert-related and balance-change tests (Fabric-EVM limitations)${NC}"
     echo ""

@@ -12,6 +12,7 @@ import (
 	_ "embed"
 	"errors"
 	"strings"
+	"sync/atomic"
 
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 )
@@ -20,8 +21,9 @@ import (
 var ddl string
 
 type Store struct {
-	queries *Queries
-	db      *sql.DB
+	queries     *Queries
+	db          *sql.DB
+	blockNumber atomic.Uint64 // cached block number for fast reads
 }
 
 func NewStore(db *sql.DB) *Store {
@@ -90,11 +92,23 @@ func toDomainTransaction(t Transaction) domain.Transaction {
 	}
 }
 
-// Init creates the tables.
+// Init creates the tables and initializes the cached block number.
 func (s *Store) Init() error {
 	if _, err := s.db.ExecContext(context.TODO(), ddl); err != nil {
 		return err
 	}
+
+	// Initialize the cached block number from the database
+	num, err := s.queries.BlockNumber(context.TODO())
+	if err == sql.ErrNoRows {
+		// Empty database, block number is 0
+		s.blockNumber.Store(0)
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	s.blockNumber.Store(uint64(num))
 	return nil
 }
 
@@ -127,6 +141,22 @@ func (s *Store) InsertBlock(ctx context.Context, block domain.Block) error {
 	if err := sqlTx.Commit(); err != nil {
 		return err
 	}
+
+	// Update the cached block number after successful commit
+	// Only update if the new block number is greater than the current cached value
+	for {
+		current := s.blockNumber.Load()
+		if block.BlockNumber <= current {
+			// Block number didn't increase (duplicate or out-of-order), don't update cache
+			break
+		}
+		if s.blockNumber.CompareAndSwap(current, block.BlockNumber) {
+			// Successfully updated the cache
+			break
+		}
+		// CAS failed, retry (another goroutine updated it)
+	}
+
 	return nil
 }
 
@@ -159,13 +189,10 @@ func toStorageLog(l domain.Log) InsertLogParams {
 	return params
 }
 
-// BlockNumber returns the number of the last committed block. If there are no rows, the blockheight is zero.
+// BlockNumber returns the number of the last committed block from the cache.
+// If there are no blocks, the blockheight is zero.
 func (s *Store) BlockNumber(ctx context.Context) (uint64, error) {
-	num, err := s.queries.BlockNumber(ctx)
-	if err == sql.ErrNoRows {
-		return 0, nil
-	}
-	return uint64(num), err
+	return s.blockNumber.Load(), nil
 }
 
 // BlockNumberByHash resolves a block hash to its block number.

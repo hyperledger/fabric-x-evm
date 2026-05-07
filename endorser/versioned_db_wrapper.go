@@ -28,22 +28,14 @@ func NewVersionedDBWrapper(db *state.VersionedDB) *VersionedDBWrapper {
 	}
 }
 
-// NewSnapshot creates a new snapshot of the current state.
-// It queries the current block number and returns a VersionedDBSnapshot
-// that will use this block number for all Get operations, providing
-// snapshot isolation.
-func (w *VersionedDBWrapper) NewSnapshot() ReadStore {
-	// Query the current block number to establish the snapshot point
-	blockNum, err := w.db.BlockNumber(context.Background())
-	if err != nil {
-		// If we can't get the block number, default to 0 (latest)
-		blockNum = 0
-	}
-
+// NewSnapshot creates a new snapshot of the state at the specified block number.
+// It returns a VersionedDBSnapshot that will use this block number for all Get operations,
+// providing snapshot isolation.
+func (w *VersionedDBWrapper) NewSnapshot(blockNumber uint64) (ReadStore, error) {
 	return &VersionedDBSnapshot{
 		db:          w.db,
-		blockNumber: blockNum,
-	}
+		blockNumber: blockNumber,
+	}, nil
 }
 
 // VersionedDBSnapshot represents a point-in-time snapshot of the VersionedDB.

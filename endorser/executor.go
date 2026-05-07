@@ -39,7 +39,7 @@ type EVMConfig struct {
 }
 
 type KVSSnapshotter interface {
-	NewSnapshot() ReadStore
+	NewSnapshot(blockNumber uint64) (ReadStore, error)
 }
 
 // KVS is implemented by both LightKVS and VersionedDBWrapper.
@@ -80,7 +80,7 @@ func NewEVMEngine(namespace string, kvs KVSSnapshotter, evmConfig EVMConfig, mon
 // so that the resulting read-write set passes MVCC validation at commit time.
 // Reverts produce a valid endorsement (Status 201 + revert event) instead of an error.
 func (e *EVMEngine) Execute(blockInfo *utils.BlockInfo, tx *types.Transaction) (endorsement.ExecutionResult, error) {
-	ex, err := e.newExecutor(blockInfo, 0)
+	ex, err := e.newExecutor(blockInfo)
 	if err != nil {
 		return endorsement.ExecutionResult{}, err
 	}
@@ -119,11 +119,7 @@ func (e *EVMEngine) Execute(blockInfo *utils.BlockInfo, tx *types.Transaction) (
 // (0 / nil = latest). The EVM block context is not reconstructed for historical blocks —
 // with all forks enabled from block 0 this is harmless.
 func (e *EVMEngine) Call(msg ethereum.CallMsg, blockNumber *big.Int) ([]byte, error) {
-	stateBlock := uint64(0)
-	if blockNumber != nil {
-		stateBlock = blockNumber.Uint64()
-	}
-	ex, err := e.newExecutor(nil, stateBlock)
+	ex, err := e.newExecutor(&utils.BlockInfo{BlockNumber: blockNumber})
 	if err != nil {
 		return nil, err
 	}
@@ -170,9 +166,17 @@ func (e *EVMEngine) NonceAt(_ context.Context, account common.Address, blockNumb
 
 // newExecutor creates a fresh executor with an isolated StateDB.
 // stateBlockNum selects the Fabric block height for the state snapshot (0 = latest).
-func (e *EVMEngine) newExecutor(blockInfo *utils.BlockInfo, stateBlockNum uint64) (*Executor, error) {
+func (e *EVMEngine) newExecutor(blockInfo *utils.BlockInfo) (*Executor, error) {
+	var stateBlockNum uint64
+	if blockInfo != nil && blockInfo.BlockNumber != nil {
+		stateBlockNum = blockInfo.BlockNumber.Uint64()
+	}
+
 	// Begin a new reader to get snapshot isolation
-	reader := e.kvs.NewSnapshot()
+	reader, err := e.kvs.NewSnapshot(stateBlockNum)
+	if err != nil {
+		return nil, err
+	}
 
 	// Create StateDB with the reader
 	stateDB, err := NewStateDB(context.TODO(), reader, e.namespace, stateBlockNum, e.monotonicVersions)
@@ -192,7 +196,10 @@ func (e *EVMEngine) newSnapshotAt(blockNumber *big.Int) (ExtendedStateDB, ReadSt
 	}
 
 	// Begin a new reader to get snapshot isolation
-	reader := e.kvs.NewSnapshot()
+	reader, err := e.kvs.NewSnapshot(blockNum)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	// Create StateDB with the reader
 	stateDB, err := NewStateDB(context.TODO(), reader, e.namespace, blockNum, e.monotonicVersions)
@@ -222,12 +229,19 @@ func NewExecutor(stateDB ExtendedStateDB, reader ReadStore, blockInfo *utils.Blo
 	if evmConfig.ChainConfig == nil {
 		return nil, fmt.Errorf("evmConfig.ChainConfig must be set")
 	}
+
+	// Fill in missing blockInfo fields with defaults
 	if blockInfo == nil {
-		blockInfo = &utils.BlockInfo{
-			BlockNumber: new(big.Int),
-			BlockTime:   1_000_000,
-			GasLimit:    10_000_000,
-		}
+		blockInfo = &utils.BlockInfo{}
+	}
+	if blockInfo.BlockNumber == nil {
+		blockInfo.BlockNumber = new(big.Int)
+	}
+	if blockInfo.BlockTime == 0 {
+		blockInfo.BlockTime = 1_000_000
+	}
+	if blockInfo.GasLimit == 0 {
+		blockInfo.GasLimit = 10_000_000
 	}
 
 	// Default block context

@@ -46,7 +46,7 @@ func NewEndorser(
 		}
 		kvs = endorser.NewVersionedDBWrapper(writeDB)
 	default:
-		kvs = endorser.NewLightKVS()
+		kvs = endorser.NewLightKVS(2)
 	}
 
 	evmConfig := endorser.EVMConfig{

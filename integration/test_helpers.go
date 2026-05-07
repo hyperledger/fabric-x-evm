@@ -435,7 +435,7 @@ func newEndorser(t *testing.T, cfg econf.Endorser, channel, namespace string, ev
 		}
 		db = endorser.NewVersionedDBWrapper(writeDB)
 	default:
-		db = endorser.NewLightKVS()
+		db = endorser.NewLightKVS(1)
 	}
 	t.Cleanup(func() { db.Close() })
 
