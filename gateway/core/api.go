@@ -70,7 +70,16 @@ type Store interface {
 // New creates a new Ethereum Gateway.
 // It accepts a Chain instance which is used to register a callback for transaction completion notification.
 // This establishes the notification pipeline: when Chain commits a block, it calls the registered callback which removes completed transactions from the Gateway's queue.
-func New(ec *EndorsementClient, submitter Submitter, store Store, chain *Chain, chainID int64, workerCount int) (*Gateway, error) {
+func New(ec *EndorsementClient, submitter Submitter, chain *Chain, chainID int64, workerCount int) (*Gateway, error) {
+	if ec == nil {
+		return nil, fmt.Errorf("endorsement client cannot be nil")
+	}
+	if submitter == nil {
+		return nil, fmt.Errorf("submitter cannot be nil")
+	}
+	if chain == nil {
+		return nil, fmt.Errorf("chain cannot be nil")
+	}
 	if workerCount <= 0 {
 		workerCount = 1
 	}
@@ -79,7 +88,7 @@ func New(ec *EndorsementClient, submitter Submitter, store Store, chain *Chain, 
 	g := &Gateway{
 		endorsers:   ec,
 		submitter:   submitter,
-		store:       store,
+		store:       chain,
 		chain:       chain,
 		chainID:     cid,
 		chainConfig: cmn.BuildChainConfig(chainID),
@@ -89,7 +98,7 @@ func New(ec *EndorsementClient, submitter Submitter, store Store, chain *Chain, 
 	}
 
 	// Register callback with Chain to handle transaction completion notification.
-	// This callback is invoked when the Chain commits a block, allowing the Gateway to remove completed transactions from the pending queue.
+	// This callback is invoked when the Chain commits a block, marking transactions as completed.
 	chain.SetTxCompletionCallback(func(txHashes []common.Hash) {
 		for _, hash := range txHashes {
 			g.txQueue.Complete(hash)
