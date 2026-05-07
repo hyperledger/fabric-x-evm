@@ -26,6 +26,22 @@ import (
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
 
+// BalancePrimingConfig configures automatic ERC-20 balance priming.
+type BalancePrimingConfig struct {
+	// Enabled turns on balance priming
+	Enabled bool
+	// ContractAddress is the ERC-20 contract address to prime
+	ContractAddress common.Address
+	// MappingPosition is the storage slot position of the balances mapping
+	MappingPosition uint64
+}
+
+// SenderAware is an interface for StateDB wrappers that need to know the transaction sender.
+// This allows wrappers to perform sender-specific optimizations (e.g., balance priming).
+type SenderAware interface {
+	SetSender(addr common.Address)
+}
+
 // EVMConfig holds the configuration for EVM execution.
 // It allows callers to specify the BlockContext, ChainConfig, and VMConfig
 // that will be used when creating the EVM instance.
@@ -35,6 +51,8 @@ type EVMConfig struct {
 	VMConfig     *vm.Config
 	// FreeGas disables gas-fee balance enforcement.
 	FreeGas bool
+	// BalancePriming configures automatic ERC-20 balance priming
+	BalancePriming *BalancePrimingConfig
 }
 
 type KVSSnapshotter interface {
@@ -169,7 +187,18 @@ func (e *EVMEngine) newExecutor(blockInfo *utils.BlockInfo, stateBlockNum uint64
 		reader.Close()
 		return nil, err
 	}
-	return NewExecutor(stateDB, reader, blockInfo, e.evmConfig)
+
+	// Wrap with balance priming wrapper if configured
+	var finalStateDB ExtendedStateDB = stateDB
+	if e.evmConfig.BalancePriming != nil && e.evmConfig.BalancePriming.Enabled {
+		finalStateDB = NewBalancePrimingWrapper(
+			stateDB,
+			e.evmConfig.BalancePriming.ContractAddress,
+			e.evmConfig.BalancePriming.MappingPosition,
+		)
+	}
+
+	return NewExecutor(finalStateDB, reader, blockInfo, e.evmConfig)
 }
 
 // newSnapshotAt returns an ExtendedStateDB over the state at the given Fabric block height (0 = latest).
@@ -378,6 +407,11 @@ func (h *Executor) Send(tx *types.Transaction) ([]byte, error) {
 		return nil, err
 	}
 
+	// Notify SenderAware wrappers of the transaction sender
+	if sa, ok := h.state.(SenderAware); ok {
+		sa.SetSender(from)
+	}
+
 	// Validate that the transaction nonce matches the ledger state nonce
 	// This adds an explicit read dependency on the ledger key of the nonce
 	ledgerNonce := h.state.GetNonce(from)
@@ -428,6 +462,12 @@ func (h *Executor) Execute(msg *core.Message) ([]byte, error) {
 	// limit. Otherwise a tx with gas limit above the block gas limit incorrectly
 	// passes preCheck and executes.
 	gp := new(core.GasPool).AddGas(h.blockCtx.GasLimit)
+
+	// If the state implements SenderAware, inform it of the transaction sender.
+	// This allows wrappers like BalancePrimingWrapper to perform sender-specific optimizations.
+	if sa, ok := h.state.(SenderAware); ok {
+		sa.SetSender(msg.From)
+	}
 
 	// Use ApplyMessage to execute the transaction
 	result, err := core.ApplyMessage(evm, msg, gp)
