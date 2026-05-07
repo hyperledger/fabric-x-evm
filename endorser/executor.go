@@ -112,7 +112,7 @@ func (e *EVMEngine) Call(msg ethereum.CallMsg, blockNumber *big.Int) ([]byte, er
 	if blockNumber != nil {
 		stateBlock = blockNumber.Uint64()
 	}
-	ex, err := e.newExecutor(nil, stateBlock)
+	ex, err := e.newExecutor(&utils.BlockInfo{BlockNumber: blockNumber}, stateBlock)
 	if err != nil {
 		return nil, err
 	}
@@ -211,12 +211,19 @@ func NewExecutor(stateDB ExtendedStateDB, reader ReadStore, blockInfo *utils.Blo
 	if evmConfig.ChainConfig == nil {
 		return nil, fmt.Errorf("evmConfig.ChainConfig must be set")
 	}
+
+	// Fill in missing blockInfo fields with defaults
 	if blockInfo == nil {
-		blockInfo = &utils.BlockInfo{
-			BlockNumber: new(big.Int),
-			BlockTime:   1_000_000,
-			GasLimit:    10_000_000,
-		}
+		blockInfo = &utils.BlockInfo{}
+	}
+	if blockInfo.BlockNumber == nil {
+		blockInfo.BlockNumber = new(big.Int)
+	}
+	if blockInfo.BlockTime == 0 {
+		blockInfo.BlockTime = 1_000_000
+	}
+	if blockInfo.GasLimit == 0 {
+		blockInfo.GasLimit = 10_000_000
 	}
 
 	// Default block context

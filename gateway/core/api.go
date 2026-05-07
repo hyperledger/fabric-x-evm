@@ -115,7 +115,12 @@ func (g *Gateway) worker(ctx context.Context) {
 
 // processTx handles the actual transaction processing
 func (g *Gateway) processTx(ctx context.Context, tx *types.Transaction) error {
-	end, err := g.ExecuteEthTx(ctx, tx, nil)
+	bn, err := g.store.BlockNumber(ctx)
+	if err != nil {
+		return err
+	}
+
+	end, err := g.ExecuteEthTx(ctx, tx, &utils.BlockInfo{BlockNumber: big.NewInt(int64(bn))})
 	if err != nil {
 		return err
 	}
@@ -140,6 +145,15 @@ func (g *Gateway) SendTransaction(ctx context.Context, tx *types.Transaction) er
 // We requests endorsement from a single endorser, return the payload, and discard the signed response.
 // This is the same way queries are handled in Fabric.
 func (g *Gateway) CallContract(ctx context.Context, call ethereum.CallMsg, blockNumber *big.Int) ([]byte, error) {
+	if blockNumber == nil || blockNumber.Sign() == 0 {
+		bn, err := g.store.BlockNumber(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		blockNumber = big.NewInt(int64(bn))
+	}
+
 	return g.endorsers.CallContract(ctx, call, &utils.BlockInfo{BlockNumber: blockNumber})
 }
 
