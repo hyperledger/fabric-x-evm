@@ -8,6 +8,7 @@ package common
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-sdk/state"
@@ -50,18 +51,20 @@ func UnmarshalLogs(event []byte) ([]state.Log, error) {
 	return logs, nil
 }
 
-// EventNameRevert is the ChaincodeEvent name used to signal an EVM revert
-// from the endorser to the committer, so receipts can be marked status=0.
-const EventNameRevert = "revert"
+// eventNameRevertPrefix is the prefix of the inner ChaincodeEvent name used
+// to signal an EVM revert. The Fabric txid is appended so the full name is
+// unique per transaction and cannot be forged by an EVM contract.
+const eventNameRevertPrefix = "revert:"
 
-// MarshalRevert wraps the raw revert payload in a ChaincodeEvent with name
-// "revert" so the committer can detect the revert via the block-parsed events.
+// MarshalRevert wraps the raw revert payload in a ChaincodeEvent whose name
+// is "revert:<txID>" so the committer can detect the revert and the marker
+// cannot collide with any name an EVM contract could produce.
 func MarshalRevert(payload []byte, namespace, txID string) ([]byte, error) {
 	return proto.Marshal(&peer.ChaincodeEvent{
 		Payload:     payload,
 		ChaincodeId: namespace,
 		TxId:        txID,
-		EventName:   EventNameRevert,
+		EventName:   eventNameRevertPrefix + txID,
 	})
 }
 
@@ -81,5 +84,5 @@ func IsRevertEvent(event []byte) bool {
 	if err := proto.Unmarshal(outer.Payload, &inner); err != nil {
 		return false
 	}
-	return inner.EventName == EventNameRevert
+	return strings.HasPrefix(inner.EventName, eventNameRevertPrefix)
 }

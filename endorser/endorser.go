@@ -70,18 +70,27 @@ func New(engine *EVMEngine, builder endorsement.Builder, chainID int64) (*Endors
 // Reverts are endorsed and submitted (so the receipt records status=0); pre-execution
 // failures (nonce, gas, signer, EIP-3860, etc.) are rejected before any envelope is cut.
 func (f *Endorser) ProcessEVMTransaction(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction, blockInfo *utils.BlockInfo) (*peer.ProposalResponse, error) {
+	// Validate the ethereum transaction signature
 	if _, err := types.Sender(f.ethSigner, ethTx); err != nil {
 		return nil, fmt.Errorf("invalid ethereum signature: %w", err)
 	}
 
+	// Execute the transaction
 	res, err := f.Engine.Execute(blockInfo, ethTx)
 	if err != nil {
+		// Distinguish between pre-execution validation errors and execution errors.
+		// Pre-execution errors (from ApplyMessage) indicate the transaction is invalid
+		// and should be rejected. Execution errors (from result.Err) indicate the
+		// transaction executed but failed, and should be included in the response.
 		if isPreExecutionError(err) {
+			// Pre-execution validation error: reject the transaction
 			return nil, err
 		}
+		// Execution error: include in response with error status
 		return response(nil, err), nil
 	}
 
+	// Build and sign the endorsement
 	return f.builder.Endorse(inv, res)
 }
 
