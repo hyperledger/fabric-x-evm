@@ -427,6 +427,9 @@ Note: `eth_estimateGas` is mocked (returns a constant) and does not surface reve
 contracts that revert during gas estimation on a real Ethereum node will succeed here. Callers
 that need revert detection should issue an `eth_call` first.
 
+See [`docs/JSON_RPC_ERRORS.md`](JSON_RPC_ERRORS.md) for the full per-method mapping,
+example error objects, and the layering of the classifier.
+
 ---
 
 ## Not implemented
