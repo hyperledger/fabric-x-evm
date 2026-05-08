@@ -18,7 +18,11 @@ NC='\033[0m' # No Color
 # Configuration
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 OZ_DIR="${PROJECT_ROOT}/testdata/openzeppelin-contracts"
+HARDHAT_FABLO_CONFIG="./testdata/fablo/fablo-config.hardhat-test.json"
 GATEWAY_PID=""
+
+# Export FABLO_CONFIG to use hardhat-specific config (single org, single endorsement)
+export FABLO_CONFIG="${HARDHAT_FABLO_CONFIG}"
 
 # Default test path
 TEST_PATH="${1:-test/token/ERC20/ERC20.test.js}"
@@ -108,9 +112,9 @@ start_gateway() {
         rm -rf testdata/triedb
     fi
     
-    # Start gateway in test node mode
+    # Start gateway in test node mode with hardhat-specific config
     echo "Starting test node (logs: /tmp/gateway_$$.log)..."
-    cd integration && go run ../cmd/fxevm testnode --config fablo.yaml \
+    cd integration && go run ../cmd/fxevm testnode --config fablo.hardhat.yaml \
         --test-accounts-path ../testdata/test_accounts.json \
         > /tmp/gateway_$$.log 2>&1 &
     cd ..
@@ -181,29 +185,9 @@ run_tests() {
     # Must run from OZ directory for Hardhat to find node_modules
     cd "${OZ_DIR}"
     
-    # Fabric-EVM limitations:
-    # 1. Transaction reverts are not reported like Ethereum - tests expecting revert errors will timeout
-    # 2. Balance change detection for internal _mint/_update functions - related to PR #152 LightKVS changes
-    #    Issue: Transactions are executed but state changes aren't visible in subsequent balance queries
-    #    Root cause: Synchronizers only sync existing blocks during startup, not real-time block creation
-    #    TODO: Investigate why new blocks aren't being created/synced for test transactions
-    #
-    # KNOWN LIMITATION: This skip pattern is brittle and specific to OpenZeppelin's
-    # ERC20 test suite. It will need updates if:
-    # - OpenZeppelin changes test descriptions
-    # - Testing other contracts with different test naming
-    # - New revert-related test patterns are added
-    #
-    # Future improvement: Consider a configuration file approach or accept timeouts
-    # and document the limitation instead of trying to skip specific tests.
-    SKIP_PATTERN="^(?!.*(reverts|rejects|overflow|when the spender has enough allowance|when the spender has unlimited allowance|when the spender does not have enough allowance|for entire balance|for less value than balance|when the sender transfers all balance|executes with balance))"
-    
-    echo -e "${YELLOW}Note: Skipping revert-related and balance-change tests (Fabric-EVM limitations)${NC}"
-    echo ""
-    
     # Use wrapper config in OZ directory (relative path)
-    echo "Executing: npx hardhat test ${TEST_PATH} --config hardhat.config.fabricevm.js --network fabricevm --grep \"${SKIP_PATTERN}\""
-    npx hardhat test "${TEST_PATH}" --config hardhat.config.fabricevm.js --network fabricevm --grep "${SKIP_PATTERN}"
+    echo "Executing: npx hardhat test ${TEST_PATH} --config hardhat.config.fabricevm.js --network fabricevm --bail"
+    npx hardhat test "${TEST_PATH}" --config hardhat.config.fabricevm.js --network fabricevm --bail
 }
 
 # Main execution
@@ -227,6 +211,9 @@ main() {
     
     # Check prerequisites
     check_prerequisites
+
+    # Use the hardhat-specific Fablo topology for this script only
+    export FABLO_CONFIG="${HARDHAT_FABLO_CONFIG}"
     
     # Initialize OpenZeppelin
     init_openzeppelin

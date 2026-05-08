@@ -15,7 +15,7 @@ import (
 type ProposalType byte
 
 const (
-	ProposalTypeEVMTx ProposalType = iota
+	ProposalTypeEVMTx ProposalType = 0xfb
 	ProposalTypeCall
 	ProposalTypeState
 )

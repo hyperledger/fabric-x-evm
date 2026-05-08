@@ -7,7 +7,7 @@
 # Configuration
 FABLO_DIR="./testdata/fablo"
 FABLO_PATH="$FABLO_DIR/fablo"
-FABLO_CONFIG="$FABLO_DIR/fablo-config.json"
+FABLO_CONFIG="${FABLO_CONFIG:-$FABLO_DIR/fablo-config.json}"
 FABLO_TARGET="$FABLO_DIR/fablo-target"
 FABRIC_VERSION="${FABRIC_VERSION:-3.1.4}"
 NETWORK_STARTED=false
@@ -61,9 +61,10 @@ start_network_and_deploy_chaincode() {
     docker pull hyperledger/fabric-ccenv:$FABRIC_VERSION || echo "Warning: Failed to pull fabric-ccenv"
 
     # Clean up any previous fablo-target
-    echo "Stopping any previously running Fablo network..."
+    echo "Stopping and pruning any previously running Fablo network..."
     cd "$FABLO_DIR" || { echo "Failed to enter fablo dir for cleanup"; exit 1; }
     ./fablo down || true
+    ./fablo prune || true
     cd - > /dev/null || exit 1
 
     if [[ -d "$FABLO_TARGET" ]]; then
@@ -73,8 +74,14 @@ start_network_and_deploy_chaincode() {
 
     # Bring up the network (generates artifacts, creates channel, deploys chaincode)
     echo "Bringing up network with Fablo..."
+    
     cd "$FABLO_DIR" || { echo "Failed to enter fablo dir"; exit 1; }
-    ./fablo up fablo-config.json || { echo "Failed to start network"; exit 1; }
+    
+    # Extract basename and call generate explicitly with the config file
+    FABLO_CONFIG_FILE="$(basename "$FABLO_CONFIG")"
+    ./fablo generate "$FABLO_CONFIG_FILE" || { echo "Failed to generate network"; exit 1; }
+    ./fablo up "$FABLO_CONFIG_FILE" || { echo "Failed to start network"; exit 1; }
+    
     cd - > /dev/null || exit 1
 
     NETWORK_STARTED=true

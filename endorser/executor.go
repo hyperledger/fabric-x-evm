@@ -184,6 +184,10 @@ func (e *EVMEngine) newExecutor(blockInfo *utils.BlockInfo) (*Executor, error) {
 		reader.Close()
 		return nil, err
 	}
+
+	// in case logging is required - consider enabling programmatically
+	// sdl := NewStateDBLogger(stateDB)
+	// flogging.ActivateSpec("DEBUG")
 	return NewExecutor(stateDB, reader, blockInfo, e.evmConfig)
 }
 
@@ -460,6 +464,7 @@ func (h *Executor) Execute(msg *core.Message) ([]byte, error) {
 	// Note: result.Err contains execution errors (e.g., revert, out of gas, code size exceeded)
 	// These are not fatal errors - the transaction is included but failed
 	if result.Err != nil {
+		fmt.Println("========+> apply failed:", result.Err)
 		return result.ReturnData, result.Err
 	}
 	return result.ReturnData, nil
@@ -475,5 +480,6 @@ func formatRevert(ret []byte, err error) error {
 	if errUnpack != nil {
 		return err
 	}
+	fmt.Println("===> revert reason", fmt.Errorf("%w: %v", vm.ErrExecutionReverted, reason))
 	return fmt.Errorf("%w: %v", vm.ErrExecutionReverted, reason)
 }

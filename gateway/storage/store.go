@@ -21,15 +21,15 @@ import (
 var ddl string
 
 type Store struct {
-	queries     *Queries
-	db          *sql.DB
-	blockNumber atomic.Uint64 // cached block number for fast reads
+	queries           *Queries
+	DB                *sql.DB
+	CachedBlockNumber atomic.Uint64 // cached block number for fast reads
 }
 
 func NewStore(db *sql.DB) *Store {
 	return &Store{
 		queries: New(db),
-		db:      db,
+		DB:      db,
 	}
 }
 
@@ -94,7 +94,7 @@ func toDomainTransaction(t Transaction) domain.Transaction {
 
 // Init creates the tables and initializes the cached block number.
 func (s *Store) Init() error {
-	if _, err := s.db.ExecContext(context.TODO(), ddl); err != nil {
+	if _, err := s.DB.ExecContext(context.TODO(), ddl); err != nil {
 		return err
 	}
 
@@ -102,18 +102,18 @@ func (s *Store) Init() error {
 	num, err := s.queries.BlockNumber(context.TODO())
 	if err == sql.ErrNoRows {
 		// Empty database, block number is 0
-		s.blockNumber.Store(0)
+		s.CachedBlockNumber.Store(0)
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	s.blockNumber.Store(uint64(num))
+	s.CachedBlockNumber.Store(uint64(num))
 	return nil
 }
 
 func (s *Store) InsertBlock(ctx context.Context, block domain.Block) error {
-	sqlTx, err := s.db.BeginTx(ctx, nil)
+	sqlTx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -145,12 +145,12 @@ func (s *Store) InsertBlock(ctx context.Context, block domain.Block) error {
 	// Update the cached block number after successful commit
 	// Only update if the new block number is greater than the current cached value
 	for {
-		current := s.blockNumber.Load()
+		current := s.CachedBlockNumber.Load()
 		if block.BlockNumber <= current {
 			// Block number didn't increase (duplicate or out-of-order), don't update cache
 			break
 		}
-		if s.blockNumber.CompareAndSwap(current, block.BlockNumber) {
+		if s.CachedBlockNumber.CompareAndSwap(current, block.BlockNumber) {
 			// Successfully updated the cache
 			break
 		}
@@ -192,7 +192,7 @@ func toStorageLog(l domain.Log) InsertLogParams {
 // BlockNumber returns the number of the last committed block from the cache.
 // If there are no blocks, the blockheight is zero.
 func (s *Store) BlockNumber(ctx context.Context) (uint64, error) {
-	return s.blockNumber.Load(), nil
+	return s.CachedBlockNumber.Load(), nil
 }
 
 // BlockNumberByHash resolves a block hash to its block number.
@@ -418,7 +418,7 @@ func (s *Store) GetLogs(ctx context.Context, filter domain.LogFilter) ([]domain.
 
 	query.WriteString(` ORDER BY block_number, tx_index, log_index`)
 
-	rows, err := s.db.QueryContext(ctx, query.String(), args...)
+	rows, err := s.DB.QueryContext(ctx, query.String(), args...)
 	if err != nil {
 		return nil, err
 	}

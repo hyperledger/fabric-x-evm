@@ -7,6 +7,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package core
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
@@ -117,7 +118,8 @@ func (c *Chain) convertToDomain(b blocks.Block) domain.Block {
 		// TODO: filter on namespace?
 
 		// retrieve the Ethereum transaction from the chaincode invocation
-		if len(tx.InputArgs) < 2 {
+		if len(tx.InputArgs) < 2 || !bytes.Equal(tx.InputArgs[0], []byte{byte(fc.ProposalTypeEVMTx)}) {
+			// skip non-eth tx
 			continue
 		}
 		status := uint8(0)
@@ -127,7 +129,7 @@ func (c *Chain) convertToDomain(b blocks.Block) domain.Block {
 
 		etx, err := convertTransaction(tx.InputArgs[1], b.Hash, b.Number, tx.Number, tx.ID, status, tx.Status, tx.Events, &logIndex)
 		if err != nil {
-			continue // ?
+			panic(err) // we surface this for now instead of swallowing it
 		}
 
 		ebl.Transactions = append(ebl.Transactions, etx)

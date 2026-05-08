@@ -23,15 +23,15 @@ func TestNewLightKVS(t *testing.T) {
 	}
 
 	// Verify initial snapshot exists and is empty
-	snapshot := kvs.current.Load()
+	snapshot := kvs.Current.Load()
 	if snapshot == nil {
 		t.Fatal("initial snapshot is nil")
 	}
-	if snapshot.blockNumber != 0 {
-		t.Errorf("expected initial block number 0, got %d", snapshot.blockNumber)
+	if snapshot.BlockNumber != 0 {
+		t.Errorf("expected initial block number 0, got %d", snapshot.BlockNumber)
 	}
-	if len(snapshot.data) != 0 {
-		t.Errorf("expected empty initial data, got %d entries", len(snapshot.data))
+	if len(snapshot.Data) != 0 {
+		t.Errorf("expected empty initial data, got %d entries", len(snapshot.Data))
 	}
 }
 
@@ -51,10 +51,10 @@ func TestNewSnapshot(t *testing.T) {
 	if !ok {
 		t.Fatal("NewSnapshot did not return a *Reader")
 	}
-	if r.snapshot == nil {
+	if r.Snapshot == nil {
 		t.Error("reader snapshot is nil")
 	}
-	if r.kvs != kvs {
+	if r.Kvs != kvs {
 		t.Error("reader kvs reference is incorrect")
 	}
 }
@@ -188,7 +188,7 @@ func TestReaderClose(t *testing.T) {
 
 	// Verify snapshot is nil after close (need to type assert to access internal field)
 	r, ok := reader.(*Reader)
-	if ok && r.snapshot != nil {
+	if ok && r.Snapshot != nil {
 		t.Error("snapshot should be nil after Close")
 	}
 
@@ -231,16 +231,16 @@ func TestUpdate(t *testing.T) {
 	}
 
 	// Verify data was updated
-	snapshot := kvs.current.Load()
-	if snapshot.blockNumber != 1 {
-		t.Errorf("expected block number 1, got %d", snapshot.blockNumber)
+	snapshot := kvs.Current.Load()
+	if snapshot.BlockNumber != 1 {
+		t.Errorf("expected block number 1, got %d", snapshot.BlockNumber)
 	}
-	if len(snapshot.data) != 2 {
-		t.Errorf("expected 2 entries, got %d", len(snapshot.data))
+	if len(snapshot.Data) != 2 {
+		t.Errorf("expected 2 entries, got %d", len(snapshot.Data))
 	}
 
 	// Verify values
-	vv1 := snapshot.data["ns1:key1"]
+	vv1 := snapshot.Data["ns1:key1"]
 	if vv1 == nil {
 		t.Fatal("key1 not found")
 	}
@@ -251,7 +251,7 @@ func TestUpdate(t *testing.T) {
 		t.Errorf("expected version 0, got %d", vv1.Version)
 	}
 
-	vv2 := snapshot.data["ns1:key2"]
+	vv2 := snapshot.Data["ns1:key2"]
 	if vv2 == nil {
 		t.Fatal("key2 not found")
 	}
@@ -280,9 +280,9 @@ func TestUpdateVersionIncrement(t *testing.T) {
 		t.Fatalf("Update failed: %v", err)
 	}
 
-	snapshot := kvs.current.Load()
-	if snapshot.data["ns1:key1"].Version != 0 {
-		t.Errorf("expected version 0, got %d", snapshot.data["ns1:key1"].Version)
+	snapshot := kvs.Current.Load()
+	if snapshot.Data["ns1:key1"].Version != 0 {
+		t.Errorf("expected version 0, got %d", snapshot.Data["ns1:key1"].Version)
 	}
 
 	// Second update to same key
@@ -301,9 +301,9 @@ func TestUpdateVersionIncrement(t *testing.T) {
 		t.Fatalf("Update failed: %v", err)
 	}
 
-	snapshot = kvs.current.Load()
-	if snapshot.data["ns1:key1"].Version != 1 {
-		t.Errorf("expected version 1, got %d", snapshot.data["ns1:key1"].Version)
+	snapshot = kvs.Current.Load()
+	if snapshot.Data["ns1:key1"].Version != 1 {
+		t.Errorf("expected version 1, got %d", snapshot.Data["ns1:key1"].Version)
 	}
 
 	// Third update
@@ -322,9 +322,9 @@ func TestUpdateVersionIncrement(t *testing.T) {
 		t.Fatalf("Update failed: %v", err)
 	}
 
-	snapshot = kvs.current.Load()
-	if snapshot.data["ns1:key1"].Version != 2 {
-		t.Errorf("expected version 2, got %d", snapshot.data["ns1:key1"].Version)
+	snapshot = kvs.Current.Load()
+	if snapshot.Data["ns1:key1"].Version != 2 {
+		t.Errorf("expected version 2, got %d", snapshot.Data["ns1:key1"].Version)
 	}
 }
 
@@ -349,8 +349,8 @@ func TestUpdateDelete(t *testing.T) {
 	}
 
 	// Verify key exists
-	snapshot := kvs.current.Load()
-	if _, ok := snapshot.data["ns1:key1"]; !ok {
+	snapshot := kvs.Current.Load()
+	if _, ok := snapshot.Data["ns1:key1"]; !ok {
 		t.Fatal("key1 should exist")
 	}
 
@@ -370,8 +370,8 @@ func TestUpdateDelete(t *testing.T) {
 	}
 
 	// Verify key is deleted
-	snapshot = kvs.current.Load()
-	if _, ok := snapshot.data["ns1:key1"]; ok {
+	snapshot = kvs.Current.Load()
+	if _, ok := snapshot.Data["ns1:key1"]; ok {
 		t.Error("key1 should be deleted")
 	}
 }
@@ -385,9 +385,9 @@ func TestUpdateEmptyBatch(t *testing.T) {
 		t.Fatalf("Update with empty batch failed: %v", err)
 	}
 
-	snapshot := kvs.current.Load()
-	if snapshot.blockNumber != 0 {
-		t.Errorf("expected block number 0, got %d", snapshot.blockNumber)
+	snapshot := kvs.Current.Load()
+	if snapshot.BlockNumber != 0 {
+		t.Errorf("expected block number 0, got %d", snapshot.BlockNumber)
 	}
 }
 
@@ -813,9 +813,9 @@ func TestHandleEmptyBlock(t *testing.T) {
 	}
 
 	// Block number should not change for empty blocks
-	snapshot := kvs.current.Load()
-	if snapshot.blockNumber != 0 {
-		t.Errorf("expected block number 0, got %d", snapshot.blockNumber)
+	snapshot := kvs.Current.Load()
+	if snapshot.BlockNumber != 0 {
+		t.Errorf("expected block number 0, got %d", snapshot.BlockNumber)
 	}
 }
 
@@ -1077,8 +1077,8 @@ func TestStructuralSharing(t *testing.T) {
 		t.Fatalf("Update failed: %v", err)
 	}
 
-	snapshot1 := kvs.current.Load()
-	ptr1 := snapshot1.data["ns1:key1"]
+	snapshot1 := kvs.Current.Load()
+	ptr1 := snapshot1.Data["ns1:key1"]
 
 	// Update only key2
 	updates2 := []KeyValueVersion{
@@ -1096,8 +1096,8 @@ func TestStructuralSharing(t *testing.T) {
 		t.Fatalf("Update failed: %v", err)
 	}
 
-	snapshot2 := kvs.current.Load()
-	ptr2 := snapshot2.data["ns1:key1"]
+	snapshot2 := kvs.Current.Load()
+	ptr2 := snapshot2.Data["ns1:key1"]
 
 	// key1 should share the same pointer (structural sharing)
 	if ptr1 != ptr2 {
@@ -1105,8 +1105,8 @@ func TestStructuralSharing(t *testing.T) {
 	}
 
 	// key2 should have a different pointer
-	ptr1_key2 := snapshot1.data["ns1:key2"]
-	ptr2_key2 := snapshot2.data["ns1:key2"]
+	ptr1_key2 := snapshot1.Data["ns1:key2"]
+	ptr2_key2 := snapshot2.Data["ns1:key2"]
 	if ptr1_key2 == ptr2_key2 {
 		t.Error("expected different pointer for updated key2")
 	}

@@ -27,24 +27,24 @@ var (
 type LightKVS struct {
 	// Atomic pointer to current snapshot
 	// Readers get this atomically, writers swap it atomically
-	current atomic.Pointer[Snapshot]
+	Current atomic.Pointer[Snapshot]
 
 	// Ring buffer of recent snapshots for history preservation
 	// Size determines how many snapshots to keep (e.g., 2 for last 2 snapshots)
-	history []atomic.Pointer[Snapshot]
+	History []atomic.Pointer[Snapshot]
 
 	// Next index in the ring buffer to write to
-	nextIndex atomic.Uint32
+	NextIndex atomic.Uint32
 }
 
 // Snapshot represents an immutable point-in-time view of the key-value store.
 type Snapshot struct {
-	// blockNumber is the block number of this snapshot
-	blockNumber uint64
+	// BlockNumber is the block number of this snapshot
+	BlockNumber uint64
 
-	// Map from key to pointer to immutable value
+	// Data is the map from key to pointer to immutable value
 	// Multiple snapshots can share pointers to unchanged values
-	data map[string]*ValueVersion
+	Data map[string]*ValueVersion
 }
 
 // ValueVersion represents a versioned value in the store.
@@ -63,18 +63,21 @@ type ValueVersion struct {
 
 	// TxID is the transaction ID
 	TxID string
+
+	// IsDelete indicates if this is a delete operation
+	IsDelete bool
 }
 
 // Reader provides a consistent view of the store at a specific point in time.
 // All Get operations see the state as it was when Begin() was called.
 // Reader implements the ReadStore interface for compatibility with StateDB.
 type Reader struct {
-	// snapshot holds a reference to the immutable snapshot
+	// Snapshot holds a reference to the immutable snapshot
 	// This prevents the snapshot from being garbage collected
-	snapshot *Snapshot
+	Snapshot *Snapshot
 
-	// kvs reference for BlockNumber queries
-	kvs *LightKVS
+	// Kvs reference for BlockNumber queries
+	Kvs *LightKVS
 }
 
 // KeyValueVersion represents a key-value pair with version for batch updates.
@@ -122,15 +125,15 @@ func (u KeyValueVersion) toLogUpdate() logUpdate {
 // NewLightKVS creates a new empty versioned key-value store.
 func NewLightKVS(historySize int) *LightKVS {
 	kvs := &LightKVS{
-		history: make([]atomic.Pointer[Snapshot], historySize),
+		History: make([]atomic.Pointer[Snapshot], historySize),
 	}
 	initial := &Snapshot{
-		blockNumber: 0,
-		data:        make(map[string]*ValueVersion),
+		BlockNumber: 0,
+		Data:        make(map[string]*ValueVersion),
 	}
-	kvs.current.Store(initial)
-	// nextIndex starts at 0 - history slots are initially nil
-	kvs.nextIndex.Store(0)
+	kvs.Current.Store(initial)
+	// NextIndex starts at 0 - history slots are initially nil
+	kvs.NextIndex.Store(0)
 	return kvs
 }
 
@@ -143,31 +146,31 @@ func NewLightKVS(historySize int) *LightKVS {
 // Readers must call Close() when done to allow garbage collection of old snapshots.
 func (kvs *LightKVS) NewSnapshot(blockNumber uint64) (ReadStore, error) {
 	// Load the current snapshot
-	current := kvs.current.Load()
+	current := kvs.Current.Load()
 
 	// If blockNumber is 0, return the current snapshot (latest state)
 	if blockNumber == 0 {
 		return &Reader{
-			snapshot: current,
-			kvs:      kvs,
+			Snapshot: current,
+			Kvs:      kvs,
 		}, nil
 	}
 
 	// Check if requested snapshot matches or is greater than the current block number
-	if blockNumber >= current.blockNumber {
+	if blockNumber >= current.BlockNumber {
 		return &Reader{
-			snapshot: current,
-			kvs:      kvs,
+			Snapshot: current,
+			Kvs:      kvs,
 		}, nil
 	}
 
 	// Search through history snapshots for the requested block number
-	for i := range kvs.history {
-		snapshot := kvs.history[i].Load()
-		if snapshot != nil && snapshot.blockNumber == blockNumber {
+	for i := range kvs.History {
+		snapshot := kvs.History[i].Load()
+		if snapshot != nil && snapshot.BlockNumber == blockNumber {
 			return &Reader{
-				snapshot: snapshot,
-				kvs:      kvs,
+				Snapshot: snapshot,
+				Kvs:      kvs,
 			}, nil
 		}
 	}
@@ -190,14 +193,14 @@ func (kvs *LightKVS) Get(namespace, key string, lastBlock uint64) (*blocks.Write
 // This implements the ReadStore interface with the signature:
 // Get(namespace, key string) (*blocks.WriteRecord, error)
 func (r *Reader) Get(namespace, key string) (*blocks.WriteRecord, error) {
-	if r.snapshot == nil {
+	if r.Snapshot == nil {
 		return nil, errors.New("reader is closed")
 	}
 
 	// Prepend namespace to key
 	fullKey := namespace + ":" + key
 
-	if vv, ok := r.snapshot.data[fullKey]; ok {
+	if vv, ok := r.Snapshot.Data[fullKey]; ok {
 		record := &blocks.WriteRecord{
 			Namespace: namespace,
 			Key:       key,
@@ -205,7 +208,7 @@ func (r *Reader) Get(namespace, key string) (*blocks.WriteRecord, error) {
 			TxNum:     vv.TxNum,
 			Version:   vv.Version,
 			Value:     vv.Value,
-			IsDelete:  false,
+			IsDelete:  vv.IsDelete,
 			TxID:      vv.TxID,
 		}
 
@@ -217,7 +220,8 @@ func (r *Reader) Get(namespace, key string) (*blocks.WriteRecord, error) {
 				"block_num": vv.BlockNum,
 				"tx_num":    vv.TxNum,
 				"version":   vv.Version,
-				"value":     truncateValue(vv.Value, 20),
+				"value":     truncateValue(vv.Value, 32),
+				"is_delete": vv.IsDelete,
 				"tx_id":     vv.TxID,
 			}
 			if jsonData, err := json.MarshalIndent(logRec, "", "  "); err == nil {
@@ -239,7 +243,7 @@ func (r *Reader) Get(namespace, key string) (*blocks.WriteRecord, error) {
 // After Close(), the reader cannot be used for further Get operations.
 // This allows Go's GC to clean up the snapshot if no other readers reference it.
 func (r *Reader) Close() error {
-	r.snapshot = nil
+	r.Snapshot = nil
 	return nil
 }
 
@@ -254,11 +258,11 @@ func (r *Reader) Close() error {
 // The single writer assumption means no locking is needed for the update itself.
 func (kvs *LightKVS) Update(updates []KeyValueVersion) error {
 	// Load current snapshot
-	oldSnapshot := kvs.current.Load()
+	oldSnapshot := kvs.Current.Load()
 
 	// Shallow clone the map - copies map structure, shares value pointers
 	// This is O(n) but highly optimized in Go's runtime
-	newData := maps.Clone(oldSnapshot.data)
+	newData := maps.Clone(oldSnapshot.Data)
 
 	// Update changed entries with new ValueVersion structs
 	// Only these allocations are new; unchanged entries share pointers
@@ -269,7 +273,7 @@ func (kvs *LightKVS) Update(updates []KeyValueVersion) error {
 		} else {
 			// Compute next version for this key: existing version + 1, or 0 if new
 			nextVersion := uint64(0)
-			if existing, ok := oldSnapshot.data[update.Key]; ok {
+			if existing, ok := oldSnapshot.Data[update.Key]; ok {
 				nextVersion = existing.Version + 1
 			}
 
@@ -280,6 +284,7 @@ func (kvs *LightKVS) Update(updates []KeyValueVersion) error {
 				TxNum:    update.TxNum,
 				Version:  nextVersion,
 				TxID:     update.TxID,
+				IsDelete: false,
 			}
 
 			if false {
@@ -290,6 +295,7 @@ func (kvs *LightKVS) Update(updates []KeyValueVersion) error {
 					"tx_num":    update.TxNum,
 					"version":   nextVersion,
 					"value":     truncateValue(update.Value, 20),
+					"is_delete": false,
 					"tx_id":     update.TxID,
 				}
 				if jsonData, err := json.MarshalIndent(logRec, "", "  "); err == nil {
@@ -307,23 +313,23 @@ func (kvs *LightKVS) Update(updates []KeyValueVersion) error {
 		blockNum = updates[0].BlockNum
 	}
 	newSnapshot := &Snapshot{
-		blockNumber: blockNum,
-		data:        newData,
+		BlockNumber: blockNum,
+		Data:        newData,
 	}
 
 	// Get the next history slot to write to
-	idx := kvs.nextIndex.Load()
+	idx := kvs.NextIndex.Load()
 
 	// Store old snapshot in the ring buffer
-	kvs.history[idx].Store(oldSnapshot)
+	kvs.History[idx].Store(oldSnapshot)
 
 	// Advance to next slot (wraps around using modulo)
-	nextIdx := (idx + 1) % uint32(len(kvs.history))
-	kvs.nextIndex.Store(nextIdx)
+	nextIdx := (idx + 1) % uint32(len(kvs.History))
+	kvs.NextIndex.Store(nextIdx)
 
 	// Atomically swap in the new snapshot
 	// New readers will see this snapshot; existing readers keep their old snapshot
-	kvs.current.Store(newSnapshot)
+	kvs.Current.Store(newSnapshot)
 
 	return nil
 }
@@ -384,8 +390,8 @@ func (kvs *LightKVS) Handle(ctx context.Context, b blocks.Block) error {
 // BlockNumber returns the current snapshot block number.
 // This implements the BlockHeightReader interface for the synchronizer.
 func (kvs *LightKVS) BlockNumber(ctx context.Context) (uint64, error) {
-	snapshot := kvs.current.Load()
-	return snapshot.blockNumber, nil
+	snapshot := kvs.Current.Load()
+	return snapshot.BlockNumber, nil
 }
 
 // Close is a no-op for LightKVS since there are no resources to clean up.

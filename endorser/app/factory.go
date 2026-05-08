@@ -12,6 +12,7 @@ import (
 	"github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/endorser"
 	"github.com/hyperledger/fabric-x-evm/endorser/config"
+	"github.com/hyperledger/fabric-x-evm/endorser/testimpl"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	efab "github.com/hyperledger/fabric-x-sdk/endorsement/fabric"
@@ -25,16 +26,18 @@ import (
 
 // NewEndorser creates a single endorser instance with its synchronizer.
 // This is the canonical way to create an endorser, whether embedded or standalone.
+// Returns the endorser, synchronizer, and the LightKVS instance (or extended version) for state management.
 func NewEndorser(
 	cfg config.Endorser,
 	network common.Network,
 	logger sdk.Logger,
 	skipAllNonceChecks bool,
-) (*endorser.Endorser, *sdknet.Synchronizer, error) {
+	testImpl bool,
+) (*endorser.Endorser, *sdknet.Synchronizer, interface{}, error) {
 	// Signer is the identity to connect to the peer for synchronizing, and for signing the endorsement.
 	signer, err := identity.SignerFromMSP(cfg.Identity.MSPDir, cfg.Identity.MspID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create signer: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to create signer: %w", err)
 	}
 
 	var kvs endorser.KVS
@@ -42,11 +45,18 @@ func NewEndorser(
 	case "sqlite":
 		writeDB, err := state.NewWriteDB(network.Channel, cfg.Database.ConnString)
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to initialize store: %w", err)
+			return nil, nil, nil, fmt.Errorf("failed to initialize store: %w", err)
 		}
 		kvs = endorser.NewVersionedDBWrapper(writeDB)
 	default:
 		kvs = endorser.NewLightKVS(2)
+
+		baseLightKVS := endorser.NewLightKVS(cfg.Database.HistorySize)
+		if testImpl {
+			kvs = testimpl.NewLightKVSExt(baseLightKVS)
+		} else {
+			kvs = baseLightKVS
+		}
 	}
 
 	evmConfig := endorser.EVMConfig{
@@ -65,7 +75,7 @@ func NewEndorser(
 		sync, err = nfab.NewSynchronizer(kvs, network.Channel, cfg.Committer.ToPeerConf(), signer, logger, kvs)
 	}
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create synchronizer: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to create synchronizer: %w", err)
 	}
 
 	// Executing transactions and signing the endorsement.
@@ -76,8 +86,8 @@ func NewEndorser(
 		network.ChainID,
 	)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create endorser: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to create endorser: %w", err)
 	}
 
-	return end, sync, nil
+	return end, sync, kvs, nil
 }

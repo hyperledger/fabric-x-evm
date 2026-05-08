@@ -24,6 +24,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	eapp "github.com/hyperledger/fabric-x-evm/endorser/app"
+	endorsertestimpl "github.com/hyperledger/fabric-x-evm/endorser/testimpl"
 	"github.com/hyperledger/fabric-x-evm/gateway/api"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
@@ -63,21 +64,31 @@ func NewWithSigner(cfg config.Config, gwSigner sdk.Signer) (*App, error) {
 	// Create endorsers and their synchronizers.
 	endorsers := make([]core.Endorser, 0, len(cfg.Endorsers))
 	endorserSyncs := make([]*network.Synchronizer, 0, len(cfg.Endorsers))
+	var firstKVS interface{} // Keep first endorser's KVS for test server
 	for i, ecfg := range cfg.Endorsers {
-		end, sync, err := eapp.NewEndorser(ecfg, cfg.Network, logger, false)
+		// Set history size: always 128 for test RPC (snapshot/revert), else default to 2 if not set
+		if cfg.Gateway.EnableTestRPC {
+			ecfg.Database.HistorySize = 128
+		} else if ecfg.Database.HistorySize == 0 {
+			ecfg.Database.HistorySize = 2
+		}
+		end, sync, kvs, err := eapp.NewEndorser(ecfg, cfg.Network, logger, false, cfg.Gateway.EnableTestRPC)
 		if err != nil {
 			return nil, fmt.Errorf("endorser %d (%s): %w", i, ecfg.Name, err)
 		}
 		endorsers = append(endorsers, end)
 		endorserSyncs = append(endorserSyncs, sync)
+		if i == 0 {
+			firstKVS = kvs
+		}
 	}
 
-	return buildApp(cfg, gwSigner, logger, endorsers, endorserSyncs)
+	return buildApp(cfg, gwSigner, logger, endorsers, endorserSyncs, firstKVS)
 }
 
 // buildApp wires up the gateway from pre-built endorsers. Used by NewWithSigner
 // and directly by integration tests that manage their own endorsers.
-func buildApp(cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorsers []core.Endorser, endorserSyncs []*network.Synchronizer) (*App, error) {
+func buildApp(cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorsers []core.Endorser, endorserSyncs []*network.Synchronizer, lightKVS interface{}) (*App, error) {
 	ec, err := core.NewEndorsementClient(endorsers, gwSigner, cfg.Network.Channel, cfg.Network.Namespace, cfg.Network.NsVersion)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create endorsement client: %w", err)
@@ -136,7 +147,15 @@ func buildApp(cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorse
 			return nil, fmt.Errorf("failed to load test accounts: %w", err)
 		}
 
-		rpcServer, err = testimpl.NewTestServer(gateway, testAccountMgr.Addresses, testAccountMgr.PrivateKeys)
+		lightKVSExt, ok := lightKVS.(*endorsertestimpl.LightKVSExt)
+		if !ok {
+			return nil, fmt.Errorf("test RPC enabled but lightKVS is not LightKVSExt")
+		}
+
+		// Wrap the chain's store with SnapshotStore for snapshot/revert functionality
+		snapshotStore := testimpl.NewSnapshotStore(chain.Store)
+
+		rpcServer, err = testimpl.NewTestServer(gateway, testAccountMgr.Addresses, testAccountMgr.PrivateKeys, lightKVSExt, snapshotStore)
 		if err != nil {
 			return nil, err
 		}

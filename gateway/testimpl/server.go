@@ -15,17 +15,23 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/rpc"
+	endorsertestimpl "github.com/hyperledger/fabric-x-evm/endorser/testimpl"
 	"github.com/hyperledger/fabric-x-evm/gateway/api"
 )
 
 // NewTestServer creates an RPC server with test-only methods enabled.
 // This wraps the production server and adds eth_accounts and eth_sendTransaction
 // with server-side signing capabilities, plus Hardhat-specific helper methods.
+// The lightKVS parameter is required for snapshot/revert functionality.
+// The store parameter is required for database snapshot/revert functionality.
 //
 // SECURITY WARNING: This server performs server-side transaction signing,
 // which is inherently insecure. Use ONLY for development and testing.
 // NEVER use in production environments.
-func NewTestServer(b api.Backend, testAccounts []common.Address, testAccountKeys map[common.Address]*ecdsa.PrivateKey) (*rpc.Server, error) {
+func NewTestServer(b api.Backend, testAccounts []common.Address, testAccountKeys map[common.Address]*ecdsa.PrivateKey, lightKVS *endorsertestimpl.LightKVSExt, store interface {
+	Snapshot(ctx context.Context) (uint64, error)
+	RevertToSnapshot(ctx context.Context, blockNumber uint64) error
+}) (*rpc.Server, error) {
 	srv := rpc.NewServer()
 
 	// Create production API
@@ -57,7 +63,7 @@ func NewTestServer(b api.Backend, testAccounts []common.Address, testAccountKeys
 	if err := srv.RegisterName("hardhat", NewHardhatAPI()); err != nil {
 		return nil, err
 	}
-	if err := srv.RegisterName("evm", NewEvmAPI()); err != nil {
+	if err := srv.RegisterName("evm", NewEvmAPI(lightKVS, store)); err != nil {
 		return nil, err
 	}
 

@@ -293,18 +293,22 @@ func (s *StateDB) getStateFromStore(key string) ([]byte, error) {
 	var val []byte
 	var read = blocks.KVRead{Key: key}
 	if record != nil {
-		if record.IsDelete {
-			return nil, nil
-		}
-		if s.monotonicVersions {
-			read.Version = &blocks.Version{BlockNum: record.Version}
-		} else {
-			read.Version = &blocks.Version{
-				BlockNum: record.BlockNum,
-				TxNum:    record.TxNum,
+		// Use the value from the record, even if IsDelete is true
+		// (IsDelete: true with non-nil Value happens during snapshot revert)
+		val = record.Value
+
+		// Only set version in read set if the key is not marked as deleted
+		// When IsDelete is true, we want a nil version in the read set for MVCC
+		if !record.IsDelete {
+			if s.monotonicVersions {
+				read.Version = &blocks.Version{BlockNum: record.Version}
+			} else {
+				read.Version = &blocks.Version{
+					BlockNum: record.BlockNum,
+					TxNum:    record.TxNum,
+				}
 			}
 		}
-		val = record.Value
 	}
 
 	// Journal the read - this creates an MVCC dependency

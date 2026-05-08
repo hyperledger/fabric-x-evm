@@ -14,6 +14,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	co "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -55,7 +56,7 @@ func TestConvertToDomain_ValidTx(t *testing.T) {
 			Number:    0,
 			Valid:     true,
 			Status:    0,
-			InputArgs: [][]byte{nil, ethb},
+			InputArgs: [][]byte{{byte(co.ProposalTypeEVMTx)}, ethb},
 		}},
 	}
 
@@ -82,7 +83,7 @@ func TestConvertToDomain_InvalidTxStatus(t *testing.T) {
 		Transactions: []blocks.Transaction{{
 			ID:        "tx-bad",
 			Valid:     false, // invalid tx
-			InputArgs: [][]byte{nil, ethb},
+			InputArgs: [][]byte{{byte(co.ProposalTypeEVMTx)}, ethb},
 		}},
 	}
 

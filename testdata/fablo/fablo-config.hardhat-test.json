@@ -42,23 +42,6 @@
         "db": "LevelDb",
         "prefix": "peer"
       }
-    },
-    {
-      "organization": {
-        "name": "Org2",
-        "domain": "org2.example.com",
-        "mspName": "Org2MSP"
-      },
-      "ca": {
-        "prefix": "ca",
-        "db": "sqlite"
-      },
-      "orderers": [],
-      "peer": {
-        "instances": 1,
-        "db": "LevelDb",
-        "prefix": "peer"
-      }
     }
   ],
   "channels": [
@@ -67,12 +50,6 @@
       "orgs": [
         {
           "name": "Org1",
-          "peers": [
-            "peer0"
-          ]
-        },
-        {
-          "name": "Org2",
           "peers": [
             "peer0"
           ]

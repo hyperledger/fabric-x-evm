@@ -228,9 +228,11 @@ executeOnFabloDocker() {
     fablo_config="$(cd "$(dirname "$fablo_config")" && pwd)/$(basename "$fablo_config")"
     local chaincodes_base_dir="$(dirname "$fablo_config")"
     local fablo_config_basename="$(basename "$fablo_config")"
+    # Always mount as fablo-config.json since the container hardcodes this name
+    local fablo_config_ext="${fablo_config_basename##*.}"
     fablo_config_params=(
-      -v "$fablo_config":/network/workspace/"$fablo_config_basename"
-      --env "FABLO_CONFIG=/network/workspace/$fablo_config_basename"
+      -v "$fablo_config":/network/workspace/fablo-config."$fablo_config_ext"
+      --env "FABLO_CONFIG=/network/workspace/fablo-config.$fablo_config_ext"
       --env "CHAINCODES_BASE_DIR=$chaincodes_base_dir"
     )
   fi
