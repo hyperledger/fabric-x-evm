@@ -403,29 +403,28 @@ endorser node for execution. Two caveats:
 
 ## Error format
 
-The go-ethereum `rpc.Server` is used, so all errors produce valid JSON-RPC error objects.
-Methods classify errors via the typed `rpcerr` package (`gateway/api/rpcerr`) so callers
-receive standard Ethereum codes, not the `-32000` fallback.
+The go-ethereum `rpc.Server` is used, so all errors produce valid JSON-RPC error objects (no
+plain string responses). However, because our methods return plain Go errors (not types that
+implement `rpc.Error` / `rpc.DataError`), every error gets the generic code `-32000` with no
+`data` field.
 
-| Surface | Code | Notes |
-|---|---|---|
-| Malformed input (bad hex, unparseable raw tx, invalid call args) | `-32602` Invalid params | |
-| Validation rejection (nonce, intrinsic gas, funds, type, sender, EIP-3860, unprotected) | `-32003` Transaction rejected | |
-| `eth_call` revert | `-32000` Execution reverted | `data` carries the raw revert payload (hex) |
-| Backend lookup / endorser / orderer failure | `-32603` Internal error | |
-
-For a reverted `eth_call` the gateway returns:
+A standard Ethereum node returns for a reverted `eth_call`:
 ```json
-{"code": -32000, "message": "execution reverted: <decoded reason>", "data": "0x08c379a0..."}
+{"code": 3, "message": "execution reverted", "data": "0x08c379a0..."}
 ```
 
-Geth uses `code: 3` historically; the JSON-RPC spec reserves the server range `-32000` to
-`-32099`, which is what geth's own `rpc` server emits today. Libraries that decode custom
-Solidity errors (`error Foo(uint amount)`) read `data` directly and work unchanged.
+We return:
+```json
+{"code": -32000, "message": "execution reverted: <decoded reason>"}
+```
 
-Note: `eth_estimateGas` is mocked (returns a constant) and does not surface revert reasons —
-contracts that revert during gas estimation on a real Ethereum node will succeed here. Callers
-that need revert detection should issue an `eth_call` first.
+Consequences:
+- The decoded revert reason is present in `message`, which is useful for debugging but not compliant.
+- Libraries that inspect `data` to decode custom Solidity errors (`error Foo(uint amount)`) will
+  not work — `data` is never populated.
+- There is no distinction between execution errors (revert) and infrastructure errors (endorser
+  or orderer unreachable); both produce `-32000`. Clients that branch on error codes cannot tell
+  them apart.
 
 ---
 

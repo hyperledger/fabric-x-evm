@@ -121,7 +121,7 @@ func (c *Chain) convertToDomain(b blocks.Block) domain.Block {
 			continue
 		}
 		status := uint8(0)
-		if tx.Valid && !fc.IsRevertEvent(tx.Events) {
+		if tx.Valid {
 			status = 1
 		}
 
@@ -164,7 +164,7 @@ func convertTransaction(ethTxBytes []byte, blockHash []byte, blockNumber uint64,
 	hash := ethTx.Hash().Bytes()
 
 	var logs []domain.Log
-	if len(events) > 0 && !fc.IsRevertEvent(events) {
+	if len(events) > 0 {
 		rawLogs, err := fc.UnmarshalLogs(events)
 		if err != nil {
 			// ?

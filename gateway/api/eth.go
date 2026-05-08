@@ -241,11 +241,7 @@ func (api *EthAPI) Call(ctx context.Context, args map[string]any, block rpc.Bloc
 	if err != nil {
 		return nil, err
 	}
-	ret, err := api.b.CallContract(ctx, callMsg, blockNum)
-	if err != nil {
-		return nil, classifyCallError(err)
-	}
-	return ret, nil
+	return api.b.CallContract(ctx, callMsg, blockNum)
 }
 
 // Fees -- mocked
