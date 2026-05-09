@@ -18,6 +18,7 @@ import (
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-common/protoutil"
 	"github.com/hyperledger/fabric-x-evm/common"
+	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	"github.com/hyperledger/fabric-x-evm/utils"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
@@ -104,10 +105,15 @@ func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Tra
 }
 
 // CallContract queries a smart contract and returns the value.
+// Status 201 from the endorser signals an EVM revert; surface as
+// *domain.RevertError so the API layer can map to JSON-RPC -32000.
 func (e *EndorsementClient) CallContract(ctx context.Context, args ethereum.CallMsg, blockInfo *utils.BlockInfo) ([]byte, error) {
 	res, err := e.endorsers[0].ProcessCall(ctx, &args, blockInfo)
 	if err != nil {
 		return nil, fmt.Errorf("process call: %w", err)
+	}
+	if res.Response.Status == 201 {
+		return nil, &domain.RevertError{Reason: res.Response.Message, Data: res.Response.Payload}
 	}
 	if res.Response.Status < 200 || res.Response.Status >= 400 {
 		return nil, fmt.Errorf("query response was not successful, error code %d, msg %s", res.Response.Status, res.Response.Message)

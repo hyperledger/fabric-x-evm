@@ -17,6 +17,7 @@ import (
 	ethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/utils"
@@ -65,7 +66,9 @@ func New(engine *EVMEngine, builder endorsement.Builder, chainID int64) (*Endors
 	}, nil
 }
 
-// ProcessEVMTransaction processes an Ethereum transaction and returns a signed proposal response
+// ProcessEVMTransaction processes an Ethereum transaction and returns a signed proposal response.
+// Reverts are endorsed and submitted (so the receipt records status=0); pre-execution
+// failures (nonce, gas, signer, EIP-3860, etc.) are rejected before any envelope is cut.
 func (f *Endorser) ProcessEVMTransaction(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction, blockInfo *utils.BlockInfo) (*peer.ProposalResponse, error) {
 	// Validate the ethereum transaction signature
 	if _, err := types.Sender(f.ethSigner, ethTx); err != nil {
@@ -135,11 +138,18 @@ func (f *Endorser) ProcessStateQuery(ctx context.Context, query common.StateQuer
 
 func response(res []byte, err error) *peer.ProposalResponse {
 	if err != nil {
+		// 201 marks an EVM revert: success-range so protoutil cuts a tx, but
+		// distinguishable from 200 so the gateway and committer can tell.
+		status := int32(500)
+		if errors.Is(err, vm.ErrExecutionReverted) {
+			status = 201
+		}
 		return &peer.ProposalResponse{
 			Version: 1,
 			Response: &peer.Response{
-				Status:  500,
+				Status:  status,
 				Message: err.Error(),
+				Payload: res,
 			},
 		}
 	}
