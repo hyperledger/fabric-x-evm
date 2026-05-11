@@ -27,7 +27,7 @@ check_prerequisites() {
     echo -e "${YELLOW}Checking prerequisites...${NC}"
     
     # Check for required commands
-    for cmd in go wget zgrep abigen; do
+    for cmd in go wget abigen; do
         if ! command -v $cmd &> /dev/null; then
             echo -e "${RED}Error: $cmd is not installed${NC}"
             if [ "$cmd" = "abigen" ]; then
@@ -64,7 +64,8 @@ setup_dataset() {
     
     # Filter for USDC transactions
     echo "Filtering USDC transactions..."
-    zgrep -E "(^.{93}${USDC_ADDRESS}|token_address)" "${TESTDATA_DIR}/202001.tsv.gz" | gzip > "${TESTDATA_DIR}/dataset.tsv.gz"
+    # Use gunzip -c for portability (works on both Linux and macOS)
+    gunzip -c "${TESTDATA_DIR}/202001.tsv.gz" | grep -iE "(${USDC_ADDRESS}|token_address)" | gzip > "${TESTDATA_DIR}/dataset.tsv.gz"
     
     FILTERED_SIZE=$(stat -f%z "${TESTDATA_DIR}/dataset.tsv.gz" 2>/dev/null || stat -c%s "${TESTDATA_DIR}/dataset.tsv.gz" 2>/dev/null)
     echo -e "${GREEN}Filtered dataset created: $(numfmt --to=iec-i --suffix=B ${FILTERED_SIZE} 2>/dev/null || echo "${FILTERED_SIZE} bytes")${NC}"
