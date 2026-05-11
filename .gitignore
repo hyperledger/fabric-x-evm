@@ -27,5 +27,7 @@ blockscout.env
 
 # Performance testing generated files
 integration/contracts/USDC_fiattokenv2_2.gen.go
+integration/perf/testdata/*.json
 integration/perf/testdata/*.json.gz
 integration/perf/testdata/*.tsv.gz
+integration/perf/performance_results.csv

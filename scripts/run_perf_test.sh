@@ -54,17 +54,17 @@ setup_dataset() {
     fi
     
     # Download full dataset if not present
-    if [ ! -f "${PROJECT_ROOT}/202001.tsv.gz" ]; then
+    if [ ! -f "${TESTDATA_DIR}/202001.tsv.gz" ]; then
         echo "Downloading January 2020 token transfer dataset (~627MB)..."
         echo "This may take several minutes..."
-        wget -O "${PROJECT_ROOT}/202001.tsv.gz" "${DATASET_URL}"
+        wget -O "${TESTDATA_DIR}/202001.tsv.gz" "${DATASET_URL}"
     else
         echo "Full dataset already downloaded"
     fi
     
     # Filter for USDC transactions
     echo "Filtering USDC transactions..."
-    zgrep -E "(^.{93}${USDC_ADDRESS}|token_address)" "${PROJECT_ROOT}/202001.tsv.gz" | gzip > "${TESTDATA_DIR}/dataset.tsv.gz"
+    zgrep -E "(^.{93}${USDC_ADDRESS}|token_address)" "${TESTDATA_DIR}/202001.tsv.gz" | gzip > "${TESTDATA_DIR}/dataset.tsv.gz"
     
     FILTERED_SIZE=$(stat -f%z "${TESTDATA_DIR}/dataset.tsv.gz" 2>/dev/null || stat -c%s "${TESTDATA_DIR}/dataset.tsv.gz" 2>/dev/null)
     echo -e "${GREEN}Filtered dataset created: $(numfmt --to=iec-i --suffix=B ${FILTERED_SIZE} 2>/dev/null || echo "${FILTERED_SIZE} bytes")${NC}"
