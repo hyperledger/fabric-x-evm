@@ -108,8 +108,9 @@ Switch to MetaMask and confirm the tokens arrived. Try sending some back —
 there's no gas cost, so experimenting is free.
 
 **You're now running your own Fabric-X EVM network.** Deploy your own contracts
-with tooling you're familiar with, or explore the [architecture](./docs/ARCHITECTURE.md)
-and [compatibility](./docs/COMPATIBILITY.md) docs to learn more.
+with tooling you're familiar with, or explore the [architecture](./docs/ARCHITECTURE.md),
+[compatibility](./docs/COMPATIBILITY.md), and [JSON-RPC error codes](./docs/JSON_RPC_ERRORS.md)
+docs to learn more.
 
 To stop the network and delete the ledger, do:
 
