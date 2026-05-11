@@ -9,29 +9,14 @@ package endorser
 import (
 	"fmt"
 	"math/big"
-	"strings"
 
-	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/holiman/uint256"
-	"github.com/hyperledger/fabric-x-evm/integration/contracts"
 )
-
-// Pre-parsed ERC-20 ABI for efficient transaction parsing
-var erc20ABI abi.ABI
 
 // Default prime value: 1 billion tokens (with 6 decimals for USDC)
 var primeValue = new(uint256.Int).Mul(uint256.NewInt(1_000_000_000), uint256.NewInt(1_000_000))
-
-func init() {
-	// Parse the ERC-20 ABI once at package initialization
-	var err error
-	erc20ABI, err = abi.JSON(strings.NewReader(contracts.FiatTokenV22MetaData.ABI))
-	if err != nil {
-		panic(fmt.Sprintf("failed to parse ERC-20 ABI: %v", err))
-	}
-}
 
 // BalancePrimingWrapper wraps a StateDB and intercepts GetState calls to prime
 // ERC-20 balance slots with a high value when they are zero.

@@ -1,3 +1,5 @@
+//go:build perf
+
 /*
 Copyright IBM Corp. All Rights Reserved.
 
@@ -100,7 +102,7 @@ func fetchContract(rpcURL, outputFile string) error {
 
 	// Set default output file if not specified
 	if outputFile == "" {
-		outputFile = path.Join(".", "testdata", "USDC_contract.json")
+		outputFile = path.Join("integration", "perf", "testdata", "USDC_contract.json")
 	}
 
 	log.Printf("Connecting to Ethereum at %s...", rpcURL)
@@ -183,7 +185,7 @@ func generateDatasetMode(inputFile, outputFile string) error {
 
 	// Set default output file if not specified
 	if outputFile == "" {
-		outputFile = path.Join(".", "testdata", "USDC_dataset.json.gz")
+		outputFile = path.Join("integration", "perf", "testdata", "USDC_dataset.json.gz")
 	}
 
 	// Load the contract allocation (we need this for the test harness setup)
@@ -308,5 +310,3 @@ func generateDatasetMode(inputFile, outputFile string) error {
 	log.Printf("Successfully saved %d transfers to %s", len(transfers), outputFile)
 	return nil
 }
-
-// Made with Bob

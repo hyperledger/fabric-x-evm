@@ -37,6 +37,12 @@ type BalancePrimingConfig struct {
 	MappingPosition uint64
 }
 
+// SenderAware is an interface for StateDB wrappers that need to know the transaction sender.
+// This allows wrappers to perform sender-specific optimizations (e.g., balance priming).
+type SenderAware interface {
+	SetSender(addr common.Address)
+}
+
 // EVMConfig holds the configuration for EVM execution.
 // It allows callers to specify the BlockContext, ChainConfig, and VMConfig
 // that will be used when creating the EVM instance.
@@ -422,6 +428,10 @@ func (h *Executor) Send(tx *types.Transaction) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Notify SenderAware wrappers of the transaction sender
+	if sa, ok := h.state.(SenderAware); ok {
+		sa.SetSender(from)
+	}
 
 	// Validate that the transaction nonce matches the ledger state nonce
 	// This adds an explicit read dependency on the ledger key of the nonce
@@ -473,12 +483,6 @@ func (h *Executor) Execute(msg *core.Message) ([]byte, error) {
 	// limit. Otherwise a tx with gas limit above the block gas limit incorrectly
 	// passes preCheck and executes.
 	gp := new(core.GasPool).AddGas(h.blockCtx.GasLimit)
-
-	// If the state is wrapped with BalancePrimingWrapper, set the sender address
-	// This allows the wrapper to prime the ERC-20 balance slot if needed
-	if wrapper, ok := h.state.(*BalancePrimingWrapper); ok {
-		wrapper.SetSender(msg.From)
-	}
 
 	// Use ApplyMessage to execute the transaction
 	result, err := core.ApplyMessage(evm, msg, gp)

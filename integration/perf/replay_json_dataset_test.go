@@ -1,3 +1,5 @@
+//go:build perf
+
 /*
 Copyright IBM Corp. All Rights Reserved.
 
@@ -13,7 +15,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"runtime"
 	"strings"
@@ -78,77 +79,11 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	////////////////////////////////////////////////
 	////////////////////////////////////////////////
 	transfers = transfers[:3000]
-	totalTransfers := int64(len(transfers))
 	////////////////////////////////////////////////
 	////////////////////////////////////////////////
 	////////////////////////////////////////////////
 
-	// // Phase 1: Collect unique senders
-	// uniqueSenders := make(map[common.Address]bool)
-	// for _, transfer := range transfers {
-	// 	if len(transfer.Transaction) > 0 { // Only count transfers with transactions
-	// 		uniqueSenders[transfer.Sender] = true
-	// 	}
-	// }
-
-	// senderList := make([]common.Address, 0, len(uniqueSenders))
-	// for sender := range uniqueSenders {
-	// 	senderList = append(senderList, sender)
-	// }
-
-	// t.Logf("Found %d unique senders with transactions", len(senderList))
-
-	// // Phase 2: Prime balances in batches
-	// const batchSize = 100 // Prime 100 accounts at a time
-	// slot := uint64(9)     // USDC balance slot
-
-	// // Create a very high balance (1 billion USDC with 6 decimals = 1e15)
-	// initialBalance := new(big.Int).Mul(big.NewInt(1000000000), big.NewInt(1000000)) // 1 billion USDC
-	// balanceValue := common.BytesToHash(uint256.MustFromBig(initialBalance).ToBig().Bytes())
-
-	// numBatches := (len(senderList) + batchSize - 1) / batchSize
-	// t.Logf("Priming %d senders in %d batches of up to %d accounts", len(senderList), numBatches, batchSize)
-
-	// for batchIdx := 0; batchIdx < numBatches; batchIdx++ {
-	// 	start := batchIdx * batchSize
-	// 	end := start + batchSize
-	// 	if end > len(senderList) {
-	// 		end = len(senderList)
-	// 	}
-
-	// 	batch := senderList[start:end]
-	// 	// t.Logf("Priming batch %d/%d (%d accounts)", batchIdx+1, numBatches, len(batch))
-
-	// 	// Create storage map for this batch
-	// 	storageMap := make(map[common.Hash]common.Hash)
-	// 	for _, sender := range batch {
-	// 		// Map the original sender to a controlled address
-	// 		mappedAddr := mapAddress(sender)
-	// 		// fmt.Printf("Real sender %s, mapped sender %s\n", sender.Hex(), mappedAddr.Hex())
-
-	// 		// Calculate the storage slot for this address's balance
-	// 		balanceSlot := integration.GetERC20BalanceSlot(mappedAddr, slot)
-	// 		storageMap[balanceSlot] = balanceValue
-	// 	}
-
-	// 	// Reset and prime the state for this batch
-	// 	_, err = th.Primer.Reset()
-	// 	assert.NoError(t, err)
-
-	// 	th.Primer.SetStorage(USDC_addr, storageMap)
-	// 	err = th.Primer.Commit(context.Background(), true)
-	// 	assert.NoError(t, err)
-
-	// 	if (batchIdx)%20 == 0 {
-	// 		t.Logf("Batch %d/%d: Primed %d storage slots", batchIdx+1, numBatches, len(storageMap))
-	// 	}
-	// }
-
-	// t.Logf("Completed priming all %d senders", len(senderList))
-
-	// time.Sleep(1 * time.Second)
-
-	// Phase 3: Replay all transactions with parallel workers
+	// Replay transactions with parallel workers
 	// Atomic counters for thread-safe counting
 	var successCount, failCount, skippedCount int64
 
@@ -234,10 +169,6 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 							time.Sleep(time.Millisecond)
 						}
 					}
-
-					if ctr == math.MaxInt64 { // initially I though we should bail quickly but we don't
-						panic("waited too long")
-					}
 				}()
 			}
 		}(w)
@@ -310,8 +241,9 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	totalElapsed := time.Since(startTime).Seconds()
 	overallThroughput := float64(finalSuccess+finalFail) / totalElapsed
 
-	// Return metrics (throughput, failed count, total transfers)
-	return overallThroughput, finalFail, totalTransfers
+	// Return metrics (throughput, failed count, total attempted transactions)
+	totalAttempted := finalSuccess + finalFail + finalSkipped
+	return overallThroughput, finalFail, totalAttempted
 }
 
 // TestReplayJSONDataset loads the USDC_dataset.json.gz file with pre-generated transactions
@@ -452,5 +384,3 @@ func exportResultsToCSV(path string, results []performanceResult) error {
 
 	return nil
 }
-
-// Made with Bob
