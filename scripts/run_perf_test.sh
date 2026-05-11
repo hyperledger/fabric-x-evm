@@ -20,7 +20,7 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PERF_DIR="${PROJECT_ROOT}/integration/perf"
 TESTDATA_DIR="${PERF_DIR}/testdata"
 DATASET_URL="https://dataverse.harvard.edu/api/access/datafile/11691882"
-USDC_ADDRESS="0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+USDC_ADDRESS="a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
 
 # Check prerequisites
 check_prerequisites() {
@@ -180,5 +180,3 @@ main() {
 
 # Run main function
 main
-
-# Made with Bob
