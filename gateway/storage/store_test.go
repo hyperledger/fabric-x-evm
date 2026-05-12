@@ -379,10 +379,6 @@ func TestBlockNumber(t *testing.T) {
 
 	// Empty database should return 0
 	num := store.CachedBlockNumber.Load()
-	err := error(nil)
-	if err != nil {
-		t.Fatalf("BlockNumber error: %v", err)
-	}
 	if num != 0 {
 		t.Errorf("expected 0 for empty db, got %d", num)
 	}
@@ -390,18 +386,12 @@ func TestBlockNumber(t *testing.T) {
 	// Insert blocks and check the number increases
 	insertTestBlock(t, store, 1, makeHash(0x01))
 	num = store.CachedBlockNumber.Load()
-	if err != nil {
-		t.Fatalf("BlockNumber error: %v", err)
-	}
 	if num != 1 {
 		t.Errorf("expected 1, got %d", num)
 	}
 
 	insertTestBlock(t, store, 5, makeHash(0x05))
 	num = store.CachedBlockNumber.Load()
-	if err != nil {
-		t.Fatalf("BlockNumber error: %v", err)
-	}
 	if num != 5 {
 		t.Errorf("expected 5, got %d", num)
 	}

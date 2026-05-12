@@ -9,11 +9,13 @@ package testimpl
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"maps"
 
+	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-x-evm/endorser"
 )
+
+var logger = flogging.MustGetLogger("endorser.testimpl.lightkvs")
 
 // LightKVSExt extends LightKVS with additional test-specific functionality.
 // It embeds the base LightKVS and adds methods for snapshot management and revert operations.
@@ -51,11 +53,11 @@ func (kvs *LightKVSExt) NewSnapshot(blockNumber uint64) (endorser.ReadStore, err
 	}
 	availableBlocks = append(availableBlocks, current.BlockNumber)
 
-	log.Printf("[DEBUG] LightKVSExt.NewSnapshot() called: requested=%d current=%d historyCount=%d available=%v\n",
+	logger.Debugf("LightKVSExt.NewSnapshot() called: requested=%d current=%d historyCount=%d available=%v",
 		blockNumber, current.BlockNumber, count, availableBlocks)
 
 	if blockNumber == 0 || blockNumber >= current.BlockNumber {
-		log.Printf("[DEBUG] LightKVSExt.NewSnapshot() returning current snapshot: requested=%d returned=%d available=%v\n",
+		logger.Debugf("LightKVSExt.NewSnapshot() returning current snapshot: requested=%d returned=%d available=%v",
 			blockNumber, current.BlockNumber, availableBlocks)
 		return &endorser.Reader{
 			Snapshot: current,
@@ -66,7 +68,7 @@ func (kvs *LightKVSExt) NewSnapshot(blockNumber uint64) (endorser.ReadStore, err
 	distance := current.BlockNumber - blockNumber
 	if distance > uint64(count) {
 		err := fmt.Errorf("snapshot not found for block number %d", blockNumber)
-		log.Printf("[DEBUG] LightKVSExt.NewSnapshot() returning error: requested=%d current=%d distance=%d historyCount=%d available=%v err=%v\n",
+		logger.Debugf("LightKVSExt.NewSnapshot() returning error: requested=%d current=%d distance=%d historyCount=%d available=%v err=%v",
 			blockNumber, current.BlockNumber, distance, count, availableBlocks, err)
 		return nil, err
 	}
@@ -75,12 +77,12 @@ func (kvs *LightKVSExt) NewSnapshot(blockNumber uint64) (endorser.ReadStore, err
 	snapshot := kvs.History[targetIndex].Load()
 	if snapshot == nil {
 		err := fmt.Errorf("snapshot not found for block number %d", blockNumber)
-		log.Printf("[DEBUG] LightKVSExt.NewSnapshot() returning error: requested=%d current=%d distance=%d targetIndex=%d historyCount=%d available=%v err=%v\n",
+		logger.Debugf("LightKVSExt.NewSnapshot() returning error: requested=%d current=%d distance=%d targetIndex=%d historyCount=%d available=%v err=%v",
 			blockNumber, current.BlockNumber, distance, targetIndex, count, availableBlocks, err)
 		return nil, err
 	}
 
-	log.Printf("[DEBUG] LightKVSExt.NewSnapshot() returning historical snapshot: requested=%d returned=%d distance=%d targetIndex=%d historyCount=%d available=%v\n",
+	logger.Debugf("LightKVSExt.NewSnapshot() returning historical snapshot: requested=%d returned=%d distance=%d targetIndex=%d historyCount=%d available=%v",
 		blockNumber, snapshot.BlockNumber, distance, targetIndex, count, availableBlocks)
 	return &endorser.Reader{
 		Snapshot: snapshot,
@@ -179,20 +181,19 @@ func (kvs *LightKVSExt) Update(updates []endorser.KeyValueVersion) error {
 // If the requested block number matches the current snapshot, it's a no-op and returns success.
 // Returns an error if the requested block number is not found in history or current.
 func (kvs *LightKVSExt) RevertToBlock(blockNumber uint64) error {
-	log.Printf("[DEBUG] LightKVSExt.RevertToBlock() called with blockNumber=%d\n", blockNumber)
+	logger.Debugf("LightKVSExt.RevertToBlock() called with blockNumber=%d", blockNumber)
 
 	// Check if the requested block is already the current snapshot (no-op)
 	currentSnapshot := kvs.Current.Load()
-	log.Printf("[DEBUG] LightKVSExt.RevertToBlock() current block number: %d\n", currentSnapshot.BlockNumber)
+	logger.Debugf("LightKVSExt.RevertToBlock() current block number: %d", currentSnapshot.BlockNumber)
 
 	if currentSnapshot.BlockNumber == blockNumber {
 		// Already at this block - no-op, return success
-		log.Printf("[DEBUG] LightKVSExt.RevertToBlock() already at block %d, no-op\n", blockNumber)
+		logger.Debugf("LightKVSExt.RevertToBlock() already at block %d, no-op", blockNumber)
 		return nil
 	}
 
 	// Log available history snapshots
-	log.Print("[DEBUG] LightKVSExt.RevertToBlock() searching history snapshots: ")
 	availableBlocks := []uint64{}
 	for i := range kvs.History {
 		snapshot := kvs.History[i].Load()
@@ -200,7 +201,7 @@ func (kvs *LightKVSExt) RevertToBlock(blockNumber uint64) error {
 			availableBlocks = append(availableBlocks, snapshot.BlockNumber)
 		}
 	}
-	log.Printf("%v\n", availableBlocks)
+	logger.Debugf("LightKVSExt.RevertToBlock() searching history snapshots: %v", availableBlocks)
 
 	// Search through history snapshots for the requested block number
 	var targetSnapshot *endorser.Snapshot
@@ -216,11 +217,11 @@ func (kvs *LightKVSExt) RevertToBlock(blockNumber uint64) error {
 
 	if targetSnapshot == nil {
 		// No matching snapshot found
-		log.Printf("[DEBUG] LightKVSExt.RevertToBlock() snapshot not found for block %d\n", blockNumber)
+		logger.Debugf("LightKVSExt.RevertToBlock() snapshot not found for block %d", blockNumber)
 		return fmt.Errorf("cannot revert: snapshot not found for block number %d", blockNumber)
 	}
 
-	log.Printf("[DEBUG] LightKVSExt.RevertToBlock() found target snapshot at block %d, performing merge\n", blockNumber)
+	logger.Debugf("LightKVSExt.RevertToBlock() found target snapshot at block %d, performing merge", blockNumber)
 
 	// Create a new merged snapshot
 	// Start with a clone of the target snapshot's data
@@ -232,7 +233,7 @@ func (kvs *LightKVSExt) RevertToBlock(blockNumber uint64) error {
 		if _, existsInTarget := targetSnapshot.Data[key]; !existsInTarget {
 			// Key was created after target snapshot
 			// Keep it with nil value but preserve version info from current ledger
-			log.Printf("[DEBUG] LightKVSExt.RevertToBlock() key %s created after target, preserving with nil value: version=%d, blockNum=%d, txNum=%d, isDelete=false\n",
+			logger.Debugf("LightKVSExt.RevertToBlock() key %s created after target, preserving with nil value: version=%d, blockNum=%d, txNum=%d, isDelete=false",
 				key, currentValue.Version, currentValue.BlockNum, currentValue.TxNum)
 			mergedData[key] = &endorser.ValueVersion{
 				Value:    nil, // Nil out the value
@@ -254,7 +255,7 @@ func (kvs *LightKVSExt) RevertToBlock(blockNumber uint64) error {
 			// Since it was deleted, the ledger has a delete record with a version
 			// We'll use target's version + 1 to represent the delete operation
 			deleteVersion := targetValue.Version + 1
-			log.Printf("[DEBUG] LightKVSExt.RevertToBlock() key %s deleted after target, marking as deleted: version=%d, blockNum=%d, txNum=%d, isDelete=true\n",
+			logger.Debugf("LightKVSExt.RevertToBlock() key %s deleted after target, marking as deleted: version=%d, blockNum=%d, txNum=%d, isDelete=true",
 				key, deleteVersion, targetValue.BlockNum, targetValue.TxNum)
 			mergedData[key] = &endorser.ValueVersion{
 				Value:    targetValue.Value, // Keep target's value for reference
@@ -267,7 +268,7 @@ func (kvs *LightKVSExt) RevertToBlock(blockNumber uint64) error {
 		} else {
 			// Key exists in both snapshots
 			// Use target's value but update version info from current
-			log.Printf("[DEBUG] LightKVSExt.RevertToBlock() key %s exists in both, using target value with current version: version=%d, blockNum=%d, txNum=%d, isDelete=%v\n",
+			logger.Debugf("LightKVSExt.RevertToBlock() key %s exists in both, using target value with current version: version=%d, blockNum=%d, txNum=%d, isDelete=%v",
 				key, currentValue.Version, currentValue.BlockNum, currentValue.TxNum, currentValue.IsDelete)
 			mergedData[key] = &endorser.ValueVersion{
 				Value:    targetValue.Value,     // Use target's value (the reverted state)
@@ -298,7 +299,7 @@ func (kvs *LightKVSExt) RevertToBlock(blockNumber uint64) error {
 		kvs.NextIndex.Store(uint32(targetIndex))
 	}
 
-	log.Printf("[DEBUG] LightKVSExt.RevertToBlock() successfully reverted to block %d with merged state and trimmed future history\n", blockNumber)
+	logger.Debugf("LightKVSExt.RevertToBlock() successfully reverted to block %d with merged state and trimmed future history", blockNumber)
 	return nil
 }
 

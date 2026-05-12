@@ -49,8 +49,6 @@ func NewEndorser(
 		}
 		kvs = endorser.NewVersionedDBWrapper(writeDB)
 	default:
-		kvs = endorser.NewLightKVS(2)
-
 		baseLightKVS := endorser.NewLightKVS(cfg.Database.HistorySize)
 		if testImpl {
 			kvs = testimpl.NewLightKVSExt(baseLightKVS)
