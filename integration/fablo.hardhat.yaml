@@ -54,6 +54,4 @@ endorsers:
         server-name: peer0.org1.example.com
         ca-cert-paths:
           - ../testdata/fablo/fablo-target/fabric-config/crypto-config/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt
-    database:
-      connection-string: "file:endorser-org1.db"
 
