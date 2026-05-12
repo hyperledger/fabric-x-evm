@@ -262,18 +262,19 @@ func buildEndorsers(t *testing.T, cfg config.Config, evmConfig endorser.EVMConfi
 
 // defaultEndorserFactory creates regular endorsers without wrapping.
 func defaultEndorserFactory(t *testing.T, ecfg econf.Endorser, channel, namespace string, evmConfig endorser.EVMConfig, protocol string) (endorser.KVS, endorsement.Builder, core.Endorser) {
-	db, builder, end := newEndorser(t, ecfg, channel, namespace, evmConfig, protocol)
+	db, builder, end := NewEndorser(t, ecfg, channel, namespace, evmConfig, protocol)
 	return db, builder, end
 }
 
 // newLocalTestHarness commits updates directly to the DB, bypassing peers and orderers.
 // Exported for use by eth-tests package.
 func NewLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath, networkType string, configOverrides map[string]any) (*TestHarness, error) {
-	return newLocalTestHarnessWithFactory(t, logger, evmConfig, primeDbPath, networkType, configOverrides, defaultEndorserFactory)
+	return NewLocalTestHarnessWithFactory(t, logger, evmConfig, primeDbPath, networkType, configOverrides, defaultEndorserFactory)
 }
 
-// newLocalTestHarnessWithFactory is like NewLocalTestHarness but allows custom endorser creation.
-func newLocalTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath, networkType string, configOverrides map[string]any, factory EndorserFactory) (*TestHarness, error) {
+// NewLocalTestHarnessWithFactory is like NewLocalTestHarness but allows custom endorser creation.
+// Exported for use by tests that need custom endorser factories.
+func NewLocalTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath, networkType string, configOverrides map[string]any, factory EndorserFactory) (*TestHarness, error) {
 	bypass := networkType == "bypass"
 
 	orderer := &common.Endpoint{Host: "127.0.0.1", Port: 1337}
@@ -412,7 +413,9 @@ func NewFabricXTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.E
 	return th, nil
 }
 
-func newEndorser(t *testing.T, cfg econf.Endorser, channel, namespace string, evmConfig endorser.EVMConfig, protocol string) (endorser.KVS, endorsement.Builder, *endorser.Endorser) {
+// NewEndorser creates an endorser with its dependencies.
+// Exported for use by custom endorser factories.
+func NewEndorser(t *testing.T, cfg econf.Endorser, channel, namespace string, evmConfig endorser.EVMConfig, protocol string) (endorser.KVS, endorsement.Builder, *endorser.Endorser) {
 	t.Helper()
 
 	var signer sdk.Signer

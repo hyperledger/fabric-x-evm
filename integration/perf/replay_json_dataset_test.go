@@ -1,5 +1,3 @@
-//go:build perf
-
 /*
 Copyright IBM Corp. All Rights Reserved.
 
@@ -26,11 +24,44 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/hyperledger/fabric-x-evm/endorser"
+	econf "github.com/hyperledger/fabric-x-evm/endorser/config"
+	"github.com/hyperledger/fabric-x-evm/endorser/testimpl"
+	gwcore "github.com/hyperledger/fabric-x-evm/gateway/core"
 	"github.com/hyperledger/fabric-x-evm/integration"
 	"github.com/hyperledger/fabric-x-evm/utils"
+	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/grpclog"
 )
+
+// balancePrimingEndorserFactory creates endorsers with balance priming support for testing.
+func balancePrimingEndorserFactory(balancePriming *testimpl.BalancePrimingConfig) integration.EndorserFactory {
+	return func(t *testing.T, ecfg econf.Endorser, channel, namespace string, evmConfig endorser.EVMConfig, protocol string) (endorser.KVS, endorsement.Builder, gwcore.Endorser) {
+		// Create the base endorser components
+		db, builder, baseEndorser := integration.NewEndorser(t, ecfg, channel, namespace, evmConfig, protocol)
+
+		// Extract the base EVMEngine
+		baseEngine, ok := baseEndorser.Engine.(*endorser.EVMEngine)
+		if !ok {
+			t.Fatalf("Expected *endorser.EVMEngine, got %T", baseEndorser.Engine)
+		}
+
+		// Wrap the engine with balance priming support
+		wrappedEngine := testimpl.NewEVMEngineWrapper(
+			namespace,
+			db,
+			evmConfig,
+			protocol == "fabric-x", // monotonicVersions
+			baseEngine,
+		)
+		wrappedEngine.SetBalancePriming(balancePriming)
+
+		// Replace the engine in the endorser
+		baseEndorser.Engine = wrappedEngine
+
+		return db, builder, baseEndorser
+	}
+}
 
 // runReplayTest executes the replay test with configurable worker counts and returns metrics.
 // Returns: (overallThroughput, failedTransactionCount, totalTransactionCount)
@@ -42,17 +73,18 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	USDC_addr := common.HexToAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
 
 	// Configure balance priming for USDC transfers
-	evmConfig := endorser.EVMConfig{
-		BalancePriming: &endorser.BalancePrimingConfig{
-			Enabled:         true,
-			ContractAddress: USDC_addr,
-			MappingPosition: 9, // USDC balance mapping is at slot 9
-		},
+	balancePriming := &testimpl.BalancePrimingConfig{
+		Enabled:         true,
+		ContractAddress: USDC_addr,
+		MappingPosition: 9, // USDC balance mapping is at slot 9
 	}
 
+	evmConfig := endorser.EVMConfig{}
+
 	// Setup test harness with USDC contract and balance priming enabled
-	// th, err := integration.NewFabricXTestHarness(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", "fabric", map[string]any{"Gateway.WorkerCount": processingWorkerCount})
-	th, err := integration.NewLocalTestHarness(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", "fabric", map[string]any{"Gateway.WorkerCount": processingWorkerCount})
+	// Use the factory pattern to create endorsers with balance priming
+	factory := balancePrimingEndorserFactory(balancePriming)
+	th, err := integration.NewLocalTestHarnessWithFactory(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", "fabric", map[string]any{"Gateway.WorkerCount": processingWorkerCount}, factory)
 	assert.NoError(t, err)
 
 	// Load the JSON dataset

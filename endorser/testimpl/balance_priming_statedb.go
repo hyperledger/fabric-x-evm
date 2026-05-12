@@ -4,7 +4,7 @@ Copyright IBM Corp. All Rights Reserved.
 SPDX-License-Identifier: LGPL-3.0-or-later
 */
 
-package endorser
+package testimpl
 
 import (
 	"fmt"
@@ -13,6 +13,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/holiman/uint256"
+	"github.com/hyperledger/fabric-x-evm/endorser"
 )
 
 // Default prime value: 1 billion tokens (with 6 decimals for USDC)
@@ -21,7 +22,7 @@ var primeValue = new(uint256.Int).Mul(uint256.NewInt(1_000_000_000), uint256.New
 // BalancePrimingWrapper wraps a StateDB and intercepts GetState calls to prime
 // ERC-20 balance slots with a high value when they are zero.
 type BalancePrimingWrapper struct {
-	ExtendedStateDB
+	endorser.ExtendedStateDB
 	contractAddr    common.Address // The ERC-20 contract address
 	senderAddr      common.Address // The sender address to prime
 	balanceSlot     common.Hash    // The storage slot for the sender's balance
@@ -30,7 +31,7 @@ type BalancePrimingWrapper struct {
 }
 
 // NewBalancePrimingWrapper creates a new wrapper that primes ERC-20 balance slots.
-func NewBalancePrimingWrapper(stateDB ExtendedStateDB, contractAddr common.Address, mappingPosition uint64) *BalancePrimingWrapper {
+func NewBalancePrimingWrapper(stateDB endorser.ExtendedStateDB, contractAddr common.Address, mappingPosition uint64) *BalancePrimingWrapper {
 	return &BalancePrimingWrapper{
 		ExtendedStateDB: stateDB,
 		contractAddr:    contractAddr,

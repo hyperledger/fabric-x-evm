@@ -421,7 +421,7 @@ type ethereumTestHarness struct {
 // wrappedEndorserFactory creates endorsers wrapped with testimpl wrappers for ethStateDB tracking.
 func wrappedEndorserFactory(t *testing.T, ecfg econf.Endorser, channel, namespace string, evmConfig endorser.EVMConfig, protocol string) (endorser.KVS, endorsement.Builder, core.Endorser) {
 	// Create the base endorser components
-	db, builder, end := newEndorser(t, ecfg, channel, namespace, evmConfig, protocol)
+	db, builder, end := NewEndorser(t, ecfg, channel, namespace, evmConfig, protocol)
 
 	// Create engine wrapper with the same configuration
 	engine := endorser.NewEVMEngine(namespace, db, evmConfig, protocol == "fabric-x")
@@ -439,7 +439,7 @@ func newEthereumTestHarness(t *testing.T, evmConfig endorser.EVMConfig, pre type
 	t.Helper()
 
 	// Create test harness with wrapped endorsers using custom factory
-	th, err := newLocalTestHarnessWithFactory(t, TestLogger{T: t}, evmConfig, "", "bypass", nil, wrappedEndorserFactory)
+	th, err := NewLocalTestHarnessWithFactory(t, TestLogger{T: t}, evmConfig, "", "bypass", nil, wrappedEndorserFactory)
 	if err != nil {
 		return nil, err
 	}

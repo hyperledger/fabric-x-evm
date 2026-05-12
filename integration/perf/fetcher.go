@@ -1,5 +1,3 @@
-//go:build perf
-
 /*
 Copyright IBM Corp. All Rights Reserved.
 
