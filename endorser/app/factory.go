@@ -60,6 +60,7 @@ func NewEndorser(
 	evmConfig := endorser.EVMConfig{
 		ChainConfig: common.BuildChainConfig(network.ChainID),
 		FreeGas:     true,
+		DebugLogs:   cfg.DebugLogs,
 	}
 
 	var builder endorsement.Builder

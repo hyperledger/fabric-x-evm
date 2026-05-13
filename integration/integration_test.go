@@ -176,14 +176,14 @@ func TestFabricX(t *testing.T) {
 // for replaying historic ethereum transactions from older forks.
 func evmConfig(fork string) endorser.EVMConfig {
 	if len(fork) == 0 {
-		return endorser.EVMConfig{}
+		return endorser.EVMConfig{DebugLogs: true}
 	}
 	c, _, err := tests.GetChainConfig(fork)
 	if err != nil {
 		fmt.Println(err)
 	}
 
-	return endorser.EVMConfig{ChainConfig: c}
+	return endorser.EVMConfig{ChainConfig: c, DebugLogs: true}
 }
 
 func testGreeter(t *testing.T, th *TestHarness) {

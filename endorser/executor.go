@@ -36,6 +36,8 @@ type EVMConfig struct {
 	VMConfig     *vm.Config
 	// FreeGas disables gas-fee balance enforcement.
 	FreeGas bool
+	// DebugLogs wraps the per-tx StateDB in StateDBLogger when true.
+	DebugLogs bool
 }
 
 type KVSSnapshotter interface {
@@ -185,10 +187,11 @@ func (e *EVMEngine) newExecutor(blockInfo *utils.BlockInfo) (*Executor, error) {
 		return nil, err
 	}
 
-	// in case logging is required - consider enabling programmatically
-	// sdl := NewStateDBLogger(stateDB)
-	// flogging.ActivateSpec("DEBUG")
-	return NewExecutor(stateDB, reader, blockInfo, e.evmConfig)
+	var state ExtendedStateDB = stateDB
+	if e.evmConfig.DebugLogs {
+		state = NewStateDBLogger(stateDB)
+	}
+	return NewExecutor(state, reader, blockInfo, e.evmConfig)
 }
 
 // newSnapshotAt returns an ExtendedStateDB over the state at the given Fabric block height (0 = latest).

@@ -266,6 +266,7 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 		BlockContext: &context,
 		ChainConfig:  config,
 		VMConfig:     &vmConfig,
+		DebugLogs:    true,
 	}
 
 	// Create test harness with local backend and state priming, passing evmConfig

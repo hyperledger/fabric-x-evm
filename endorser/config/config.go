@@ -16,6 +16,8 @@ type Endorser struct {
 	Identity  common.IdentityConfig `mapstructure:"identity"  yaml:"identity"`
 	Committer common.ClientConfig   `mapstructure:"committer" yaml:"committer"`
 	Database  DB                    `mapstructure:"database"  yaml:"database"`
+	// DebugLogs enables per-tx StateDB DEBUG logging via StateDBLogger.
+	DebugLogs bool `mapstructure:"debug-logs" yaml:"debug-logs"`
 }
 
 // DB holds the database path for an endorser.
