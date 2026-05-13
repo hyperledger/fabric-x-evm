@@ -21,8 +21,8 @@ func TestNewExecutor_WrapsStateDBWhenDebugEnabled(t *testing.T) {
 	}
 	kvs := NewVersionedDBWrapper(backend)
 	cfg := EVMConfig{
-		ChainConfig:  common.BuildChainConfig(4011),
-		DebugLogs: true,
+		ChainConfig: common.BuildChainConfig(4011),
+		DebugLogs:   true,
 	}
 	eng := NewEVMEngine(Namespace, kvs, cfg, false)
 
@@ -44,8 +44,8 @@ func TestNewExecutor_BareStateDBWhenDebugDisabled(t *testing.T) {
 	}
 	kvs := NewVersionedDBWrapper(backend)
 	cfg := EVMConfig{
-		ChainConfig:  common.BuildChainConfig(4011),
-		DebugLogs: false,
+		ChainConfig: common.BuildChainConfig(4011),
+		DebugLogs:   false,
 	}
 	eng := NewEVMEngine(Namespace, kvs, cfg, false)
 
