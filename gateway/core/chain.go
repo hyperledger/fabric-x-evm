@@ -72,7 +72,10 @@ func NewChain(dbConnStr, triePath string, withTrie bool) (*Chain, error) {
 // Handle implements blocks.BlockHandler. It commits the block's write sets to the trie,
 // then persists the block and its transactions to the database.
 func (c *Chain) Handle(ctx context.Context, b blocks.Block) error {
-	ebl := c.convertToDomain(b)
+	ebl, err := c.convertToDomain(b)
+	if err != nil {
+		return err
+	}
 
 	if c.ts != nil {
 		stateRoot, err := c.ts.Commit(ctx, b)
@@ -104,7 +107,7 @@ func (c *Chain) Close() error {
 
 // convertToDomain maps a Fabric SDK block to the gateway domain model,
 // extracting and decoding the embedded Ethereum transactions.
-func (c *Chain) convertToDomain(b blocks.Block) domain.Block {
+func (c *Chain) convertToDomain(b blocks.Block) (domain.Block, error) {
 	ebl := domain.Block{
 		BlockNumber:  b.Number,
 		BlockHash:    b.Hash,
@@ -129,13 +132,13 @@ func (c *Chain) convertToDomain(b blocks.Block) domain.Block {
 
 		etx, err := convertTransaction(tx.InputArgs[1], b.Hash, b.Number, tx.Number, tx.ID, status, tx.Status, tx.Events, &logIndex)
 		if err != nil {
-			panic(err) // we surface this for now instead of swallowing it
+			return domain.Block{}, fmt.Errorf("convert tx %s: %w", tx.ID, err)
 		}
 
 		ebl.Transactions = append(ebl.Transactions, etx)
 	}
 
-	return ebl
+	return ebl, nil
 }
 
 // convertTransaction converts an Ethereum transaction to a domain.Transaction.
