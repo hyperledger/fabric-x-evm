@@ -75,8 +75,11 @@ func (w *BalancePrimingWrapper) GetState(addr common.Address, slot common.Hash) 
 					w.senderAddr.Hex(), slot.Hex(), primeValue.String())
 			}
 
-			// // Set the balance to the prime value
-			// w.ExtendedStateDB.SetState(addr, slot, common.BytesToHash(w.primeValue.Bytes()))
+			// Intentionally not calling SetState here. Writing the primed value to the
+			// StateDB would include it in the transaction's write set and commit a fake
+			// balance to the ledger, affecting future transactions. Returning it only
+			// from GetState keeps the priming invisible to the ledger while still
+			// allowing the EVM execution to proceed with a non-zero balance.
 
 			// Return the primed value
 			return common.BytesToHash(primeValue.Bytes())
