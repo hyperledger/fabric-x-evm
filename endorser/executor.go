@@ -186,7 +186,6 @@ func (e *EVMEngine) newExecutor(blockInfo *utils.BlockInfo) (*Executor, error) {
 		reader.Close()
 		return nil, err
 	}
-
 	var state ExtendedStateDB = stateDB
 	if e.evmConfig.DebugLogs {
 		state = NewStateDBLogger(stateDB)
@@ -221,8 +220,8 @@ func (e *EVMEngine) newSnapshotAt(blockNumber *big.Int) (ExtendedStateDB, ReadSt
 type Executor struct {
 	state    ExtendedStateDB
 	reader   ReadStore // reader that must be closed when done
-	chainCfg *params.ChainConfig
-	blockCtx vm.BlockContext
+	ChainCfg *params.ChainConfig
+	BlockCtx vm.BlockContext
 	vmConfig vm.Config
 	freeGas  bool
 }
@@ -289,8 +288,8 @@ func NewExecutor(stateDB ExtendedStateDB, reader ReadStore, blockInfo *utils.Blo
 	return &Executor{
 		state:    stateDB,
 		reader:   reader,
-		chainCfg: evmConfig.ChainConfig,
-		blockCtx: blockCtx,
+		ChainCfg: evmConfig.ChainConfig,
+		BlockCtx: blockCtx,
 		vmConfig: vmConfig,
 		freeGas:  evmConfig.FreeGas,
 	}, nil
@@ -387,7 +386,7 @@ func CallMsgToMessage(msg ethereum.CallMsg, baseFee *big.Int, skipNonceCheck, sk
 // Call executes a read-only call (eth_call semantics).
 // An empty revert is treated as a non-error: many Ethereum tools probe contracts this way.
 func (h *Executor) Call(msg ethereum.CallMsg) ([]byte, error) {
-	ret, err := h.Execute(CallMsgToMessage(msg, h.blockCtx.BaseFee, true, true))
+	ret, err := h.Execute(CallMsgToMessage(msg, h.BlockCtx.BaseFee, true, true))
 	if errors.Is(err, vm.ErrExecutionReverted) && len(ret) == 0 {
 		return nil, nil // empty revert on a call is not an error
 	}
@@ -396,7 +395,7 @@ func (h *Executor) Call(msg ethereum.CallMsg) ([]byte, error) {
 
 // Send executes a state-changing transaction, increments the sender nonce and returns the result.
 func (h *Executor) Send(tx *types.Transaction) ([]byte, error) {
-	signer := types.MakeSigner(h.chainCfg, h.blockCtx.BlockNumber, h.blockCtx.Time)
+	signer := types.MakeSigner(h.ChainCfg, h.BlockCtx.BlockNumber, h.BlockCtx.Time)
 
 	from, err := types.Sender(signer, tx)
 	if err != nil {
@@ -412,7 +411,7 @@ func (h *Executor) Send(tx *types.Transaction) ([]byte, error) {
 		return nil, core.ErrNonceTooHigh
 	}
 
-	msg, err := core.TransactionToMessage(tx, signer, h.blockCtx.BaseFee)
+	msg, err := core.TransactionToMessage(tx, signer, h.BlockCtx.BaseFee)
 	if err != nil {
 		return nil, err
 	}
@@ -443,7 +442,7 @@ func (h *Executor) Execute(msg *core.Message) ([]byte, error) {
 	}
 
 	// Create EVM instance with configured VMConfig
-	evm := vm.NewEVM(h.blockCtx, h.state, h.chainCfg, h.vmConfig)
+	evm := vm.NewEVM(h.BlockCtx, h.state, h.ChainCfg, h.vmConfig)
 
 	// Take a snapshot before executing the transaction
 	// This mimicks geth's approach and permits tests to pass
@@ -452,7 +451,7 @@ func (h *Executor) Execute(msg *core.Message) ([]byte, error) {
 	// The block gas pool must reflect the enclosing block gas limit, not the tx gas
 	// limit. Otherwise a tx with gas limit above the block gas limit incorrectly
 	// passes preCheck and executes.
-	gp := new(core.GasPool).AddGas(h.blockCtx.GasLimit)
+	gp := new(core.GasPool).AddGas(h.BlockCtx.GasLimit)
 
 	// Use ApplyMessage to execute the transaction
 	result, err := core.ApplyMessage(evm, msg, gp)

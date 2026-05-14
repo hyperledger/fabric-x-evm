@@ -1,0 +1,120 @@
+/*
+Copyright IBM Corp. All Rights Reserved.
+
+SPDX-License-Identifier: LGPL-3.0-or-later
+*/
+
+package testimpl
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/hyperledger/fabric-x-evm/endorser"
+	"github.com/hyperledger/fabric-x-evm/utils"
+	"github.com/hyperledger/fabric-x-sdk/endorsement"
+)
+
+// BalancePrimingConfig configures automatic ERC-20 balance priming.
+type BalancePrimingConfig struct {
+	// Enabled turns on balance priming
+	Enabled bool
+	// ContractAddress is the ERC-20 contract address to prime
+	ContractAddress common.Address
+	// MappingPosition is the storage slot position of the balances mapping
+	MappingPosition uint64
+}
+
+// SenderAware is an interface for StateDB wrappers that need to know the transaction sender.
+// This allows wrappers to perform sender-specific optimizations (e.g., balance priming).
+type SenderAware interface {
+	SetSender(addr common.Address)
+}
+
+// BalancePrimingExecutor wraps an Executor and adds balance priming support for testing.
+type BalancePrimingExecutor struct {
+	*endorser.Executor
+	state endorser.ExtendedStateDB
+}
+
+// NewBalancePrimingExecutor creates a new executor with balance priming support.
+func NewBalancePrimingExecutor(
+	namespace string,
+	kvs endorser.KVSSnapshotter,
+	blockInfo *utils.BlockInfo,
+	stateBlockNum uint64,
+	evmConfig endorser.EVMConfig,
+	monotonicVersions bool,
+	balancePriming *BalancePrimingConfig,
+) (*BalancePrimingExecutor, error) {
+	// Begin a new reader to get snapshot isolation
+	reader, err := kvs.NewSnapshot(0)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create StateDB with the reader
+	stateDB, err := endorser.NewStateDB(context.TODO(), reader, namespace, stateBlockNum, monotonicVersions)
+	if err != nil {
+		reader.Close()
+		return nil, err
+	}
+
+	// Wrap with balance priming wrapper if configured
+	var finalStateDB endorser.ExtendedStateDB = stateDB
+	if balancePriming != nil && balancePriming.Enabled {
+		finalStateDB = NewBalancePrimingWrapper(
+			stateDB,
+			balancePriming.ContractAddress,
+			balancePriming.MappingPosition,
+		)
+	}
+
+	// Create the base executor using the public API
+	executor, err := endorser.NewExecutor(finalStateDB, reader, blockInfo, evmConfig)
+	if err != nil {
+		reader.Close()
+		return nil, err
+	}
+
+	return &BalancePrimingExecutor{
+		Executor: executor,
+		state:    finalStateDB,
+	}, nil
+}
+
+// Execute runs a state-changing transaction with SenderAware notification.
+func (e *BalancePrimingExecutor) Execute(tx *types.Transaction) (endorsement.ExecutionResult, error) {
+	// Extract the sender to notify SenderAware wrappers
+	// This replicates the logic from the original Executor.Send
+	signer := types.MakeSigner(e.ChainCfg, e.BlockCtx.BlockNumber, e.BlockCtx.Time)
+	from, err := types.Sender(signer, tx)
+	if err != nil {
+		return endorsement.ExecutionResult{}, err
+	}
+
+	// Notify SenderAware wrappers of the transaction sender
+	if sa, ok := e.state.(SenderAware); ok {
+		sa.SetSender(from)
+	}
+
+	// Execute the transaction using the base Executor
+	ret, err := e.Executor.Send(tx)
+	if err != nil {
+		return endorsement.ExecutionResult{}, err
+	}
+
+	// Marshal logs if any
+	var logs []byte
+	if l := e.state.Logs(); len(l) > 0 {
+		logs, err = json.Marshal(l)
+		if err != nil {
+			return endorsement.ExecutionResult{}, errors.New("error marshaling logs")
+		}
+	}
+
+	return endorsement.Success(e.state.Result(), logs, ret), nil
+}

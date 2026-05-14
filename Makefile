@@ -191,3 +191,8 @@ demo-transfer:
 .PHONY: hardhat-tests
 hardhat-tests:
 	@./scripts/run_hardhat_test.sh
+
+
+.PHONY: perf-tests
+perf-tests: pre-pull-images
+	@VERBOSE=$(VERBOSE) FABRIC_VERSION=$(FABRIC_VERSION) ./scripts/run_perf_test.sh
