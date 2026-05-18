@@ -7,11 +7,13 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package core
 
 import (
+	"context"
 	"math/big"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -63,4 +65,116 @@ func TestTxQueue_DequeueMovesTxToInProgressMap(t *testing.T) {
 	inProgressTx, exists := q.inProgressMap[tx.Hash()]
 	require.True(t, exists)
 	assert.Equal(t, tx.Hash(), inProgressTx.Hash())
+}
+
+func TestTxQueue_IsPending_FindsInPendingQueue(t *testing.T) {
+	q := NewTxQueue()
+	tx := testTx(1)
+	q.Enqueue(tx)
+
+	result := q.IsPending(tx.Hash())
+	require.NotNil(t, result)
+	assert.Equal(t, tx.Hash(), result.Hash())
+}
+
+func TestTxQueue_IsPending_FindsInProgressMap(t *testing.T) {
+	q := NewTxQueue()
+	tx := testTx(1)
+	q.Enqueue(tx)
+	q.Dequeue() // Moves to inProgressMap
+
+	result := q.IsPending(tx.Hash())
+	require.NotNil(t, result)
+	assert.Equal(t, tx.Hash(), result.Hash())
+}
+
+func TestTxQueue_IsPending_ReturnsNilWhenNotFound(t *testing.T) {
+	q := NewTxQueue()
+	tx := testTx(1)
+
+	result := q.IsPending(tx.Hash())
+	assert.Nil(t, result)
+}
+
+func TestTxQueue_IsPending_ReturnsNilAfterComplete(t *testing.T) {
+	q := NewTxQueue()
+	tx := testTx(1)
+	q.Enqueue(tx)
+	q.Dequeue() // Moves to inProgressMap
+	q.Complete(tx.Hash())
+
+	result := q.IsPending(tx.Hash())
+	assert.Nil(t, result)
+}
+
+func TestTxQueue_Complete_RemovesFromInProgressMap(t *testing.T) {
+	q := NewTxQueue()
+	tx := testTx(1)
+	q.Enqueue(tx)
+	q.Dequeue() // Moves to inProgressMap
+
+	q.Complete(tx.Hash())
+
+	_, exists := q.inProgressMap[tx.Hash()]
+	assert.False(t, exists)
+}
+
+func TestTxQueue_Complete_IsIdempotent(t *testing.T) {
+	q := NewTxQueue()
+	tx := testTx(1)
+	q.Enqueue(tx)
+	q.Dequeue()
+
+	// Call Complete multiple times
+	q.Complete(tx.Hash())
+	q.Complete(tx.Hash())
+	q.Complete(tx.Hash())
+
+	// Should not panic and map should be empty
+	assert.Len(t, q.inProgressMap, 0)
+}
+
+func TestTxQueue_Handle_MarksTransactionsComplete(t *testing.T) {
+	q := NewTxQueue()
+	tx1 := testTx(1)
+	tx2 := testTx(2)
+
+	// Enqueue and dequeue to move to inProgressMap
+	q.Enqueue(tx1)
+	q.Enqueue(tx2)
+	q.Dequeue()
+	q.Dequeue()
+
+	// Verify both are in progress
+	assert.NotNil(t, q.IsPending(tx1.Hash()))
+	assert.NotNil(t, q.IsPending(tx2.Hash()))
+
+	// Create a block with these transactions
+	block := &domain.Block{
+		BlockNumber: 1,
+		Transactions: []domain.Transaction{
+			{TxHash: tx1.Hash().Bytes()},
+			{TxHash: tx2.Hash().Bytes()},
+		},
+	}
+
+	// Handle the block
+	err := q.Handle(context.Background(), block)
+	require.NoError(t, err)
+
+	// Verify both are now complete (not pending)
+	assert.Nil(t, q.IsPending(tx1.Hash()))
+	assert.Nil(t, q.IsPending(tx2.Hash()))
+}
+
+func TestTxQueue_Handle_EmptyBlock(t *testing.T) {
+	q := NewTxQueue()
+
+	block := &domain.Block{
+		BlockNumber:  1,
+		Transactions: []domain.Transaction{},
+	}
+
+	err := q.Handle(context.Background(), block)
+	require.NoError(t, err)
 }

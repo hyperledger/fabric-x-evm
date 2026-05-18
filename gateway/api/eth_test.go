@@ -319,8 +319,8 @@ func (s *stubBackend) SendTransaction(ctx context.Context, tx *types.Transaction
 func (s *stubBackend) CallContract(ctx context.Context, call ethereum.CallMsg, blockNumber *big.Int) ([]byte, error) {
 	return nil, s.callErr
 }
-func (s *stubBackend) TransactionByHash(ctx context.Context, hash common.Hash) (*domain.Transaction, bool, error) {
-	return nil, false, nil
+func (s *stubBackend) TransactionByHash(ctx context.Context, hash common.Hash) (*domain.Transaction, error) {
+	return nil, nil
 }
 func (s *stubBackend) GetTransactionByBlockHashAndIndex(ctx context.Context, hash common.Hash, idx int64) (*domain.Transaction, error) {
 	return nil, nil

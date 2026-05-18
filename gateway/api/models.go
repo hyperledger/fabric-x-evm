@@ -151,6 +151,7 @@ type RPCBlock struct {
 
 // rpcTransaction converts a domain.Transaction to an RPCTransaction with block metadata.
 // Returns nil if the transaction cannot be converted.
+// For pending transactions (BlockHash == nil or BlockNumber == 0), the block fields are set to nil.
 func rpcTransaction(tx *domain.Transaction) *RPCTransaction {
 	if tx == nil {
 		return nil
@@ -161,17 +162,25 @@ func rpcTransaction(tx *domain.Transaction) *RPCTransaction {
 		return nil
 	}
 
-	blockHash := common.Hash(tx.BlockHash)
-	blockNumber := hexutil.Big(*big.NewInt(int64(tx.BlockNumber)))
-	txIndex := hexutil.Uint64(tx.TxIndex)
-
-	return &RPCTransaction{
-		tx:               ethTx,
-		From:             common.BytesToAddress(tx.FromAddress),
-		BlockHash:        &blockHash,
-		BlockNumber:      &blockNumber,
-		TransactionIndex: &txIndex,
+	rpcTx := &RPCTransaction{
+		tx:   ethTx,
+		From: common.BytesToAddress(tx.FromAddress),
 	}
+
+	// Check if this is a pending transaction (BlockHash is nil or BlockNumber is 0)
+	// For pending transactions, leave block fields as nil
+	if tx.BlockHash != nil && tx.BlockNumber != 0 {
+		blockHash := common.Hash(tx.BlockHash)
+		blockNumber := hexutil.Big(*big.NewInt(int64(tx.BlockNumber)))
+		txIndex := hexutil.Uint64(tx.TxIndex)
+
+		rpcTx.BlockHash = &blockHash
+		rpcTx.BlockNumber = &blockNumber
+		rpcTx.TransactionIndex = &txIndex
+	}
+	// else: leave BlockHash, BlockNumber, TransactionIndex as nil (pending transaction)
+
+	return rpcTx
 }
 
 // rpcBlock returns a block in the form the RPC API can return. Some values are mocked.

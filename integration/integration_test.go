@@ -90,6 +90,11 @@ var cases = []testCase{
 		fn:    testRevertHandling,
 		nodes: 2,
 	},
+	{
+		name:  "pending_transaction_status",
+		fn:    testPendingTransactionStatus,
+		nodes: 2,
+	},
 }
 
 // TestLocal tests a good portion of the fabric functionality, with the difference that
@@ -986,4 +991,92 @@ func testRevertHandling(t *testing.T, th *TestHarness) {
 			t.Errorf("receipt.Status = %d, want %d (failed)", receipt.Status, types.ReceiptStatusFailed)
 		}
 	})
+}
+
+// testPendingTransactionStatus verifies that transactions return isPending=true while in the queue
+// and isPending=false after commit. This test races to catch a transaction in the pending state
+// by submitting it and immediately querying in a tight loop.
+func testPendingTransactionStatus(t *testing.T, th *TestHarness) {
+	node := th.Gateways[0]
+	ec, err := NewNativeEthClient(node)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	counter, err := NewEthClient(contracts.CounterMetaData, th.ethChainConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Prepare a deployment transaction
+	deployTx, _, err := counter.txForDeploy(t.Context(), node, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Channel to signal when we've sent the transaction
+	txSent := make(chan bool, 1)
+	caughtPending := make(chan bool, 1)
+
+	// Start a goroutine that will poll for the transaction immediately after we send it
+	go func() {
+		// Wait for the signal that transaction was sent
+		<-txSent
+
+		// Poll aggressively for the transaction
+		for range 1000 {
+			tx, isPending, err := ec.TransactionByHash(t.Context(), deployTx.Hash())
+
+			// Skip if transaction not found yet (still being processed by gateway)
+			if err != nil {
+				continue
+			}
+
+			// Check if we caught it in pending state
+			if tx != nil && isPending {
+				t.Logf("✓ Successfully caught transaction %s in pending state (isPending=true)", deployTx.Hash().Hex())
+				caughtPending <- true
+				return
+			}
+
+			// If we found it but it's already committed, we missed the window
+			if tx != nil && !isPending {
+				t.Logf("Transaction %s already committed (isPending=false), missed pending window", deployTx.Hash().Hex())
+				caughtPending <- false
+				return
+			}
+		}
+
+		t.Log("Could not catch transaction in pending state after 1000 attempts (timing issue)")
+		caughtPending <- false
+	}()
+
+	// Send the transaction and immediately signal the polling goroutine
+	if err := ec.SendTransaction(t.Context(), deployTx); err != nil {
+		t.Fatal(err)
+	}
+	txSent <- true
+
+	// Wait for the polling goroutine to finish and check if we caught it pending
+	caught := <-caughtPending
+	if !caught {
+		t.Fatal("Failed to catch transaction in pending state - this test requires catching isPending=true")
+	}
+
+	// Wait for the transaction to commit
+	waitForCommitT(t, ec, deployTx)
+
+	// Verify it's now committed (not pending)
+	tx, isPending, err := ec.TransactionByHash(t.Context(), deployTx.Hash())
+	if err != nil {
+		t.Fatalf("TransactionByHash after commit: %v", err)
+	}
+	if tx == nil {
+		t.Fatal("Transaction not found after commit")
+	}
+	if isPending {
+		t.Error("Transaction still marked as pending after commit (isPending should be false)")
+	}
+
+	t.Logf("Transaction successfully committed (isPending=false)")
 }

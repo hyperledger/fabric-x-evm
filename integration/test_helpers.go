@@ -139,7 +139,7 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 	}
 	t.Cleanup(func() { chain.Close() })
 
-	// Build submitter.
+	// Build submitter and synchronizer
 	orderers := make([]network.OrdererConf, len(cfg.Gateway.Orderers))
 	for i, o := range cfg.Gateway.Orderers {
 		orderers[i] = o.ToOrdererConf()
@@ -148,39 +148,52 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 	var submitter core.Submitter
 	var sync *network.Synchronizer
 	var err1 error
+
 	if bypass {
+		// Use local submitter for bypass mode (no network communication)
 		submitter = local.NewLocalSubmitter(dbs[0], cfg.Network.Channel, cfg.Network.Namespace, nfab.NewTxPackager(gwSigner), bfab.NewBlockParser(logger), false)
 	} else {
-		handlers := make([]blocks.BlockHandler, 0, len(dbs)+1)
-		for _, db := range dbs {
-			handlers = append(handlers, db)
-		}
-		// by adding `chain` as last handler, we're sure that by the time the
-		// gateway sees the transaction as committed, all endorsers will have
-		// updated their ledger state
-		handlers = append(handlers, chain)
-
+		// Create network submitter
 		switch cfg.Network.Protocol {
 		case "fabric":
-			sync, err = nfab.NewSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, handlers...)
 			submitter, err1 = nfab.NewSubmitter(orderers, gwSigner, 0, logger)
 		case "fabric-x", "":
-			sync, err = nfabx.NewSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, handlers...)
 			submitter, err1 = nfabx.NewSubmitter(orderers, gwSigner, 0, logger)
 		default:
 			return nil, nil, fmt.Errorf("unsupported protocol: %q", cfg.Network.Protocol)
 		}
-		if err := errors.Join(err, err1); err != nil {
-			return nil, nil, err
+		if err1 != nil {
+			return nil, nil, err1
 		}
 	}
 
+	// Create gateway before synchronizer so we can register it as a handler
 	gw, err := core.New(ec, submitter, chain, cfg.Network.ChainID, cfg.Gateway.WorkerCount)
 	if err != nil {
 		return nil, nil, err
 	}
 
+	// Create synchronizer with handlers (endorsers, chain, and gateway) - only for non-bypass mode
 	if !bypass {
+		handlers := make([]blocks.BlockHandler, 0, len(dbs)+2)
+		for _, db := range dbs {
+			handlers = append(handlers, db)
+		}
+		// Add chain before gateway to ensure blocks are persisted before marking transactions complete
+		handlers = append(handlers, chain, gw)
+
+		switch cfg.Network.Protocol {
+		case "fabric":
+			sync, err = nfab.NewSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, handlers...)
+		case "fabric-x", "":
+			sync, err = nfabx.NewSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, handlers...)
+		default:
+			return nil, nil, fmt.Errorf("unsupported protocol: %q", cfg.Network.Protocol)
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+
 		go func() error { return sync.Start(t.Context()) }()
 	}
 

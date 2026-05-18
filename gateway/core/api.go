@@ -22,6 +22,7 @@ import (
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	"github.com/hyperledger/fabric-x-evm/utils"
 	sdk "github.com/hyperledger/fabric-x-sdk"
+	"github.com/hyperledger/fabric-x-sdk/blocks"
 )
 
 type Signer interface {
@@ -252,25 +253,66 @@ func (g *Gateway) NonceAt(ctx context.Context, account common.Address, blockNumb
 
 // Transactions
 
-// TransactionByHash retrieves a past transaction data from local storage, reconstructs a Transaction object and returns it.
-// We always return false for "is pending".
-func (g *Gateway) TransactionByHash(ctx context.Context, hash common.Hash) (*domain.Transaction, bool, error) {
+// TransactionByHash retrieves transaction data from either the queue or database.
+// It first checks if the transaction is in the queue (pending or in-progress),
+// then queries the database for committed transactions.
+//
+// Return values represent three possible states:
+// - State 1 (Pending): Transaction in queue → tx with BlockNumber=0 (becomes null in JSON)
+// - State 2 (Completed): Transaction in database → tx with block data populated
+// - State 3 (Not Found): Transaction in neither location → nil
+//
+// The pending status is signaled by BlockNumber=0, which the API layer converts to null.
+func (g *Gateway) TransactionByHash(ctx context.Context, hash common.Hash) (*domain.Transaction, error) {
+	// Check if transaction is pending in the queue (either waiting or being processed)
+	if pendingTx := g.txQueue.IsPending(hash); pendingTx != nil {
+		// Transaction is pending - return it with zero block fields
+		// The API layer will convert these to nil in the JSON response
+		rawTx, err := pendingTx.MarshalBinary()
+		if err != nil {
+			return nil, err
+		}
+
+		from, err := types.Sender(g.signer, pendingTx)
+		if err != nil {
+			return nil, err
+		}
+
+		var toAddr []byte
+		if to := pendingTx.To(); to != nil {
+			toAddr = to.Bytes()
+		}
+
+		return &domain.Transaction{
+			TxHash:      hash.Bytes(),
+			BlockHash:   nil, // nil signals pending to API layer
+			BlockNumber: 0,   // 0 signals pending to API layer
+			TxIndex:     0,   // Value doesn't matter - API layer checks BlockNumber==0 for pending
+			RawTx:       rawTx,
+			FromAddress: from.Bytes(),
+			ToAddress:   toAddr,
+		}, nil
+	}
+
+	// Transaction not in queue, check database for committed transaction
 	tx, err := g.store.GetTransactionByHash(ctx, hash.Bytes())
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	if tx == nil {
-		return nil, false, nil
+		// Transaction not found in queue or database
+		return nil, nil
 	}
 
 	// Fetch logs for the transaction (needed for receipts)
 	logs, err := g.store.GetLogsByTxHash(ctx, hash.Bytes())
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	tx.Logs = logs
 
-	return tx, false, nil
+	// Transaction found in database
+	return tx, nil
 }
 
 // GetTransactionByBlockHashAndIndex retrieves a transaction based on block hash in the transaction index in that block.
@@ -301,5 +343,16 @@ func (g *Gateway) Stop() error {
 		// Close submitter connection
 		err = g.submitter.Close()
 	})
+	return err
+}
+
+// Handle processes block notifications and marks transactions as complete.
+// This method implements blocks.BlockHandler and can be registered with the synchronizer
+// to receive notifications when blocks are committed. It converts the blocks.Block to domain.Block
+// and delegates to the TxQueue's Handle method.
+func (g *Gateway) Handle(ctx context.Context, b blocks.Block) error {
+	// Convert blocks.Block to domain.Block using the shared conversion function
+	domainBlock := ConvertToDomain(b)
+	err := g.txQueue.Handle(ctx, &domainBlock)
 	return err
 }

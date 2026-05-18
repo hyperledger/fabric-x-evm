@@ -124,12 +124,14 @@ func buildApp(cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorse
 		return nil, fmt.Errorf("failed to create gateway: %w", err)
 	}
 
+	// Create synchronizer with both chain and gateway as handlers
+	// Chain must be called first to persist blocks, then gateway to mark transactions complete
 	var gwSync *network.Synchronizer
 	switch cfg.Network.Protocol {
 	case "fabric":
-		gwSync, err = nfab.NewSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, chain)
+		gwSync, err = nfab.NewSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, chain, gateway)
 	case "fabric-x", "":
-		gwSync, err = nfabx.NewSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, chain)
+		gwSync, err = nfabx.NewSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, chain, gateway)
 	default:
 		return nil, fmt.Errorf("unsupported protocol: %q", cfg.Network.Protocol)
 	}

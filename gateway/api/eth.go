@@ -49,7 +49,8 @@ type Backend interface {
 	CallContract(ctx context.Context, call ethereum.CallMsg, blockNumber *big.Int) ([]byte, error) // ethereum.ContractCaller
 
 	// Transactions. Our transactions also include the status, so we can build receipts out of the same data.
-	TransactionByHash(ctx context.Context, hash common.Hash) (tx *domain.Transaction, isPending bool, err error)
+	// For pending transactions, BlockNumber will be 0 (converted to null in JSON response).
+	TransactionByHash(ctx context.Context, hash common.Hash) (*domain.Transaction, error)
 	GetTransactionByBlockHashAndIndex(ctx context.Context, hash common.Hash, idx int64) (*domain.Transaction, error)
 	GetTransactionByBlockNumberAndIndex(ctx context.Context, num uint64, idx int64) (*domain.Transaction, error)
 	GetLogs(ctx context.Context, query domain.LogFilter) ([]domain.Log, error)
@@ -256,7 +257,7 @@ func (api *EthAPI) SendRawTransaction(ctx context.Context, input hexutil.Bytes) 
 // eth_getTransactionByHash
 func (api *EthAPI) GetTransactionByHash(ctx context.Context, hash common.Hash) (*RPCTransaction, error) {
 	logger.Debugf("EthAPI.GetTransactionByHash() called with hash=%s", hash.Hex())
-	tx, _, err := api.b.TransactionByHash(ctx, hash)
+	tx, err := api.b.TransactionByHash(ctx, hash)
 	if err != nil {
 		logger.Debugf("EthAPI.GetTransactionByHash() returning error: %v", err)
 		return nil, err
@@ -301,7 +302,7 @@ func (api *EthAPI) GetTransactionByBlockNumberAndIndex(ctx context.Context, num 
 // eth_getTransactionReceipt
 func (api *EthAPI) GetTransactionReceipt(ctx context.Context, hash common.Hash) (*rpcReceipt, error) {
 	logger.Debugf("EthAPI.GetTransactionReceipt() called with hash=%s", hash.Hex())
-	r, _, err := api.b.TransactionByHash(ctx, hash)
+	r, err := api.b.TransactionByHash(ctx, hash)
 	if err != nil {
 		logger.Debugf("EthAPI.GetTransactionReceipt() returning error: %v", err)
 		return nil, err

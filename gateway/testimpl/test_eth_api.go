@@ -132,10 +132,47 @@ func (api *TestEthAPI) SendTransaction(ctx context.Context, args TransactionArgs
 		return common.Hash{}, fmt.Errorf("failed to marshal transaction: %w", err)
 	}
 
-	_, err = api.EthAPI.SendRawTransaction(ctx, hexutil.Bytes(txBytes))
+	// Call our overridden SendRawTransaction which makes it synchronous
+	txHash, err := api.SendRawTransaction(ctx, hexutil.Bytes(txBytes))
 	if err != nil {
 		return common.Hash{}, err
 	}
 
-	return signedTx.Hash(), nil
+	return txHash, nil
+}
+
+// SendRawTransaction overrides the base implementation to make it synchronous for Hardhat compatibility.
+// It sends the transaction and polls until it's committed to a block, mimicking Hardhat's auto-mining behavior.
+func (api *TestEthAPI) SendRawTransaction(ctx context.Context, input hexutil.Bytes) (common.Hash, error) {
+	// Call the underlying SendRawTransaction
+	txHash, err := api.EthAPI.SendRawTransaction(ctx, input)
+	if err != nil {
+		return common.Hash{}, err
+	}
+
+	// Poll until the transaction is committed (has a block number > 0)
+	// This mimics Hardhat's auto-mining behavior where transactions are mined immediately
+	for {
+		select {
+		case <-ctx.Done():
+			return common.Hash{}, ctx.Err()
+		default:
+			// Check if transaction is committed
+			tx, err := api.backend.TransactionByHash(ctx, txHash)
+			if err != nil {
+				// Transaction not found yet, continue polling
+				continue
+			}
+
+			// Check if transaction has been included in a block
+			// BlockNumber is 0 for pending transactions, > 0 for committed
+			if tx.BlockNumber > 0 {
+				// Transaction is committed
+				return txHash, nil
+			}
+
+			// Transaction is still pending, continue polling
+			// Note: We continue immediately since blocks should be fast in tests
+		}
+	}
 }
