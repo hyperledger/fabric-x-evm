@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"runtime"
 	"runtime/pprof"
@@ -82,6 +83,9 @@ type replayConfig struct {
 	// totalDispatches is the total number of transfers to dispatch when
 	// wrapAround is true. Ignored when wrapAround is false.
 	totalDispatches int64
+
+	// TODO: add forever bool (run until SIGINT/SIGTERM, implies wrapAround).
+	// Set via PERF_REPLAY_FOREVER=1. Feed loop already structured for easy extension.
 }
 
 func loadReplayConfigFromEnv(t *testing.T) replayConfig {
@@ -147,6 +151,7 @@ func writeHeapProfile(filename string) {
 func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCount int, cfg replayConfig) (float64, int64, int64) {
 	// Silence GRPC logging
 	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr))
+	t.Logf("Config: processingWorkers=%d submittingWorkers=%d", processingWorkerCount, submittingWorkerCount)
 
 	// USDC contract address
 	USDCAddr := common.HexToAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
@@ -289,6 +294,10 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 		}(w)
 	}
 
+	// recentSamples collects windowed throughput values for stability reporting.
+	// Written only by the logging goroutine; safe to read after loggingWg.Wait().
+	var recentSamples []float64
+
 	// Progress logging goroutine
 	stopLogging := make(chan struct{})
 	var loggingWg sync.WaitGroup
@@ -314,6 +323,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 
 				txProcessed := currentTotal - lastLogCount
 				throughput := float64(txProcessed) / elapsed
+				recentSamples = append(recentSamples, throughput)
 
 				totalElapsed := now.Sub(startTime).Seconds()
 				overallThroughput := float64(currentTotal) / totalElapsed
@@ -383,6 +393,36 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	close(stopLogging)
 	loggingWg.Wait()
 
+	// TPS stability stats (requires at least 2 samples for meaningful statistics).
+	// CV (coefficient of variation = stddev/mean) answers "is throughput steady?":
+	// CV < 10% is very steady, 10–25% is moderate variance, >25% is high variance.
+	if len(recentSamples) >= 2 {
+		var sum float64
+		minTPS, maxTPS := recentSamples[0], recentSamples[0]
+		for _, s := range recentSamples {
+			sum += s
+			if s < minTPS {
+				minTPS = s
+			}
+			if s > maxTPS {
+				maxTPS = s
+			}
+		}
+		mean := sum / float64(len(recentSamples))
+		var variance float64
+		for _, s := range recentSamples {
+			d := s - mean
+			variance += d * d
+		}
+		stddev := math.Sqrt(variance / float64(len(recentSamples)))
+		cv := 0.0
+		if mean > 0 {
+			cv = stddev / mean * 100
+		}
+		t.Logf("TPS stability (%d samples): min=%.2f max=%.2f avg=%.2f stddev=%.2f CV=%.1f%%",
+			len(recentSamples), minTPS, maxTPS, mean, stddev, cv)
+	}
+
 	// Final counts
 	finalSuccess := atomic.LoadInt64(&successCount)
 	finalFail := atomic.LoadInt64(&failCount)
@@ -394,6 +434,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	// Calculate overall throughput
 	totalElapsed := time.Since(startTime).Seconds()
 	overallThroughput := float64(finalSuccess+finalFail) / totalElapsed
+	t.Logf("Result: Throughput=%.2f tx/s", overallThroughput)
 
 	// Return metrics (throughput, failed count, total dispatched transfers)
 	return overallThroughput, finalFail, dispatched
@@ -458,6 +499,8 @@ func TestReplayJSONDatasetPerformance(t *testing.T) {
 
 			t.Logf("Result: Throughput=%.2f tx/s, Failed=%d/%d (%.2f%%)",
 				throughput, failedTxs, totalTxs, failureRate*100)
+			t.Logf("PerfResult: pw=%d sw=%d throughput=%.2f failed=%d total=%d",
+				processingWorkers, submittingWorkers, throughput, failedTxs, totalTxs)
 		}
 	}
 

@@ -126,6 +126,15 @@ func (g *Gateway) Start(ctx context.Context) {
 // worker processes transactions from the queue
 func (g *Gateway) worker(ctx context.Context) {
 	defer g.wg.Done()
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Errorf("worker panic: %v", r)
+			if ctx.Err() == nil {
+				g.wg.Add(1)
+				go g.worker(ctx)
+			}
+		}
+	}()
 
 	for {
 		tx, ok := g.TxQueue.Dequeue()
