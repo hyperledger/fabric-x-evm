@@ -47,7 +47,7 @@ func (r *rpcReceipt) MarshalJSON() ([]byte, error) {
 
 // receipt returns a receipt in the form the RPC API can return. Some values are mocked.
 func receipt(r *domain.Transaction) *rpcReceipt {
-	if r == nil {
+	if r == nil || r.BlockHash == nil {
 		return nil
 	}
 
