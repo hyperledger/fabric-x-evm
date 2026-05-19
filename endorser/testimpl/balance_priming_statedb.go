@@ -28,6 +28,8 @@ type BalancePrimingWrapper struct {
 	balanceSlot     common.Hash    // The storage slot for the sender's balance
 	mappingPosition uint64         // The position of the balances mapping in storage
 	enabled         bool           // Whether priming is enabled
+	expectedNonce   uint64         // The nonce the current transaction expects
+	nonceEnabled    bool           // Whether nonce priming is active
 }
 
 // NewBalancePrimingWrapper creates a new wrapper that primes ERC-20 balance slots.
@@ -92,6 +94,31 @@ func (w *BalancePrimingWrapper) GetState(addr common.Address, slot common.Hash) 
 
 	// Otherwise, just pass through to the underlying StateDB
 	return w.ExtendedStateDB.GetState(addr, slot)
+}
+
+// SetExpectedNonce stores the nonce the current transaction expects.
+func (w *BalancePrimingWrapper) SetExpectedNonce(nonce uint64) {
+	// fmt.Printf("[NoncePriming] SetExpectedNonce sender=%s nonce=%d enabled(before)=%t\n", w.senderAddr.Hex(), nonce, w.nonceEnabled)
+	w.expectedNonce = nonce
+	w.nonceEnabled = true
+}
+
+// GetNonce intercepts nonce reads and returns the expected transaction nonce
+// when nonce priming is enabled. The underlying read still happens to preserve
+// the MVCC read dependency on the real nonce key version.
+func (w *BalancePrimingWrapper) GetNonce(addr common.Address) uint64 {
+	// Always delegate first to record the MVCC read dependency
+	// realNonce := w.ExtendedStateDB.GetNonce(addr)
+	// fmt.Printf("[NoncePriming] GetNonce addr=%s sender=%s enabled=%t expected=%d real=%d\n", addr.Hex(), w.senderAddr.Hex(), w.nonceEnabled, w.expectedNonce, realNonce)
+
+	// If nonce priming is enabled and this is the sender, return the
+	// expected nonce so the tx.Nonce() == ledgerNonce check in Executor.Send passes.
+	if w.nonceEnabled && addr == w.senderAddr {
+		return w.expectedNonce
+	}
+
+	// For all other addresses, delegate normally
+	return w.ExtendedStateDB.GetNonce(addr)
 }
 
 // GetERC20BalanceSlot computes the storage slot for a balance in an ERC-20 mapping(address => uint256).

@@ -46,9 +46,9 @@ type Gateway struct {
 	endorsers   *EndorsementClient
 	store       Store
 	chainID     *big.Int
-	chainConfig *params.ChainConfig
-	signer      types.Signer
-	txQueue     *TxQueue
+	ChainConfig *params.ChainConfig
+	Signer      types.Signer
+	TxQueue     *TxQueue
 	workerCount int
 	wg          sync.WaitGroup
 	stopOnce    sync.Once
@@ -81,9 +81,9 @@ func New(ec *EndorsementClient, submitter Submitter, store Store, chainID int64,
 		submitter:   submitter,
 		store:       store,
 		chainID:     cid,
-		chainConfig: cmn.BuildChainConfig(chainID),
-		signer:      types.LatestSignerForChainID(cid),
-		txQueue:     NewTxQueue(),
+		ChainConfig: cmn.BuildChainConfig(chainID),
+		Signer:      types.LatestSignerForChainID(cid),
+		TxQueue:     NewTxQueue(),
 		workerCount: workerCount,
 	}, nil
 }
@@ -101,7 +101,7 @@ func (g *Gateway) worker(ctx context.Context) {
 	defer g.wg.Done()
 
 	for {
-		tx, ok := g.txQueue.Dequeue()
+		tx, ok := g.TxQueue.Dequeue()
 		if !ok {
 			// Queue is closed and empty
 			return
@@ -131,10 +131,10 @@ func (g *Gateway) processTx(ctx context.Context, tx *types.Transaction) error {
 // SendTransaction runs geth-style pre-flight validation, then enqueues the tx
 // for async endorse/submit. Mirrors eth_sendRawTransaction's failure model.
 func (g *Gateway) SendTransaction(ctx context.Context, tx *types.Transaction) error {
-	if err := ValidateTx(ctx, tx, g.chainConfig, g.signer, g); err != nil {
+	if err := ValidateTx(ctx, tx, g.ChainConfig, g.Signer, g); err != nil {
 		return err
 	}
-	g.txQueue.Enqueue(tx)
+	g.TxQueue.Enqueue(tx)
 	return nil
 }
 
@@ -295,7 +295,7 @@ func (g *Gateway) Stop() error {
 	var err error
 	g.stopOnce.Do(func() {
 		// Close the queue to signal workers to stop
-		g.txQueue.Close()
+		g.TxQueue.Close()
 
 		// Wait for all workers to finish processing
 		g.wg.Wait()

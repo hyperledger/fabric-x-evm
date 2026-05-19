@@ -27,6 +27,7 @@ import (
 	econf "github.com/hyperledger/fabric-x-evm/endorser/config"
 	"github.com/hyperledger/fabric-x-evm/endorser/testimpl"
 	gwcore "github.com/hyperledger/fabric-x-evm/gateway/core"
+	gwtestimpl "github.com/hyperledger/fabric-x-evm/gateway/testimpl"
 	"github.com/hyperledger/fabric-x-evm/integration"
 	"github.com/hyperledger/fabric-x-evm/utils"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
@@ -63,29 +64,81 @@ func balancePrimingEndorserFactory(balancePriming *testimpl.BalancePrimingConfig
 	}
 }
 
+type replayConfig struct {
+	// windowSize is the number of transfers to use from the dataset.
+	// 0 means use the entire dataset.
+	windowSize int
+
+	// wrapAround, when true, restarts the feed from the beginning of the
+	// window after every pass. The feed continues until totalDispatches
+	// transfers have been sent to workChan. Ignored when false.
+	wrapAround bool
+
+	// wrapCount is the raw wrap count requested by configuration.
+	// totalDispatches is computed later, after the effective window size is known.
+	wrapCount int64
+
+	// totalDispatches is the total number of transfers to dispatch when
+	// wrapAround is true. Ignored when wrapAround is false.
+	totalDispatches int64
+}
+
+func loadReplayConfigFromEnv(t *testing.T) replayConfig {
+	cfg := replayConfig{windowSize: 3000, wrapAround: false}
+
+	windowSizeStr := os.Getenv("PERF_REPLAY_WINDOW_SIZE")
+	if windowSizeStr != "" {
+		var parsedWindowSize int
+		_, err := fmt.Sscanf(windowSizeStr, "%d", &parsedWindowSize)
+		assert.NoError(t, err, "PERF_REPLAY_WINDOW_SIZE must be a valid integer")
+		assert.True(t, parsedWindowSize >= 0, "PERF_REPLAY_WINDOW_SIZE must be >= 0")
+		cfg.windowSize = parsedWindowSize
+	}
+
+	if cfg.windowSize == 0 {
+		t.Log("WARNING: full dataset mode selected — this is intended for distributed infra, not local runs")
+	}
+
+	wrapCountStr := os.Getenv("PERF_REPLAY_WRAP_COUNT")
+	if wrapCountStr != "" {
+		var wrapCount int64
+		_, err := fmt.Sscanf(wrapCountStr, "%d", &wrapCount)
+		assert.NoError(t, err, "PERF_REPLAY_WRAP_COUNT must be a valid integer")
+		assert.True(t, wrapCount >= 1, "PERF_REPLAY_WRAP_COUNT must be >= 1")
+		cfg.wrapCount = wrapCount
+		if wrapCount > 1 {
+			cfg.wrapAround = true
+		}
+	}
+
+	return cfg
+}
+
 // runReplayTest executes the replay test with configurable worker counts and returns metrics.
 // Returns: (overallThroughput, failedTransactionCount, totalTransactionCount)
-func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCount int) (float64, int64, int64) {
+func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCount int, cfg replayConfig) (float64, int64, int64) {
 	// Silence GRPC logging
 	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr))
 
 	// USDC contract address
-	USDC_addr := common.HexToAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
+	USDCAddr := common.HexToAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
 
 	// Configure balance priming for USDC transfers
 	balancePriming := &testimpl.BalancePrimingConfig{
 		Enabled:         true,
-		ContractAddress: USDC_addr,
+		ContractAddress: USDCAddr,
 		MappingPosition: 9, // USDC balance mapping is at slot 9
 	}
-
 	evmConfig := endorser.EVMConfig{}
 
 	// Setup test harness with USDC contract and balance priming enabled
-	// Use the factory pattern to create endorsers with balance priming
 	factory := balancePrimingEndorserFactory(balancePriming)
 	th, err := integration.NewLocalTestHarnessWithFactory(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", "fabric", map[string]any{"Gateway.WorkerCount": processingWorkerCount}, factory)
 	assert.NoError(t, err)
+
+	// Wrap the gateway with NonceBypassGateway to skip nonce validation
+	// This is necessary for wrap-around replay where the same transactions are replayed
+	wrappedGateway := gwtestimpl.NewNonceBypassGateway(th.Gateways[0])
 
 	// Load the JSON dataset
 	datasetPath := "testdata/USDC_dataset.json.gz"
@@ -99,21 +152,22 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	assert.NoError(t, err)
 	defer gzReader.Close()
 
-	var transfers []utils.TokenTransfer
+	var allTransfers []utils.TokenTransfer
 	decoder := json.NewDecoder(gzReader)
-	err = decoder.Decode(&transfers)
+	err = decoder.Decode(&allTransfers)
 	assert.NoError(t, err)
-	assert.NotEmpty(t, transfers, "dataset should contain transfers")
+	assert.NotEmpty(t, allTransfers, "dataset should contain transfers")
 
-	t.Logf("Loaded %d transfers from dataset", len(transfers))
+	t.Logf("Loaded %d transfers from dataset", len(allTransfers))
 
-	////////////////////////////////////////////////
-	////////////////////////////////////////////////
-	////////////////////////////////////////////////
-	transfers = transfers[:3000]
-	////////////////////////////////////////////////
-	////////////////////////////////////////////////
-	////////////////////////////////////////////////
+	window := allTransfers
+	if cfg.windowSize > 0 && cfg.windowSize < len(allTransfers) {
+		window = allTransfers[:cfg.windowSize]
+	}
+
+	if cfg.wrapAround && cfg.wrapCount > 0 {
+		cfg.totalDispatches = int64(len(window)) * cfg.wrapCount
+	}
 
 	// Replay transactions with parallel workers
 	// Atomic counters for thread-safe counting
@@ -129,10 +183,10 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 
 	// Create a channel for work items
 	type workItem struct {
-		index    int
+		index    int64
 		transfer utils.TokenTransfer
 	}
-	workChan := make(chan workItem, 100) // Buffer to avoid blocking
+	workChan := make(chan workItem, 500) // Buffer to avoid blocking
 
 	// Worker pool configuration
 	numWorkers := submittingWorkerCount
@@ -144,7 +198,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 		go func(workerID int) {
 			defer wg.Done()
 
-			// Create native eth client for sending transactions
+			// Create native eth client for read operations (TransactionByHash, etc.)
 			ec, err := integration.NewNativeEthClient(th.Gateways[0])
 			assert.NoError(t, err)
 
@@ -178,7 +232,8 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 						}
 					}()
 
-					err = ec.SendTransaction(context.Background(), tx)
+					// Use the wrapped gateway directly to bypass nonce validation
+					err = wrappedGateway.SendTransaction(context.Background(), tx)
 					if err != nil {
 						t.Logf("Transfer %d: SendTransaction error: %v", i, err)
 						panic(err) // Trigger the defer recovery
@@ -233,8 +288,13 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 				totalElapsed := now.Sub(startTime).Seconds()
 				overallThroughput := float64(currentTotal) / totalElapsed
 
+				progressTarget := int64(len(window))
+				if cfg.wrapAround {
+					progressTarget = cfg.totalDispatches
+				}
+
 				t.Logf("Progress: %d/%d transfers processed (%d successful, %d failed, %d skipped) | Throughput: %.2f tx/s (recent), %.2f tx/s (overall)",
-					currentSuccess+currentFail+currentSkipped, len(transfers),
+					currentSuccess+currentFail+currentSkipped, progressTarget,
 					currentSuccess, currentFail, currentSkipped,
 					throughput, overallThroughput)
 
@@ -249,8 +309,34 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	}()
 
 	// Feed work to the workers
-	for i, transfer := range transfers {
-		workChan <- workItem{index: i, transfer: transfer}
+	var dispatched int64
+	cursor := 0
+
+	for {
+		if cfg.wrapAround {
+			if dispatched >= cfg.totalDispatches {
+				break
+			}
+		} else {
+			if cursor >= len(window) {
+				break
+			}
+		}
+
+		workChan <- workItem{index: dispatched, transfer: window[cursor]}
+		dispatched++
+		cursor++
+
+		if cursor >= len(window) {
+			if cfg.wrapAround {
+				cursor = 0
+				// BalancePrimingWrapper.GetNonce() handles nonce validation bypass automatically,
+				// so no explicit nonce priming is needed between wrap-around passes.
+				t.Logf("Wrap-around: restarting from beginning (dispatched %d so far)", dispatched)
+			} else {
+				break
+			}
+		}
 	}
 
 	// Close the work channel and wait for all workers to finish
@@ -267,15 +353,14 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	finalSkipped := atomic.LoadInt64(&skippedCount)
 
 	t.Logf("Replay complete: %d successful, %d failed, %d skipped out of %d total transfers",
-		finalSuccess, finalFail, finalSkipped, len(transfers))
+		finalSuccess, finalFail, finalSkipped, dispatched)
 
 	// Calculate overall throughput
 	totalElapsed := time.Since(startTime).Seconds()
 	overallThroughput := float64(finalSuccess+finalFail) / totalElapsed
 
-	// Return metrics (throughput, failed count, total attempted transactions)
-	totalAttempted := finalSuccess + finalFail + finalSkipped
-	return overallThroughput, finalFail, totalAttempted
+	// Return metrics (throughput, failed count, total dispatched transfers)
+	return overallThroughput, finalFail, dispatched
 }
 
 // TestReplayJSONDataset loads the USDC_dataset.json.gz file with pre-generated transactions
@@ -287,7 +372,16 @@ func TestReplayJSONDataset(t *testing.T) {
 	}
 
 	// Run the test with single worker configuration
-	_, _, _ = runReplayTest(t, 1, 1)
+	_, _, _ = runReplayTest(t, 1, 1, loadReplayConfigFromEnv(t))
+}
+
+type performanceResult struct {
+	processingWorkers  int
+	submittingWorkers  int
+	throughput         float64
+	failedTransactions int64
+	totalTransactions  int64
+	failureRate        float64
 }
 
 // TestReplayJSONDatasetPerformance runs the replay test with varying worker counts
@@ -313,7 +407,7 @@ func TestReplayJSONDatasetPerformance(t *testing.T) {
 			t.Logf("\n=== Testing with processingWorkers=%d, submittingWorkers=%d ===",
 				processingWorkers, submittingWorkers)
 
-			throughput, failedTxs, totalTxs := runReplayTest(t, processingWorkers, submittingWorkers)
+			throughput, failedTxs, totalTxs := runReplayTest(t, processingWorkers, submittingWorkers, loadReplayConfigFromEnv(t))
 			failureRate := float64(failedTxs) / float64(totalTxs)
 
 			results = append(results, performanceResult{
@@ -325,94 +419,43 @@ func TestReplayJSONDatasetPerformance(t *testing.T) {
 				failureRate:        failureRate,
 			})
 
-			t.Logf("Result: Throughput=%.2f tx/s, Failed=%d, Failure Rate=%.4f\n",
-				throughput, failedTxs, failureRate)
+			t.Logf("Result: Throughput=%.2f tx/s, Failed=%d/%d (%.2f%%)",
+				throughput, failedTxs, totalTxs, failureRate*100)
 		}
 	}
 
-	// Print results table
-	t.Logf("\n\n================================================================================")
-	t.Logf("PERFORMANCE TEST RESULTS")
-	t.Logf("================================================================================")
-	t.Logf("%-20s | %-20s | %-20s | %-15s | %-15s",
-		"Processing Workers", "Submitting Workers", "Throughput (tx/s)", "Failed Txs", "Failure Rate")
-	t.Logf("--------------------------------------------------------------------------------")
-
-	for _, r := range results {
-		t.Logf("%-20d | %-20d | %-20.2f | %-15d | %-15.4f",
-			r.processingWorkers, r.submittingWorkers, r.throughput, r.failedTransactions, r.failureRate)
-	}
-	t.Logf("================================================================================")
-
-	// Find best configuration
-	var bestResult performanceResult
-	bestThroughput := 0.0
-	for _, r := range results {
-		if r.throughput > bestThroughput {
-			bestThroughput = r.throughput
-			bestResult = r
-		}
-	}
-
-	t.Logf("\nBest Configuration:")
-	t.Logf("  Processing Workers: %d", bestResult.processingWorkers)
-	t.Logf("  Submitting Workers: %d", bestResult.submittingWorkers)
-	t.Logf("  Throughput: %.2f tx/s", bestResult.throughput)
-	t.Logf("  Failed Transactions: %d", bestResult.failedTransactions)
-	t.Logf("  Failure Rate: %.4f", bestResult.failureRate)
-
-	// Export results to CSV for plotting
-	csvPath := "./performance_results.csv"
-	err := exportResultsToCSV(csvPath, results)
-	if err != nil {
-		t.Logf("Warning: Failed to export results to CSV: %v", err)
-	} else {
-		t.Logf("\nResults exported to: %s", csvPath)
-		t.Logf("Run 'python3 integration/perf/plot_performance.py' to generate 3D plots")
-	}
-}
-
-// performanceResult stores the results of a single performance test run
-type performanceResult struct {
-	processingWorkers  int
-	submittingWorkers  int
-	throughput         float64
-	failedTransactions int64
-	totalTransactions  int64
-	failureRate        float64
-}
-
-// exportResultsToCSV writes the performance results to a CSV file
-func exportResultsToCSV(path string, results []performanceResult) error {
-	file, err := os.Create(path)
-	if err != nil {
-		return fmt.Errorf("failed to create CSV file: %w", err)
-	}
+	// Write results to CSV file
+	csvPath := "performance_results.csv"
+	file, err := os.Create(csvPath)
+	assert.NoError(t, err)
 	defer file.Close()
 
 	writer := csv.NewWriter(file)
 	defer writer.Flush()
 
 	// Write header
-	header := []string{"ProcessingWorkers", "SubmittingWorkers", "Throughput", "FailedTransactions", "TotalTransactions", "FailureRate"}
-	if err := writer.Write(header); err != nil {
-		return fmt.Errorf("failed to write CSV header: %w", err)
-	}
+	err = writer.Write([]string{
+		"processing_workers",
+		"submitting_workers",
+		"throughput_tx_per_s",
+		"failed_transactions",
+		"total_transactions",
+		"failure_rate",
+	})
+	assert.NoError(t, err)
 
 	// Write data rows
-	for _, r := range results {
-		row := []string{
-			fmt.Sprintf("%d", r.processingWorkers),
-			fmt.Sprintf("%d", r.submittingWorkers),
-			fmt.Sprintf("%.2f", r.throughput),
-			fmt.Sprintf("%d", r.failedTransactions),
-			fmt.Sprintf("%d", r.totalTransactions),
-			fmt.Sprintf("%.6f", r.failureRate),
-		}
-		if err := writer.Write(row); err != nil {
-			return fmt.Errorf("failed to write CSV row: %w", err)
-		}
+	for _, result := range results {
+		err = writer.Write([]string{
+			fmt.Sprintf("%d", result.processingWorkers),
+			fmt.Sprintf("%d", result.submittingWorkers),
+			fmt.Sprintf("%.2f", result.throughput),
+			fmt.Sprintf("%d", result.failedTransactions),
+			fmt.Sprintf("%d", result.totalTransactions),
+			fmt.Sprintf("%.4f", result.failureRate),
+		})
+		assert.NoError(t, err)
 	}
 
-	return nil
+	t.Logf("Performance results written to %s", csvPath)
 }

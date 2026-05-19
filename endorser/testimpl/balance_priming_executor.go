@@ -34,6 +34,14 @@ type SenderAware interface {
 	SetSender(addr common.Address)
 }
 
+// NonceAware is an interface for StateDB wrappers that need to know the
+// expected transaction nonce. This allows wrappers to intercept nonce reads
+// and return a synthetic value, bypassing ledger nonce validation.
+// Used by the performance demo to make wrap-around replay seamless.
+type NonceAware interface {
+	SetExpectedNonce(nonce uint64)
+}
+
 // BalancePrimingExecutor wraps an Executor and adds balance priming support for testing.
 type BalancePrimingExecutor struct {
 	*endorser.Executor
@@ -94,6 +102,11 @@ func (e *BalancePrimingExecutor) Execute(tx *types.Transaction) (endorsement.Exe
 	from, err := types.Sender(signer, tx)
 	if err != nil {
 		return endorsement.ExecutionResult{}, err
+	}
+
+	// Notify NonceAware wrappers of the expected nonce for this transaction
+	if na, ok := e.state.(NonceAware); ok {
+		na.SetExpectedNonce(tx.Nonce())
 	}
 
 	// Notify SenderAware wrappers of the transaction sender
