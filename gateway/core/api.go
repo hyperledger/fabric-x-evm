@@ -36,6 +36,12 @@ type Submitter interface {
 	Close() error
 }
 
+// CommitTracker is an optional interface for transaction queues that support
+// per-tx submit→commit latency tracking. Implemented by TxQueueV2.
+type CommitTracker interface {
+	RecordSubmit(hash common.Hash)
+}
+
 // TxQueueInterface defines the interface that transaction queue implementations must satisfy.
 // This allows switching between different queue implementations (e.g., TxQueue and TxQueueV2).
 type TxQueueInterface interface {
@@ -126,6 +132,15 @@ func (g *Gateway) Start(ctx context.Context) {
 // worker processes transactions from the queue
 func (g *Gateway) worker(ctx context.Context) {
 	defer g.wg.Done()
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Errorf("worker panic: %v", r)
+			if ctx.Err() == nil {
+				g.wg.Add(1)
+				go g.worker(ctx)
+			}
+		}
+	}()
 
 	for {
 		tx, ok := g.TxQueue.Dequeue()
@@ -151,7 +166,9 @@ func (g *Gateway) processTx(ctx context.Context, tx *types.Transaction) error {
 	if err := g.SubmitFabricTx(ctx, end); err != nil {
 		return err
 	}
-
+	if ct, ok := g.TxQueue.(CommitTracker); ok {
+		ct.RecordSubmit(tx.Hash())
+	}
 	return nil
 }
 

@@ -7,7 +7,6 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package testimpl
 
 import (
-	"fmt"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -42,56 +41,30 @@ func NewBalancePrimingWrapper(stateDB endorser.ExtendedStateDB, contractAddr com
 	}
 }
 
-// SetSender sets the sender address and calculates the balance slot.
+// SetSender sets the sender address and calculates the balance slot for priming.
+// Only the sender's balance slot will be primed; all other contract storage is
+// passed through unchanged so that fields like _paused, _blacklisted, etc. are
+// not accidentally set to a non-zero value.
 func (w *BalancePrimingWrapper) SetSender(sender common.Address) {
 	w.enabled = true
-
-	if false {
-		fmt.Printf("[BalancePriming] SetSender called: sender=%s, balanceSlot=%s, contractAddr=%s\n",
-			sender.Hex(), w.balanceSlot.Hex(), w.contractAddr.Hex())
-	}
+	w.senderAddr = sender
+	w.balanceSlot = GetERC20BalanceSlot(sender, w.mappingPosition)
 }
 
-// GetState intercepts storage reads and primes the balance slot if needed.
+// GetState intercepts storage reads and primes the sender's balance slot if needed.
+// Only the slot computed from the sender address (set via SetSender) is intercepted;
+// all other slots are passed through unchanged. This avoids incorrectly priming
+// boolean/address slots such as _paused or _blacklisted.
 func (w *BalancePrimingWrapper) GetState(addr common.Address, slot common.Hash) common.Hash {
-	// Check if this is a read of our target balance slot
-	if w.enabled && addr == w.contractAddr {
-		if false {
-			fmt.Printf("[BalancePriming] GetState intercepted: addr=%s, slot=%s (matches target)\n",
-				addr.Hex(), slot.Hex())
-		}
-
-		// Get the current value
-		currentValue := w.ExtendedStateDB.GetState(addr, slot)
-
-		if false {
-			fmt.Printf("[BalancePriming] Current value: %s\n", currentValue.Hex())
-		}
-
-		// If it's zero, prime it with a high value
-		if currentValue == (common.Hash{}) {
-			if false {
-				fmt.Printf("[BalancePriming] *** PRIMING BALANCE *** sender=%s, slot=%s, value=%s\n",
-					w.senderAddr.Hex(), slot.Hex(), primeValue.String())
-			}
-
-			// Intentionally not calling SetState here. Writing the primed value to the
-			// StateDB would include it in the transaction's write set and commit a fake
-			// balance to the ledger, affecting future transactions. Returning it only
-			// from GetState keeps the priming invisible to the ledger while still
-			// allowing the EVM execution to proceed with a non-zero balance.
-
-			// Return the primed value
-			return common.BytesToHash(primeValue.Bytes())
-		} else {
-			if false {
-				fmt.Printf("[BalancePriming] Balance already set, not priming\n")
-			}
-		}
+	result := w.ExtendedStateDB.GetState(addr, slot)
+	// Only intercept the specific balance slot for the known sender.
+	if w.enabled && addr == w.contractAddr && slot == w.balanceSlot && result == (common.Hash{}) {
+		// Return a synthetic high balance. The EVM will write the decremented balance
+		// (primeValue - amount) via SetState, which is fine. Not writing the raw
+		// primeValue keeps the ledger clean.
+		return common.BytesToHash(primeValue.Bytes())
 	}
-
-	// Otherwise, just pass through to the underlying StateDB
-	return w.ExtendedStateDB.GetState(addr, slot)
+	return result
 }
 
 // SetExpectedNonce stores the nonce the current transaction expects.

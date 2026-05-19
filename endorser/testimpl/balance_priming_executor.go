@@ -10,9 +10,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vm"
+	fxcommon "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/endorser"
 	"github.com/hyperledger/fabric-x-evm/utils"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
@@ -96,23 +99,41 @@ func NewBalancePrimingExecutor(
 
 // Execute runs a state-changing transaction with SenderAware notification.
 func (e *BalancePrimingExecutor) Execute(tx *types.Transaction) (endorsement.ExecutionResult, error) {
-	// Extract the sender to notify SenderAware wrappers
-	// This replicates the logic from the original Executor.Send
-
-	// Notify NonceAware wrappers of the expected nonce for this transaction
+	// Notify NonceAware wrappers of the expected nonce for this transaction.
 	if na, ok := e.state.(NonceAware); ok {
 		na.SetExpectedNonce(tx.Nonce())
 	}
 
-	// Notify SenderAware wrappers of the transaction sender
+	// Notify SenderAware wrappers of the actual transaction sender so that
+	// balance priming targets the correct storage slot.
+	// e.Executor.ChainCfg is the same chain config used by Executor.Send, so
+	// the recovered address will match the one the EVM uses.
 	if sa, ok := e.state.(SenderAware); ok {
-		sa.SetSender(common.Address{})
+		signer := types.LatestSignerForChainID(e.Executor.ChainCfg.ChainID)
+		from, err := types.Sender(signer, tx)
+		if err != nil {
+			return endorsement.ExecutionResult{}, fmt.Errorf("recover sender: %w", err)
+		}
+		sa.SetSender(from)
 	}
 
 	// Execute the transaction using the base Executor
 	ret, err := e.Executor.Send(tx)
-	if err != nil {
+	if err != nil && !errors.Is(err, vm.ErrExecutionReverted) {
 		return endorsement.ExecutionResult{}, err
+	}
+	if errors.Is(err, vm.ErrExecutionReverted) {
+		event, mErr := fxcommon.MarshalRevert(ret, "", tx.Hash().Hex())
+		if mErr != nil {
+			return endorsement.ExecutionResult{}, fmt.Errorf("marshal revert event: %w", mErr)
+		}
+		return endorsement.ExecutionResult{
+			RWS:     e.state.Result(),
+			Event:   event,
+			Status:  201,
+			Message: err.Error(),
+			Payload: ret,
+		}, nil
 	}
 
 	// Marshal logs if any

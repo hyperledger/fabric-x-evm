@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"runtime"
 	"runtime/pprof"
@@ -33,6 +34,7 @@ import (
 	"github.com/hyperledger/fabric-x-evm/utils"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/grpclog"
 )
 
@@ -82,6 +84,9 @@ type replayConfig struct {
 	// totalDispatches is the total number of transfers to dispatch when
 	// wrapAround is true. Ignored when wrapAround is false.
 	totalDispatches int64
+
+	// TODO: add forever bool (run until SIGINT/SIGTERM, implies wrapAround).
+	// Set via PERF_REPLAY_FOREVER=1. Feed loop already structured for easy extension.
 }
 
 func loadReplayConfigFromEnv(t *testing.T) replayConfig {
@@ -147,6 +152,7 @@ func writeHeapProfile(filename string) {
 func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCount int, cfg replayConfig) (float64, int64, int64) {
 	// Silence GRPC logging
 	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr))
+	t.Logf("Config: processingWorkers=%d submittingWorkers=%d", processingWorkerCount, submittingWorkerCount)
 
 	// USDC contract address
 	USDCAddr := common.HexToAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
@@ -161,9 +167,8 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 
 	// Setup test harness with USDC contract and balance priming enabled
 	factory := balancePrimingEndorserFactory(balancePriming)
-	th, err := integration.NewLocalTestHarnessWithFactory(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", "fabric", map[string]any{"Gateway.WorkerCount": processingWorkerCount}, factory)
-	// th, err = integration.NewFabricXTestHarnessWithFactory(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", map[string]any{"Gateway.WorkerCount": processingWorkerCount}, factory)
-	assert.NoError(t, err)
+	th, err := integration.NewFabricXTestHarnessWithFactory(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", map[string]any{"Gateway.WorkerCount": processingWorkerCount}, factory)
+	require.NoError(t, err)
 
 	// Wrap the gateway with NonceBypassGateway to skip nonce validation
 	// This is necessary for wrap-around replay where the same transactions are replayed
@@ -284,10 +289,26 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 							time.Sleep(time.Millisecond)
 						}
 					}
+
+					// Verify EVM execution succeeded (status=0x1). A committed transaction
+					// can still have status=0x0 if the EVM reverted (e.g. insufficient balance).
+					receipt, err := ec.TransactionReceipt(t.Context(), tx.Hash())
+					if err != nil {
+						t.Logf("Transfer %d: TransactionReceipt error: %v", i, err)
+						panic(err)
+					}
+					if receipt.Status != 1 {
+						t.Logf("Transfer %d: EVM revert (status=0x0), hash=%s", i, tx.Hash().Hex())
+						panic(fmt.Errorf("EVM revert"))
+					}
 				}()
 			}
 		}(w)
 	}
+
+	// recentSamples collects windowed throughput values for stability reporting.
+	// Written only by the logging goroutine; safe to read after loggingWg.Wait().
+	var recentSamples []float64
 
 	// Progress logging goroutine
 	stopLogging := make(chan struct{})
@@ -314,6 +335,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 
 				txProcessed := currentTotal - lastLogCount
 				throughput := float64(txProcessed) / elapsed
+				recentSamples = append(recentSamples, throughput)
 
 				totalElapsed := now.Sub(startTime).Seconds()
 				overallThroughput := float64(currentTotal) / totalElapsed
@@ -383,6 +405,36 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	close(stopLogging)
 	loggingWg.Wait()
 
+	// TPS stability stats (requires at least 2 samples for meaningful statistics).
+	// CV (coefficient of variation = stddev/mean) answers "is throughput steady?":
+	// CV < 10% is very steady, 10–25% is moderate variance, >25% is high variance.
+	if len(recentSamples) >= 2 {
+		var sum float64
+		minTPS, maxTPS := recentSamples[0], recentSamples[0]
+		for _, s := range recentSamples {
+			sum += s
+			if s < minTPS {
+				minTPS = s
+			}
+			if s > maxTPS {
+				maxTPS = s
+			}
+		}
+		mean := sum / float64(len(recentSamples))
+		var variance float64
+		for _, s := range recentSamples {
+			d := s - mean
+			variance += d * d
+		}
+		stddev := math.Sqrt(variance / float64(len(recentSamples)))
+		cv := 0.0
+		if mean > 0 {
+			cv = stddev / mean * 100
+		}
+		t.Logf("TPS stability (%d samples): min=%.2f max=%.2f avg=%.2f stddev=%.2f CV=%.1f%%",
+			len(recentSamples), minTPS, maxTPS, mean, stddev, cv)
+	}
+
 	// Final counts
 	finalSuccess := atomic.LoadInt64(&successCount)
 	finalFail := atomic.LoadInt64(&failCount)
@@ -394,6 +446,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	// Calculate overall throughput
 	totalElapsed := time.Since(startTime).Seconds()
 	overallThroughput := float64(finalSuccess+finalFail) / totalElapsed
+	t.Logf("Result: Throughput=%.2f tx/s", overallThroughput)
 
 	// Return metrics (throughput, failed count, total dispatched transfers)
 	return overallThroughput, finalFail, dispatched
@@ -408,8 +461,16 @@ func TestReplayJSONDataset(t *testing.T) {
 	}
 	// flogging.ActivateSpec("gateway.core.txqueue_v2=debug")
 
-	// Run the test with single worker configuration
-	_, _, _ = runReplayTest(t, 1, 8, loadReplayConfigFromEnv(t))
+	// PERF_SUBMITTING_WORKERS overrides the default 8 submitting workers.
+	submittingWorkers := 8
+	if v := os.Getenv("PERF_SUBMITTING_WORKERS"); v != "" {
+		n, err := fmt.Sscanf(v, "%d", &submittingWorkers)
+		if n != 1 || err != nil || submittingWorkers < 1 {
+			t.Fatalf("PERF_SUBMITTING_WORKERS must be a positive integer, got %q", v)
+		}
+	}
+
+	_, _, _ = runReplayTest(t, 1, submittingWorkers, loadReplayConfigFromEnv(t))
 }
 
 type performanceResult struct {
@@ -431,7 +492,7 @@ func TestReplayJSONDatasetPerformance(t *testing.T) {
 
 	// Define the range of worker counts to test
 	processingWorkerCounts := []int{1, 4, 8}
-	submittingWorkerCounts := []int{4, 8, 16, 24}
+	submittingWorkerCounts := []int{4, 8, 16, 24, 32, 64}
 
 	// Store results
 	var results []performanceResult
@@ -458,6 +519,8 @@ func TestReplayJSONDatasetPerformance(t *testing.T) {
 
 			t.Logf("Result: Throughput=%.2f tx/s, Failed=%d/%d (%.2f%%)",
 				throughput, failedTxs, totalTxs, failureRate*100)
+			t.Logf("PerfResult: pw=%d sw=%d throughput=%.2f failed=%d total=%d",
+				processingWorkers, submittingWorkers, throughput, failedTxs, totalTxs)
 		}
 	}
 

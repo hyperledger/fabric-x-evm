@@ -10,6 +10,7 @@ import (
 	"container/list"
 	"context"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -66,6 +67,10 @@ type TxQueueV2 struct {
 	// Shutdown flag
 	done bool
 
+	// Per-tx submit timestamps for commit-latency measurement.
+	// RecordSubmit writes; completeUnlocked reads and deletes.
+	submitTimes map[common.Hash]time.Time
+
 	// Statistics
 	total   int
 	invalid int
@@ -79,6 +84,7 @@ func NewTxQueueV2() *TxQueueV2 {
 		participantMap: make(map[common.Address][]*txEntry),
 		hashMap:        make(map[common.Hash]*txEntry),
 		pendingMap:     make(map[common.Hash]*types.Transaction),
+		submitTimes:    make(map[common.Hash]time.Time),
 	}
 	q.cond = sync.NewCond(&q.mu)
 	return q
@@ -206,11 +212,25 @@ func (q *TxQueueV2) Complete(hash common.Hash) {
 	}
 }
 
+// RecordSubmit records the time a transaction was submitted to the orderer.
+// Call this immediately after submitter.Submit returns successfully.
+func (q *TxQueueV2) RecordSubmit(hash common.Hash) {
+	q.mu.Lock()
+	q.submitTimes[hash] = time.Now()
+	q.mu.Unlock()
+}
+
 // completeUnlocked is the internal implementation of Complete that assumes the lock is held.
 // Returns true if any transactions were promoted to the ready list.
 func (q *TxQueueV2) completeUnlocked(hash common.Hash) bool {
 	// Remove from pending map
 	delete(q.pendingMap, hash)
+
+	// Log submit→commit latency if we recorded a submit time for this tx.
+	if submitTime, ok := q.submitTimes[hash]; ok {
+		loggerV2.Infof("tx %s: submit→commit=%dms", hash.Hex()[:10], time.Since(submitTime).Milliseconds())
+		delete(q.submitTimes, hash)
+	}
 
 	// Find the transaction entry
 	entry, exists := q.hashMap[hash]

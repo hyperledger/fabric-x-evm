@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"math/big"
 	"math/rand/v2"
+	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -133,7 +134,7 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 		return nil, nil, err
 	}
 
-	chain, err := core.NewChain(cfg.Gateway.Database.ConnString, cfg.Gateway.Database.TriePath, false)
+	chain, err := core.NewChain(cfg.Gateway.Database.ConnString, cfg.Gateway.Database.TriePath, cfg.Network.Namespace, false)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -153,12 +154,15 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 		// Use local submitter for bypass mode (no network communication)
 		submitter = local.NewLocalSubmitter(dbs[0], cfg.Network.Channel, cfg.Network.Namespace, nfab.NewTxPackager(gwSigner), bfab.NewBlockParser(logger), false)
 	} else {
-		// Create network submitter
+		// Create network submitter.
+		// For fabric-x, use ArMASubmitter which uses Send→Recv (not Send→CloseSend→Recv).
+		// The ArMA orderer-router only sends a response while the stream is open; calling
+		// CloseSend before Recv causes the router to close the stream without responding.
 		switch cfg.Network.Protocol {
 		case "fabric":
 			submitter, err1 = nfab.NewSubmitter(orderers, gwSigner, 0, logger)
 		case "fabric-x", "":
-			submitter, err1 = nfabx.NewSubmitter(orderers, gwSigner, 0, logger)
+			submitter, err1 = NewArMASubmitter(orderers, gwSigner, logger)
 		default:
 			return nil, nil, fmt.Errorf("unsupported protocol: %q", cfg.Network.Protocol)
 		}
@@ -405,11 +409,15 @@ func NewFabricXTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.E
 // It follows the directory structure of a fabric samples test network.
 // Exported for use by eth-tests package.
 func NewFabricXTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory) (*TestHarness, error) {
-	// cwd, _ := os.Getwd()
-	// defer os.Chdir(cwd)
-	// _ = os.Chdir("../")
+	configPath := os.Getenv("FABX_CONFIG_PATH")
+	if configPath == "" {
+		cwd, _ := os.Getwd()
+		defer os.Chdir(cwd)
+		_ = os.Chdir("../")
+		configPath = "fabx.yaml"
+	}
 
-	cfg, err := config.Load("fabx.yaml")
+	cfg, err := config.Load(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
@@ -426,10 +434,17 @@ func NewFabricXTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig
 	// Build all endorsers
 	dbs, builders, ends := buildEndorsers(t, cfg, evmConfig, factory)
 
-	th, _, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false, ends, dbs, builders)
+	th, sync, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false, ends, dbs, builders)
 	if err != nil {
 		return nil, err
 	}
+
+	syncTimeout := cfg.Gateway.SyncTimeout
+	if syncTimeout == 0 {
+		syncTimeout = 60 * time.Second
+	}
+	t.Log("waiting for synchronizer to connect to Fabric-X backend...")
+	waitUntilSynced(t, sync, syncTimeout)
 
 	return th, nil
 }

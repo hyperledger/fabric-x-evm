@@ -764,6 +764,79 @@ func TestInsertBlock_WithTransactionsAndLogs(t *testing.T) {
 	}
 }
 
+// TruncateBlocks tests
+
+func TestTruncateBlocks(t *testing.T) {
+	store := setupTestDB(t)
+
+	// Insert blocks 1-10, each with a transaction and a log
+	for i := uint64(1); i <= 10; i++ {
+		bh := makeHash(byte(i))
+		insertTestBlock(t, store, i, bh)
+		th := makeHash(byte(i + 100))
+		insertTestTransaction(t, store, i, bh, th, 0)
+		insertTestLog(t, store, i, th, makeAddress(0x01), 0, nil)
+	}
+
+	// Keep last 5: blocks 6-10 should survive, 1-5 should be deleted
+	err := store.TruncateBlocks(t.Context(), 5)
+	if err != nil {
+		t.Fatalf("TruncateBlocks error: %v", err)
+	}
+
+	// Block 5 should be gone
+	b, err := store.GetBlockByNumber(t.Context(), 5, false)
+	if err != nil {
+		t.Fatalf("GetBlockByNumber error: %v", err)
+	}
+	if b != nil {
+		t.Error("expected block 5 to be deleted")
+	}
+
+	// Block 6 should still exist
+	b, err = store.GetBlockByNumber(t.Context(), 6, false)
+	if err != nil {
+		t.Fatalf("GetBlockByNumber error: %v", err)
+	}
+	if b == nil {
+		t.Error("expected block 6 to survive")
+	}
+
+	// Transactions for block 5 should be gone
+	tx, err := store.GetTransactionByBlockNumberAndIndex(t.Context(), 5, 0)
+	if err != nil {
+		t.Fatalf("GetTransactionByBlockNumberAndIndex error: %v", err)
+	}
+	if tx != nil {
+		t.Error("expected transaction for block 5 to be deleted")
+	}
+
+	// Logs for blocks 1-5 should be gone
+	five := uint64(5)
+	logs, err := store.GetLogs(t.Context(), domain.LogFilter{ToBlock: &five})
+	if err != nil {
+		t.Fatalf("GetLogs error: %v", err)
+	}
+	if len(logs) != 0 {
+		t.Errorf("expected 0 logs for blocks 1-5, got %d", len(logs))
+	}
+}
+
+func TestTruncateBlocks_NothingToDelete(t *testing.T) {
+	store := setupTestDB(t)
+	for i := uint64(1); i <= 3; i++ {
+		insertTestBlock(t, store, i, makeHash(byte(i)))
+	}
+	// keepLastN > total blocks: nothing should be deleted
+	if err := store.TruncateBlocks(t.Context(), 100); err != nil {
+		t.Fatalf("TruncateBlocks error: %v", err)
+	}
+	b, _ := store.GetBlockByNumber(t.Context(), 1, false)
+	if b == nil {
+		t.Error("block 1 should not have been deleted")
+	}
+}
+
 // GetLogsByTxHash test
 
 func TestGetLogsByTxHash(t *testing.T) {

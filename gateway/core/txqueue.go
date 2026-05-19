@@ -242,9 +242,6 @@ func (q *TxQueue) Handle(ctx context.Context, block *domain.Block) error {
 		if tx.Status == 0 {
 			q.invalid++
 		}
-		// if tx.Status == 0 {
-		// 	fmt.Println("Invalid transaction", txHash)
-		// }
 		q.Complete(txHash)
 	}
 

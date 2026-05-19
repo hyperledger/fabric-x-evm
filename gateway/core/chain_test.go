@@ -129,6 +129,49 @@ func TestConvertToDomain_EmptyBlock(t *testing.T) {
 	assert.Len(t, got.Transactions, 0)
 }
 
+func TestConvertToDomain_NamespaceFilter(t *testing.T) {
+	key, err := crypto.GenerateKey()
+	require.NoError(t, err)
+	ethb := marshaledEthTx(t, key, common.HexToAddress("0x1111111111111111111111111111111111111111"), big.NewInt(1))
+
+	matchTx := blocks.Transaction{
+		ID:        "tx-match",
+		Valid:     true,
+		InputArgs: [][]byte{{byte(co.ProposalTypeEVMTx)}, ethb},
+		NsRWS:     []blocks.NsReadWriteSet{{Namespace: "my-ns"}},
+	}
+	foreignTx := blocks.Transaction{
+		ID:        "tx-foreign",
+		Valid:     true,
+		InputArgs: [][]byte{{byte(co.ProposalTypeEVMTx)}, ethb},
+		NsRWS:     []blocks.NsReadWriteSet{{Namespace: "other-ns"}},
+	}
+
+	t.Run("filters out foreign namespace", func(t *testing.T) {
+		c := &Chain{namespace: "my-ns"}
+		got := c.convertToDomain(blocks.Block{Number: 1, Transactions: []blocks.Transaction{matchTx, foreignTx}})
+		require.Len(t, got.Transactions, 1)
+		assert.Equal(t, "tx-match", got.Transactions[0].FabricTxID)
+	})
+
+	t.Run("no-op when namespace is empty", func(t *testing.T) {
+		c := &Chain{}
+		got := c.convertToDomain(blocks.Block{Number: 1, Transactions: []blocks.Transaction{matchTx, foreignTx}})
+		assert.Len(t, got.Transactions, 2)
+	})
+
+	t.Run("skips tx with no NsRWS when namespace set", func(t *testing.T) {
+		noNsTx := blocks.Transaction{
+			ID:        "tx-no-ns",
+			Valid:     true,
+			InputArgs: [][]byte{{byte(co.ProposalTypeEVMTx)}, ethb},
+		}
+		c := &Chain{namespace: "my-ns"}
+		got := c.convertToDomain(blocks.Block{Number: 1, Transactions: []blocks.Transaction{noNsTx}})
+		assert.Len(t, got.Transactions, 0)
+	})
+}
+
 // --- convertTransaction ---
 
 func TestConvertTransaction_RegularTransfer(t *testing.T) {

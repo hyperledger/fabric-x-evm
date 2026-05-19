@@ -24,6 +24,8 @@ build-release:
 			-o release/linux-$$arch/fxevm ./cmd/fxevm || exit 1; \
 	done
 
+IMAGE_TAG ?= dev
+
 .PHONY: build-image
 build-image: build-release
 	$(DOCKER) buildx build \
@@ -32,7 +34,7 @@ build-image: build-release
 		--build-arg VERSION=dev \
 		--build-arg CREATED=$(shell date -u +%Y-%m-%dT%H:%M:%SZ) \
 		--build-arg REVISION=$(shell git rev-parse HEAD) \
-		--tag fabric-x-evm:dev \
+		--tag fabric-x-evm:$(IMAGE_TAG) \
 		.
 
 .PHONY: checks
@@ -193,3 +195,16 @@ hardhat-tests:
 .PHONY: perf-tests
 perf-tests: pre-pull-images
 	@VERBOSE=$(VERBOSE) FABRIC_VERSION=$(FABRIC_VERSION) ./scripts/run_perf_test.sh
+
+# STAGING_HOST, SSH_USER, EVM_BRANCH, and DEMO_ARGS may be overridden on the command line.
+STAGING_HOST ?= dectrust8.vpc.cloud9.ibm.com
+SSH_USER     ?= root
+EVM_BRANCH   ?= $(shell git rev-parse --abbrev-ref HEAD)
+
+.PHONY: run-demo
+run-demo:
+	scripts/run-demo.sh \
+		--staging-host $(STAGING_HOST) \
+		--ssh-user $(SSH_USER) \
+		--evm-branch $(EVM_BRANCH) \
+		$(DEMO_ARGS)
