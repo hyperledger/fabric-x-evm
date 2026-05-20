@@ -16,6 +16,7 @@ import (
 	"crypto/ecdsa"
 	"fmt"
 	"math/big"
+	"runtime"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -161,7 +162,14 @@ func (api *TestEthAPI) SendRawTransaction(ctx context.Context, input hexutil.Byt
 			tx, err := api.backend.TransactionByHash(ctx, txHash)
 			if err != nil {
 				// Transaction not found yet, continue polling
+				hardhatLogger.Debugf("got error %w while polling TransactionByHash for hash %s", err, txHash)
 				continue
+			}
+
+			// this should never happen: `api.EthAPI.SendRawTransaction` synchronously enqueues the transaction
+			// and so `api.backend.TransactionByHash` must for sure find it in the pending queue or inprogress map
+			if tx == nil {
+				panic("programming error - synchronously enqueued transaction was not found")
 			}
 
 			// Check if transaction has been included in a block
@@ -172,7 +180,7 @@ func (api *TestEthAPI) SendRawTransaction(ctx context.Context, input hexutil.Byt
 			}
 
 			// Transaction is still pending, continue polling
-			// Note: We continue immediately since blocks should be fast in tests
+			runtime.Gosched()
 		}
 	}
 }

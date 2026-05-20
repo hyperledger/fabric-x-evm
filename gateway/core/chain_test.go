@@ -60,8 +60,6 @@ func TestConvertToDomain_ValidTx(t *testing.T) {
 		}},
 	}
 
-	c := &Chain{}
-	_ = c
 	got := ConvertToDomain(b)
 
 	assert.Equal(t, uint64(42), got.BlockNumber)
@@ -88,8 +86,6 @@ func TestConvertToDomain_InvalidTxStatus(t *testing.T) {
 		}},
 	}
 
-	c := &Chain{}
-	_ = c
 	got := ConvertToDomain(b)
 
 	require.Len(t, got.Transactions, 1)
@@ -105,8 +101,6 @@ func TestConvertToDomain_SkipsInsufficientInputArgs(t *testing.T) {
 		},
 	}
 
-	c := &Chain{}
-	_ = c
 	got := ConvertToDomain(b)
 
 	assert.Len(t, got.Transactions, 0)
@@ -122,8 +116,6 @@ func TestConvertToDomain_SkipsInvalidEthBytes(t *testing.T) {
 		}},
 	}
 
-	c := &Chain{}
-	_ = c
 	got := ConvertToDomain(b)
 
 	assert.Len(t, got.Transactions, 0)
@@ -131,8 +123,6 @@ func TestConvertToDomain_SkipsInvalidEthBytes(t *testing.T) {
 
 func TestConvertToDomain_EmptyBlock(t *testing.T) {
 	b := blocks.Block{Number: 5}
-	c := &Chain{}
-	_ = c
 	got := ConvertToDomain(b)
 
 	assert.Equal(t, uint64(5), got.BlockNumber)
