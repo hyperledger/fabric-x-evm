@@ -12,6 +12,7 @@ import (
 	_ "embed"
 	"errors"
 	"strings"
+	"sync/atomic"
 
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 )
@@ -20,14 +21,15 @@ import (
 var ddl string
 
 type Store struct {
-	queries *Queries
-	db      *sql.DB
+	queries           *Queries
+	DB                *sql.DB
+	CachedBlockNumber atomic.Uint64 // cached block number for fast reads
 }
 
 func NewStore(db *sql.DB) *Store {
 	return &Store{
 		queries: New(db),
-		db:      db,
+		DB:      db,
 	}
 }
 
@@ -90,16 +92,28 @@ func toDomainTransaction(t Transaction) domain.Transaction {
 	}
 }
 
-// Init creates the tables.
+// Init creates the tables and initializes the cached block number.
 func (s *Store) Init() error {
-	if _, err := s.db.ExecContext(context.TODO(), ddl); err != nil {
+	if _, err := s.DB.ExecContext(context.TODO(), ddl); err != nil {
 		return err
 	}
+
+	// Initialize the cached block number from the database
+	num, err := s.queries.BlockNumber(context.TODO())
+	if err == sql.ErrNoRows {
+		// Empty database, block number is 0
+		s.CachedBlockNumber.Store(0)
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	s.CachedBlockNumber.Store(uint64(num))
 	return nil
 }
 
 func (s *Store) InsertBlock(ctx context.Context, block domain.Block) error {
-	sqlTx, err := s.db.BeginTx(ctx, nil)
+	sqlTx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -127,6 +141,22 @@ func (s *Store) InsertBlock(ctx context.Context, block domain.Block) error {
 	if err := sqlTx.Commit(); err != nil {
 		return err
 	}
+
+	// Update the cached block number after successful commit
+	// Only update if the new block number is greater than the current cached value
+	for {
+		current := s.CachedBlockNumber.Load()
+		if block.BlockNumber <= current {
+			// Block number didn't increase (duplicate or out-of-order), don't update cache
+			break
+		}
+		if s.CachedBlockNumber.CompareAndSwap(current, block.BlockNumber) {
+			// Successfully updated the cache
+			break
+		}
+		// CAS failed, retry (another goroutine updated it)
+	}
+
 	return nil
 }
 
@@ -159,13 +189,23 @@ func toStorageLog(l domain.Log) InsertLogParams {
 	return params
 }
 
-// BlockNumber returns the number of the last committed block. If there are no rows, the blockheight is zero.
+// BlockNumber returns the number of the last committed block from the cache.
+// If there are no blocks, the blockheight is zero.
 func (s *Store) BlockNumber(ctx context.Context) (uint64, error) {
-	num, err := s.queries.BlockNumber(ctx)
-	if err == sql.ErrNoRows {
-		return 0, nil
+	return s.CachedBlockNumber.Load(), nil
+}
+
+// BlockNumberByHash resolves a block hash to its block number.
+func (s *Store) BlockNumberByHash(ctx context.Context, blockHash []byte) (*uint64, error) {
+	num, err := s.queries.BlockNumberByHash(ctx, blockHash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
 	}
-	return uint64(num), err
+	if err != nil {
+		return nil, err
+	}
+	res := uint64(num)
+	return &res, nil
 }
 
 // GetBlockByNumber retrieves a block by its number.
@@ -378,7 +418,7 @@ func (s *Store) GetLogs(ctx context.Context, filter domain.LogFilter) ([]domain.
 
 	query.WriteString(` ORDER BY block_number, tx_index, log_index`)
 
-	rows, err := s.db.QueryContext(ctx, query.String(), args...)
+	rows, err := s.DB.QueryContext(ctx, query.String(), args...)
 	if err != nil {
 		return nil, err
 	}

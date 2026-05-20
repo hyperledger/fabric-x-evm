@@ -18,7 +18,7 @@ import (
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-common/protoutil"
 	"github.com/hyperledger/fabric-x-evm/common"
-	"github.com/hyperledger/fabric-x-evm/endorser"
+	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	"github.com/hyperledger/fabric-x-evm/utils"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
@@ -35,14 +35,16 @@ type Endorser interface {
 // EndorsementClient forwards ethereum-style transactions and calls
 // to the endorsers and returns their signed fabric-style responses.
 type EndorsementClient struct {
-	endorsers []*endorser.Endorser
+	endorsers []Endorser
 	signer    Signer
 	channel   string
 	namespace string
 	nsVersion string
 }
 
-func NewEndorsementClient(endorsers []*endorser.Endorser, signer Signer, channel, namespace, nsVersion string) (*EndorsementClient, error) {
+// NewEndorsementClient creates an EndorsementClient from Endorser interface instances.
+// This allows using concrete endorsers, wrapped endorsers (e.g., from testimpl package), or other implementations.
+func NewEndorsementClient(endorsers []Endorser, signer Signer, channel, namespace, nsVersion string) (*EndorsementClient, error) {
 	return &EndorsementClient{
 		endorsers: endorsers,
 		signer:    signer,
@@ -75,7 +77,7 @@ func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Tra
 
 	for i, end := range e.endorsers {
 		wg.Add(1)
-		go func(index int, endorser *endorser.Endorser) {
+		go func(index int, endorser Endorser) {
 			defer wg.Done()
 			pResp, err := endorser.ProcessEVMTransaction(ctx, inv, tx, blockInfo)
 			if err != nil {
@@ -103,10 +105,15 @@ func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Tra
 }
 
 // CallContract queries a smart contract and returns the value.
+// Status 201 from the endorser signals an EVM revert; surface as
+// *domain.RevertError so the API layer can map to JSON-RPC -32000.
 func (e *EndorsementClient) CallContract(ctx context.Context, args ethereum.CallMsg, blockInfo *utils.BlockInfo) ([]byte, error) {
 	res, err := e.endorsers[0].ProcessCall(ctx, &args, blockInfo)
 	if err != nil {
 		return nil, fmt.Errorf("process call: %w", err)
+	}
+	if res.Response.Status == 201 {
+		return nil, &domain.RevertError{Reason: res.Response.Message, Data: res.Response.Payload}
 	}
 	if res.Response.Status < 200 || res.Response.Status >= 400 {
 		return nil, fmt.Errorf("query response was not successful, error code %d, msg %s", res.Response.Status, res.Response.Message)

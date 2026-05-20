@@ -8,26 +8,35 @@ package integration
 
 import (
 	"bufio"
+	"bytes"
+	"context"
 	"flag"
 	"fmt"
 	"io"
+	"math/big"
 	"math/rand"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/hyperledger/fabric-protos-go-apiv2/ledger/rwset"
 	"github.com/hyperledger/fabric-protos-go-apiv2/ledger/rwset/kvrwset"
 	"github.com/hyperledger/fabric-x-common/protoutil"
 	"github.com/hyperledger/fabric-x-evm/endorser"
+	econf "github.com/hyperledger/fabric-x-evm/endorser/config"
+	"github.com/hyperledger/fabric-x-evm/endorser/testimpl"
+	"github.com/hyperledger/fabric-x-evm/gateway/core"
 	"github.com/hyperledger/fabric-x-evm/gateway/storage/trie"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
+	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	"google.golang.org/grpc/grpclog"
 	"google.golang.org/protobuf/proto"
 )
@@ -128,6 +137,9 @@ func TestEthereumTests(t *testing.T) {
 
 	// 1) GeneralStateTests
 	testsDir := filepath.Join("..", "testdata", "ethereum-tests", "GeneralStateTests")
+	if _, err := os.Stat(testsDir); os.IsNotExist(err) {
+		t.Fatalf("ethereum/tests corpus not found at %s; run `git submodule update --init --recursive`", testsDir)
+	}
 	allFiles, err := findJSONFiles(testsDir)
 	if err != nil {
 		t.Fatalf("Failed to find test files: %v", err)
@@ -192,6 +204,15 @@ func runSingleEthereumTest(t *testing.T, stateTest *StateTest) {
 	}
 }
 
+type nonceReader struct {
+	db *state.StateDB
+}
+
+func (n *nonceReader) NonceAt(ctx context.Context, account common.Address, blockNumber *big.Int) (uint64, error) {
+	nonce := n.db.GetNonce(account)
+	return nonce, nil
+}
+
 // runEthereumTestConfig executes a specific test configuration
 func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubtest, snapshotter bool, scheme string) {
 	// Build block info from test environment
@@ -245,6 +266,7 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 		BlockContext: &context,
 		ChainConfig:  config,
 		VMConfig:     &vmConfig,
+		DebugLogs:    true,
 	}
 
 	// Create test harness with local backend and state priming, passing evmConfig
@@ -254,8 +276,11 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 	}
 	defer th.Stop()
 
+	// run the tx through the pre-execution validation steps
+	preExecErr := core.ValidateTx(t.Context(), tx, config, signerForTx(tx), &nonceReader{th.endorsers[0].(*testimpl.EndorserWrapper).GetEthStateDB()})
+
 	// Execute transaction through gateway
-	env, execErr := th.gateways[0].ExecuteEthTx(t.Context(), tx, blockInfo)
+	env, execErr := th.Gateways[0].ExecuteEthTx(t.Context(), tx, blockInfo)
 
 	// Get expected root from post-state
 	expectedRoot := common.Hash(post.Root)
@@ -263,7 +288,7 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 	var actualRoot common.Hash
 	// After execution, extract the ethStateDB and commit the ethereum state
 	if len(th.endorsers) > 0 {
-		ethStateDB := th.endorsers[0].GetEthStateDB()
+		ethStateDB := th.endorsers[0].(*testimpl.EndorserWrapper).GetEthStateDB()
 		if ethStateDB != nil {
 			// Commit the ethereum state
 			root, err := ethStateDB.Commit(blockInfo.BlockNumber.Uint64(),
@@ -274,6 +299,15 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 			}
 
 			actualRoot = root
+		}
+	}
+
+	if tx.Type() != types.BlobTxType && // our pre-execution validation doesn't support blob txes yet
+		tx.Protected() { // our pre-execution validation only support protected transactions
+
+		// err out if we got a pre-validation error which we wouldn't get again when endorsing
+		if preExecErr != nil && execErr == nil {
+			t.Fatalf("unexpected pre-validation error %q", preExecErr)
 		}
 	}
 
@@ -301,7 +335,7 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 		if err != nil {
 			t.Fatalf("extract tx RWS from endorsement: %v", err)
 		}
-		verifyTrieRoot(t, th.primer.Writes(), txRWS, blockInfo.BlockNumber.Uint64(), expectedRoot)
+		verifyTrieRoot(t, th.Primer.Writes(), txRWS, blockInfo.BlockNumber.Uint64(), expectedRoot)
 	}
 }
 
@@ -380,19 +414,117 @@ func verifyTrieRoot(t *testing.T, genesisRWS, txRWS blocks.ReadWriteSet, blockNu
 	t.Logf("trie root verified: %s", trieRoot.Hex())
 }
 
-// newEthereumTestHarness creates a test harness with pre-state primed from ethereum test format
-func newEthereumTestHarness(t *testing.T, evmConfig endorser.EVMConfig, pre types.GenesisAlloc) (*TestHarness, error) {
+// ethereumTestHarness wraps TestHarness with endorser wrappers for ethereum state tracking
+type ethereumTestHarness struct {
+	*TestHarness
+}
+
+// wrappedEndorserFactory creates endorsers wrapped with testimpl wrappers for ethStateDB tracking.
+func wrappedEndorserFactory(t *testing.T, ecfg econf.Endorser, channel, namespace string, evmConfig endorser.EVMConfig, protocol string) (endorser.KVS, endorsement.Builder, core.Endorser) {
+	// Create the base endorser components
+	db, builder, end := NewEndorser(t, ecfg, channel, namespace, evmConfig, protocol)
+
+	// Create engine wrapper with the same configuration
+	engine := endorser.NewEVMEngine(namespace, db, evmConfig, protocol == "fabric-x")
+	engineWrapper := testimpl.NewEVMEngineWrapper(namespace, db, evmConfig, protocol == "fabric-x", engine)
+
+	// Wrap the endorser
+	wrapper := testimpl.NewEndorserWrapper(end, engineWrapper)
+
+	return db, builder, wrapper
+}
+
+// newEthereumTestHarness creates a test harness with pre-state primed from ethereum test format.
+// This version creates endorser wrappers to support ethStateDB tracking for state root verification.
+func newEthereumTestHarness(t *testing.T, evmConfig endorser.EVMConfig, pre types.GenesisAlloc) (*ethereumTestHarness, error) {
 	t.Helper()
 
-	th, err := newLocalTestHarness(t, TestLogger{T: t}, evmConfig, "", "bypass", nil)
+	// Create test harness with wrapped endorsers using custom factory
+	th, err := NewLocalTestHarnessWithFactory(t, TestLogger{T: t}, evmConfig, "", "bypass", nil, wrappedEndorserFactory)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := th.PrimeGenesisAlloc(t.Context(), pre, false); err != nil {
+	eth := &ethereumTestHarness{th}
+
+	// Prime the state using our custom method that works with wrappers
+	if err := eth.primeGenesisAlloc(t.Context(), pre, false); err != nil {
 		th.Stop()
 		return nil, err
 	}
 
-	return th, nil
+	return eth, nil
+}
+
+// primeGenesisAlloc primes the state from ethereum genesis format and sets up ethStateDB for wrappers
+func (eth *ethereumTestHarness) primeGenesisAlloc(ctx context.Context, pre types.GenesisAlloc, wait bool) error {
+	if len(pre) == 0 {
+		return nil
+	}
+
+	primer, err := eth.NewStatePrimer()
+	if err != nil {
+		return err
+	}
+
+	// Sort addresses to ensure deterministic account creation order
+	var addresses []common.Address
+	for addr := range pre {
+		addresses = append(addresses, addr)
+	}
+	sort.Slice(addresses, func(i, j int) bool {
+		return bytes.Compare(addresses[i].Bytes(), addresses[j].Bytes()) < 0
+	})
+
+	// Convert each test account to StatePrimer operations in sorted order
+	for _, addr := range addresses {
+		account := pre[addr]
+		n := account.Nonce
+		nonce := &n
+
+		var balance *big.Int
+		if account.Balance != nil {
+			balance = account.Balance
+		}
+
+		var code []byte
+		if len(account.Code) > 0 {
+			code = account.Code
+		}
+
+		var storage map[common.Hash]common.Hash
+		if len(account.Storage) > 0 {
+			storage = account.Storage
+		}
+
+		primer.SetAccount(addr, nonce, code, balance, storage)
+	}
+
+	// Extract the ethStateDB before committing
+	ethStateDB := primer.GetEthStateDB()
+
+	// Commit the ethStateDB to finalize the primed state
+	root, err := ethStateDB.Commit(0, false, false)
+	if err != nil {
+		return fmt.Errorf("failed to commit primed ethStateDB: %w", err)
+	}
+
+	// Create a new ethStateDB from the committed root
+	stateDB := ethStateDB.Database()
+	ethStateDB, err = state.New(root, stateDB)
+	if err != nil {
+		return fmt.Errorf("failed to create new ethStateDB from committed root: %w", err)
+	}
+
+	// Commit all state changes to the Fabric ledger
+	if err := primer.Commit(ctx, wait); err != nil {
+		return err
+	}
+
+	// Set the ethStateDB on all wrappers
+	for _, end := range eth.endorsers {
+		end.(*testimpl.EndorserWrapper).SetEthStateDB(ethStateDB)
+	}
+
+	return nil
 }

@@ -124,10 +124,51 @@ Here, because of execute-order-commit:
 
 ---
 
+## Pre-flight transaction validation
+
+`eth_sendRawTransaction` runs geth's stateless validation before a transaction is enqueued for
+endorsement, so callers see geth-style errors immediately. The gateway calls
+`core/txpool.ValidateTransaction` directly (see `gateway/core/validate.go`); upgrading
+go-ethereum picks up upstream changes automatically.
+
+The only stateful check is **nonce-too-low**: we look up the sender's committed nonce from the
+endorser and reject the transaction if it is lower than expected. We do not call
+`txpool.ValidateTransactionWithState` — building a per-tx `*state.StateDB` for one nonce/balance
+lookup is too expensive — so the balance/cost check is skipped (gas is not metered anyway).
+
+**Deliberate deviations from geth's failure model:**
+
+- **Sender balance is not validated**: `txpool.ValidateTransactionWithState` would reject a tx
+  whose `gas × gasPrice + value` exceeds the sender balance. We skip this since gas is not
+  metered and balances are unfunded by default (see Gas and fees).
+- **Replacement transactions are not supported**: tracked in #62. The gateway has no mempool
+  today, so there is nothing to replace.
+- **Nonce gaps are accepted**: a transaction with a nonce higher than the account's current
+  nonce is admitted; the endorser enforces ordering at execution time.
+- **Blob transactions (EIP-4844, type 3) are rejected at submission**: the `Accept` bitmap
+  excludes them and `MaxBlobCount` is `0`. They were previously accepted and executed without
+  KZG proof validation; that path is no longer reachable through the JSON-RPC gateway.
+- **Set-code transactions (EIP-7702, type 4) are rejected at submission**: the `Accept` bitmap
+  excludes them. Authorization-list checks are therefore skipped entirely.
+- **Synthetic block context for stateless rules**: `head.Number = 0`, `head.Time = 0`,
+  `head.Difficulty = 0` (post-merge), `head.GasLimit = 30_000_000`. All forks in our chain
+  config activate at genesis, so any `(number, time)` yields the same fork rule set; the
+  per-tx Osaka cap (`params.MaxTxGas`, 16.7M) is enforced by geth on top of `head.GasLimit`.
+- **No RPC tx-fee cap**: geth's `internal/ethapi.SubmitTransaction` rejects transactions whose
+  total fee exceeds an operator-configured cap. We don't expose such a knob; submission is
+  accepted regardless of fee size, subject to the 256-bit sanity checks geth applies.
+- **`MinTip = 0`**: any tip is accepted; we do not enforce a mempool-style minimum.
+
+The replay-protection (`!tx.Protected()`) and `MaxSize` (128 KiB) checks match geth's defaults.
+
+---
+
 ## Nonce management
 
-**No nonce validation**: The sender's nonce is not verified before execution. Any transaction
-with any nonce value is accepted and executed. Replay protection is not implemented yet.
+**Pre-flight nonce validation**: A transaction whose nonce is **lower** than the sender's
+committed nonce is rejected synchronously by `eth_sendRawTransaction` with `nonce too low`,
+matching geth. Higher-nonce gaps are still accepted (no mempool to queue against) — see
+"Pre-flight transaction validation" above.
 
 **No increment on failed transaction**: The nonce is incremented on the sender's account only 
 after a *successful* execution — reverts or MVCC conflicted transactions do not increment the nonce.
@@ -150,28 +191,26 @@ section).
 
 ## EVM execution differences
 
-**Snapshot / revert is a no-op** :`Snapshot()` always returns 0; `RevertToSnapshot()` does nothing.
-In geth, the EVM takes a snapshot before every sub-call and rolls it back if the sub-call reverts.
-Here, **state writes from a reverted sub-call persist**. Any inner `CALL`, `STATICCALL`,
-`DELEGATECALL`, or `CREATE` that fails will have already mutated the parent state irrevocably.
+**Fork-level opcodes and precompiles**: All EVM opcodes through Osaka are active. This includes
+`MCOPY` (EIP-5656), `TLOAD`/`TSTORE` (EIP-1153, transient storage is fully implemented with
+snapshot/journal support), `BLOBHASH`/`BLOBBASEFEE` (EIP-4844), and BLS12-381 precompiles
+(EIP-2537). Blob transactions (type 3) are accepted and executed; KZG proof validation is
+skipped (no DA layer). EIP-7702 set-code transactions (type 4) are accepted and processed —
+EOA code is set via the standard `SetCode` path.
 
-Impact: contracts with error-handling patterns (`try/catch` in Solidity, value-transfer guards,
-re-entrancy locks that rely on revert isolation) may exhibit incorrect state.
+**Snapshot / revert is implemented**: `Snapshot()` and `RevertToSnapshot()` use a journal-based
+mechanism that correctly rolls back all in-memory state changes (balances, nonces, code, storage,
+transient storage, logs, self-destruct flags). Sub-call reverts isolate state as expected.
 
-**Transient storage (EIP-1153) not implemented** :`SetTransientState` and `GetTransientState` are 
-no-ops. The `TSTORE` and `TLOAD` opcodes silently store/read nothing. Contracts that use transient 
-storage for reentrancy guards or transient data will not work correctly.
+**`SELFDESTRUCT` is a no-op** (EIP-6780, active from Osaka): With EIP-6780 active, the EVM always
+calls `SelfDestruct6780`. Our implementation returns `(0, false)` — it does nothing: no balance
+transfer to the beneficiary, no code removal, no storage clearing, and `HasSelfDestructed` always
+returns `false`. Previously (Shanghai), `SelfDestruct()` at least zeroed the account balance. That
+no longer happens either. Contracts that depend on SELFDESTRUCT for cleanup, ETH recovery, or
+reentrancy detection via `HasSelfDestructed` will not work correctly.
 
-
-**`SELFDESTRUCT` does not clear state** `SelfDestruct()` only sets an in-memory flag 
-(`HasSelfDestructed` works correctly within one transaction). Code, storage slots, and balance of 
-the destructed account are **not removed** from the DB. `SelfDestruct6780` always returns 
-`(0, false)`.
-
-Implementation note: clearing balance and code is straightforward. Clearing all storage slots requires
-deeper investigation: the keys must be enumerated (non-trivial) and deleting them all via the
-ledger read-write set may produce an impractically large RWSet for contracts with extensive
-storage.
+Implementation note: clearing storage slots requires enumerating all keys for the address
+(non-trivial) and may produce an impractically large RWSet for contracts with many storage entries.
 
 **Native ETH balances not funded**: balances are implemented but unused. Accounts have zero ETH 
 balance by default. Value transfers inside the EVM (`CALL` with value, `SELFDESTRUCT` beneficiary, 
@@ -199,8 +238,9 @@ network values.
 | --------------------------- | ------------------------------------------------- | --------------------------- |
 | `BLOCKHASH(n)`              | always `0x000…`                                   | hash of block `n`           |
 | `COINBASE`                  | `0x000…`                                          | block proposer address      |
-| `DIFFICULTY` / `PREVRANDAO` | `1`                                               | current random / difficulty |
-| `BASEFEE`                   | `1`                                               | actual EIP-1559 base fee    |
+| `DIFFICULTY` / `PREVRANDAO` | `0x000…` (stub — do not rely on for randomness)   | current random / difficulty |
+| `BASEFEE`                   | `0`                                               | actual EIP-1559 base fee    |
+| `BLOBBASEFEE`               | ~1 wei (calculated from `ExcessBlobGas = 0`)      | actual EIP-4844 blob fee    |
 | `TIMESTAMP`                 | `1_000_000` (when blockInfo not supplied)         | actual Unix timestamp       |
 | `NUMBER`                    | Fabric block number (when blockInfo not supplied) | Ethereum block number       |
 
@@ -222,15 +262,15 @@ read `block.number` or `block.timestamp` inside a view function will see inconsi
 
 Gas mechanics are intentionally not implemented.
 
-| Aspect                      | Fabric.                      | Ethereum                            |
-| --------------------------- | ---------------------------- | ----------------------------------- |
-| `GASPRICE` opcode           | `0`                          | actual tx gas price                 |
-| Sender balance check        | not performed                | must cover `gas × gasPrice + value` |
-| Intrinsic gas deduction     | not deducted                 | ~21 000 deducted before execution   |
-| Gas refund counter          | always `0`                   | tracks SSTORE/SELFDESTRUCT refunds  |
-| Default gas per call/deploy | `5 000 000` if not specified | whatever the tx sets                |
-| Block gas limit             | `10 000 000`                 | network-set limit                   |
-| Access list warmup          | not done                     | sender, to, precompiles pre-warmed  |
+| Aspect                      | Fabric.                              | Ethereum                            |
+| --------------------------- | ------------------------------------ | ----------------------------------- |
+| `GASPRICE` opcode           | `0`                                  | actual tx gas price                 |
+| Sender balance check        | not performed                        | must cover `gas × gasPrice + value` |
+| Intrinsic gas deduction     | enforced at submission, not deducted | ~21 000 deducted before execution   |
+| Gas refund counter          | always `0`                           | tracks SSTORE/SELFDESTRUCT refunds  |
+| Default gas per call/deploy | `5 000 000` if not specified         | whatever the tx sets                |
+| Block gas limit             | `10 000 000`                         | network-set limit                   |
+| Access list warmup          | not done                             | sender, to, precompiles pre-warmed  |
 
 **JSON-RPC fee stubs**: `eth_estimateGas` always returns `0`; `eth_gasPrice` and
 `eth_maxPriorityFeePerGas` always return `1 wei`; `eth_feeHistory` returns all-zero arrays. Clients
@@ -363,28 +403,32 @@ endorser node for execution. Two caveats:
 
 ## Error format
 
-The go-ethereum `rpc.Server` is used, so all errors produce valid JSON-RPC error objects (no
-plain string responses). However, because our methods return plain Go errors (not types that
-implement `rpc.Error` / `rpc.DataError`), every error gets the generic code `-32000` with no
-`data` field.
+The go-ethereum `rpc.Server` is used, so all errors produce valid JSON-RPC error objects.
+Methods classify errors via the typed `rpcerr` package (`gateway/api/rpcerr`) so callers
+receive standard Ethereum codes, not the `-32000` fallback.
 
-A standard Ethereum node returns for a reverted `eth_call`:
+| Surface | Code | Notes |
+|---|---|---|
+| Malformed input (bad hex, unparseable raw tx, invalid call args) | `-32602` Invalid params | |
+| Validation rejection (nonce, intrinsic gas, funds, type, sender, EIP-3860, unprotected) | `-32003` Transaction rejected | |
+| `eth_call` revert | `-32000` Execution reverted | `data` carries the raw revert payload (hex) |
+| Backend lookup / endorser / orderer failure | `-32603` Internal error | |
+
+For a reverted `eth_call` the gateway returns:
 ```json
-{"code": 3, "message": "execution reverted", "data": "0x08c379a0..."}
+{"code": -32000, "message": "execution reverted: <decoded reason>", "data": "0x08c379a0..."}
 ```
 
-We return:
-```json
-{"code": -32000, "message": "execution reverted: <decoded reason>"}
-```
+Geth uses `code: 3` historically; the JSON-RPC spec reserves the server range `-32000` to
+`-32099`, which is what geth's own `rpc` server emits today. Libraries that decode custom
+Solidity errors (`error Foo(uint amount)`) read `data` directly and work unchanged.
 
-Consequences:
-- The decoded revert reason is present in `message`, which is useful for debugging but not compliant.
-- Libraries that inspect `data` to decode custom Solidity errors (`error Foo(uint amount)`) will
-  not work — `data` is never populated.
-- There is no distinction between execution errors (revert) and infrastructure errors (endorser
-  or orderer unreachable); both produce `-32000`. Clients that branch on error codes cannot tell
-  them apart.
+Note: `eth_estimateGas` is mocked (returns a constant) and does not surface revert reasons —
+contracts that revert during gas estimation on a real Ethereum node will succeed here. Callers
+that need revert detection should issue an `eth_call` first.
+
+See [`docs/JSON_RPC_ERRORS.md`](JSON_RPC_ERRORS.md) for the full per-method mapping,
+example error objects, and the layering of the classifier.
 
 ---
 

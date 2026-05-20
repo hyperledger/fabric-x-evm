@@ -11,9 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/ethereum/go-ethereum/rpc"
@@ -26,8 +23,8 @@ import (
 	"golang.org/x/sync/errgroup"
 	_ "modernc.org/sqlite"
 
-	"github.com/hyperledger/fabric-x-evm/endorser"
 	eapp "github.com/hyperledger/fabric-x-evm/endorser/app"
+	endorsertestimpl "github.com/hyperledger/fabric-x-evm/endorser/testimpl"
 	"github.com/hyperledger/fabric-x-evm/gateway/api"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
@@ -67,23 +64,33 @@ func NewWithSigner(cfg config.Config, gwSigner sdk.Signer) (*App, error) {
 	logger := sdk.NewStdLogger("gateway")
 
 	// Create endorsers and their synchronizers.
-	endorsers := make([]*endorser.Endorser, 0, len(cfg.Endorsers))
+	endorsers := make([]core.Endorser, 0, len(cfg.Endorsers))
 	endorserSyncs := make([]*network.Synchronizer, 0, len(cfg.Endorsers))
+	var firstKVS interface{} // Keep first endorser's KVS for test server
 	for i, ecfg := range cfg.Endorsers {
-		end, sync, err := eapp.NewEndorser(ecfg, cfg.Network, logger, false)
+		// Set history size: always 128 for test RPC (snapshot/revert), else default to 2 if not set
+		if cfg.Gateway.EnableTestRPC {
+			ecfg.Database.HistorySize = 128
+		} else if ecfg.Database.HistorySize == 0 {
+			ecfg.Database.HistorySize = 2
+		}
+		end, sync, kvs, err := eapp.NewEndorser(ecfg, cfg.Network, logger, false, cfg.Gateway.EnableTestRPC)
 		if err != nil {
 			return nil, fmt.Errorf("endorser %d (%s): %w", i, ecfg.Name, err)
 		}
 		endorsers = append(endorsers, end)
 		endorserSyncs = append(endorserSyncs, sync)
+		if i == 0 {
+			firstKVS = kvs
+		}
 	}
 
-	return buildApp(cfg, gwSigner, logger, endorsers, endorserSyncs)
+	return buildApp(cfg, gwSigner, logger, endorsers, endorserSyncs, firstKVS)
 }
 
 // buildApp wires up the gateway from pre-built endorsers. Used by NewWithSigner
 // and directly by integration tests that manage their own endorsers.
-func buildApp(cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorsers []*endorser.Endorser, endorserSyncs []*network.Synchronizer) (*App, error) {
+func buildApp(cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorsers []core.Endorser, endorserSyncs []*network.Synchronizer, lightKVS interface{}) (*App, error) {
 	ec, err := core.NewEndorsementClient(endorsers, gwSigner, cfg.Network.Channel, cfg.Network.Namespace, cfg.Network.NsVersion)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create endorsement client: %w", err)
@@ -107,7 +114,7 @@ func buildApp(cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorse
 		return nil, fmt.Errorf("failed to create submitter: %w", err)
 	}
 
-	chain, err := core.NewChain(cfg.Gateway.DbConnStr, cfg.Gateway.TrieDBPath)
+	chain, err := core.NewChain(cfg.Gateway.Database.ConnString, cfg.Gateway.Database.TriePath, false)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create chain: %w", err)
 	}
@@ -142,7 +149,15 @@ func buildApp(cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorse
 			return nil, fmt.Errorf("failed to load test accounts: %w", err)
 		}
 
-		rpcServer, err = testimpl.NewTestServer(gateway, testAccountMgr.Addresses, testAccountMgr.PrivateKeys)
+		lightKVSExt, ok := lightKVS.(*endorsertestimpl.LightKVSExt)
+		if !ok {
+			return nil, fmt.Errorf("test RPC enabled but lightKVS is not LightKVSExt")
+		}
+
+		// Wrap the chain's store with SnapshotStore for snapshot/revert functionality
+		snapshotStore := testimpl.NewSnapshotStore(chain.Store)
+
+		rpcServer, err = testimpl.NewTestServer(gateway, testAccountMgr.Addresses, testAccountMgr.PrivateKeys, lightKVSExt, snapshotStore)
 		if err != nil {
 			return nil, err
 		}
@@ -191,7 +206,7 @@ func (a *App) Run(ctx context.Context) error {
 	a.gateway.Start(gctx)
 
 	// Create HTTP server before starting goroutine so Shutdown can safely read a.httpServer
-	a.httpServer = api.NewHTTPServer(a.rpcServer, a.cfg.Server.Bind)
+	a.httpServer = api.NewHTTPServer(a.rpcServer, a.cfg.Gateway.Listen)
 	g.Go(func() error {
 		if err := a.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			return err
@@ -204,18 +219,6 @@ func (a *App) Run(ctx context.Context) error {
 		<-gctx.Done()
 		return a.Shutdown()
 	})
-
-	// Signal → cancel → triggers shutdown goroutine
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		select {
-		case sig := <-sigCh:
-			appLogger.Debugf("signal %v received, initiating graceful shutdown...", sig)
-			cancel()
-		case <-gctx.Done():
-		}
-	}()
 
 	return g.Wait()
 }

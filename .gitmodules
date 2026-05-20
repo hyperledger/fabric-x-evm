@@ -2,3 +2,6 @@
 	path = testdata/ethereum-tests
 	url = https://github.com/ethereum/tests.git
 	ignore = all
+[submodule "testdata/openzeppelin-contracts"]
+	path = testdata/openzeppelin-contracts
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts.git

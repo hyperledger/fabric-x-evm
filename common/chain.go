@@ -13,8 +13,8 @@ import (
 )
 
 // BuildChainConfig creates an Ethereum chain configuration with the specified chain ID.
-// We are currently on Shanghai (2023), the first post-merge fork. Note that having the
-// fork enabled doesn't mean that we automatically are fully compatible; see COMPATIBILITY.md.
+// All forks through Osaka are active from block/time 0. Note that having a fork enabled
+// doesn't mean full compatibility; see COMPATIBILITY.md.
 func BuildChainConfig(chainID int64) *params.ChainConfig {
 	return &params.ChainConfig{
 		ChainID:                 big.NewInt(chainID),
@@ -36,10 +36,11 @@ func BuildChainConfig(chainID int64) *params.ChainConfig {
 		TerminalTotalDifficulty: big.NewInt(0), // shanghai is post-fork (mining is disabled)
 		MergeNetsplitBlock:      nil,
 		ShanghaiTime:            new(uint64(0)),
-		CancunTime:              nil,
-		PragueTime:              nil,
-		OsakaTime:               nil,
+		CancunTime:              new(uint64(0)),
+		PragueTime:              new(uint64(0)),
+		OsakaTime:               new(uint64(0)),
 		VerkleTime:              nil,
+		BlobScheduleConfig:      params.DefaultBlobSchedule,
 		Ethash:                  new(params.EthashConfig),
 		Clique:                  nil,
 	}

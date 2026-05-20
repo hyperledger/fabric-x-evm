@@ -24,6 +24,11 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// storeKey replicates the key generation from endorser/statedb.go
+func storeKey(addr ethCommon.Address, slot ethCommon.Hash) string {
+	return "str:" + addr.Hex() + ":" + slot.Hex()
+}
+
 type ERC20TxInfo struct {
 	Op       string            // transfer / transferFrom / approve / other
 	From     ethCommon.Address // tx signer (msg.sender)
@@ -114,7 +119,7 @@ func parseERC20Tx(t *testing.T, raw []byte, erc20ABI abi.ABI) (*ERC20TxInfo, err
 }
 
 func testTetherTokenReplay(t *testing.T, th *TestHarness) {
-	node1 := th.gateways[0]
+	node1 := th.Gateways[0]
 
 	// --- Load deployment + transactions JSON ---
 	jsonPath := "../testdata/tether_txs.json"
@@ -328,12 +333,78 @@ func testTetherTokenReplay(t *testing.T, th *TestHarness) {
 			t.Fatalf("prime nonce for tx #%d: %v", i+1, err)
 		}
 
-		// Replay tx
-		processCommon(t, node1, true, decodeRawTransactionT(t, rawTx), &utils.BlockInfo{
+		// Replay tx and capture the endorsement result
+		env := processCommon(t, node1, true, decodeRawTransactionT(t, rawTx), &utils.BlockInfo{
 			BlockNumber: txBlockNum,
 			BlockTime:   txRec.BlockTime,
 			GasLimit:    5_000_000,
 		})
+
+		// Verify storage slot predictions for transfer operations
+		if info.Op == "transfer" || info.Op == "transferFrom" {
+			// For TetherToken, balances mapping is at storage position 2
+			// Storage layout: 0=owner, 1=_totalSupply, 2=balances, 3=basisPointsRate, 4=maximumFee
+			const balancesMappingPosition = 2
+
+			// Get the read-write set from the endorsement
+			rws, err := endorsementToRWS(env)
+			if err != nil {
+				t.Fatalf("Tx #%d: Failed to extract RWS: %v", i+1, err)
+			}
+
+			// Only verify storage slots if we have writes in the RWS
+			// (fabricx encoding may not populate writes in the same way)
+			if len(rws.Writes) > 0 {
+				// Debug: Log all storage writes
+				t.Logf("Tx #%d: Total writes in RWS: %d", i+1, len(rws.Writes))
+				for _, write := range rws.Writes {
+					if strings.HasPrefix(write.Key, "str:") {
+						t.Logf("  Storage write: %s", write.Key)
+					}
+				}
+
+				// Predict storage slots
+				var senderSlot, receiverSlot ethCommon.Hash
+				var senderKey, receiverKey string
+
+				if info.Sender != (ethCommon.Address{}) {
+					senderSlot = GetERC20BalanceSlot(info.Sender, balancesMappingPosition)
+					senderKey = storeKey(contractAddr, senderSlot)
+					t.Logf("Tx #%d: Predicted sender key: %s (slot %s)", i+1, senderKey, senderSlot.Hex())
+				}
+
+				if info.Receiver != (ethCommon.Address{}) {
+					receiverSlot = GetERC20BalanceSlot(info.Receiver, balancesMappingPosition)
+					receiverKey = storeKey(contractAddr, receiverSlot)
+					t.Logf("Tx #%d: Predicted receiver key: %s (slot %s)", i+1, receiverKey, receiverSlot.Hex())
+				}
+
+				// Check if predicted keys appear in the write set
+				foundSender := false
+				foundReceiver := false
+
+				for _, write := range rws.Writes {
+					if senderKey != "" && write.Key == senderKey {
+						foundSender = true
+						t.Logf("✓ Tx #%d: Found predicted sender storage key: %s", i+1, senderKey)
+					}
+					if receiverKey != "" && write.Key == receiverKey {
+						foundReceiver = true
+						t.Logf("✓ Tx #%d: Found predicted receiver storage key: %s", i+1, receiverKey)
+					}
+				}
+
+				// Assert that we found the expected storage writes
+				if info.Sender != (ethCommon.Address{}) && !foundSender {
+					t.Errorf("Tx #%d: Expected to find sender storage write for key %s (slot %s)", i+1, senderKey, senderSlot.Hex())
+				}
+				if info.Receiver != (ethCommon.Address{}) && !foundReceiver {
+					t.Errorf("Tx #%d: Expected to find receiver storage write for key %s (slot %s)", i+1, receiverKey, receiverSlot.Hex())
+				}
+			} else {
+				t.Logf("Tx #%d: Skipping storage slot verification (no writes in RWS, likely using fabricx encoding)", i+1)
+			}
+		}
 	}
 
 	// --- Verify all balances on-chain ---

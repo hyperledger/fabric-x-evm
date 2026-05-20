@@ -118,8 +118,14 @@ func assertEqual[T comparable](t *testing.T, label string, got1, got2, expected 
 	}
 }
 
-func snapshotDB(t *testing.T, backend ReadStore, blockNum uint64) *StateDB {
-	stateDB, err := NewStateDB(t.Context(), backend, Namespace, blockNum, false)
+func snapshotDB(t *testing.T, backend *state.VersionedDB, blockNum uint64) *StateDB {
+	wrapper := NewVersionedDBWrapper(backend)
+	snapshot, err := wrapper.NewSnapshot(blockNum)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { snapshot.Close() })
+	stateDB, err := NewStateDB(t.Context(), snapshot, Namespace, blockNum, false)
 	if err != nil {
 		t.Fatal(err)
 	}

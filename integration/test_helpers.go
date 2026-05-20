@@ -7,24 +7,21 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package integration
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"math/big"
-	"os"
-	"path"
+	"math/rand/v2"
 	"path/filepath"
 	"reflect"
 	"runtime"
-	"sort"
 	"strings"
 	"testing"
 	"time"
 
 	ethcommon "github.com/ethereum/go-ethereum/common"
-	ethstate "github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
@@ -40,6 +37,7 @@ import (
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
 	"github.com/hyperledger/fabric-x-evm/utils"
 	sdk "github.com/hyperledger/fabric-x-sdk"
+	"github.com/hyperledger/fabric-x-sdk/blocks"
 	bfab "github.com/hyperledger/fabric-x-sdk/blocks/fabric"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	efab "github.com/hyperledger/fabric-x-sdk/endorsement/fabric"
@@ -52,6 +50,17 @@ import (
 	nfabx "github.com/hyperledger/fabric-x-sdk/network/fabricx"
 	"github.com/hyperledger/fabric-x-sdk/state"
 )
+
+// GetERC20BalanceSlot computes the storage slot for a balance in an ERC-20 mapping(address => uint256).
+// This uses the Solidity storage layout: keccak256(abi.encodePacked(address, mappingPosition))
+func GetERC20BalanceSlot(account ethcommon.Address, mappingPosition uint64) ethcommon.Hash {
+	// Concatenate: address (32 bytes) + mapping position (32 bytes)
+	data := append(
+		ethcommon.LeftPadBytes(account.Bytes(), 32),
+		ethcommon.LeftPadBytes(new(big.Int).SetUint64(mappingPosition).Bytes(), 32)...,
+	)
+	return crypto.Keccak256Hash(data)
+}
 
 type localSigner struct{}
 
@@ -71,88 +80,7 @@ func (localSigner) Serialize() ([]byte, error) {
 //	primer, err := th.NewStatePrimer()
 //	err = primer.SetNonce(addr1, 5).SetCode(addr2, contractCode).Commit(ctx)
 func (th *TestHarness) NewStatePrimer() (*StatePrimer, error) {
-	return th.primer.Reset()
-}
-
-// PrimeGenesisAlloc primes ledger state from an Ethereum genesis allocation and
-// injects the resulting ethStateDB into all endorsers for state reuse.
-func (th *TestHarness) PrimeGenesisAlloc(ctx context.Context, pre types.GenesisAlloc, wait bool) error {
-	if len(pre) == 0 {
-		return nil
-	}
-
-	primer, err := th.NewStatePrimer()
-	if err != nil {
-		return err
-	}
-
-	// Sort addresses to ensure deterministic account creation order
-	// (Go map iteration order is random, which affects the state trie structure)
-	var addresses []ethcommon.Address
-	for addr := range pre {
-		addresses = append(addresses, addr)
-	}
-	sort.Slice(addresses, func(i, j int) bool {
-		return bytes.Compare(addresses[i].Bytes(), addresses[j].Bytes()) < 0
-	})
-
-	// Convert each test account to StatePrimer operations in sorted order
-	for _, addr := range addresses {
-		account := pre[addr]
-		// Set nonce (always set it, even if 0, to ensure consistent state tracking)
-		n := account.Nonce
-		nonce := &n
-
-		// Set balance
-		var balance *big.Int
-		if account.Balance != nil {
-			balance = account.Balance
-		}
-
-		// Set code
-		var code []byte
-		if len(account.Code) > 0 {
-			code = account.Code
-		}
-
-		// Set storage
-		var storage map[ethcommon.Hash]ethcommon.Hash
-		if len(account.Storage) > 0 {
-			storage = account.Storage
-		}
-
-		// Apply all account properties
-		primer.SetAccount(addr, nonce, code, balance, storage)
-	}
-
-	// Extract the ethStateDB before committing
-	ethStateDB := primer.GetEthStateDB()
-
-	// Commit the ethStateDB to finalize the primed state
-	// This is critical: we commit with deleteEmptyObjects=false to preserve all primed accounts
-	root, err := ethStateDB.Commit(0, false, false)
-	if err != nil {
-		return fmt.Errorf("failed to commit primed ethStateDB: %w", err)
-	}
-
-	// Create a new ethStateDB from the committed root
-	// This ensures we start transaction execution with a clean, committed state
-	stateDB := ethStateDB.Database()
-	ethStateDB, err = ethstate.New(root, stateDB)
-	if err != nil {
-		return fmt.Errorf("failed to create new ethStateDB from committed root: %w", err)
-	}
-
-	// Commit all state changes to the Fabric ledger
-	if err := primer.Commit(ctx, wait); err != nil {
-		return err
-	}
-
-	for _, end := range th.endorsers {
-		end.SetEthStateDB(ethStateDB)
-	}
-
-	return nil
+	return th.Primer.Reset()
 }
 
 // PrimeStateFromJSON builds a proposal that contains a RWSet derived from the contents of
@@ -187,30 +115,7 @@ func (th *TestHarness) PrimeStateFromJSON(ctx context.Context, jsonFilePath stri
 //
 // Sync goroutines are started in the background using ctx. The returned synchronizers
 // can be used by callers that need to wait for the initial sync to complete.
-func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmConfig endorser.EVMConfig, primeDBPath string, bypass bool) (*TestHarness, []*network.Synchronizer, error) {
-	t.Helper()
-
-	// Derive ChainConfig from cfg.Network.ChainID when not explicitly provided.
-	if evmConfig.ChainConfig == nil {
-		evmConfig.ChainConfig = common.BuildChainConfig(cfg.Network.ChainID)
-	}
-
-	// Build all endorsers.
-	dbs := make([]*state.VersionedDB, len(cfg.Endorsers))
-	builders := make([]endorsement.Builder, len(cfg.Endorsers))
-	ends := make([]*endorser.Endorser, len(cfg.Endorsers))
-	syncs := make([]*network.Synchronizer, len(cfg.Endorsers))
-	for i, ecfg := range cfg.Endorsers {
-		dbs[i], builders[i], ends[i], syncs[i] = newEndorser(t, logger, ecfg, cfg.Network.Channel, cfg.Network.Namespace, evmConfig, cfg.Network.Protocol)
-	}
-
-	// Start sync goroutines; they run until the test context is cancelled.
-	if !bypass {
-		for _, s := range syncs {
-			go s.Start(t.Context())
-		}
-	}
-
+func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmConfig endorser.EVMConfig, primeDBPath string, bypass bool, ends []core.Endorser, dbs []endorser.KVS, builders []endorsement.Builder) (*TestHarness, *network.Synchronizer, error) {
 	// Build gateway signer.
 	var gwSigner sdk.Signer
 	if cfg.Gateway.Identity.MSPDir != "" {
@@ -228,7 +133,7 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 		return nil, nil, err
 	}
 
-	chain, err := core.NewChain(cfg.Gateway.DbConnStr, cfg.Gateway.TrieDBPath)
+	chain, err := core.NewChain(cfg.Gateway.Database.ConnString, cfg.Gateway.Database.TriePath, false)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -241,17 +146,26 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 	}
 
 	var submitter core.Submitter
-	var gwSync *network.Synchronizer
+	var sync *network.Synchronizer
 	var err1 error
 	if bypass {
 		submitter = local.NewLocalSubmitter(dbs[0], cfg.Network.Channel, cfg.Network.Namespace, nfab.NewTxPackager(gwSigner), bfab.NewBlockParser(logger), false)
 	} else {
+		handlers := make([]blocks.BlockHandler, 0, len(dbs)+1)
+		for _, db := range dbs {
+			handlers = append(handlers, db)
+		}
+		// by adding `chain` as last handler, we're sure that by the time the
+		// gateway sees the transaction as committed, all endorsers will have
+		// updated their ledger state
+		handlers = append(handlers, chain)
+
 		switch cfg.Network.Protocol {
 		case "fabric":
-			gwSync, err = nfab.NewSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, chain)
+			sync, err = nfab.NewSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, handlers...)
 			submitter, err1 = nfab.NewSubmitter(orderers, gwSigner, 0, logger)
 		case "fabric-x", "":
-			gwSync, err = nfabx.NewSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, chain)
+			sync, err = nfabx.NewSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, handlers...)
 			submitter, err1 = nfabx.NewSubmitter(orderers, gwSigner, 0, logger)
 		default:
 			return nil, nil, fmt.Errorf("unsupported protocol: %q", cfg.Network.Protocol)
@@ -267,7 +181,7 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 	}
 
 	if !bypass {
-		go func() error { return gwSync.Start(t.Context()) }()
+		go func() error { return sync.Start(t.Context()) }()
 	}
 
 	// Start gateway worker pool for tests
@@ -280,17 +194,18 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 	}
 
 	th := &TestHarness{
-		gateways:       []*core.Gateway{gw},
+		Gateways:       []*core.Gateway{gw},
 		endorsers:      ends,
 		ethChainConfig: evmConfig.ChainConfig,
-		primer:         primer,
+		Primer:         primer,
+		DBs:            dbs,
 	}
 
 	if err := th.PrimeStateFromJSON(t.Context(), primeDBPath, !bypass); err != nil {
 		return nil, nil, err
 	}
 
-	return th, syncs, nil
+	return th, sync, nil
 }
 
 // applyConfigOverrides applies overrides from a map to a config struct using reflection.
@@ -330,23 +245,40 @@ func applyConfigOverrides(cfg *config.Config, overrides map[string]any) error {
 	return nil
 }
 
+// EndorserFactory is a function that creates an endorser along with its dependencies.
+// It returns core.Endorser interface which both *endorser.Endorser and *testimpl.EndorserWrapper implement.
+type EndorserFactory func(t *testing.T, ecfg econf.Endorser, channel, namespace string, evmConfig endorser.EVMConfig, protocol string) (endorser.KVS, endorsement.Builder, core.Endorser)
+
+// buildEndorsers creates endorsers using the provided factory function.
+func buildEndorsers(t *testing.T, cfg config.Config, evmConfig endorser.EVMConfig, factory EndorserFactory) ([]endorser.KVS, []endorsement.Builder, []core.Endorser) {
+	dbs := make([]endorser.KVS, len(cfg.Endorsers))
+	builders := make([]endorsement.Builder, len(cfg.Endorsers))
+	ends := make([]core.Endorser, len(cfg.Endorsers))
+	for i, ecfg := range cfg.Endorsers {
+		dbs[i], builders[i], ends[i] = factory(t, ecfg, cfg.Network.Channel, cfg.Network.Namespace, evmConfig, cfg.Network.Protocol)
+	}
+	return dbs, builders, ends
+}
+
+// defaultEndorserFactory creates regular endorsers without wrapping.
+func defaultEndorserFactory(t *testing.T, ecfg econf.Endorser, channel, namespace string, evmConfig endorser.EVMConfig, protocol string) (endorser.KVS, endorsement.Builder, core.Endorser) {
+	db, builder, end := NewEndorser(t, ecfg, channel, namespace, evmConfig, protocol)
+	return db, builder, end
+}
+
 // newLocalTestHarness commits updates directly to the DB, bypassing peers and orderers.
 // Exported for use by eth-tests package.
-func newLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath, networkType string, configOverrides map[string]any) (*TestHarness, error) {
+func NewLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath, networkType string, configOverrides map[string]any) (*TestHarness, error) {
+	return NewLocalTestHarnessWithFactory(t, logger, evmConfig, primeDbPath, networkType, configOverrides, defaultEndorserFactory)
+}
+
+// NewLocalTestHarnessWithFactory is like NewLocalTestHarness but allows custom endorser creation.
+// Exported for use by tests that need custom endorser factories.
+func NewLocalTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath, networkType string, configOverrides map[string]any, factory EndorserFactory) (*TestHarness, error) {
 	bypass := networkType == "bypass"
 
 	orderer := &common.Endpoint{Host: "127.0.0.1", Port: 1337}
 	peer := &common.Endpoint{Host: "127.0.0.1", Port: 1337}
-
-	if !bypass {
-		nw, err := fabrictest.Start("basic", networkType, fabrictest.Config{})
-		if err != nil {
-			t.Fatalf("fabrictest.Start: %v", err)
-		}
-		t.Cleanup(nw.Stop)
-		orderer.Port = nw.OrdererPort
-		peer.Port = nw.PeerPort
-	}
 
 	// bypass mode uses Fabric block format
 	protocol := networkType
@@ -362,11 +294,13 @@ func newLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVM
 			Channel:   "mychannel",
 			Namespace: "basic",
 			NsVersion: "1.0",
-			ChainID:   31337,
+			ChainID:   4011,
 		},
 		Gateway: config.Gateway{
-			DbConnStr:   filepath.Join(dir, tname+"gateway.db"),
-			TrieDBPath:  filepath.Join(dir, tname+"triedb.db"),
+			Database: config.DB{
+				ConnString: filepath.Join(dir, tname+"gateway.db"),
+				TriePath:   filepath.Join(dir, tname+"triedb.db"),
+			},
 			SyncTimeout: 2 * time.Second,
 			Orderers: []common.ClientConfig{
 				{Endpoint: orderer},
@@ -379,7 +313,9 @@ func newLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVM
 			{
 				Committer: common.ClientConfig{Endpoint: peer},
 				Name:      "endorser1",
-				DbConnStr: filepath.Join(dir, tname+"endorser1.db"),
+				Database: econf.DB{
+					ConnString: filepath.Join(dir, tname+"endorser1.db"),
+				},
 			},
 		},
 	}
@@ -387,7 +323,25 @@ func newLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVM
 		return nil, err
 	}
 
-	th, _, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, bypass)
+	// Derive ChainConfig from cfg.Network.ChainID when not explicitly provided.
+	if evmConfig.ChainConfig == nil {
+		evmConfig.ChainConfig = common.BuildChainConfig(cfg.Network.ChainID)
+	}
+
+	// Build all endorsers using the factory
+	dbs, builders, ends := buildEndorsers(t, cfg, evmConfig, factory)
+
+	if !bypass {
+		nw, err := fabrictest.Start("basic", networkType, fabrictest.Config{}, dbs[0])
+		if err != nil {
+			t.Fatalf("fabrictest.Start: %v", err)
+		}
+		t.Cleanup(nw.Stop)
+		orderer.Port = nw.OrdererPort
+		peer.Port = nw.PeerPort
+	}
+
+	th, _, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, bypass, ends, dbs, builders)
 	if err != nil {
 		return nil, err
 	}
@@ -396,52 +350,62 @@ func newLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVM
 }
 
 // newFabricTestHarness returns a client for integration testing with access to a peer, orderer and local committer.
-// It follows the directory structure of a fabric samples test network.
-// Exported for use by eth-tests package.
+// It follows the directory structure of a Fablo test network.
 func newFabricTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any) (*TestHarness, error) {
-	// Use TESTDATA environment variable if set, otherwise find project root
-	var testdataDir string
-	if envTestdata := os.Getenv("TESTDATA"); envTestdata != "" {
-		testdataDir = envTestdata
-	} else {
-		projectRoot, err := findProjectRoot()
-		if err != nil {
-			cwd, _ := os.Getwd()
-			testdataDir = path.Join(cwd, "..", "testdata")
-		} else {
-			testdataDir = path.Join(projectRoot, "testdata")
-		}
+	cfg, err := config.Load("fablo.yaml")
+	if err != nil {
+		return nil, fmt.Errorf("load config: %w", err)
 	}
 
-	cfg := FabricSamplesConfig(testdataDir)
+	x := rand.Int64()
+	for i := range cfg.Endorsers {
+		cfg.Endorsers[i].Database.ConnString = fmt.Sprintf("file:endorser%d-%d.db?mode=memory&cache=shared", i, x)
+	}
 
 	if err := applyConfigOverrides(&cfg, configOverrides); err != nil {
 		return nil, err
 	}
 
-	th, syncs, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false)
+	// Derive ChainConfig from cfg.Network.ChainID when not explicitly provided.
+	if evmConfig.ChainConfig == nil {
+		evmConfig.ChainConfig = common.BuildChainConfig(cfg.Network.ChainID)
+	}
+
+	// Build all endorsers
+	dbs, builders, ends := buildEndorsers(t, cfg, evmConfig, defaultEndorserFactory)
+
+	th, sync, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false, ends, dbs, builders)
 	if err != nil {
 		return nil, err
 	}
 
-	for _, s := range syncs {
-		waitUntilSynced(t, s, 10*time.Second)
-	}
+	waitUntilSynced(t, sync, 10*time.Second)
 
 	return th, nil
 }
 
-// newFabricXTestHarness returns a client for integration testing with access to a peer, orderer and local committer.
+// NewFabricXTestHarness returns a client for integration testing with access to a peer, orderer and local committer.
 // It follows the directory structure of a fabric samples test network.
 // Exported for use by eth-tests package.
-func newFabricXTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any) (*TestHarness, error) {
-	cfg := XTestCommitterConfig()
+func NewFabricXTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any) (*TestHarness, error) {
+	cfg, err := config.Load("fabx.yaml")
+	if err != nil {
+		return nil, fmt.Errorf("load config: %w", err)
+	}
 
 	if err := applyConfigOverrides(&cfg, configOverrides); err != nil {
 		return nil, err
 	}
 
-	th, _, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false)
+	// Derive ChainConfig from cfg.Network.ChainID when not explicitly provided.
+	if evmConfig.ChainConfig == nil {
+		evmConfig.ChainConfig = common.BuildChainConfig(cfg.Network.ChainID)
+	}
+
+	// Build all endorsers
+	dbs, builders, ends := buildEndorsers(t, cfg, evmConfig, defaultEndorserFactory)
+
+	th, _, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false, ends, dbs, builders)
 	if err != nil {
 		return nil, err
 	}
@@ -449,7 +413,9 @@ func newFabricXTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.E
 	return th, nil
 }
 
-func newEndorser(t *testing.T, logger sdk.Logger, cfg econf.Endorser, channel, namespace string, evmConfig endorser.EVMConfig, protocol string) (*state.VersionedDB, endorsement.Builder, *endorser.Endorser, *network.Synchronizer) {
+// NewEndorser creates an endorser with its dependencies.
+// Exported for use by custom endorser factories.
+func NewEndorser(t *testing.T, cfg econf.Endorser, channel, namespace string, evmConfig endorser.EVMConfig, protocol string) (endorser.KVS, endorsement.Builder, *endorser.Endorser) {
 	t.Helper()
 
 	var signer sdk.Signer
@@ -463,39 +429,34 @@ func newEndorser(t *testing.T, logger sdk.Logger, cfg econf.Endorser, channel, n
 		}
 	}
 
-	writeDB, err := state.NewWriteDB(channel, cfg.DbConnStr)
-	if err != nil {
-		t.Fatalf("NewWriteDB: %v", err)
+	var db endorser.KVS
+	switch cfg.Database.Database {
+	case "sqlite":
+		writeDB, err := state.NewWriteDB(channel, cfg.Database.ConnString)
+		if err != nil {
+			t.Fatalf("NewWriteDB: %v", err)
+		}
+		db = endorser.NewVersionedDBWrapper(writeDB)
+	default:
+		db = endorser.NewLightKVS(1)
 	}
-	t.Cleanup(func() { writeDB.Close() })
-
-	readDB, err := state.NewReadDB(channel, cfg.DbConnStr)
-	if err != nil {
-		t.Fatalf("NewReadDB: %v", err)
-	}
-	t.Cleanup(func() { readDB.Close() })
+	t.Cleanup(func() { db.Close() })
 
 	// the shape of endorsements and blocks differs per protocol.
 	var builder endorsement.Builder
-	var sync *network.Synchronizer
 	var monotonicVersions bool
 	switch protocol {
 	case "fabric", "":
 		builder = efab.NewEndorsementBuilder(signer)
-		sync, err = nfab.NewSynchronizer(readDB, channel, cfg.Committer.ToPeerConf(), signer, logger, writeDB)
 	case "fabric-x":
 		builder = efabx.NewEndorsementBuilder(signer)
-		sync, err = nfabx.NewSynchronizer(readDB, channel, cfg.Committer.ToPeerConf(), signer, logger, writeDB)
 		monotonicVersions = true
 	default:
 		t.Fatalf("unsupported protocol: %q", protocol)
 	}
-	if err != nil {
-		t.Fatalf("NewSynchronizer: %v", err)
-	}
 
 	end, err := endorser.New(
-		endorser.NewEVMEngine(namespace, writeDB, evmConfig, monotonicVersions),
+		endorser.NewEVMEngine(namespace, db, evmConfig, monotonicVersions),
 		builder,
 		evmConfig.ChainConfig.ChainID.Int64(),
 	)
@@ -503,21 +464,22 @@ func newEndorser(t *testing.T, logger sdk.Logger, cfg econf.Endorser, channel, n
 		t.Fatalf("endorser.New: %v", err)
 	}
 
-	return writeDB, builder, end, sync
+	return db, builder, end
 }
 
 // TestHarness provides access to gateways and endorsers for testing.
 // Exported for use by eth-tests package.
 type TestHarness struct {
-	gateways       []*core.Gateway
-	endorsers      []*endorser.Endorser
+	DBs            []endorser.KVS
+	Gateways       []*core.Gateway
+	endorsers      []core.Endorser
 	ethChainConfig *params.ChainConfig
-	primer         *StatePrimer
+	Primer         *StatePrimer
 }
 
 func (th *TestHarness) Stop() error {
 	errs := []error{}
-	for _, n := range th.gateways {
+	for _, n := range th.Gateways {
 		if err := n.Stop(); err != nil {
 			errs = append(errs, err)
 		}
@@ -538,7 +500,7 @@ func processCommon(t *testing.T, gw *core.Gateway, commit bool, tx *types.Transa
 			t.Fatal(err)
 		}
 
-		ec, err := newNativeEthClient(gw)
+		ec, err := NewNativeEthClient(gw)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -551,7 +513,7 @@ func processCommon(t *testing.T, gw *core.Gateway, commit bool, tx *types.Transa
 
 func getEndorsedTxForSmartContractCall(t *testing.T, client *EthClient, addr ethcommon.Address, gw *core.Gateway, method string, blockInfo *utils.BlockInfo, args ...any) sdk.Endorsement {
 	t.Helper()
-	tx, err := client.txForCall(t.Context(), gw, &addr, method, blockInfo, args...)
+	tx, err := client.TxForCall(t.Context(), gw, &addr, method, blockInfo, args...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -559,7 +521,7 @@ func getEndorsedTxForSmartContractCall(t *testing.T, client *EthClient, addr eth
 	return processCommon(t, gw, false, tx, blockInfo)
 }
 
-func newNativeEthClient(gw *core.Gateway) (*ethclient.Client, error) {
+func NewNativeEthClient(gw *core.Gateway) (*ethclient.Client, error) {
 	// Create production RPC server (no test accounts needed for integration tests)
 	rpcServer, err := gwapi.NewServer(gw)
 	if err != nil {
@@ -573,7 +535,7 @@ func newNativeEthClient(gw *core.Gateway) (*ethclient.Client, error) {
 func deploySmartContract(t *testing.T, gw *core.Gateway, client *EthClient, args ...any) ethcommon.Address {
 	t.Helper()
 
-	ec, err := newNativeEthClient(gw)
+	ec, err := NewNativeEthClient(gw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -596,12 +558,12 @@ func deploySmartContract(t *testing.T, gw *core.Gateway, client *EthClient, args
 func callSmartContract(t *testing.T, client *EthClient, addr ethcommon.Address, gw *core.Gateway, method string, blockInfo *utils.BlockInfo, args ...any) {
 	t.Helper()
 
-	ec, err := newNativeEthClient(gw)
+	ec, err := NewNativeEthClient(gw)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	tx, err := client.txForCall(t.Context(), gw, &addr, method, blockInfo, args...)
+	tx, err := client.TxForCall(t.Context(), gw, &addr, method, blockInfo, args...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -617,7 +579,7 @@ func callSmartContract(t *testing.T, client *EthClient, addr ethcommon.Address, 
 func querySmartContract(t *testing.T, gw *core.Gateway, client *EthClient, addr ethcommon.Address, method string, params ...any) []any {
 	t.Helper()
 
-	ec, err := newNativeEthClient(gw)
+	ec, err := NewNativeEthClient(gw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -645,7 +607,7 @@ func querySmartContract(t *testing.T, gw *core.Gateway, client *EthClient, addr 
 
 // querySmartContractExpect queries all gateways in the test harness and expects the same result
 func querySmartContractExpect(t *testing.T, client *EthClient, addr ethcommon.Address, th *TestHarness, expected any, method string, params ...any) {
-	for _, gw := range th.gateways {
+	for _, gw := range th.Gateways {
 		res := querySmartContract(t, gw, client, addr, method, params...)
 		if len(res) == 0 {
 			t.Errorf("expected %v, got empty result", expected)
@@ -674,7 +636,7 @@ func submit(t *testing.T, gw *core.Gateway, end sdk.Endorsement) {
 		t.Error(err)
 	}
 
-	ec, err := newNativeEthClient(gw)
+	ec, err := NewNativeEthClient(gw)
 	if err != nil {
 		t.Error(err)
 	}
@@ -734,7 +696,7 @@ func waitForCommit(ctx context.Context, ec *ethclient.Client, tx *types.Transact
 
 	backoff := time.Duration(0)
 	iter := 0
-	step := 40
+	step := 100
 
 	for pending := true; pending; {
 		_, pending, err = ec.TransactionByHash(ctx, tx.Hash())

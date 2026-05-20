@@ -14,6 +14,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	co "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -24,7 +25,7 @@ import (
 func createTestEthTx(t *testing.T, key *ecdsa.PrivateKey, to common.Address, value *big.Int) *types.Transaction {
 	t.Helper()
 	tx := types.NewTransaction(0, to, value, 21000, big.NewInt(1000), []byte("test data"))
-	signer := types.NewEIP155Signer(big.NewInt(31337))
+	signer := types.NewEIP155Signer(big.NewInt(4011))
 	signed, err := types.SignTx(tx, signer, key)
 	require.NoError(t, err)
 	return signed
@@ -55,7 +56,7 @@ func TestConvertToDomain_ValidTx(t *testing.T) {
 			Number:    0,
 			Valid:     true,
 			Status:    0,
-			InputArgs: [][]byte{nil, ethb},
+			InputArgs: [][]byte{{byte(co.ProposalTypeEVMTx)}, ethb},
 		}},
 	}
 
@@ -82,7 +83,7 @@ func TestConvertToDomain_InvalidTxStatus(t *testing.T) {
 		Transactions: []blocks.Transaction{{
 			ID:        "tx-bad",
 			Valid:     false, // invalid tx
-			InputArgs: [][]byte{nil, ethb},
+			InputArgs: [][]byte{{byte(co.ProposalTypeEVMTx)}, ethb},
 		}},
 	}
 
@@ -165,7 +166,7 @@ func TestConvertTransaction_ContractCreation(t *testing.T) {
 	require.NoError(t, err)
 
 	ethTx := types.NewContractCreation(0, big.NewInt(0), 1000000, big.NewInt(1000), []byte("contract code"))
-	signer := types.NewEIP155Signer(big.NewInt(31337))
+	signer := types.NewEIP155Signer(big.NewInt(4011))
 	signed, err := types.SignTx(ethTx, signer, key)
 	require.NoError(t, err)
 	ethb, _ := signed.MarshalBinary()

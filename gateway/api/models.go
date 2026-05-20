@@ -9,7 +9,6 @@ package api
 import (
 	"encoding/json"
 	"math/big"
-	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -127,25 +126,27 @@ func (r *RPCTransaction) MarshalJSON() ([]byte, error) {
 }
 
 type RPCBlock struct {
-	Number           hexutil.Uint64 `json:"number"`
-	Hash             common.Hash    `json:"hash"`
-	ParentHash       common.Hash    `json:"parentHash"`
-	Sha3Uncles       common.Hash    `json:"sha3Uncles"`
-	LogsBloom        string         `json:"logsBloom"`
-	TransactionsRoot common.Hash    `json:"transactionsRoot"`
-	StateRoot        common.Hash    `json:"stateRoot"`
-	ReceiptsRoot     common.Hash    `json:"receiptsRoot"`
-	Miner            common.Address `json:"miner"`
-	Difficulty       hexutil.Big    `json:"difficulty"`
-	TotalDifficulty  hexutil.Big    `json:"totalDifficulty"`
-	ExtraData        string         `json:"extraData"`
-	Size             hexutil.Uint64 `json:"size"`
-	GasLimit         hexutil.Uint64 `json:"gasLimit"`
-	GasUsed          hexutil.Uint64 `json:"gasUsed"`
-	BaseFeePerGas    hexutil.Big    `json:"baseFeePerGas"`
-	Timestamp        hexutil.Uint64 `json:"timestamp"`
-	Transactions     []any          `json:"transactions"`
-	Uncles           []common.Hash  `json:"uncles"`
+	Number           hexutil.Uint64   `json:"number"`
+	Hash             common.Hash      `json:"hash"`
+	ParentHash       common.Hash      `json:"parentHash"`
+	Sha3Uncles       common.Hash      `json:"sha3Uncles"`
+	LogsBloom        hexutil.Bytes    `json:"logsBloom"`
+	TransactionsRoot common.Hash      `json:"transactionsRoot"`
+	StateRoot        common.Hash      `json:"stateRoot"`
+	ReceiptsRoot     common.Hash      `json:"receiptsRoot"`
+	Miner            common.Address   `json:"miner"`
+	Difficulty       hexutil.Big      `json:"difficulty"`
+	TotalDifficulty  hexutil.Big      `json:"totalDifficulty"`
+	ExtraData        hexutil.Bytes    `json:"extraData"`
+	Size             hexutil.Uint64   `json:"size"`
+	GasLimit         hexutil.Uint64   `json:"gasLimit"`
+	GasUsed          hexutil.Uint64   `json:"gasUsed"`
+	BaseFeePerGas    hexutil.Big      `json:"baseFeePerGas"`
+	Timestamp        hexutil.Uint64   `json:"timestamp"`
+	Transactions     []any            `json:"transactions"`
+	Uncles           []common.Hash    `json:"uncles"`
+	MixHash          common.Hash      `json:"mixHash"`
+	Nonce            types.BlockNonce `json:"nonce"`
 }
 
 // rpcTransaction converts a domain.Transaction to an RPCTransaction with block metadata.
@@ -215,19 +216,25 @@ func rpcBlock(b *domain.Block, full bool) *RPCBlock {
 		transactions = []any{}
 	}
 
+	// ethclient cross-checks: EmptyUncleHash ↔ uncles=[], EmptyTxsHash ↔ txs=[].
+	txRoot := types.EmptyTxsHash
+	if len(transactions) > 0 {
+		txRoot = common.Hash{}
+	}
+
 	return &RPCBlock{
 		Number:           hexutil.Uint64(b.BlockNumber),
 		Hash:             (common.Hash)(b.BlockHash),
 		ParentHash:       (common.Hash)(b.ParentHash),
-		Sha3Uncles:       common.Hash{},
-		LogsBloom:        "" + strings.Repeat("0", 512),
-		TransactionsRoot: common.Hash{},
+		Sha3Uncles:       types.EmptyUncleHash,
+		LogsBloom:        make(hexutil.Bytes, types.BloomByteLength),
+		TransactionsRoot: txRoot,
 		StateRoot:        common.BytesToHash(b.StateRoot),
-		ReceiptsRoot:     common.Hash{},
-		Miner:            common.Address{}, // b.Miner
+		ReceiptsRoot:     types.EmptyRootHash,
+		Miner:            common.HexToAddress("0x0000000000000000000000000000000000000F4B"),
 		Difficulty:       hexutil.Big(*big.NewInt(0)),
 		TotalDifficulty:  hexutil.Big(*big.NewInt(0)),
-		ExtraData:        "",
+		ExtraData:        hexutil.Bytes{},
 		Size:             0,
 		GasLimit:         hexutil.Uint64(0),
 		GasUsed:          hexutil.Uint64(0),

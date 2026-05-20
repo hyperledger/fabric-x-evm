@@ -51,7 +51,7 @@ func insertTestLog(t *testing.T, store *Store, blockNum uint64, txHash, address 
 	padded := make([][]byte, 4)
 	copy(padded, topics)
 
-	_, err := store.db.ExecContext(t.Context(), `
+	_, err := store.DB.ExecContext(t.Context(), `
 		INSERT INTO logs (block_number, tx_hash, tx_index, log_index, address, topic0, topic1, topic2, topic3, data)
 		VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
 		blockNum, txHash, logIndex, address, padded[0], padded[1], padded[2], padded[3], []byte{})
@@ -363,7 +363,7 @@ func insertTestTransaction(t *testing.T, store *Store, blockNum uint64, blockHas
 	t.Helper()
 	// Use txHash to create unique fabric_tx_id
 	fabricTxID := fmt.Sprintf("fabric-tx-%x", txHash[:8])
-	_, err := store.db.ExecContext(t.Context(), `
+	_, err := store.DB.ExecContext(t.Context(), `
 		INSERT INTO transactions (tx_hash, block_hash, block_number, tx_index, raw_tx, from_address, to_address, contract_address, status, fabric_tx_id, fabric_tx_status)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		txHash, blockHash, blockNum, txIndex, []byte{0x01, 0x02}, makeAddress(0x11), makeAddress(0x22), nil, 1, fabricTxID, 0)
@@ -378,31 +378,48 @@ func TestBlockNumber(t *testing.T) {
 	store := setupTestDB(t)
 
 	// Empty database should return 0
-	num, err := store.BlockNumber(t.Context())
-	if err != nil {
-		t.Fatalf("BlockNumber error: %v", err)
-	}
+	num := store.CachedBlockNumber.Load()
 	if num != 0 {
 		t.Errorf("expected 0 for empty db, got %d", num)
 	}
 
 	// Insert blocks and check the number increases
 	insertTestBlock(t, store, 1, makeHash(0x01))
-	num, err = store.BlockNumber(t.Context())
-	if err != nil {
-		t.Fatalf("BlockNumber error: %v", err)
-	}
+	num = store.CachedBlockNumber.Load()
 	if num != 1 {
 		t.Errorf("expected 1, got %d", num)
 	}
 
 	insertTestBlock(t, store, 5, makeHash(0x05))
-	num, err = store.BlockNumber(t.Context())
-	if err != nil {
-		t.Fatalf("BlockNumber error: %v", err)
-	}
+	num = store.CachedBlockNumber.Load()
 	if num != 5 {
 		t.Errorf("expected 5, got %d", num)
+	}
+}
+
+func TestBlockNumberByHash(t *testing.T) {
+	store := setupTestDB(t)
+
+	blockHash := makeHash(0xBC)
+	insertTestBlock(t, store, 77, blockHash)
+
+	num, err := store.BlockNumberByHash(t.Context(), blockHash)
+	if err != nil {
+		t.Fatalf("BlockNumberByHash error: %v", err)
+	}
+	if num == nil {
+		t.Fatal("expected block number, got nil")
+	}
+	if *num != 77 {
+		t.Errorf("expected block number 77, got %d", *num)
+	}
+
+	missing, err := store.BlockNumberByHash(t.Context(), makeHash(0xFF))
+	if err != nil {
+		t.Fatalf("BlockNumberByHash (missing) error: %v", err)
+	}
+	if missing != nil {
+		t.Errorf("expected nil for missing hash, got %d", *missing)
 	}
 }
 
