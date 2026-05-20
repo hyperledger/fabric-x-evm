@@ -10,12 +10,14 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"log"
 	"net/http"
 
 	"github.com/ethereum/go-ethereum/node"
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/hyperledger/fabric-lib-go/common/flogging"
 )
+
+var apiLogger = flogging.MustGetLogger("gateway.api")
 
 // NewServer returns an RPC server.
 func NewServer(b Backend) (*rpc.Server, error) {
@@ -55,7 +57,7 @@ func (h *loggingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
 	r.Body.Close() //nolint:errcheck
 
-	log.Printf("[req] %s", body)
+	apiLogger.Debugf("[req] %s", body)
 
 	r.Body = io.NopCloser(bytes.NewReader(body))
 

@@ -10,7 +10,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -18,6 +17,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/identity"
 	"github.com/hyperledger/fabric-x-sdk/network"
@@ -33,6 +33,8 @@ import (
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
 	"github.com/hyperledger/fabric-x-evm/gateway/testimpl"
 )
+
+var appLogger = flogging.MustGetLogger("gateway.app")
 
 // App represents the gateway application with all its components.
 type App struct {
@@ -132,8 +134,8 @@ func buildApp(cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorse
 	var rpcServer *rpc.Server
 	if cfg.Gateway.EnableTestRPC {
 		// UNSAFE: Test RPC methods enabled - load test accounts
-		log.Println("WARNING: Test RPC methods enabled (eth_accounts, eth_sendTransaction)")
-		log.Println("WARNING: Server-side signing is UNSAFE and should NEVER be used in production")
+		appLogger.Warn("Test RPC methods enabled (eth_accounts, eth_sendTransaction)")
+		appLogger.Warn("Server-side signing is unsafe and should never be used in production")
 
 		testAccountMgr, err := testimpl.LoadTestAccounts(cfg.Gateway.TestAccountsPath)
 		if err != nil {
@@ -181,11 +183,11 @@ func (a *App) Run(ctx context.Context) error {
 		if err := waitUntilSynced(gctx, sync, 10*time.Second); err != nil {
 			return err
 		}
-		log.Printf("endorser %d synced", i)
+		appLogger.Debugf("endorser %d synced", i)
 	}
 
 	// Start gateway worker pool
-	log.Printf("starting gateway with %d workers", a.cfg.Gateway.WorkerCount)
+	appLogger.Debugf("starting gateway with %d workers", a.cfg.Gateway.WorkerCount)
 	a.gateway.Start(gctx)
 
 	// Create HTTP server before starting goroutine so Shutdown can safely read a.httpServer
@@ -209,7 +211,7 @@ func (a *App) Run(ctx context.Context) error {
 	go func() {
 		select {
 		case sig := <-sigCh:
-			log.Printf("signal %v received, initiating graceful shutdown...", sig)
+			appLogger.Debugf("signal %v received, initiating graceful shutdown...", sig)
 			cancel()
 		case <-gctx.Done():
 		}
@@ -225,31 +227,31 @@ func (a *App) Shutdown() error {
 
 	// Stop accepting new HTTP requests
 	if a.httpServer != nil {
-		log.Println("shutting down HTTP server...")
+		appLogger.Debug("shutting down HTTP server...")
 		if err := a.httpServer.Shutdown(shutdownCtx); err != nil {
-			log.Printf("HTTP server shutdown error: %v", err)
+			appLogger.Warnf("HTTP server shutdown error: %v", err)
 		} else {
-			log.Println("HTTP server stopped")
+			appLogger.Debug("HTTP server stopped")
 		}
 	}
 
 	// Stop gateway workers
-	log.Println("stopping gateway workers...")
+	appLogger.Debug("stopping gateway workers...")
 	if err := a.gateway.Stop(); err != nil {
-		log.Printf("gateway stop error: %v", err)
+		appLogger.Warnf("gateway stop error: %v", err)
 	} else {
-		log.Println("gateway workers stopped")
+		appLogger.Debug("gateway workers stopped")
 	}
 
 	// Close chain (trie + database)
-	log.Println("closing chain...")
+	appLogger.Debug("closing chain...")
 	if err := a.chain.Close(); err != nil {
-		log.Printf("chain close error: %v", err)
+		appLogger.Warnf("chain close error: %v", err)
 	} else {
-		log.Println("chain closed")
+		appLogger.Debug("chain closed")
 	}
 
-	log.Println("graceful shutdown complete")
+	appLogger.Debug("graceful shutdown complete")
 	return nil
 }
 
