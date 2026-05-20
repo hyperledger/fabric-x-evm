@@ -345,7 +345,11 @@ func (api *EthAPI) EstimateGas(ctx context.Context, args map[string]any, block *
 	logger.Debugf("EthAPI.EstimateGas() called with args=%v", args)
 
 	// we invoke api.Call first to see if the tx is valid and won't revert
-	if _, err := api.Call(ctx, args, *block); err != nil {
+	blockRef := rpc.BlockNumberOrHashWithNumber(rpc.LatestBlockNumber)
+	if block != nil {
+		blockRef = *block
+	}
+	if _, err := api.Call(ctx, args, blockRef); err != nil {
 		return nil, err
 	}
 
@@ -487,16 +491,17 @@ func domainLogToTypesLog(l domain.Log) *types.Log {
 func argsToCallMsg(args map[string]any) (ethereum.CallMsg, error) {
 	var msg ethereum.CallMsg
 
-	if v, ok := args["from"]; ok {
+	if v, ok := args["from"]; ok && v != nil {
 		msg.From = common.HexToAddress(v.(string))
 	}
 
-	if v, ok := args["to"]; ok {
+	// "to" may be explicitly null for contract-creation calls.
+	if v, ok := args["to"]; ok && v != nil {
 		addr := common.HexToAddress(v.(string))
 		msg.To = &addr
 	}
 
-	if v, ok := args["gas"]; ok {
+	if v, ok := args["gas"]; ok && v != nil {
 		gas, err := hexutil.DecodeUint64(v.(string))
 		if err != nil {
 			return msg, rpcerr.InvalidParams("invalid gas: %v", err)
@@ -504,7 +509,7 @@ func argsToCallMsg(args map[string]any) (ethereum.CallMsg, error) {
 		msg.Gas = gas
 	}
 
-	if v, ok := args["gasPrice"]; ok {
+	if v, ok := args["gasPrice"]; ok && v != nil {
 		gp, err := hexutil.DecodeBig(v.(string))
 		if err != nil {
 			return msg, rpcerr.InvalidParams("invalid gasPrice: %v", err)
@@ -512,7 +517,7 @@ func argsToCallMsg(args map[string]any) (ethereum.CallMsg, error) {
 		msg.GasPrice = gp
 	}
 
-	if v, ok := args["value"]; ok {
+	if v, ok := args["value"]; ok && v != nil {
 		val, err := hexutil.DecodeBig(v.(string))
 		if err != nil {
 			return msg, rpcerr.InvalidParams("invalid value: %v", err)
@@ -527,7 +532,7 @@ func argsToCallMsg(args map[string]any) (ethereum.CallMsg, error) {
 			inputKey = "data"
 		}
 	}
-	if v, ok := args[inputKey]; ok {
+	if v, ok := args[inputKey]; ok && v != nil {
 		data, err := hexutil.Decode(v.(string))
 		if err != nil {
 			return msg, rpcerr.InvalidParams("invalid %s: %v", inputKey, err)
@@ -536,7 +541,7 @@ func argsToCallMsg(args map[string]any) (ethereum.CallMsg, error) {
 	}
 
 	// EIP-1559 (optional, ignore safely if absent)
-	if v, ok := args["maxFeePerGas"]; ok {
+	if v, ok := args["maxFeePerGas"]; ok && v != nil {
 		fee, err := hexutil.DecodeBig(v.(string))
 		if err != nil {
 			return msg, rpcerr.InvalidParams("invalid maxFeePerGas: %v", err)
@@ -544,7 +549,7 @@ func argsToCallMsg(args map[string]any) (ethereum.CallMsg, error) {
 		msg.GasFeeCap = fee
 	}
 
-	if v, ok := args["maxPriorityFeePerGas"]; ok {
+	if v, ok := args["maxPriorityFeePerGas"]; ok && v != nil {
 		tip, err := hexutil.DecodeBig(v.(string))
 		if err != nil {
 			return msg, rpcerr.InvalidParams("invalid maxPriorityFeePerGas: %v", err)

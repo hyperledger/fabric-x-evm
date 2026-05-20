@@ -74,16 +74,15 @@ func NewChain(dbConnStr, triePath string, withTrie bool) (*Chain, error) {
 func (c *Chain) Handle(ctx context.Context, b blocks.Block) error {
 	ebl := c.convertToDomain(b)
 
+	ebl.ParentHash = c.prevHash.Bytes()
 	if c.ts != nil {
 		stateRoot, err := c.ts.Commit(ctx, b)
 		if err != nil {
 			return err // irrecoverable
 		}
 		ebl.StateRoot = stateRoot.Bytes()
-		ebl.ParentHash = c.prevHash.Bytes()
 	} else {
 		ebl.StateRoot = types.EmptyRootHash[:]
-		ebl.ParentHash = types.EmptyRootHash[:]
 	}
 	c.prevHash = common.BytesToHash(ebl.BlockHash)
 

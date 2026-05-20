@@ -18,6 +18,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	cmn "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	"github.com/hyperledger/fabric-x-evm/utils"
@@ -33,6 +34,8 @@ type Submitter interface {
 	Submit(context.Context, sdk.Endorsement) error
 	Close() error
 }
+
+var logger = flogging.MustGetLogger("gateway.core")
 
 // Gateway is the component that bridges Fabric-x and the EVM. Its API is the
 // Ethereum JSON RPC. When the user submits a transaction targeting an Ethereum
@@ -106,8 +109,7 @@ func (g *Gateway) worker(ctx context.Context) {
 
 		// Process the transaction (old SendTransaction logic)
 		if err := g.processTx(ctx, tx); err != nil {
-			// TODO: Add proper error handling/logging
-			// For now, we just continue processing
+			logger.Errorf("tx %s failed: %v", tx.Hash().Hex(), err)
 			continue
 		}
 	}

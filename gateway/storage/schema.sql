@@ -3,7 +3,7 @@ CREATE TABLE
     IF NOT EXISTS blocks (
         block_number INTEGER PRIMARY KEY NOT NULL CHECK (block_number >= 0),
         block_hash BLOB NOT NULL UNIQUE CHECK (length (block_hash) = 32),
-        parent_hash BLOB CHECK (parent_hash IS NULL OR length (parent_hash) = 32), -- NULL for genesis block
+        parent_hash BLOB UNIQUE CHECK (parent_hash IS NULL OR length (parent_hash) = 32), -- NULL for genesis block; UNIQUE enforces valid chain linkage
         state_root BLOB NOT NULL CHECK (length (state_root) = 32),
         timestamp BIGINT NOT NULL CHECK (timestamp >= 0),
         extra_data BLOB

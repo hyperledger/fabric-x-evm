@@ -35,7 +35,7 @@ func insertTestBlock(t *testing.T, store *Store, blockNum uint64, blockHash []by
 	err := store.InsertBlock(t.Context(), domain.Block{
 		BlockNumber: blockNum,
 		BlockHash:   blockHash,
-		ParentHash:  make([]byte, 32),
+		ParentHash:  nil,
 		StateRoot:   make([]byte, 32),
 		Timestamp:   1000,
 	})
