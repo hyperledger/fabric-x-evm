@@ -8,6 +8,8 @@ package core
 
 import (
 	"context"
+
+	//"fmt"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -15,29 +17,35 @@ import (
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 )
 
-// TxQueue is a two-queue system for tracking transaction lifecycle.
+// TxQueue tracks transaction lifecycle.
 // Transactions flow: pendingQueue -> inProgressMap -> completed (removed from tracking)
 //
 // Locking strategy:
 // - Write operations (Enqueue, Dequeue, Complete, Close) use exclusive Lock()
 // - Read operations (IsPending) use shared RLock() for concurrent queries
-// - This allows multiple simultaneous pending status checks without blocking writers
 //
 // Thread-safety: All map and slice operations are protected by the RWMutex.
-// The inProgressMap is safe for concurrent access as long as proper locking is used.
 type TxQueue struct {
-	mu            sync.RWMutex                       // Protects all fields below
-	cond          *sync.Cond                         // Signals when new transactions arrive
-	pendingQueue  []*types.Transaction               // FIFO queue of transactions waiting to be processed
-	inProgressMap map[common.Hash]*types.Transaction // Transactions currently being processed by workers
-	done          bool                               // Shutdown flag
+	mu                     sync.RWMutex                       // Protects all fields below
+	cond                   *sync.Cond                         // Signals when new transactions arrive
+	pendingQueue           []*types.Transaction               // Transactions waiting to be processed
+	nextScanIndex          int                                // Rotating starting point for the next pending scan
+	inProgressMap          map[common.Hash]*types.Transaction // Transactions currently being processed by workers
+	inProgressParticipants map[common.Address]int             // Sender/recipient -> number of in-progress transactions touching that account
+	txParticipants         map[common.Hash][]common.Address   // Transaction hash -> tracked participants
+	done                   bool                               // Shutdown flag
+
+	total   int
+	invalid int
 }
 
 // NewTxQueue creates a new transaction queue
 func NewTxQueue() *TxQueue {
 	q := &TxQueue{
-		pendingQueue:  make([]*types.Transaction, 0),
-		inProgressMap: make(map[common.Hash]*types.Transaction),
+		pendingQueue:           make([]*types.Transaction, 0),
+		inProgressMap:          make(map[common.Hash]*types.Transaction),
+		inProgressParticipants: make(map[common.Address]int),
+		txParticipants:         make(map[common.Hash][]common.Address),
 	}
 	// sync.Cond requires a Locker; RWMutex implements Locker interface
 	q.cond = sync.NewCond(&q.mu)
@@ -49,6 +57,11 @@ func NewTxQueue() *TxQueue {
 func (q *TxQueue) Enqueue(tx *types.Transaction) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+
+	txHash := tx.Hash()
+	if _, exists := q.txParticipants[txHash]; !exists {
+		q.txParticipants[txHash] = participantsForTx(tx)
+	}
 
 	q.pendingQueue = append(q.pendingQueue, tx)
 	q.cond.Signal() // Wake up one waiting worker
@@ -62,19 +75,88 @@ func (q *TxQueue) Dequeue() (*types.Transaction, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	for len(q.pendingQueue) == 0 && !q.done {
+	for {
+		for len(q.pendingQueue) == 0 && !q.done {
+			q.nextScanIndex = 0
+			q.cond.Wait()
+		}
+
+		if q.done && len(q.pendingQueue) == 0 {
+			return nil, false
+		}
+
+		if tx, ok := q.dequeueReady(); ok {
+			return tx, true
+		}
+
+		if q.done && len(q.pendingQueue) == 0 {
+			return nil, false
+		}
+
 		q.cond.Wait()
 	}
+}
 
-	if q.done && len(q.pendingQueue) == 0 {
+func (q *TxQueue) dequeueReady() (*types.Transaction, bool) {
+	pendingLen := len(q.pendingQueue)
+	if pendingLen == 0 {
+		q.nextScanIndex = 0
 		return nil, false
 	}
 
-	tx := q.pendingQueue[0]
-	q.pendingQueue[0] = nil // Prevent memory leak
-	q.pendingQueue = q.pendingQueue[1:]
-	q.inProgressMap[tx.Hash()] = tx // Track as in-progress
-	return tx, true
+	start := 0
+	if q.nextScanIndex < pendingLen {
+		start = q.nextScanIndex
+	}
+
+	for scanned := 0; scanned < pendingLen; scanned++ {
+		idx := (start + scanned) % pendingLen
+		tx := q.pendingQueue[idx]
+
+		txHash := tx.Hash()
+		participants, ok := q.txParticipants[txHash]
+		if !ok {
+			participants = participantsForTx(tx)
+			q.txParticipants[txHash] = participants
+		}
+
+		blocked := false
+		for _, participant := range participants {
+			if q.inProgressParticipants[participant] > 0 {
+				blocked = true
+				break
+			}
+		}
+		if blocked {
+			continue
+		}
+
+		// Found a ready transaction - remove it from queue
+		lastIdx := pendingLen - 1
+		q.pendingQueue[idx] = q.pendingQueue[lastIdx]
+		q.pendingQueue[lastIdx] = nil
+		q.pendingQueue = q.pendingQueue[:lastIdx]
+
+		// Update nextScanIndex for next scan
+		if len(q.pendingQueue) == 0 {
+			q.nextScanIndex = 0
+		} else if idx >= len(q.pendingQueue) {
+			q.nextScanIndex = 0
+		} else {
+			q.nextScanIndex = idx
+		}
+
+		// Mark as in-progress
+		q.inProgressMap[txHash] = tx
+		for _, participant := range participants {
+			q.inProgressParticipants[participant]++
+		}
+		return tx, true
+	}
+
+	// No ready transaction found - reset scan index
+	q.nextScanIndex = 0
+	return nil, false
 }
 
 // Close signals that no more transactions will be enqueued and initiates shutdown.
@@ -119,7 +201,76 @@ func (q *TxQueue) IsPending(txHash common.Hash) *types.Transaction {
 func (q *TxQueue) Complete(hash common.Hash) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+
 	delete(q.inProgressMap, hash)
+
+	if participants, exists := q.txParticipants[hash]; exists {
+		delete(q.txParticipants, hash)
+		for _, participant := range participants {
+			if count := q.inProgressParticipants[participant]; count > 0 {
+				if count == 1 {
+					delete(q.inProgressParticipants, participant)
+				} else {
+					q.inProgressParticipants[participant] = count - 1
+				}
+			}
+		}
+	}
+
+	if len(q.pendingQueue) > 0 {
+		q.cond.Signal()
+	}
+}
+
+func participantsForTx(tx *types.Transaction) []common.Address {
+	participants := make([]common.Address, 0, 2)
+
+	if sender, ok := senderForTx(tx); ok {
+		participants = append(participants, sender)
+	}
+
+	if recipient, ok := recipientForTx(tx); ok && !containsAddress(participants, recipient) {
+		participants = append(participants, recipient)
+	}
+
+	return participants
+}
+
+func senderForTx(tx *types.Transaction) (common.Address, bool) {
+	if !tx.Protected() && tx.Type() == types.LegacyTxType {
+		return common.Address{}, false
+	}
+
+	signer := types.LatestSignerForChainID(tx.ChainId())
+	sender, err := types.Sender(signer, tx)
+	if err != nil {
+		return common.Address{}, false
+	}
+
+	return sender, true
+}
+
+func recipientForTx(tx *types.Transaction) (common.Address, bool) {
+	if tx.To() == nil {
+		return common.Address{}, false
+	}
+
+	data := tx.Data()
+	if len(data) < 4+32+32 {
+		return common.Address{}, false
+	}
+
+	recipientOffset := 4 + 12
+	return common.BytesToAddress(data[recipientOffset : recipientOffset+20]), true
+}
+
+func containsAddress(addresses []common.Address, target common.Address) bool {
+	for _, address := range addresses {
+		if address == target {
+			return true
+		}
+	}
+	return false
 }
 
 // Handle processes block notifications from the synchronizer and marks transactions as complete.
@@ -130,6 +281,13 @@ func (q *TxQueue) Handle(ctx context.Context, block *domain.Block) error {
 	// Mark all transactions in the block as complete
 	for _, tx := range block.Transactions {
 		txHash := common.BytesToHash(tx.TxHash)
+		q.total++
+		if tx.Status == 0 {
+			q.invalid++
+		}
+		// if tx.Status == 0 {
+		// 	fmt.Println("Invalid transaction", txHash)
+		// }
 		q.Complete(txHash)
 	}
 

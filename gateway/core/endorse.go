@@ -76,9 +76,7 @@ func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Tra
 	errs := make([]error, len(e.endorsers)) // indexed — deterministic error order
 
 	for i, end := range e.endorsers {
-		wg.Add(1)
-		go func(index int, endorser Endorser) {
-			defer wg.Done()
+		processEndorsement := func(index int, endorser Endorser) {
 			pResp, err := endorser.ProcessEVMTransaction(ctx, inv, tx, blockInfo)
 			if err != nil {
 				errs[index] = fmt.Errorf("process EVM transaction: %w", err)
@@ -86,7 +84,17 @@ func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Tra
 				return
 			}
 			res[index] = pResp
-		}(i, end)
+		}
+
+		if len(e.endorsers) > 1 {
+			wg.Add(1)
+			go func(index int, endorser Endorser) {
+				defer wg.Done()
+				processEndorsement(index, endorser)
+			}(i, end)
+		} else {
+			processEndorsement(i, end)
+		}
 	}
 
 	wg.Wait()
