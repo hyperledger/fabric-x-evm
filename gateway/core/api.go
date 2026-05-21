@@ -345,6 +345,9 @@ func (g *Gateway) Stop() error {
 		// Close submitter connection
 		err = g.submitter.Close()
 	})
+
+	fmt.Println("gw stats:", g.TxQueue.total, g.TxQueue.invalid, float64(g.TxQueue.invalid)/float64(g.TxQueue.total))
+
 	return err
 }
 

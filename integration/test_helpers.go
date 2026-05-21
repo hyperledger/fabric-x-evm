@@ -397,10 +397,18 @@ func newFabricTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EV
 	return th, nil
 }
 
+func NewFabricXTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any) (*TestHarness, error) {
+	return NewFabricXTestHarnessWithFactory(t, logger, evmConfig, primeDbPath, configOverrides, defaultEndorserFactory)
+}
+
 // NewFabricXTestHarness returns a client for integration testing with access to a peer, orderer and local committer.
 // It follows the directory structure of a fabric samples test network.
 // Exported for use by eth-tests package.
-func NewFabricXTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any) (*TestHarness, error) {
+func NewFabricXTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory) (*TestHarness, error) {
+	// cwd, _ := os.Getwd()
+	// defer os.Chdir(cwd)
+	// _ = os.Chdir("../")
+
 	cfg, err := config.Load("fabx.yaml")
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
@@ -416,7 +424,7 @@ func NewFabricXTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.E
 	}
 
 	// Build all endorsers
-	dbs, builders, ends := buildEndorsers(t, cfg, evmConfig, defaultEndorserFactory)
+	dbs, builders, ends := buildEndorsers(t, cfg, evmConfig, factory)
 
 	th, _, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false, ends, dbs, builders)
 	if err != nil {

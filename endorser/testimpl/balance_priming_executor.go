@@ -98,11 +98,6 @@ func NewBalancePrimingExecutor(
 func (e *BalancePrimingExecutor) Execute(tx *types.Transaction) (endorsement.ExecutionResult, error) {
 	// Extract the sender to notify SenderAware wrappers
 	// This replicates the logic from the original Executor.Send
-	signer := types.MakeSigner(e.ChainCfg, e.BlockCtx.BlockNumber, e.BlockCtx.Time)
-	from, err := types.Sender(signer, tx)
-	if err != nil {
-		return endorsement.ExecutionResult{}, err
-	}
 
 	// Notify NonceAware wrappers of the expected nonce for this transaction
 	if na, ok := e.state.(NonceAware); ok {
@@ -111,7 +106,7 @@ func (e *BalancePrimingExecutor) Execute(tx *types.Transaction) (endorsement.Exe
 
 	// Notify SenderAware wrappers of the transaction sender
 	if sa, ok := e.state.(SenderAware); ok {
-		sa.SetSender(from)
+		sa.SetSender(common.Address{})
 	}
 
 	// Execute the transaction using the base Executor
