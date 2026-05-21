@@ -17,7 +17,7 @@ import (
 )
 
 // Default prime value: 1 billion tokens (with 6 decimals for USDC)
-var primeValue = new(uint256.Int).Mul(uint256.NewInt(1_000_000_000), uint256.NewInt(1_000_000))
+var primeValue = new(uint256.Int).Mul(uint256.NewInt(1_000_000_000_000), uint256.NewInt(1_000_000_000_000))
 
 // BalancePrimingWrapper wraps a StateDB and intercepts GetState calls to prime
 // ERC-20 balance slots with a high value when they are zero.
@@ -44,8 +44,6 @@ func NewBalancePrimingWrapper(stateDB endorser.ExtendedStateDB, contractAddr com
 
 // SetSender sets the sender address and calculates the balance slot.
 func (w *BalancePrimingWrapper) SetSender(sender common.Address) {
-	w.senderAddr = sender
-	w.balanceSlot = GetERC20BalanceSlot(sender, w.mappingPosition)
 	w.enabled = true
 
 	if false {
@@ -57,7 +55,7 @@ func (w *BalancePrimingWrapper) SetSender(sender common.Address) {
 // GetState intercepts storage reads and primes the balance slot if needed.
 func (w *BalancePrimingWrapper) GetState(addr common.Address, slot common.Hash) common.Hash {
 	// Check if this is a read of our target balance slot
-	if w.enabled && addr == w.contractAddr && slot == w.balanceSlot {
+	if w.enabled && addr == w.contractAddr {
 		if false {
 			fmt.Printf("[BalancePriming] GetState intercepted: addr=%s, slot=%s (matches target)\n",
 				addr.Hex(), slot.Hex())
@@ -113,7 +111,7 @@ func (w *BalancePrimingWrapper) GetNonce(addr common.Address) uint64 {
 
 	// If nonce priming is enabled and this is the sender, return the
 	// expected nonce so the tx.Nonce() == ledgerNonce check in Executor.Send passes.
-	if w.nonceEnabled && addr == w.senderAddr {
+	if w.nonceEnabled {
 		return w.expectedNonce
 	}
 

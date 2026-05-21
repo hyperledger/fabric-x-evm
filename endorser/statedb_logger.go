@@ -37,13 +37,13 @@ func getGoroutineID() uint64 {
 // It includes a mutex to serialize all calls, making it easier to debug
 // concurrent access patterns and potential race conditions.
 type StateDBLogger struct {
-	inner  *StateDB
+	inner  ExtendedStateDB
 	logger *flogging.FabricLogger
 	mu     sync.Mutex
 }
 
 // NewStateDBLogger creates a new logging wrapper
-func NewStateDBLogger(inner *StateDB) *StateDBLogger {
+func NewStateDBLogger(inner ExtendedStateDB) ExtendedStateDB {
 	return &StateDBLogger{
 		inner:  inner,
 		logger: flogging.MustGetLogger("StateDB"),

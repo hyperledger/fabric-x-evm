@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"runtime/pprof"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -114,6 +115,33 @@ func loadReplayConfigFromEnv(t *testing.T) replayConfig {
 	return cfg
 }
 
+//lint:ignore U1000 kept for future tests / debugging
+func logMem(tag string) {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	fmt.Printf("[%s] Alloc = %d MB | TotalAlloc = %d MB | Sys = %d MB | NumGC = %d\n",
+		tag,
+		m.Alloc/1024/1024,
+		m.TotalAlloc/1024/1024,
+		m.Sys/1024/1024,
+		m.NumGC,
+	)
+}
+
+//lint:ignore U1000 kept for future tests / debugging
+func writeHeapProfile(filename string) {
+	f, err := os.Create(filename)
+	if err != nil {
+		panic(err)
+	}
+	defer f.Close()
+
+	runtime.GC() // normalize heap before snapshot
+	if err := pprof.WriteHeapProfile(f); err != nil {
+		panic(err)
+	}
+}
+
 // runReplayTest executes the replay test with configurable worker counts and returns metrics.
 // Returns: (overallThroughput, failedTransactionCount, totalTransactionCount)
 func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCount int, cfg replayConfig) (float64, int64, int64) {
@@ -134,6 +162,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	// Setup test harness with USDC contract and balance priming enabled
 	factory := balancePrimingEndorserFactory(balancePriming)
 	th, err := integration.NewLocalTestHarnessWithFactory(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", "fabric", map[string]any{"Gateway.WorkerCount": processingWorkerCount}, factory)
+	// th, err = integration.NewFabricXTestHarnessWithFactory(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", map[string]any{"Gateway.WorkerCount": processingWorkerCount}, factory)
 	assert.NoError(t, err)
 
 	// Wrap the gateway with NonceBypassGateway to skip nonce validation
@@ -240,8 +269,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 					}
 
 					// Wait for transaction to be committed
-					ctr := 0
-					for pending := true; pending && ctr < 100; ctr++ {
+					for pending := true; pending; {
 						_, pending, err = ec.TransactionByHash(t.Context(), tx.Hash())
 						if err != nil {
 							if !strings.Contains(err.Error(), "not found") {
@@ -269,6 +297,8 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 		defer loggingWg.Done()
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
+
+		itrctr := 0
 
 		for {
 			select {
@@ -301,6 +331,12 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 				// Update for next interval
 				lastLogTime.Store(now)
 				lastLogCount = currentTotal
+
+				_ = itrctr
+				// runtime.GC()
+				// logMem("blah")
+				// itrctr++
+				// writeHeapProfile(fmt.Sprintf("heap_%d.prof", itrctr))
 
 			case <-stopLogging:
 				return
@@ -372,7 +408,7 @@ func TestReplayJSONDataset(t *testing.T) {
 	}
 
 	// Run the test with single worker configuration
-	_, _, _ = runReplayTest(t, 1, 1, loadReplayConfigFromEnv(t))
+	_, _, _ = runReplayTest(t, 1, 8, loadReplayConfigFromEnv(t))
 }
 
 type performanceResult struct {
