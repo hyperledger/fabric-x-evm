@@ -146,7 +146,7 @@ func TestFablo(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			th, err := newFabricTestHarness(t, TestLogger{T: t}, evmConfig(tc.fork), tc.primeDbPath, tc.overrides)
+			th, err := NewFabricTestHarness(t, TestLogger{T: t}, evmConfig(tc.fork), tc.primeDbPath, tc.overrides)
 			if err != nil {
 				t.Fatal(err)
 			}

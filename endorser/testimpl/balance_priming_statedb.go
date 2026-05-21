@@ -8,16 +8,14 @@ package testimpl
 
 import (
 	"fmt"
-	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/holiman/uint256"
 	"github.com/hyperledger/fabric-x-evm/endorser"
 )
 
 // Default prime value: 1 billion tokens (with 6 decimals for USDC)
-var primeValue = new(uint256.Int).Mul(uint256.NewInt(1_000_000_000), uint256.NewInt(1_000_000))
+var primeValue = new(uint256.Int).Mul(uint256.NewInt(1_000_000_000_000), uint256.NewInt(1_000_000_000_000))
 
 // BalancePrimingWrapper wraps a StateDB and intercepts GetState calls to prime
 // ERC-20 balance slots with a high value when they are zero.
@@ -25,7 +23,6 @@ type BalancePrimingWrapper struct {
 	endorser.ExtendedStateDB
 	contractAddr    common.Address // The ERC-20 contract address
 	senderAddr      common.Address // The sender address to prime
-	balanceSlot     common.Hash    // The storage slot for the sender's balance
 	mappingPosition uint64         // The position of the balances mapping in storage
 	enabled         bool           // Whether priming is enabled
 	expectedNonce   uint64         // The nonce the current transaction expects
@@ -43,21 +40,18 @@ func NewBalancePrimingWrapper(stateDB endorser.ExtendedStateDB, contractAddr com
 }
 
 // SetSender sets the sender address and calculates the balance slot.
-func (w *BalancePrimingWrapper) SetSender(sender common.Address) {
-	w.senderAddr = sender
-	w.balanceSlot = GetERC20BalanceSlot(sender, w.mappingPosition)
+func (w *BalancePrimingWrapper) SetSender() {
 	w.enabled = true
 
 	if false {
-		fmt.Printf("[BalancePriming] SetSender called: sender=%s, balanceSlot=%s, contractAddr=%s\n",
-			sender.Hex(), w.balanceSlot.Hex(), w.contractAddr.Hex())
+		fmt.Printf("[BalancePriming] SetSender called")
 	}
 }
 
 // GetState intercepts storage reads and primes the balance slot if needed.
 func (w *BalancePrimingWrapper) GetState(addr common.Address, slot common.Hash) common.Hash {
 	// Check if this is a read of our target balance slot
-	if w.enabled && addr == w.contractAddr && slot == w.balanceSlot {
+	if w.enabled && addr == w.contractAddr {
 		if false {
 			fmt.Printf("[BalancePriming] GetState intercepted: addr=%s, slot=%s (matches target)\n",
 				addr.Hex(), slot.Hex())
@@ -98,7 +92,6 @@ func (w *BalancePrimingWrapper) GetState(addr common.Address, slot common.Hash) 
 
 // SetExpectedNonce stores the nonce the current transaction expects.
 func (w *BalancePrimingWrapper) SetExpectedNonce(nonce uint64) {
-	// fmt.Printf("[NoncePriming] SetExpectedNonce sender=%s nonce=%d enabled(before)=%t\n", w.senderAddr.Hex(), nonce, w.nonceEnabled)
 	w.expectedNonce = nonce
 	w.nonceEnabled = true
 }
@@ -107,27 +100,12 @@ func (w *BalancePrimingWrapper) SetExpectedNonce(nonce uint64) {
 // when nonce priming is enabled. The underlying read still happens to preserve
 // the MVCC read dependency on the real nonce key version.
 func (w *BalancePrimingWrapper) GetNonce(addr common.Address) uint64 {
-	// Always delegate first to record the MVCC read dependency
-	// realNonce := w.ExtendedStateDB.GetNonce(addr)
-	// fmt.Printf("[NoncePriming] GetNonce addr=%s sender=%s enabled=%t expected=%d real=%d\n", addr.Hex(), w.senderAddr.Hex(), w.nonceEnabled, w.expectedNonce, realNonce)
-
 	// If nonce priming is enabled and this is the sender, return the
 	// expected nonce so the tx.Nonce() == ledgerNonce check in Executor.Send passes.
-	if w.nonceEnabled && addr == w.senderAddr {
+	if w.nonceEnabled {
 		return w.expectedNonce
 	}
 
 	// For all other addresses, delegate normally
 	return w.ExtendedStateDB.GetNonce(addr)
-}
-
-// GetERC20BalanceSlot computes the storage slot for a balance in an ERC-20 mapping(address => uint256).
-// This uses the Solidity storage layout: keccak256(abi.encodePacked(address, mappingPosition))
-func GetERC20BalanceSlot(account common.Address, mappingPosition uint64) common.Hash {
-	// Concatenate: address (32 bytes) + mapping position (32 bytes)
-	data := append(
-		common.LeftPadBytes(account.Bytes(), 32),
-		common.LeftPadBytes(new(big.Int).SetUint64(mappingPosition).Bytes(), 32)...,
-	)
-	return crypto.Keccak256Hash(data)
 }

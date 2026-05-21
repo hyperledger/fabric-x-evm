@@ -66,7 +66,7 @@ func runStart(ctx context.Context, configPath string) error {
 		return err
 	}
 
-	application, err := app.New(cfg)
+	application, err := app.New(ctx, cfg)
 	if err != nil {
 		return err
 	}
@@ -127,7 +127,7 @@ func runTestNode(ctx context.Context, configPath, testAccountsPath string) error
 	fmt.Println("WARNING: NEVER use in production")
 	fmt.Println("========================================")
 
-	application, err := app.New(cfg)
+	application, err := app.New(ctx, cfg)
 	if err != nil {
 		return err
 	}

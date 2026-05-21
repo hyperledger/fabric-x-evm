@@ -115,7 +115,7 @@ func (th *TestHarness) PrimeStateFromJSON(ctx context.Context, jsonFilePath stri
 //
 // Sync goroutines are started in the background using ctx. The returned synchronizers
 // can be used by callers that need to wait for the initial sync to complete.
-func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmConfig endorser.EVMConfig, primeDBPath string, bypass bool, ends []core.Endorser, dbs []endorser.KVS, builders []endorsement.Builder) (*TestHarness, *network.Synchronizer, error) {
+func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmConfig endorser.EVMConfig, primeDBPath string, bypass bool, ends []core.Endorser, dbs []endorser.KVS, builders []endorsement.Builder, txQueue core.TxQueueInterface) (*TestHarness, *network.Synchronizer, error) {
 	// Build gateway signer.
 	var gwSigner sdk.Signer
 	if cfg.Gateway.Identity.MSPDir != "" {
@@ -156,9 +156,9 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 		// Create network submitter
 		switch cfg.Network.Protocol {
 		case "fabric":
-			submitter, err1 = nfab.NewSubmitter(orderers, gwSigner, 0, logger)
+			submitter, err1 = nfab.NewSubmitter(t.Context(), orderers, gwSigner, 0, logger)
 		case "fabric-x", "":
-			submitter, err1 = nfabx.NewSubmitter(orderers, gwSigner, 0, logger)
+			submitter, err1 = nfabx.NewSubmitter(t.Context(), orderers, gwSigner, 0, logger)
 		default:
 			return nil, nil, fmt.Errorf("unsupported protocol: %q", cfg.Network.Protocol)
 		}
@@ -168,7 +168,7 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 	}
 
 	// Create gateway before synchronizer so we can register it as a handler
-	gw, err := core.New(ec, submitter, chain, cfg.Network.ChainID, cfg.Gateway.WorkerCount)
+	gw, err := core.New(ec, submitter, chain, cfg.Network.ChainID, cfg.Gateway.WorkerCount, txQueue)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -286,8 +286,15 @@ func NewLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVM
 }
 
 // NewLocalTestHarnessWithFactory is like NewLocalTestHarness but allows custom endorser creation.
-// Exported for use by tests that need custom endorser factories.
+// NewLocalTestHarnessWithFactory creates a test harness with a custom endorser factory.
+// Uses the default TxQueue implementation.
 func NewLocalTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath, networkType string, configOverrides map[string]any, factory EndorserFactory) (*TestHarness, error) {
+	return NewLocalTestHarnessWithFactoryAndTxQueue(t, logger, evmConfig, primeDbPath, networkType, configOverrides, factory, nil)
+}
+
+// NewLocalTestHarnessWithFactoryAndTxQueue creates a test harness with a custom endorser factory and TxQueue.
+// If txQueue is nil, the default TxQueue will be used.
+func NewLocalTestHarnessWithFactoryAndTxQueue(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath, networkType string, configOverrides map[string]any, factory EndorserFactory, txQueue core.TxQueueInterface) (*TestHarness, error) {
 	bypass := networkType == "bypass"
 
 	orderer := &common.Endpoint{Host: "127.0.0.1", Port: 1337}
@@ -354,7 +361,7 @@ func NewLocalTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig e
 		peer.Port = nw.PeerPort
 	}
 
-	th, _, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, bypass, ends, dbs, builders)
+	th, _, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, bypass, ends, dbs, builders, txQueue)
 	if err != nil {
 		return nil, err
 	}
@@ -362,9 +369,21 @@ func NewLocalTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig e
 	return th, nil
 }
 
-// newFabricTestHarness returns a client for integration testing with access to a peer, orderer and local committer.
+// NewFabricTestHarness returns a client for integration testing with access to a peer, orderer and local committer.
 // It follows the directory structure of a Fablo test network.
-func newFabricTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any) (*TestHarness, error) {
+func NewFabricTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any) (*TestHarness, error) {
+	return NewFabricTestHarnessWithFactory(t, logger, evmConfig, primeDbPath, configOverrides, defaultEndorserFactory)
+}
+
+func NewFabricTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory) (*TestHarness, error) {
+	return NewFabricTestHarnessWithFactoryAndTxQueue(t, logger, evmConfig, primeDbPath, configOverrides, factory, nil)
+}
+
+func NewFabricTestHarnessWithFactoryAndTxQueue(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory, txQueue core.TxQueueInterface) (*TestHarness, error) {
+	// cwd, _ := os.Getwd()
+	// defer os.Chdir(cwd)
+	// _ = os.Chdir("../")
+
 	cfg, err := config.Load("fablo.yaml")
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
@@ -385,9 +404,9 @@ func newFabricTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EV
 	}
 
 	// Build all endorsers
-	dbs, builders, ends := buildEndorsers(t, cfg, evmConfig, defaultEndorserFactory)
+	dbs, builders, ends := buildEndorsers(t, cfg, evmConfig, factory)
 
-	th, sync, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false, ends, dbs, builders)
+	th, sync, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false, ends, dbs, builders, txQueue)
 	if err != nil {
 		return nil, err
 	}
@@ -397,10 +416,22 @@ func newFabricTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EV
 	return th, nil
 }
 
+func NewFabricXTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any) (*TestHarness, error) {
+	return NewFabricXTestHarnessWithFactory(t, logger, evmConfig, primeDbPath, configOverrides, defaultEndorserFactory)
+}
+
 // NewFabricXTestHarness returns a client for integration testing with access to a peer, orderer and local committer.
 // It follows the directory structure of a fabric samples test network.
 // Exported for use by eth-tests package.
-func NewFabricXTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any) (*TestHarness, error) {
+func NewFabricXTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory) (*TestHarness, error) {
+	return NewFabricXTestHarnessWithFactoryAndTxQueue(t, logger, evmConfig, primeDbPath, configOverrides, factory, nil)
+}
+
+func NewFabricXTestHarnessWithFactoryAndTxQueue(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory, txQueue core.TxQueueInterface) (*TestHarness, error) {
+	// cwd, _ := os.Getwd()
+	// defer os.Chdir(cwd)
+	// _ = os.Chdir("../")
+
 	cfg, err := config.Load("fabx.yaml")
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
@@ -416,9 +447,9 @@ func NewFabricXTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.E
 	}
 
 	// Build all endorsers
-	dbs, builders, ends := buildEndorsers(t, cfg, evmConfig, defaultEndorserFactory)
+	dbs, builders, ends := buildEndorsers(t, cfg, evmConfig, factory)
 
-	th, _, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false, ends, dbs, builders)
+	th, _, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false, ends, dbs, builders, txQueue)
 	if err != nil {
 		return nil, err
 	}

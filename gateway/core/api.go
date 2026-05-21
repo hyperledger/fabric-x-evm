@@ -36,6 +36,29 @@ type Submitter interface {
 	Close() error
 }
 
+// TxQueueInterface defines the interface that transaction queue implementations must satisfy.
+// This allows switching between different queue implementations (e.g., TxQueue and TxQueueV2).
+type TxQueueInterface interface {
+	// Enqueue adds a transaction to the queue
+	Enqueue(tx *types.Transaction)
+
+	// Dequeue removes and returns a transaction from the queue
+	// Returns (transaction, true) if successful, or (nil, false) if queue is closed
+	Dequeue() (*types.Transaction, bool)
+
+	// IsPending checks if a transaction is currently in the queue or being processed
+	IsPending(txHash common.Hash) *types.Transaction
+
+	// Close signals shutdown of the queue
+	Close()
+
+	// Handle processes block notifications from the synchronizer
+	Handle(ctx context.Context, block *domain.Block) error
+
+	// Stats returns statistics about processed transactions (total, invalid)
+	Stats() (total int, invalid int)
+}
+
 var logger = flogging.MustGetLogger("gateway.core")
 
 // Gateway is the component that bridges Fabric-x and the EVM. Its API is the
@@ -49,7 +72,7 @@ type Gateway struct {
 	chainID     *big.Int
 	ChainConfig *params.ChainConfig
 	Signer      types.Signer
-	TxQueue     *TxQueue
+	TxQueue     TxQueueInterface
 	workerCount int
 	wg          sync.WaitGroup
 	stopOnce    sync.Once
@@ -71,9 +94,15 @@ type Store interface {
 }
 
 // New creates a new Ethereum Gateway.
-func New(ec *EndorsementClient, submitter Submitter, store Store, chainID int64, workerCount int) (*Gateway, error) {
+// If txQueue is nil, NewTxQueue() will be used as the default.
+func New(ec *EndorsementClient, submitter Submitter, store Store, chainID int64, workerCount int, txQueue TxQueueInterface) (*Gateway, error) {
 	if workerCount <= 0 {
 		workerCount = 1
+	}
+
+	// Use default TxQueue if none provided
+	if txQueue == nil {
+		txQueue = NewTxQueue()
 	}
 
 	cid := big.NewInt(chainID)
@@ -84,7 +113,7 @@ func New(ec *EndorsementClient, submitter Submitter, store Store, chainID int64,
 		chainID:     cid,
 		ChainConfig: cmn.BuildChainConfig(chainID),
 		Signer:      types.LatestSignerForChainID(cid),
-		TxQueue:     NewTxQueue(),
+		TxQueue:     txQueue,
 		workerCount: workerCount,
 	}, nil
 }
@@ -345,6 +374,12 @@ func (g *Gateway) Stop() error {
 		// Close submitter connection
 		err = g.submitter.Close()
 	})
+
+	total, invalid := g.TxQueue.Stats()
+	if total > 0 {
+		fmt.Println("gw stats:", total, invalid, float64(invalid)/float64(total))
+	}
+
 	return err
 }
 

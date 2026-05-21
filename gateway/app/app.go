@@ -50,17 +50,17 @@ func (a *App) Gateway() *core.Gateway { return a.gateway }
 
 // New creates a new gateway application from the provided configuration.
 // It loads the gateway signer from the MSP directory configured in cfg.
-func New(cfg config.Config) (*App, error) {
+func New(ctx context.Context, cfg config.Config) (*App, error) {
 	gwSigner, err := identity.SignerFromMSP(cfg.Gateway.Identity.MSPDir, cfg.Gateway.Identity.MspID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gateway signer: %w", err)
 	}
-	return NewWithSigner(cfg, gwSigner)
+	return NewWithSigner(ctx, cfg, gwSigner)
 }
 
 // NewWithSigner builds the gateway application with the provided signer.
 // Useful for callers that manage identity externally, such as integration tests.
-func NewWithSigner(cfg config.Config, gwSigner sdk.Signer) (*App, error) {
+func NewWithSigner(ctx context.Context, cfg config.Config, gwSigner sdk.Signer) (*App, error) {
 	logger := sdk.NewStdLogger("gateway")
 
 	// Create endorsers and their synchronizers.
@@ -85,12 +85,12 @@ func NewWithSigner(cfg config.Config, gwSigner sdk.Signer) (*App, error) {
 		}
 	}
 
-	return buildApp(cfg, gwSigner, logger, endorsers, endorserSyncs, firstKVS)
+	return buildApp(ctx, cfg, gwSigner, logger, endorsers, endorserSyncs, firstKVS)
 }
 
 // buildApp wires up the gateway from pre-built endorsers. Used by NewWithSigner
 // and directly by integration tests that manage their own endorsers.
-func buildApp(cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorsers []core.Endorser, endorserSyncs []*network.Synchronizer, lightKVS interface{}) (*App, error) {
+func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorsers []core.Endorser, endorserSyncs []*network.Synchronizer, lightKVS interface{}) (*App, error) {
 	ec, err := core.NewEndorsementClient(endorsers, gwSigner, cfg.Network.Channel, cfg.Network.Namespace, cfg.Network.NsVersion)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create endorsement client: %w", err)
@@ -104,9 +104,9 @@ func buildApp(cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorse
 	var submitter core.Submitter
 	switch cfg.Network.Protocol {
 	case "fabric":
-		submitter, err = nfab.NewSubmitter(orderers, gwSigner, 0, logger)
+		submitter, err = nfab.NewSubmitter(ctx, orderers, gwSigner, 0, logger)
 	case "fabric-x", "":
-		submitter, err = nfabx.NewSubmitter(orderers, gwSigner, 0, logger)
+		submitter, err = nfabx.NewSubmitter(ctx, orderers, gwSigner, 0, logger)
 	default:
 		return nil, fmt.Errorf("unsupported protocol: %q", cfg.Network.Protocol)
 	}
@@ -119,7 +119,7 @@ func buildApp(cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorse
 		return nil, fmt.Errorf("failed to create chain: %w", err)
 	}
 
-	gateway, err := core.New(ec, submitter, chain, cfg.Network.ChainID, cfg.Gateway.WorkerCount)
+	gateway, err := core.New(ec, submitter, chain, cfg.Network.ChainID, cfg.Gateway.WorkerCount, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gateway: %w", err)
 	}

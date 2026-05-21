@@ -31,6 +31,10 @@ type TxQueue struct {
 	pendingQueue  []*types.Transaction               // FIFO queue of transactions waiting to be processed
 	inProgressMap map[common.Hash]*types.Transaction // Transactions currently being processed by workers
 	done          bool                               // Shutdown flag
+
+	// Statistics
+	total   int
+	invalid int
 }
 
 // NewTxQueue creates a new transaction queue
@@ -127,11 +131,23 @@ func (q *TxQueue) Complete(hash common.Hash) {
 // It extracts all transaction hashes from the committed block and removes them from the in-progress map.
 // This method is safe to call concurrently and will not block block processing.
 func (q *TxQueue) Handle(ctx context.Context, block *domain.Block) error {
-	// Mark all transactions in the block as complete
+	// Mark all transactions in the block as complete and update statistics
 	for _, tx := range block.Transactions {
 		txHash := common.BytesToHash(tx.TxHash)
+		q.total++
+		if tx.Status == 0 {
+			q.invalid++
+		}
 		q.Complete(txHash)
 	}
 
 	return nil
+}
+
+// Stats returns statistics about processed transactions.
+// Returns (total transactions processed, invalid transactions).
+func (q *TxQueue) Stats() (int, int) {
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+	return q.total, q.invalid
 }
