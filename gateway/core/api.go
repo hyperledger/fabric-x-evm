@@ -267,7 +267,7 @@ func (g *Gateway) NonceAt(ctx context.Context, account common.Address, blockNumb
 // The pending status is signaled by BlockNumber=0, which the API layer converts to null.
 func (g *Gateway) TransactionByHash(ctx context.Context, hash common.Hash) (*domain.Transaction, error) {
 	// Check if transaction is pending in the queue (either waiting or being processed)
-	if pendingTx := g.txQueue.IsPending(hash); pendingTx != nil {
+	if pendingTx := g.TxQueue.IsPending(hash); pendingTx != nil {
 		// Transaction is pending - return it with zero block fields
 		// The API layer will convert these to nil in the JSON response
 		rawTx, err := pendingTx.MarshalBinary()
@@ -275,7 +275,7 @@ func (g *Gateway) TransactionByHash(ctx context.Context, hash common.Hash) (*dom
 			return nil, err
 		}
 
-		from, err := types.Sender(g.signer, pendingTx)
+		from, err := types.Sender(g.Signer, pendingTx)
 		if err != nil {
 			return nil, err
 		}
@@ -355,6 +355,6 @@ func (g *Gateway) Stop() error {
 func (g *Gateway) Handle(ctx context.Context, b blocks.Block) error {
 	// Convert blocks.Block to domain.Block using the shared conversion function
 	domainBlock := ConvertToDomain(b)
-	err := g.txQueue.Handle(ctx, &domainBlock)
+	err := g.TxQueue.Handle(ctx, &domainBlock)
 	return err
 }
