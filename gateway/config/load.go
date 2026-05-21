@@ -22,6 +22,7 @@ func Load(path string) (Config, error) {
 	defer f.Close()
 
 	parser := viperutil.New()
+	parser.SetConfigName("gateway")
 	if err := parser.ReadConfig(f); err != nil {
 		return Config{}, fmt.Errorf("read config %q: %w", path, err)
 	}

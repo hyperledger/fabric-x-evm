@@ -31,5 +31,5 @@ notifications:
     clientKey: testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.key
     rootCerts:
       - testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/ca.crt
-  connectionTimeout: 5s
-  waitingTimeout: 5s
+  connectionTimeout: 10s
+  waitingTimeout: 15s

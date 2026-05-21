@@ -9,6 +9,9 @@ network:
   ns-version: "1.0"
   chain-id: 4011
 
+logging:
+  spec: info
+
 gateway:
   listen: "0.0.0.0:8545"
 
@@ -18,7 +21,7 @@ gateway:
 
   database:
     connection-string: "file:gateway.db?mode=memory&cache=shared"
-    trie-path: ""
+    # trie-path: "" # trie db is temporarily disabled
 
   orderers:
     - endpoint:
@@ -55,7 +58,8 @@ endorsers:
         ca-cert-paths:
           - ../testdata/fablo/fablo-target/fabric-config/crypto-config/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt
     database:
-      connection-string: "file:endorser-org1.db"
+      database: memory
+      # connection-string: "file:endorser-org1.db"
 
   - name: org2
     identity:
@@ -71,4 +75,5 @@ endorsers:
         ca-cert-paths:
           - ../testdata/fablo/fablo-target/fabric-config/crypto-config/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/tls/ca.crt
     database:
-      connection-string: "file:endorser-org2.db"
+      database: memory
+      # connection-string: "file:endorser-org2.db"

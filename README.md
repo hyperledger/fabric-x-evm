@@ -127,6 +127,36 @@ make stop
 
 Reset your Metamask wallet in Settings → Developer tools → Delete activity and nonce data.
 
+# Configuration
+
+The gateway is configured via a YAML file passed to the `start` command with `-c`:
+
+```shell
+fxevm -c path/to/config.yaml start
+```
+
+See [`integration/fabx.yaml`](integration/fabx.yaml) for a complete annotated example. The
+top-level sections are:
+
+| Section | Description |
+|---|---|
+| `logging` | Log format and level spec |
+| `network` | Channel, namespace, chain ID, and protocol (`fabric` or `fabric-x`) |
+| `gateway` | Listen address, identity, database, orderers, committer |
+| `endorsers` | One entry per embedded endorser peer |
+
+## Environment variable overrides
+
+Any config field can be overridden at runtime without editing the file. The
+variable name is `GATEWAY_<SECTION>_<FIELD>`, uppercased with dots and hyphens
+replaced by underscores. For example:
+
+```shell
+GATEWAY_LOGGING_SPEC=debug fxevm -c config.yaml start
+GATEWAY_NETWORK_CHANNEL=mychannel fxevm -c config.yaml start
+GATEWAY_GATEWAY_LISTEN=0.0.0.0:9545 fxevm -c config.yaml start
+```
+
 # Testing
 
 ## Unit tests

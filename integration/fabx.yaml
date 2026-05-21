@@ -8,6 +8,9 @@ network:
   ns-version: "1.0"
   chain-id: 4011
 
+logging:
+  spec: info
+
 gateway:
   listen: "0.0.0.0:8545"
 
@@ -17,7 +20,7 @@ gateway:
 
   database:
     connection-string: "file:gateway.db?mode=memory&cache=shared"
-    trie-path: ""
+    # trie-path: "" # trie db is temporarily disabled
 
   orderers:
     - endpoint:
@@ -57,4 +60,5 @@ endorsers:
         ca-cert-paths:
           - ../testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/ca.crt
     database:
-      connection-string: "file:endorser-org1.db?mode=memory&cache=shared"
+      database: memory
+      # connection-string: "file:endorser-org1.db?mode=memory&cache=shared"
