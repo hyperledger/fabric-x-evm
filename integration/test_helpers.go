@@ -345,11 +345,11 @@ func NewLocalTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig e
 	dbs, builders, ends := buildEndorsers(t, cfg, evmConfig, factory)
 
 	if !bypass {
-		nw, err := fabrictest.Start("basic", networkType, fabrictest.Config{}, dbs[0])
+		nw, err := fabrictest.Start(t.Context(), "basic", networkType, fabrictest.Config{}, dbs[0])
 		if err != nil {
 			t.Fatalf("fabrictest.Start: %v", err)
 		}
-		t.Cleanup(nw.Stop)
+		// Don't register cleanup for nw.Stop - fabrictest.Start already registers its own cleanup internally
 		orderer.Port = nw.OrdererPort
 		peer.Port = nw.PeerPort
 	}
