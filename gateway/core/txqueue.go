@@ -222,55 +222,12 @@ func (q *TxQueue) Complete(hash common.Hash) {
 	}
 }
 
-func participantsForTx(tx *types.Transaction) []common.Address {
-	participants := make([]common.Address, 0, 2)
-
-	if sender, ok := senderForTx(tx); ok {
-		participants = append(participants, sender)
-	}
-
-	if recipient, ok := recipientForTx(tx); ok && !containsAddress(participants, recipient) {
-		participants = append(participants, recipient)
-	}
-
-	return participants
-}
-
-func senderForTx(tx *types.Transaction) (common.Address, bool) {
-	if !tx.Protected() && tx.Type() == types.LegacyTxType {
-		return common.Address{}, false
-	}
-
-	signer := types.LatestSignerForChainID(tx.ChainId())
-	sender, err := types.Sender(signer, tx)
-	if err != nil {
-		return common.Address{}, false
-	}
-
-	return sender, true
-}
-
-func recipientForTx(tx *types.Transaction) (common.Address, bool) {
-	if tx.To() == nil {
-		return common.Address{}, false
-	}
-
-	data := tx.Data()
-	if len(data) < 4+32+32 {
-		return common.Address{}, false
-	}
-
-	recipientOffset := 4 + 12
-	return common.BytesToAddress(data[recipientOffset : recipientOffset+20]), true
-}
-
-func containsAddress(addresses []common.Address, target common.Address) bool {
-	for _, address := range addresses {
-		if address == target {
-			return true
-		}
-	}
-	return false
+// Stats returns statistics about processed transactions.
+// Returns (total transactions processed, invalid transactions).
+func (q *TxQueue) Stats() (int, int) {
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+	return q.total, q.invalid
 }
 
 // Handle processes block notifications from the synchronizer and marks transactions as complete.
