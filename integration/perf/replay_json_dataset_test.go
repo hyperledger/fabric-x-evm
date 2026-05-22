@@ -406,6 +406,7 @@ func TestReplayJSONDataset(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping in short mode")
 	}
+	// flogging.ActivateSpec("gateway.core.txqueue_v2=debug")
 
 	// Run the test with single worker configuration
 	_, _, _ = runReplayTest(t, 1, 8, loadReplayConfigFromEnv(t))

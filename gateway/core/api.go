@@ -36,6 +36,32 @@ type Submitter interface {
 	Close() error
 }
 
+// TxQueueInterface defines the interface that transaction queue implementations must satisfy.
+// This allows switching between different queue implementations (e.g., TxQueue and TxQueueV2).
+type TxQueueInterface interface {
+	// Enqueue adds a transaction to the queue
+	Enqueue(tx *types.Transaction)
+
+	// Dequeue removes and returns a transaction from the queue
+	// Returns (transaction, true) if successful, or (nil, false) if queue is closed
+	Dequeue() (*types.Transaction, bool)
+
+	// IsPending checks if a transaction is currently in the queue or being processed
+	IsPending(txHash common.Hash) *types.Transaction
+
+	// Complete marks a transaction as completed
+	Complete(hash common.Hash)
+
+	// Close signals shutdown of the queue
+	Close()
+
+	// Handle processes block notifications from the synchronizer
+	Handle(ctx context.Context, block *domain.Block) error
+
+	// Stats returns statistics about processed transactions (total, invalid)
+	Stats() (total int, invalid int)
+}
+
 var logger = flogging.MustGetLogger("gateway.core")
 
 // Gateway is the component that bridges Fabric-x and the EVM. Its API is the
@@ -49,7 +75,7 @@ type Gateway struct {
 	chainID     *big.Int
 	ChainConfig *params.ChainConfig
 	Signer      types.Signer
-	TxQueue     *TxQueue
+	TxQueue     TxQueueInterface
 	workerCount int
 	wg          sync.WaitGroup
 	stopOnce    sync.Once
@@ -84,7 +110,7 @@ func New(ec *EndorsementClient, submitter Submitter, store Store, chainID int64,
 		chainID:     cid,
 		ChainConfig: cmn.BuildChainConfig(chainID),
 		Signer:      types.LatestSignerForChainID(cid),
-		TxQueue:     NewTxQueue(),
+		TxQueue:     NewTxQueueV2(),
 		workerCount: workerCount,
 	}, nil
 }
@@ -346,7 +372,10 @@ func (g *Gateway) Stop() error {
 		err = g.submitter.Close()
 	})
 
-	fmt.Println("gw stats:", g.TxQueue.total, g.TxQueue.invalid, float64(g.TxQueue.invalid)/float64(g.TxQueue.total))
+	total, invalid := g.TxQueue.Stats()
+	if total > 0 {
+		fmt.Println("gw stats:", total, invalid, float64(invalid)/float64(total))
+	}
 
 	return err
 }
