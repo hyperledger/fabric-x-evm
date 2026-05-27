@@ -1009,6 +1009,7 @@ func testPendingTransactionStatus(t *testing.T, th *TestHarness) {
 	// Channel to signal when we've sent the transaction
 	txSent := make(chan bool, 1)
 	caughtPending := make(chan bool, 1)
+	pendingReceiptCheckErr := make(chan error, 1)
 
 	// Start a goroutine that will poll for the transaction immediately after we send it
 	go func() {
@@ -1032,11 +1033,16 @@ func testPendingTransactionStatus(t *testing.T, th *TestHarness) {
 				// JSON-RPC returns null; go-ethereum maps this to ethereum.NotFound.
 				receipt, receiptErr := ec.TransactionReceipt(t.Context(), deployTx.Hash())
 				if receiptErr == nil {
-					t.Fatalf("expected pending tx receipt to be unavailable, got %+v", receipt)
+					pendingReceiptCheckErr <- fmt.Errorf("expected pending tx receipt to be unavailable, got %+v", receipt)
+					caughtPending <- false
+					return
 				}
 				if receiptErr != ethereum.NotFound {
-					t.Fatalf("expected ethereum.NotFound for pending receipt lookup, got %v", receiptErr)
+					pendingReceiptCheckErr <- fmt.Errorf("expected ethereum.NotFound for pending receipt lookup, got %v", receiptErr)
+					caughtPending <- false
+					return
 				}
+				pendingReceiptCheckErr <- nil
 
 				caughtPending <- true
 				return
@@ -1064,6 +1070,9 @@ func testPendingTransactionStatus(t *testing.T, th *TestHarness) {
 	caught := <-caughtPending
 	if !caught {
 		t.Fatal("Failed to catch transaction in pending state - this test requires catching isPending=true")
+	}
+	if err := <-pendingReceiptCheckErr; err != nil {
+		t.Fatal(err)
 	}
 
 	// Wait for the transaction to commit
