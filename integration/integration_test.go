@@ -1027,6 +1027,17 @@ func testPendingTransactionStatus(t *testing.T, th *TestHarness) {
 			// Check if we caught it in pending state
 			if tx != nil && isPending {
 				t.Logf("✓ Successfully caught transaction %s in pending state (isPending=true)", deployTx.Hash().Hex())
+
+				// While pending, receipt must not be available yet.
+				// JSON-RPC returns null; go-ethereum maps this to ethereum.NotFound.
+				receipt, receiptErr := ec.TransactionReceipt(t.Context(), deployTx.Hash())
+				if receiptErr == nil {
+					t.Fatalf("expected pending tx receipt to be unavailable, got %+v", receipt)
+				}
+				if receiptErr != ethereum.NotFound {
+					t.Fatalf("expected ethereum.NotFound for pending receipt lookup, got %v", receiptErr)
+				}
+
 				caughtPending <- true
 				return
 			}
@@ -1068,6 +1079,18 @@ func testPendingTransactionStatus(t *testing.T, th *TestHarness) {
 	}
 	if isPending {
 		t.Error("Transaction still marked as pending after commit (isPending should be false)")
+	}
+
+	// After commit, receipt should be available and successful.
+	receipt, err := ec.TransactionReceipt(t.Context(), deployTx.Hash())
+	if err != nil {
+		t.Fatalf("TransactionReceipt after commit: %v", err)
+	}
+	if receipt == nil {
+		t.Fatal("TransactionReceipt returned nil after commit")
+	}
+	if receipt.Status != types.ReceiptStatusSuccessful {
+		t.Errorf("receipt.Status = %d, want %d", receipt.Status, types.ReceiptStatusSuccessful)
 	}
 
 	t.Logf("Transaction successfully committed (isPending=false)")
