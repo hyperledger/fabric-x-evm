@@ -1037,7 +1037,7 @@ func testPendingTransactionStatus(t *testing.T, th *TestHarness) {
 					caughtPending <- false
 					return
 				}
-				if receiptErr != ethereum.NotFound {
+				if !errors.Is(receiptErr, ethereum.NotFound) {
 					pendingReceiptCheckErr <- fmt.Errorf("expected ethereum.NotFound for pending receipt lookup, got %v", receiptErr)
 					caughtPending <- false
 					return
