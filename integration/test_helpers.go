@@ -159,7 +159,7 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 		case "fabric":
 			submitter, err1 = nfab.NewSubmitter(orderers, gwSigner, 0, logger)
 		case "fabric-x", "":
-			submitter, err1 = nfabx.NewSubmitter(orderers, gwSigner, 0, logger)
+			submitter, err1 = NewArMASubmitter(orderers, gwSigner, logger)
 		default:
 			return nil, nil, fmt.Errorf("unsupported protocol: %q", cfg.Network.Protocol)
 		}
