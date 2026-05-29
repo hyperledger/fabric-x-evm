@@ -13,8 +13,8 @@ import (
 
 	ethstate "github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/hyperledger/fabric-x-evm/endorser"
-	"github.com/hyperledger/fabric-x-evm/utils"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
 
@@ -26,23 +26,24 @@ type ExecutorWrapper struct {
 }
 
 // NewExecutorWrapper creates a new executor wrapper with DualStateDB support.
+// If blockContext is non-nil it overrides the executor's BlockCtx after creation,
+// injecting test-specific fork/coinbase/difficulty values.
 func NewExecutorWrapper(
 	namespace string,
 	kvs endorser.KVSSnapshotter,
-	blockInfo *utils.BlockInfo,
-	stateBlockNum uint64,
 	evmConfig endorser.EVMConfig,
 	monotonicVersions bool,
 	ethStateDB *ethstate.StateDB,
+	blockContext *vm.BlockContext,
 ) (*ExecutorWrapper, error) {
 	// Begin a new reader to get snapshot isolation
-	reader, err := kvs.NewSnapshot(stateBlockNum)
+	reader, err := kvs.NewSnapshot(0)
 	if err != nil {
 		return nil, err
 	}
 
 	// Create StateDB with the reader
-	stateDB, err := endorser.NewStateDB(context.TODO(), reader, namespace, stateBlockNum, monotonicVersions)
+	stateDB, err := endorser.NewStateDB(context.TODO(), reader, namespace, 0, monotonicVersions)
 	if err != nil {
 		reader.Close()
 		return nil, err
@@ -52,10 +53,15 @@ func NewExecutorWrapper(
 	dualStateDB := endorser.NewDualStateDB(ethStateDB, stateDB)
 
 	// Create the executor using the public API with the DualStateDB
-	executor, err := endorser.NewExecutor(dualStateDB, reader, blockInfo, evmConfig)
+	executor, err := endorser.NewExecutor(dualStateDB, reader, nil, evmConfig)
 	if err != nil {
 		reader.Close()
 		return nil, err
+	}
+
+	// Inject test block context (fork rules, coinbase, difficulty, etc.)
+	if blockContext != nil {
+		executor.BlockCtx = *blockContext
 	}
 
 	return &ExecutorWrapper{
@@ -65,9 +71,14 @@ func NewExecutorWrapper(
 	}, nil
 }
 
-// Execute runs a state-changing transaction.
+// Execute runs a state-changing transaction using real gas pricing (no free-gas defaults).
 func (w *ExecutorWrapper) Execute(tx *types.Transaction) (endorsement.ExecutionResult, error) {
-	ret, err := w.Executor.Send(tx)
+	msg, err := w.Executor.PrepareMessage(tx)
+	if err != nil {
+		return endorsement.ExecutionResult{}, err
+	}
+
+	ret, err := w.Executor.ApplyMessage(msg)
 	if err != nil {
 		return endorsement.ExecutionResult{}, err
 	}

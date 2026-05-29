@@ -30,7 +30,6 @@ import (
 	gwcore "github.com/hyperledger/fabric-x-evm/gateway/core"
 	gwtestimpl "github.com/hyperledger/fabric-x-evm/gateway/testimpl"
 	"github.com/hyperledger/fabric-x-evm/integration"
-	"github.com/hyperledger/fabric-x-evm/utils"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/grpclog"
@@ -182,7 +181,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	assert.NoError(t, err)
 	defer gzReader.Close()
 
-	var allTransfers []utils.TokenTransfer
+	var allTransfers []TokenTransfer
 	decoder := json.NewDecoder(gzReader)
 	err = decoder.Decode(&allTransfers)
 	assert.NoError(t, err)
@@ -214,7 +213,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	// Create a channel for work items
 	type workItem struct {
 		index    int64
-		transfer utils.TokenTransfer
+		transfer TokenTransfer
 	}
 	workChan := make(chan workItem, 500) // Buffer to avoid blocking
 

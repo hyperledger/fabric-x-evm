@@ -35,7 +35,6 @@ import (
 	gwapi "github.com/hyperledger/fabric-x-evm/gateway/api"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
-	"github.com/hyperledger/fabric-x-evm/utils"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	bfab "github.com/hyperledger/fabric-x-sdk/blocks/fabric"
@@ -531,10 +530,10 @@ func (th *TestHarness) Stop() error {
 	return errors.Join(errs...)
 }
 
-func processCommon(t *testing.T, gw *core.Gateway, commit bool, tx *types.Transaction, blockInfo *utils.BlockInfo) sdk.Endorsement {
+func processCommon(t *testing.T, gw *core.Gateway, commit bool, tx *types.Transaction) sdk.Endorsement {
 	t.Helper()
 
-	env, err := gw.ExecuteEthTx(t.Context(), tx, blockInfo)
+	env, err := gw.ExecuteEthTx(t.Context(), tx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -555,14 +554,14 @@ func processCommon(t *testing.T, gw *core.Gateway, commit bool, tx *types.Transa
 	return env
 }
 
-func getEndorsedTxForSmartContractCall(t *testing.T, client *EthClient, addr ethcommon.Address, gw *core.Gateway, method string, blockInfo *utils.BlockInfo, args ...any) sdk.Endorsement {
+func getEndorsedTxForSmartContractCall(t *testing.T, client *EthClient, addr ethcommon.Address, gw *core.Gateway, method string, args ...any) sdk.Endorsement {
 	t.Helper()
-	tx, err := client.TxForCall(t.Context(), gw, &addr, method, blockInfo, args...)
+	tx, err := client.TxForCall(t.Context(), gw, &addr, method, args...)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	return processCommon(t, gw, false, tx, blockInfo)
+	return processCommon(t, gw, false, tx)
 }
 
 func NewNativeEthClient(gw *core.Gateway) (*ethclient.Client, error) {
@@ -584,7 +583,7 @@ func deploySmartContract(t *testing.T, gw *core.Gateway, client *EthClient, args
 		t.Fatal(err)
 	}
 
-	tx, addr, err := client.txForDeploy(t.Context(), gw, nil, args...)
+	tx, addr, err := client.txForDeploy(t.Context(), gw, args...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -599,7 +598,7 @@ func deploySmartContract(t *testing.T, gw *core.Gateway, client *EthClient, args
 	return addr
 }
 
-func callSmartContract(t *testing.T, client *EthClient, addr ethcommon.Address, gw *core.Gateway, method string, blockInfo *utils.BlockInfo, args ...any) {
+func callSmartContract(t *testing.T, client *EthClient, addr ethcommon.Address, gw *core.Gateway, method string, args ...any) {
 	t.Helper()
 
 	ec, err := NewNativeEthClient(gw)
@@ -607,7 +606,7 @@ func callSmartContract(t *testing.T, client *EthClient, addr ethcommon.Address, 
 		t.Fatal(err)
 	}
 
-	tx, err := client.TxForCall(t.Context(), gw, &addr, method, blockInfo, args...)
+	tx, err := client.TxForCall(t.Context(), gw, &addr, method, args...)
 	if err != nil {
 		t.Fatal(err)
 	}

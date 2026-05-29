@@ -205,12 +205,12 @@ func testGreeter(t *testing.T, th *TestHarness) {
 
 	// test body
 	firstGreeting := "Hello"
-	callSmartContract(t, ethA, addr, node2, "setGreeting", nil, firstGreeting)
+	callSmartContract(t, ethA, addr, node2, "setGreeting", firstGreeting)
 
 	querySmartContractExpect(t, ethA, addr, th, firstGreeting, "greet")
 
 	secondGreeting := "Hi 👋 this is a greeting with a special character and more bytes than can fit in a single slot"
-	env := getEndorsedTxForSmartContractCall(t, ethA, addr, node2, "setGreeting", nil, secondGreeting)
+	env := getEndorsedTxForSmartContractCall(t, ethA, addr, node2, "setGreeting", secondGreeting)
 
 	// not committed yet, expect to still be Hello
 	querySmartContractExpect(t, ethA, addr, th, firstGreeting, "greet")
@@ -236,17 +236,17 @@ func testCounter(t *testing.T, th *TestHarness) {
 	x := big.NewInt(0)
 	x.Add(x, big.NewInt(1))
 
-	callSmartContract(t, ethOwner, addr, node2, "increment", nil)
+	callSmartContract(t, ethOwner, addr, node2, "increment")
 
 	querySmartContractExpect(t, ethOwner, addr, th, x, "getCount")
 
 	x.Sub(x, big.NewInt(1))
 
-	callSmartContract(t, ethOwner, addr, node1, "decrement", nil)
+	callSmartContract(t, ethOwner, addr, node1, "decrement")
 
 	querySmartContractExpect(t, ethOwner, addr, th, x, "getCount")
 
-	env := getEndorsedTxForSmartContractCall(t, ethOwner, addr, node2, "increment", nil)
+	env := getEndorsedTxForSmartContractCall(t, ethOwner, addr, node2, "increment")
 	querySmartContractExpect(t, ethOwner, addr, th, x, "getCount")
 
 	x.Add(x, big.NewInt(1))
@@ -276,7 +276,7 @@ func testNonceValidation(t *testing.T, th *TestHarness) {
 	}
 
 	// get the transaction with nonce equal to 3
-	tx, err := ethClient.TxForCall(t.Context(), node, &addr, "increment", nil)
+	tx, err := ethClient.TxForCall(t.Context(), node, &addr, "increment")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +291,7 @@ func testNonceValidation(t *testing.T, th *TestHarness) {
 	}
 
 	// call should fail now - transaction has nonce 3 but ledger has nonce 5
-	_, err = node.ExecuteEthTx(t.Context(), tx, nil)
+	_, err = node.ExecuteEthTx(t.Context(), tx)
 	if err == nil {
 		t.Fatal("expected transaction with wrong nonce to fail, but it succeeded")
 	}
@@ -302,7 +302,7 @@ func testNonceValidation(t *testing.T, th *TestHarness) {
 	t.Logf("Transaction with wrong nonce correctly failed: %v", err)
 
 	// Now call with correct nonce (5) - should succeed
-	callSmartContract(t, ethClient, addr, node, "increment", nil)
+	callSmartContract(t, ethClient, addr, node, "increment")
 	querySmartContractExpect(t, ethClient, addr, th, big.NewInt(1), "getCount")
 }
 
@@ -338,7 +338,7 @@ func testTetherToken(t *testing.T, th *TestHarness) {
 
 	// -------------------- Owner transfers to user1 --------------------
 	toA := big.NewInt(500_000)
-	callSmartContract(t, ethOwner, addr, node2, "transfer", nil, ethA.Address(), toA)
+	callSmartContract(t, ethOwner, addr, node2, "transfer", ethA.Address(), toA)
 
 	ownerBalance := new(big.Int).Sub(deploySupply, toA)
 	querySmartContractExpect(t, ethOwner, addr, th, ownerBalance, "balanceOf", ethOwner.Address())
@@ -346,11 +346,11 @@ func testTetherToken(t *testing.T, th *TestHarness) {
 
 	// -------------------- Owner approves user2 --------------------
 	approveAmount := big.NewInt(100_000)
-	callSmartContract(t, ethOwner, addr, node2, "approve", nil, ethA.Address(), approveAmount)
+	callSmartContract(t, ethOwner, addr, node2, "approve", ethA.Address(), approveAmount)
 	querySmartContractExpect(t, ethOwner, addr, th, approveAmount, "allowance", ethOwner.Address(), ethA.Address())
 
 	// -------------------- User2 transferFrom --------------------
-	callSmartContract(t, ethA, addr, node2, "transferFrom", nil, ethOwner.Address(), ethA.Address(), approveAmount)
+	callSmartContract(t, ethA, addr, node2, "transferFrom", ethOwner.Address(), ethA.Address(), approveAmount)
 	ownerBalance.Sub(ownerBalance, approveAmount)
 	toA.Add(toA, approveAmount)
 	zero := big.NewInt(0)
@@ -359,11 +359,11 @@ func testTetherToken(t *testing.T, th *TestHarness) {
 	querySmartContractExpect(t, ethOwner, addr, th, zero, "allowance", ethOwner.Address(), ethA.Address())
 
 	// -------------------- Blacklist user1 --------------------
-	callSmartContract(t, ethOwner, addr, node2, "addBlackList", nil, ethA.Address())
+	callSmartContract(t, ethOwner, addr, node2, "addBlackList", ethA.Address())
 	trueVal := true
 	querySmartContractExpect(t, ethA, addr, th, trueVal, "isBlackListed", ethA.Address())
 
-	callSmartContract(t, ethOwner, addr, node2, "destroyBlackFunds", nil, ethA.Address())
+	callSmartContract(t, ethOwner, addr, node2, "destroyBlackFunds", ethA.Address())
 	querySmartContractExpect(t, ethA, addr, th, zero, "balanceOf", ethA.Address())
 	querySmartContractExpect(t, ethOwner, addr, th, zero, "balanceOf", ethA.Address())
 	querySmartContractExpect(t, ethOwner, addr, th, ownerBalance, "balanceOf", ethOwner.Address())
@@ -373,16 +373,16 @@ func testTetherToken(t *testing.T, th *TestHarness) {
 	querySmartContractExpect(t, ethA, addr, th, newTotalSupply, "balanceOf", ethOwner.Address())
 	querySmartContractExpect(t, ethA, addr, th, newTotalSupply, "totalSupply")
 
-	callSmartContract(t, ethOwner, addr, node2, "removeBlackList", nil, ethA.Address())
+	callSmartContract(t, ethOwner, addr, node2, "removeBlackList", ethA.Address())
 	falseVal := false
 	querySmartContractExpect(t, ethA, addr, th, falseVal, "isBlackListed", ethA.Address())
 
 	// -------------------- Pause/unpause --------------------
-	callSmartContract(t, ethOwner, addr, node2, "pause", nil)
-	callSmartContract(t, ethOwner, addr, node2, "unpause", nil)
+	callSmartContract(t, ethOwner, addr, node2, "pause")
+	callSmartContract(t, ethOwner, addr, node2, "unpause")
 
 	// -------------------- Ownership transfer to user2 --------------------
-	callSmartContract(t, ethOwner, addr, node2, "transferOwnership", nil, ethA.Address())
+	callSmartContract(t, ethOwner, addr, node2, "transferOwnership", ethA.Address())
 	querySmartContractExpect(t, ethA, addr, th, ethA.Address(), "getOwner")
 	querySmartContractExpect(t, ethA, addr, th, zero, "balanceOf", ethA.Address())
 	querySmartContractExpect(t, ethA, addr, th, newTotalSupply, "balanceOf", ethOwner.Address())
@@ -392,14 +392,14 @@ func testTetherToken(t *testing.T, th *TestHarness) {
 	issueAmount := big.NewInt(500_000)
 	ownerAmount := new(big.Int).Set(newTotalSupply)
 	totalAmount := new(big.Int).Add(issueAmount, ownerAmount)
-	callSmartContract(t, ethA, addr, node2, "issue", nil, issueAmount)
+	callSmartContract(t, ethA, addr, node2, "issue", issueAmount)
 	querySmartContractExpect(t, ethA, addr, th, issueAmount, "balanceOf", ethA.Address())
 	querySmartContractExpect(t, ethA, addr, th, ownerAmount, "balanceOf", ethOwner.Address())
 	querySmartContractExpect(t, ethA, addr, th, totalAmount, "totalSupply")
 
 	// -------------------- User2 redeems tokens --------------------
 	redeemAmount := big.NewInt(100_000)
-	callSmartContract(t, ethA, addr, node2, "redeem", nil, redeemAmount)
+	callSmartContract(t, ethA, addr, node2, "redeem", redeemAmount)
 	issueAmount.Sub(issueAmount, redeemAmount)
 	totalAmount.Sub(totalAmount, redeemAmount)
 	querySmartContractExpect(t, ethA, addr, th, issueAmount, "balanceOf", ethA.Address())
@@ -458,7 +458,7 @@ func testTetherTokenParallel(t *testing.T, th *TestHarness) {
 
 	// // Owner transfers 200,000 to userA
 	toA := big.NewInt(200_000)
-	callSmartContract(t, ethOwner, addr, node2, "transfer", nil, ethA.Address(), toA)
+	callSmartContract(t, ethOwner, addr, node2, "transfer", ethA.Address(), toA)
 
 	// Result:
 	//   Owner:  800,000 USDT (-200,000)
@@ -473,7 +473,7 @@ func testTetherTokenParallel(t *testing.T, th *TestHarness) {
 
 	// Owner transfers 150,000 to userB
 	toB := big.NewInt(150_000)
-	callSmartContract(t, ethOwner, addr, node2, "transfer", nil, ethB.Address(), toB)
+	callSmartContract(t, ethOwner, addr, node2, "transfer", ethB.Address(), toB)
 
 	// Result:
 	//   Owner:  650,000 USDT (-150,000)
@@ -490,8 +490,8 @@ func testTetherTokenParallel(t *testing.T, th *TestHarness) {
 	// UserB transfers 30,000 USDT to UserD
 	toAC := big.NewInt(30_000)
 	toBD := big.NewInt(20_000)
-	env1 := getEndorsedTxForSmartContractCall(t, ethA, addr, node1, "transfer", nil, ethC.Address(), toAC)
-	env2 := getEndorsedTxForSmartContractCall(t, ethB, addr, node2, "transfer", nil, ethD.Address(), toBD)
+	env1 := getEndorsedTxForSmartContractCall(t, ethA, addr, node1, "transfer", ethC.Address(), toAC)
+	env2 := getEndorsedTxForSmartContractCall(t, ethB, addr, node2, "transfer", ethD.Address(), toBD)
 
 	// Commit the two transactions in parallel (in one block)
 	// Result:
@@ -578,7 +578,6 @@ func testUniswapFactory(t *testing.T, th *TestHarness) {
 		factoryAddr,
 		node,
 		"createPair",
-		nil,
 		tokenAAddr,
 		tokenBAddr,
 	)
@@ -670,7 +669,6 @@ func testUniswapFactory(t *testing.T, th *TestHarness) {
 		tokenAAddr,
 		node,
 		"approve",
-		nil,
 		pairAddr,
 		amountA,
 	)
@@ -682,7 +680,6 @@ func testUniswapFactory(t *testing.T, th *TestHarness) {
 		tokenBAddr,
 		node,
 		"approve",
-		nil,
 		pairAddr,
 		amountB,
 	)
@@ -694,7 +691,6 @@ func testUniswapFactory(t *testing.T, th *TestHarness) {
 		tokenAAddr,
 		node,
 		"transfer",
-		nil,
 		pairAddr,
 		amountA,
 	)
@@ -705,7 +701,6 @@ func testUniswapFactory(t *testing.T, th *TestHarness) {
 		tokenBAddr,
 		node,
 		"transfer",
-		nil,
 		pairAddr,
 		amountB,
 	)
@@ -717,7 +712,6 @@ func testUniswapFactory(t *testing.T, th *TestHarness) {
 		pairAddr,
 		node,
 		"mint",
-		nil,
 		liquidityProvider,
 	)
 
@@ -746,7 +740,6 @@ func testUniswapFactory(t *testing.T, th *TestHarness) {
 		tokenAAddr,
 		node,
 		"transfer",
-		nil,
 		pairAddr,
 		swapIn,
 	)
@@ -767,7 +760,6 @@ func testUniswapFactory(t *testing.T, th *TestHarness) {
 		pairAddr,
 		node,
 		"swap",
-		nil,
 		amount0Out,
 		amount1Out,
 		liquidityProvider,
@@ -804,7 +796,7 @@ func testQueryValidation(t *testing.T, th *TestHarness) {
 		t.Fatal(err)
 	}
 
-	deployTx, contractAddr, err := counter.txForDeploy(t.Context(), node, nil)
+	deployTx, contractAddr, err := counter.txForDeploy(t.Context(), node)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -813,7 +805,7 @@ func testQueryValidation(t *testing.T, th *TestHarness) {
 	}
 	waitForCommitT(t, ec, deployTx)
 
-	callTx, err := counter.TxForCall(t.Context(), node, &contractAddr, "increment", nil)
+	callTx, err := counter.TxForCall(t.Context(), node, &contractAddr, "increment")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -974,7 +966,7 @@ func testRevertHandling(t *testing.T, th *TestHarness) {
 	})
 
 	t.Run("eth_sendRawTransaction_revert_commits_with_status_0", func(t *testing.T) {
-		tx, err := user.TxForCall(t.Context(), node, &addr, "transferFrom", nil, owner.Address(), user.Address(), amount)
+		tx, err := user.TxForCall(t.Context(), node, &addr, "transferFrom", owner.Address(), user.Address(), amount)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1009,7 +1001,7 @@ func testPendingTransactionStatus(t *testing.T, th *TestHarness) {
 	}
 
 	// Prepare a deployment transaction
-	deployTx, _, err := counter.txForDeploy(t.Context(), node, nil)
+	deployTx, _, err := counter.txForDeploy(t.Context(), node)
 	if err != nil {
 		t.Fatal(err)
 	}

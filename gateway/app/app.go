@@ -74,7 +74,7 @@ func NewWithSigner(ctx context.Context, cfg config.Config, gwSigner sdk.Signer) 
 		} else if ecfg.Database.HistorySize == 0 {
 			ecfg.Database.HistorySize = 2
 		}
-		end, sync, kvs, err := eapp.NewEndorser(ecfg, cfg.Network, logger, false, cfg.Gateway.EnableTestRPC)
+		end, sync, kvs, err := eapp.NewEndorser(ecfg, cfg.Network, logger, cfg.Gateway.EnableTestRPC)
 		if err != nil {
 			return nil, fmt.Errorf("endorser %d (%s): %w", i, ecfg.Name, err)
 		}

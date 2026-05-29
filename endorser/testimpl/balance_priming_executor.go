@@ -13,8 +13,8 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/hyperledger/fabric-x-evm/endorser"
-	"github.com/hyperledger/fabric-x-evm/utils"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
 
@@ -52,11 +52,10 @@ type BalancePrimingExecutor struct {
 func NewBalancePrimingExecutor(
 	namespace string,
 	kvs endorser.KVSSnapshotter,
-	blockInfo *utils.BlockInfo,
-	stateBlockNum uint64,
 	evmConfig endorser.EVMConfig,
 	monotonicVersions bool,
 	balancePriming *BalancePrimingConfig,
+	blockContext *vm.BlockContext,
 ) (*BalancePrimingExecutor, error) {
 	// Begin a new reader to get snapshot isolation
 	reader, err := kvs.NewSnapshot(0)
@@ -64,8 +63,7 @@ func NewBalancePrimingExecutor(
 		return nil, err
 	}
 
-	// Create StateDB with the reader
-	stateDB, err := endorser.NewStateDB(context.TODO(), reader, namespace, stateBlockNum, monotonicVersions)
+	stateDB, err := endorser.NewStateDB(context.TODO(), reader, namespace, 0, monotonicVersions)
 	if err != nil {
 		reader.Close()
 		return nil, err
@@ -81,11 +79,14 @@ func NewBalancePrimingExecutor(
 		)
 	}
 
-	// Create the base executor using the public API
-	executor, err := endorser.NewExecutor(finalStateDB, reader, blockInfo, evmConfig)
+	executor, err := endorser.NewExecutor(finalStateDB, reader, nil, evmConfig)
 	if err != nil {
 		reader.Close()
 		return nil, err
+	}
+
+	if blockContext != nil {
+		executor.BlockCtx = *blockContext
 	}
 
 	return &BalancePrimingExecutor{

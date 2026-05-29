@@ -12,14 +12,16 @@ import (
 	"fmt"
 	"sync"
 
+	"math/big"
+
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/core/types"
 	fabCommon "github.com/hyperledger/fabric-protos-go-apiv2/common"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-common/protoutil"
+
 	"github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
-	"github.com/hyperledger/fabric-x-evm/utils"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
@@ -27,8 +29,8 @@ import (
 // Endorser interface defines the contract for endorsement providers.
 // This allows different implementations (e.g., local, gRPC client, mock).
 type Endorser interface {
-	ProcessEVMTransaction(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction, blockInfo *utils.BlockInfo) (*peer.ProposalResponse, error)
-	ProcessCall(ctx context.Context, callMsg *ethereum.CallMsg, blockInfo *utils.BlockInfo) (*peer.ProposalResponse, error)
+	ProcessEVMTransaction(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction) (*peer.ProposalResponse, error)
+	ProcessCall(ctx context.Context, callMsg *ethereum.CallMsg, blockNumber *big.Int) (*peer.ProposalResponse, error)
 	ProcessStateQuery(ctx context.Context, query common.StateQuery) (*peer.ProposalResponse, error)
 }
 
@@ -54,7 +56,7 @@ func NewEndorsementClient(endorsers []Endorser, signer Signer, channel, namespac
 	}, nil
 }
 
-func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Transaction, blockInfo *utils.BlockInfo) (sdk.Endorsement, error) {
+func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Transaction) (sdk.Endorsement, error) {
 	// Marshal the transaction for the invocation args
 	ethTxBytes, err := tx.MarshalBinary()
 	if err != nil {
@@ -77,7 +79,7 @@ func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Tra
 
 	for i, end := range e.endorsers {
 		processEndorsement := func(index int, endorser Endorser) {
-			pResp, err := endorser.ProcessEVMTransaction(ctx, inv, tx, blockInfo)
+			pResp, err := endorser.ProcessEVMTransaction(ctx, inv, tx)
 			if err != nil {
 				errs[index] = fmt.Errorf("process EVM transaction: %w", err)
 				cancel() // signal other goroutines to stop early
@@ -115,8 +117,8 @@ func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Tra
 // CallContract queries a smart contract and returns the value.
 // Status 201 from the endorser signals an EVM revert; surface as
 // *domain.RevertError so the API layer can map to JSON-RPC -32000.
-func (e *EndorsementClient) CallContract(ctx context.Context, args ethereum.CallMsg, blockInfo *utils.BlockInfo) ([]byte, error) {
-	res, err := e.endorsers[0].ProcessCall(ctx, &args, blockInfo)
+func (e *EndorsementClient) CallContract(ctx context.Context, args ethereum.CallMsg, blockNumber *big.Int) ([]byte, error) {
+	res, err := e.endorsers[0].ProcessCall(ctx, &args, blockNumber)
 	if err != nil {
 		return nil, fmt.Errorf("process call: %w", err)
 	}

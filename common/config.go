@@ -34,6 +34,9 @@ type Network struct {
 
 	// ChainID is the ethereum-style chain ID for this network.
 	ChainID int64 `mapstructure:"chain-id" yaml:"chain-id"`
+
+	// MaxTxGas caps msg.GasLimit before EVM execution. 0 means unlimited.
+	MaxTxGas uint64 `mapstructure:"max-tx-gas" yaml:"max-tx-gas"`
 }
 
 // IdentityConfig defines the component's MSP.

@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"math/big"
 	"testing"
 
 	"github.com/ethereum/go-ethereum"
@@ -17,7 +18,6 @@ import (
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
-	"github.com/hyperledger/fabric-x-evm/utils"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
 
@@ -26,10 +26,10 @@ type stubEndorser struct {
 	callErr  error
 }
 
-func (s *stubEndorser) ProcessEVMTransaction(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction, blockInfo *utils.BlockInfo) (*peer.ProposalResponse, error) {
+func (s *stubEndorser) ProcessEVMTransaction(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction) (*peer.ProposalResponse, error) {
 	return nil, nil
 }
-func (s *stubEndorser) ProcessCall(ctx context.Context, callMsg *ethereum.CallMsg, blockInfo *utils.BlockInfo) (*peer.ProposalResponse, error) {
+func (s *stubEndorser) ProcessCall(ctx context.Context, callMsg *ethereum.CallMsg, _ *big.Int) (*peer.ProposalResponse, error) {
 	return s.callResp, s.callErr
 }
 func (s *stubEndorser) ProcessStateQuery(ctx context.Context, query common.StateQuery) (*peer.ProposalResponse, error) {

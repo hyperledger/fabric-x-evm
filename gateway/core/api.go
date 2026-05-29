@@ -21,7 +21,6 @@ import (
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	cmn "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
-	"github.com/hyperledger/fabric-x-evm/utils"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 )
@@ -147,7 +146,7 @@ func (g *Gateway) worker(ctx context.Context) {
 
 // processTx handles the actual transaction processing
 func (g *Gateway) processTx(ctx context.Context, tx *types.Transaction) error {
-	end, err := g.ExecuteEthTx(ctx, tx, nil)
+	end, err := g.ExecuteEthTx(ctx, tx)
 	if err != nil {
 		return err
 	}
@@ -172,12 +171,12 @@ func (g *Gateway) SendTransaction(ctx context.Context, tx *types.Transaction) er
 // We requests endorsement from a single endorser, return the payload, and discard the signed response.
 // This is the same way queries are handled in Fabric.
 func (g *Gateway) CallContract(ctx context.Context, call ethereum.CallMsg, blockNumber *big.Int) ([]byte, error) {
-	return g.endorsers.CallContract(ctx, call, &utils.BlockInfo{BlockNumber: blockNumber})
+	return g.endorsers.CallContract(ctx, call, blockNumber)
 }
 
 // ExecuteEthTx requests endorsements for the submitted ethereum-style transaction.
-func (g *Gateway) ExecuteEthTx(ctx context.Context, tx *types.Transaction, blockInfo *utils.BlockInfo) (sdk.Endorsement, error) {
-	return g.endorsers.ExecuteTransaction(ctx, tx, blockInfo)
+func (g *Gateway) ExecuteEthTx(ctx context.Context, tx *types.Transaction) (sdk.Endorsement, error) {
+	return g.endorsers.ExecuteTransaction(ctx, tx)
 }
 
 // SubmitFabricTx submits a Fabric envelope.

@@ -24,7 +24,6 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/hyperledger/fabric-x-evm/integration"
 	"github.com/hyperledger/fabric-x-evm/integration/contracts"
-	"github.com/hyperledger/fabric-x-evm/utils"
 )
 
 // USDC proxy address
@@ -193,7 +192,7 @@ func generateDatasetMode(inputFile, outputFile string) error {
 	log.Printf("Parsing dataset from %s...", inputFile)
 
 	// Parse the dataset
-	transfers, err := utils.ParseTSVGZ(inputFile)
+	transfers, err := ParseTSVGZ(inputFile)
 	if err != nil {
 		return fmt.Errorf("failed to parse TSV file: %w", err)
 	}

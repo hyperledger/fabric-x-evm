@@ -18,7 +18,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/hyperledger/fabric-x-evm/utils"
 )
 
 // NonceProvider is an interface for getting account nonces.
@@ -102,23 +101,14 @@ func (e *EthClient) Address() common.Address {
 	return crypto.PubkeyToAddress(e.priv.PublicKey)
 }
 
-func (e *EthClient) txForDeploy(ctx context.Context, nonceProvider NonceProvider, blockInfo *utils.BlockInfo, args ...any) (*types.Transaction, common.Address, error) {
+func (e *EthClient) txForDeploy(ctx context.Context, nonceProvider NonceProvider, args ...any) (*types.Transaction, common.Address, error) {
 	constructorInput, err := e.abi.Pack("", args...)
 	if err != nil {
 		return nil, common.Address{}, err
 	}
 
 	callData := append(e.bytecode, constructorInput...)
-
-	var bn *big.Int
-	var bt uint64
-
-	if blockInfo == nil {
-		bn, bt = GetCtxForSigner()
-	} else {
-		bn = blockInfo.BlockNumber
-		bt = blockInfo.BlockTime
-	}
+	bn, bt := GetCtxForSigner()
 
 	// Determine the from address to get the nonce
 	from := crypto.PubkeyToAddress(e.priv.PublicKey)
@@ -169,21 +159,13 @@ func (e *EthClient) getResult(method string, output []byte) ([]any, error) {
 	return e.abi.Unpack(method, output)
 }
 
-func (e *EthClient) TxForCall(ctx context.Context, nonceProvider NonceProvider, addr *common.Address, method string, blockInfo *utils.BlockInfo, args ...any) (*types.Transaction, error) {
+func (e *EthClient) TxForCall(ctx context.Context, nonceProvider NonceProvider, addr *common.Address, method string, args ...any) (*types.Transaction, error) {
 	data, err := e.abi.Pack(method, args...)
 	if err != nil {
 		return nil, err
 	}
 
-	var bn *big.Int
-	var bt uint64
-
-	if blockInfo == nil {
-		bn, bt = GetCtxForSigner()
-	} else {
-		bn = blockInfo.BlockNumber
-		bt = blockInfo.BlockTime
-	}
+	bn, bt := GetCtxForSigner()
 
 	// Determine the from address to get the nonce
 	from := crypto.PubkeyToAddress(e.priv.PublicKey)
