@@ -448,8 +448,19 @@ func TestReplayJSONDataset(t *testing.T) {
 	}
 	// flogging.ActivateSpec("gateway.core.txqueue_v2=debug")
 
-	// Run the test with single worker configuration
-	_, _, _ = runReplayTest(t, 1, 8, loadReplayConfigFromEnv(t))
+	processingWorkers := 1
+	if v := os.Getenv("PERF_PROCESSING_WORKERS"); v != "" {
+		_, err := fmt.Sscanf(v, "%d", &processingWorkers)
+		assert.NoError(t, err, "PERF_PROCESSING_WORKERS must be a valid integer")
+		assert.True(t, processingWorkers >= 1, "PERF_PROCESSING_WORKERS must be >= 1")
+	}
+	submittingWorkers := 8
+	if v := os.Getenv("PERF_SUBMITTING_WORKERS"); v != "" {
+		_, err := fmt.Sscanf(v, "%d", &submittingWorkers)
+		assert.NoError(t, err, "PERF_SUBMITTING_WORKERS must be a valid integer")
+		assert.True(t, submittingWorkers >= 1, "PERF_SUBMITTING_WORKERS must be >= 1")
+	}
+	_, _, _ = runReplayTest(t, processingWorkers, submittingWorkers, loadReplayConfigFromEnv(t))
 }
 
 type performanceResult struct {
