@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"math/big"
 	"math/rand/v2"
+	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -405,11 +406,15 @@ func NewFabricXTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.E
 // It follows the directory structure of a fabric samples test network.
 // Exported for use by eth-tests package.
 func NewFabricXTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory) (*TestHarness, error) {
-	// cwd, _ := os.Getwd()
-	// defer os.Chdir(cwd)
-	// _ = os.Chdir("../")
+	configPath := os.Getenv("FABX_CONFIG_PATH")
+	if configPath == "" {
+		cwd, _ := os.Getwd()
+		defer os.Chdir(cwd)
+		_ = os.Chdir("../")
+		configPath = "fabx.yaml"
+	}
 
-	cfg, err := config.Load("fabx.yaml")
+	cfg, err := config.Load(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
