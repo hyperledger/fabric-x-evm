@@ -10,16 +10,20 @@
 #
 # Usage:
 #   scripts/run-demo.sh [--staging-host HOST] [--ssh-user USER] \
-#     [--evm-branch BRANCH] [--wrap-count N] [--skip-testdata] [--skip-deploy] \
-#     [--skip-teardown] [--dry-run]
+#     [--evm-branch BRANCH] [--wrap-count N] [--restart-network] \
+#     [--skip-testdata] [--skip-deploy] [--skip-teardown] [--dry-run]
 #
 # Flags:
-#   --staging-host HOST   SSH hostname of the control node
-#                         (default: dectrust8.vpc.cloud9.ibm.com)
-#   --ssh-user USER       SSH login user (default: root)
-#   --evm-branch BRANCH   fabric-x-evm branch/ref to run (default: current branch)
-#   --wrap-count N        replay the dataset window N times for stability measurement (default: 1)
-#   --skip-testdata       skip testdata generation/distribution step
+#   --staging-host HOST       SSH hostname of the control node
+#                             (default: dectrust8.vpc.cloud9.ibm.com)
+#   --ssh-user USER           SSH login user (default: root)
+#   --evm-branch BRANCH       fabric-x-evm branch/ref to run (default: current branch)
+#   --wrap-count N            replay the dataset window N times (default: 1)
+#   --submitting-workers N    parallel submitting workers per replica
+#   --processing-workers N    gateway processing worker count per replica
+#   --restart-network         restart the Fabric-X backend (dectrust1-4) via Ansible before running.
+#                             Use this when the orderers/committer are down (e.g. after a VM reboot).
+#   --skip-testdata           skip testdata generation/distribution step
 #   --skip-deploy         pass through to demo-staging.sh
 #   --skip-teardown       pass through to demo-staging.sh
 #   --perf-sweep          pass through to demo-staging.sh: run all worker configurations
@@ -34,6 +38,9 @@ STAGING_HOST="dectrust8.vpc.cloud9.ibm.com"
 SSH_USER="root"
 EVM_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)"
 WRAP_COUNT=1
+SUBMITTING_WORKERS=""
+PROCESSING_WORKERS=""
+RESTART_NETWORK=false
 SKIP_TESTDATA=false
 SKIP_DEPLOY=false
 SKIP_TEARDOWN=false
@@ -48,6 +55,9 @@ while [[ $# -gt 0 ]]; do
         --ssh-user)      SSH_USER="$2"; shift 2 ;;
         --evm-branch)    EVM_BRANCH="$2"; shift 2 ;;
         --wrap-count)    WRAP_COUNT="$2"; shift 2 ;;
+        --submitting-workers) SUBMITTING_WORKERS="$2"; shift 2 ;;
+        --processing-workers) PROCESSING_WORKERS="$2"; shift 2 ;;
+        --restart-network) RESTART_NETWORK=true; shift ;;
         --skip-testdata) SKIP_TESTDATA=true; shift ;;
         --skip-deploy)   SKIP_DEPLOY=true; shift ;;
         --skip-teardown) SKIP_TEARDOWN=true; shift ;;
@@ -133,8 +143,28 @@ if [[ "$DRY_RUN" != true ]]; then
         else
             git clone --branch ${FORK_BRANCH} ${FORK_URL} '${COLLECTION_ON_CTL}'
         fi
+        # Symlink into the standard Ansible collections path so roles resolve when
+        # running 'make fabric_x start' from the collection directory.
+        mkdir -p \"\${HOME}/.ansible/collections/ansible_collections/hyperledger\"
+        ln -sfn '${COLLECTION_ON_CTL}' \"\${HOME}/.ansible/collections/ansible_collections/hyperledger/fabricx\"
     "
     vlog "Collection synced at ${COLLECTION_ON_CTL}"
+fi
+
+# ─── step 2b: restart Fabric-X backend network (optional) ────────────────────
+if [[ "$RESTART_NETWORK" == true ]]; then
+    section "STEP 2b: Restart Fabric-X backend network (dectrust1-4)"
+    if [[ "$DRY_RUN" != true ]]; then
+        vlog "Running 'make fabric_x start' via Ansible on dectrust8..."
+        vrun ssh "$CTL" "
+            cd '${COLLECTION_ON_CTL}'
+            make install-deps >/dev/null 2>&1 || true
+            ANSIBLE_INVENTORY=examples/inventory/ibmcloud/fabric-x-evm.yaml make fabric_x start 2>&1
+        "
+        vlog "Fabric-X network restart complete"
+    else
+        echo "+ [make install-deps && make fabric_x start on $CTL]"
+    fi
 fi
 
 # ─── step 3: testdata ─────────────────────────────────────────────────────────
@@ -297,6 +327,8 @@ section "STEP 4: Run demo"
 
 demo_args="--evm-branch ${EVM_BRANCH}"
 [[ "$WRAP_COUNT"    != "1"  ]] && demo_args+=" --wrap-count ${WRAP_COUNT}"
+[[ -n "$SUBMITTING_WORKERS" ]] && demo_args+=" --submitting-workers ${SUBMITTING_WORKERS}"
+[[ -n "$PROCESSING_WORKERS" ]] && demo_args+=" --processing-workers ${PROCESSING_WORKERS}"
 [[ "$SKIP_DEPLOY"   == true ]] && demo_args+=" --skip-deploy"
 [[ "$SKIP_TEARDOWN" == true ]] && demo_args+=" --skip-teardown"
 [[ "$PERF_SWEEP"    == true ]] && demo_args+=" --perf-sweep"
@@ -310,15 +342,18 @@ if [[ "$DRY_RUN" != true ]]; then
     LOCAL_LOG=$(mktemp /tmp/run-demo-$$.XXXXXX.log)
     set +e
     if [[ "$QUIET" == true ]]; then
-        # Use a while-read loop instead of tee|awk to avoid block-buffering in the pipe chain.
-        # tee uses stdio block buffering when writing to a pipe, which holds progress lines
-        # until the buffer fills (~4-8 KB). while-read is line-by-line and flushes immediately.
-        ssh -tt "$CTL" "bash ${DEMO_SCRIPT}${demo_args:+ $demo_args}" 2>&1 | \
+        # Use ssh -T (no PTY) to get clean \n-only output — PTY mode (-tt) translates \n to \r\n
+        # and injects other control sequences that corrupt indentation.
+        # Use a while-read loop (not tee|awk) to avoid block-buffering in the pipe chain.
+        ssh -T "$CTL" "bash ${DEMO_SCRIPT}${demo_args:+ $demo_args}" 2>&1 | \
             while IFS= read -r line; do
-                line="${line%$'\r'}"  # strip CR from PTY output
                 echo "$line" >> "$QUIET_LOG"
                 echo "$line" >> "$LOCAL_LOG"
+                [[ "$line" == *"=== "* ]] && echo "$line"
+                [[ "$line" == *"Committer:"* || "$line" == *"Orderer:"* ]] && echo "$line"
                 [[ "$line" == *"[replica "* ]] && echo "$line"
+                [[ "$line" == *"Aggregate TPS"* || "$line" == *"Total"*"successful"* ]] && echo "$line"
+                [[ "$line" == *"Demo passed"* || "$line" == *"Demo FAIL"* ]] && echo "$line"
             done
     else
         ssh -tt "$CTL" "bash ${DEMO_SCRIPT}${demo_args:+ $demo_args}" 2>&1 | tee "$LOCAL_LOG"

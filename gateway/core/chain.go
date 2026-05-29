@@ -118,7 +118,7 @@ func (c *Chain) Handle(ctx context.Context, b blocks.Block) error {
 		return err
 	}
 
-	if c.Store.BlockRetention > 0 && ebl.BlockNumber%1000 == 0 {
+	if c.Store.BlockRetention > 0 && c.Store.BlockTruncationInterval > 0 && ebl.BlockNumber%c.Store.BlockTruncationInterval == 0 {
 		if err := c.Store.TruncateBlocks(ctx, c.Store.BlockRetention); err != nil {
 			logger.Warnf("block DB truncation failed at block %d: %v", ebl.BlockNumber, err)
 		}

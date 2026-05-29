@@ -116,6 +116,11 @@ func (r *RPCTransaction) MarshalJSON() ([]byte, error) {
 	// Remove internal go-ethereum fields that shouldn't be exposed
 	delete(m, "ignore")
 
+	// gasPrice must always be a hex string; EIP-1559 txs leave it null in go-ethereum's marshaler
+	if m["gasPrice"] == nil {
+		m["gasPrice"] = (*hexutil.Big)(big.NewInt(0))
+	}
+
 	// Add block metadata and sender - these override any fields from the transaction
 	m["from"] = r.From
 	m["blockHash"] = r.BlockHash

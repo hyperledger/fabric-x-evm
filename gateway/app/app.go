@@ -104,9 +104,9 @@ func buildApp(cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorse
 	var submitter core.Submitter
 	switch cfg.Network.Protocol {
 	case "fabric":
-		submitter, err = nfab.NewSubmitter(orderers, gwSigner, 0, logger)
+		submitter, err = nfab.NewSubmitter(context.Background(), orderers, gwSigner, 0, logger)
 	case "fabric-x", "":
-		submitter, err = nfabx.NewSubmitter(orderers, gwSigner, 0, logger)
+		submitter, err = nfabx.NewSubmitter(context.Background(), orderers, gwSigner, 0, logger)
 	default:
 		return nil, fmt.Errorf("unsupported protocol: %q", cfg.Network.Protocol)
 	}
@@ -198,7 +198,7 @@ func (a *App) Run(ctx context.Context) error {
 	// Wait for initial sync before serving traffic
 	syncTimeout := a.cfg.Gateway.SyncTimeout
 	if syncTimeout == 0 {
-		syncTimeout = 5 * time.Minute
+		syncTimeout = 60 * time.Second
 	}
 	for i, sync := range a.endorserSyncs {
 		if err := waitUntilSynced(gctx, sync, syncTimeout); err != nil {

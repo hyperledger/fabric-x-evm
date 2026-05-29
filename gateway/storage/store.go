@@ -21,19 +21,24 @@ import (
 var ddl string
 
 type Store struct {
-	queries           *Queries
-	DB                *sql.DB
-	CachedBlockNumber atomic.Uint64 // cached block number for fast reads
-	BlockRetention    int           // number of recent blocks to keep; 0 disables truncation
+	queries                 *Queries
+	DB                      *sql.DB
+	CachedBlockNumber       atomic.Uint64 // cached block number for fast reads
+	BlockRetention          int           // number of recent blocks to keep; 0 disables truncation
+	BlockTruncationInterval uint64        // run truncation every N blocks; 0 disables truncation
 }
 
-const DefaultBlockRetention = 10000
+const (
+	DefaultBlockRetention          = 10000
+	DefaultBlockTruncationInterval = 1000
+)
 
 func NewStore(db *sql.DB) *Store {
 	return &Store{
-		queries:        New(db),
-		DB:             db,
-		BlockRetention: DefaultBlockRetention,
+		queries:                 New(db),
+		DB:                      db,
+		BlockRetention:          DefaultBlockRetention,
+		BlockTruncationInterval: DefaultBlockTruncationInterval,
 	}
 }
 

@@ -37,7 +37,6 @@ type Submitter interface {
 }
 
 // TxQueueInterface defines the interface that transaction queue implementations must satisfy.
-// This allows switching between different queue implementations (e.g., TxQueue and TxQueueV2).
 type TxQueueInterface interface {
 	// Enqueue adds a transaction to the queue
 	Enqueue(tx *types.Transaction)
@@ -383,7 +382,7 @@ func (g *Gateway) Stop() error {
 
 	total, invalid := g.TxQueue.Stats()
 	if total > 0 {
-		fmt.Println("gw stats:", total, invalid, float64(invalid)/float64(total))
+		logger.Infof("gw stats: total=%d invalid=%d invalid_ratio=%.4f", total, invalid, float64(invalid)/float64(total))
 	}
 
 	return err

@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"runtime"
 	"runtime/pprof"
@@ -34,6 +36,7 @@ import (
 	"github.com/hyperledger/fabric-x-evm/utils"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/grpclog"
 )
 
@@ -149,6 +152,16 @@ func writeHeapProfile(filename string) {
 // runReplayTest executes the replay test with configurable worker counts and returns metrics.
 // Returns: (overallThroughput, failedTransactionCount, totalTransactionCount)
 func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCount int, cfg replayConfig) (float64, int64, int64) {
+	// Start pprof HTTP server if enabled
+	if os.Getenv("PERF_PPROF") == "1" {
+		go func() {
+			t.Logf("Starting pprof server on http://localhost:6060/debug/pprof/")
+			if err := http.ListenAndServe("localhost:6060", nil); err != nil {
+				t.Logf("pprof server failed: %v", err)
+			}
+		}()
+	}
+
 	// Silence GRPC logging
 	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr))
 	t.Logf("Config: processingWorkers=%d submittingWorkers=%d", processingWorkerCount, submittingWorkerCount)
@@ -166,9 +179,8 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 
 	// Setup test harness with USDC contract and balance priming enabled
 	factory := balancePrimingEndorserFactory(balancePriming)
-	th, err := integration.NewLocalTestHarnessWithFactory(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", "fabric", map[string]any{"Gateway.WorkerCount": processingWorkerCount}, factory)
-	// th, err = integration.NewFabricXTestHarnessWithFactory(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", map[string]any{"Gateway.WorkerCount": processingWorkerCount}, factory)
-	assert.NoError(t, err)
+	th, err := integration.NewFabricXTestHarnessWithFactory(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", map[string]any{"Gateway.WorkerCount": processingWorkerCount}, factory)
+	require.NoError(t, err)
 
 	// Wrap the gateway with NonceBypassGateway to skip nonce validation
 	// This is necessary for wrap-around replay where the same transactions are replayed
@@ -207,6 +219,12 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	// Atomic counters for thread-safe counting
 	var successCount, failCount, skippedCount int64
 
+	// Per-tx latency tracking
+	var latenciesMu sync.Mutex
+	var latencies []float64
+
+	var sentCount, committedCount atomic.Int64
+
 	runtime.GC()
 
 	// Track throughput
@@ -239,6 +257,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 			for item := range workChan {
 				i := item.index
 				transfer := item.transfer
+				txStart := time.Now()
 
 				// Skip transfers without transactions
 				if len(transfer.Transaction) == 0 {
@@ -263,6 +282,11 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 							atomic.AddInt64(&failCount, 1)
 						} else {
 							atomic.AddInt64(&successCount, 1)
+							// Record latency on success
+							latMs := float64(time.Since(txStart).Microseconds()) / 1000.0
+							latenciesMu.Lock()
+							latencies = append(latencies, latMs)
+							latenciesMu.Unlock()
 						}
 					}()
 
@@ -272,8 +296,32 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 						t.Logf("Transfer %d: SendTransaction error: %v", i, err)
 						panic(err) // Trigger the defer recovery
 					}
+					sentCount.Add(1)
 
-					// Wait for transaction to be committed
+					// Polls for inclusion only — doesn't check status. The
+					// receipt-check variant below reports 0% success on the
+					// multi-service stack: BalancePrimingWrapper returns a phantom
+					// non-zero balance from GetState but the underlying read still
+					// records version 0, so the committer-validator invalidates
+					// every tx on MVCC. The single-service test image happens not
+					// to re-check, which is why it passes there.
+					//
+					// for {
+					//     receipt, rerr := ec.TransactionReceipt(t.Context(), tx.Hash())
+					//     if rerr != nil {
+					//         if strings.Contains(rerr.Error(), "not found") {
+					//             time.Sleep(time.Millisecond)
+					//             continue
+					//         }
+					//         t.Logf("Transfer %d: TransactionReceipt error: %v", i, rerr)
+					//         panic(rerr)
+					//     }
+					//     if receipt.Status != 1 {
+					//         t.Logf("Transfer %d: EVM revert (status=0x0), hash=%s", i, tx.Hash().Hex())
+					//         panic(fmt.Errorf("EVM revert"))
+					//     }
+					//     break
+					// }
 					for pending := true; pending; {
 						_, pending, err = ec.TransactionByHash(t.Context(), tx.Hash())
 						if err != nil {
@@ -289,6 +337,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 							time.Sleep(time.Millisecond)
 						}
 					}
+					committedCount.Add(1)
 				}()
 			}
 		}(w)
@@ -333,10 +382,13 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 					progressTarget = cfg.totalDispatches
 				}
 
-				t.Logf("Progress: %d/%d transfers processed (%d successful, %d failed, %d skipped) | Throughput: %.2f tx/s (recent), %.2f tx/s (overall)",
+				sent := sentCount.Load()
+				committed := committedCount.Load()
+				t.Logf("Progress: %d/%d transfers processed (%d successful, %d failed, %d skipped) | Throughput: %.2f tx/s (recent), %.2f tx/s (overall) | sent=%d committed=%d inflight=%d",
 					currentSuccess+currentFail+currentSkipped, progressTarget,
 					currentSuccess, currentFail, currentSkipped,
-					throughput, overallThroughput)
+					throughput, overallThroughput,
+					sent, committed, sent-committed)
 
 				// Update for next interval
 				lastLogTime.Store(now)
@@ -423,6 +475,43 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 			len(recentSamples), minTPS, maxTPS, mean, stddev, cv)
 	}
 
+	// Compute latency percentiles
+	if len(latencies) > 0 {
+		// Sort latencies for percentile calculation
+		sortedLat := make([]float64, len(latencies))
+		copy(sortedLat, latencies)
+		// Simple insertion sort for small arrays, or use sort package
+		for i := 1; i < len(sortedLat); i++ {
+			key := sortedLat[i]
+			j := i - 1
+			for j >= 0 && sortedLat[j] > key {
+				sortedLat[j+1] = sortedLat[j]
+				j--
+			}
+			sortedLat[j+1] = key
+		}
+
+		p50Idx := len(sortedLat) * 50 / 100
+		p90Idx := len(sortedLat) * 90 / 100
+		p99Idx := len(sortedLat) * 99 / 100
+		if p50Idx >= len(sortedLat) {
+			p50Idx = len(sortedLat) - 1
+		}
+		if p90Idx >= len(sortedLat) {
+			p90Idx = len(sortedLat) - 1
+		}
+		if p99Idx >= len(sortedLat) {
+			p99Idx = len(sortedLat) - 1
+		}
+
+		p50 := sortedLat[p50Idx]
+		p90 := sortedLat[p90Idx]
+		p99 := sortedLat[p99Idx]
+		maxLat := sortedLat[len(sortedLat)-1]
+
+		t.Logf("Latency: p50=%.2fms p90=%.2fms p99=%.2fms max=%.2fms", p50, p90, p99, maxLat)
+	}
+
 	// Final counts
 	finalSuccess := atomic.LoadInt64(&successCount)
 	finalFail := atomic.LoadInt64(&failCount)
@@ -449,8 +538,19 @@ func TestReplayJSONDataset(t *testing.T) {
 	}
 	// flogging.ActivateSpec("gateway.core.txqueue_v2=debug")
 
-	// Run the test with single worker configuration
-	_, _, _ = runReplayTest(t, 1, 8, loadReplayConfigFromEnv(t))
+	processingWorkers := 1
+	if v := os.Getenv("PERF_PROCESSING_WORKERS"); v != "" {
+		_, err := fmt.Sscanf(v, "%d", &processingWorkers)
+		assert.NoError(t, err, "PERF_PROCESSING_WORKERS must be a valid integer")
+		assert.True(t, processingWorkers >= 1, "PERF_PROCESSING_WORKERS must be >= 1")
+	}
+	submittingWorkers := 8
+	if v := os.Getenv("PERF_SUBMITTING_WORKERS"); v != "" {
+		_, err := fmt.Sscanf(v, "%d", &submittingWorkers)
+		assert.NoError(t, err, "PERF_SUBMITTING_WORKERS must be a valid integer")
+		assert.True(t, submittingWorkers >= 1, "PERF_SUBMITTING_WORKERS must be >= 1")
+	}
+	_, _, _ = runReplayTest(t, processingWorkers, submittingWorkers, loadReplayConfigFromEnv(t))
 }
 
 type performanceResult struct {
