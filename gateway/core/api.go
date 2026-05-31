@@ -13,6 +13,7 @@ import (
 	"math"
 	"math/big"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
@@ -152,14 +153,20 @@ func (g *Gateway) worker(ctx context.Context) {
 
 // processTx handles the actual transaction processing
 func (g *Gateway) processTx(ctx context.Context, tx *types.Transaction) error {
+	t0 := time.Now()
 	end, err := g.ExecuteEthTx(ctx, tx, nil)
 	if err != nil {
 		return err
 	}
+	t1 := time.Now()
 	if err := g.SubmitFabricTx(ctx, end); err != nil {
 		return err
 	}
-
+	logger.Infof("processTx hash=%s endorse_us=%d submit_us=%d total_us=%d",
+		tx.Hash().Hex()[:10],
+		t1.Sub(t0).Microseconds(),
+		time.Since(t1).Microseconds(),
+		time.Since(t0).Microseconds())
 	return nil
 }
 
@@ -393,8 +400,14 @@ func (g *Gateway) Stop() error {
 // to receive notifications when blocks are committed. It converts the blocks.Block to domain.Block
 // and delegates to the TxQueue's Handle method.
 func (g *Gateway) Handle(ctx context.Context, b blocks.Block) error {
-	// Convert blocks.Block to domain.Block using the shared conversion function
+	start := time.Now()
+	convertStart := time.Now()
 	domainBlock := ConvertToDomain(b)
+	convertUs := time.Since(convertStart).Microseconds()
+	queueStart := time.Now()
 	err := g.TxQueue.Handle(ctx, &domainBlock)
+	queueUs := time.Since(queueStart).Microseconds()
+	logger.Infof("gateway.Handle block=%d txs=%d convert_us=%d queue_us=%d total_us=%d",
+		b.Number, len(domainBlock.Transactions), convertUs, queueUs, time.Since(start).Microseconds())
 	return err
 }

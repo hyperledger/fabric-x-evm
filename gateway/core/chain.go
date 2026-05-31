@@ -11,6 +11,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -23,6 +25,11 @@ import (
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/state/sqlite"
 )
+
+// TxObservedAt maps tx hash → time the gateway first saw it in a delivered block.
+// Used by the perf-test open-loop receiver. Populated only when in-process tests
+// import this package; safe to leak in production (sync.Map is GC-tolerant).
+var TxObservedAt sync.Map
 
 // Chain owns the block storage and state trie. It implements blocks.BlockHandler
 // (for block ingestion) and core.Store (via the embedded *storage.Store, for API queries).
@@ -100,7 +107,18 @@ func (c *Chain) convertToDomain(b blocks.Block) domain.Block {
 // Handle implements blocks.BlockHandler. It commits the block's write sets to the trie,
 // then persists the block and its transactions to the database.
 func (c *Chain) Handle(ctx context.Context, b blocks.Block) error {
+	handleStart := time.Now()
 	ebl := c.convertToDomain(b)
+
+	now := time.Now()
+	for _, tx := range ebl.Transactions {
+		TxObservedAt.Store(common.BytesToHash(tx.TxHash), now)
+	}
+
+	defer func() {
+		logger.Infof("chain.Handle block=%d txs=%d took_us=%d",
+			b.Number, len(ebl.Transactions), time.Since(handleStart).Microseconds())
+	}()
 
 	ebl.ParentHash = c.prevHash.Bytes()
 	if c.ts != nil {

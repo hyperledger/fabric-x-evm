@@ -188,6 +188,9 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 
 	// Load the JSON dataset
 	datasetPath := "testdata/USDC_dataset.json.gz"
+	if v := os.Getenv("PERF_DATASET_PATH"); v != "" {
+		datasetPath = v
+	}
 	t.Logf("Loading dataset from %s", datasetPath)
 
 	file, err := os.Open(datasetPath)
@@ -224,6 +227,19 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	var latencies []float64
 
 	var sentCount, committedCount atomic.Int64
+
+	openLoop := os.Getenv("PERF_OPEN_LOOP") == "1"
+	var sentTimes sync.Map // tx hash -> time.Time when SendTransaction returned (open-loop only)
+
+	// Clear historical chain-sync entries from TxObservedAt before workers start.
+	// The gateway populates it as blocks arrive, including historical re-sync from
+	// block 0; we only care about commits observed AFTER dispatch begins.
+	if openLoop {
+		gwcore.TxObservedAt.Range(func(k, _ any) bool {
+			gwcore.TxObservedAt.Delete(k)
+			return true
+		})
+	}
 
 	runtime.GC()
 
@@ -278,11 +294,9 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 				func() {
 					defer func() {
 						if r := recover(); r != nil {
-							// t.Logf("Transfer %d: Failed to send transaction (panic recovered): %v", i, r)
 							atomic.AddInt64(&failCount, 1)
-						} else {
+						} else if !openLoop {
 							atomic.AddInt64(&successCount, 1)
-							// Record latency on success
 							latMs := float64(time.Since(txStart).Microseconds()) / 1000.0
 							latenciesMu.Lock()
 							latencies = append(latencies, latMs)
@@ -297,6 +311,11 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 						panic(err) // Trigger the defer recovery
 					}
 					sentCount.Add(1)
+
+					if openLoop {
+						sentTimes.Store(tx.Hash(), time.Now())
+						return
+					}
 
 					// Polls for inclusion only — doesn't check status. The
 					// receipt-check variant below reports 0% success on the
@@ -341,6 +360,42 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 				}()
 			}
 		}(w)
+	}
+
+	// Open-loop receiver: scans sentTimes for hashes observed in TxObservedAt.
+	stopReceiver := make(chan struct{})
+	var receiverWg sync.WaitGroup
+	if openLoop {
+		receiverWg.Add(1)
+		go func() {
+			defer receiverWg.Done()
+			ticker := time.NewTicker(50 * time.Millisecond)
+			defer ticker.Stop()
+			drain := func() {
+				sentTimes.Range(func(k, v any) bool {
+					hash := k.(common.Hash)
+					if observedAny, ok := gwcore.TxObservedAt.Load(hash); ok {
+						sentTimes.Delete(hash)
+						latMs := float64(observedAny.(time.Time).Sub(v.(time.Time)).Microseconds()) / 1000.0
+						latenciesMu.Lock()
+						latencies = append(latencies, latMs)
+						latenciesMu.Unlock()
+						committedCount.Add(1)
+						atomic.AddInt64(&successCount, 1)
+					}
+					return true
+				})
+			}
+			for {
+				select {
+				case <-ticker.C:
+					drain()
+				case <-stopReceiver:
+					drain()
+					return
+				}
+			}
+		}()
 	}
 
 	// recentSamples collects windowed throughput values for stability reporting.
@@ -440,6 +495,22 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	// Close the work channel and wait for all workers to finish
 	close(workChan)
 	wg.Wait()
+
+	// Open-loop drain: wait for receiver to confirm all sent txs committed.
+	if openLoop {
+		drainStart := time.Now()
+		drainTimeout := 60 * time.Second
+		for committedCount.Load() < sentCount.Load() {
+			if time.Since(drainStart) > drainTimeout {
+				t.Logf("Open-loop drain timeout after %v: sent=%d committed=%d",
+					drainTimeout, sentCount.Load(), committedCount.Load())
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		close(stopReceiver)
+		receiverWg.Wait()
+	}
 
 	// Stop the logging goroutine
 	close(stopLogging)
