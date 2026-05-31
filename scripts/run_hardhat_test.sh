@@ -225,7 +225,7 @@ main() {
     echo "Waiting for network to fully stabilize..."
     sleep 10
     echo -e "${GREEN}Fabric network started${NC}"
-    
+
     # Start gateway (fresh instance for this test run)
     start_gateway
     

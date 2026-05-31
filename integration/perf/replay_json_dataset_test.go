@@ -162,7 +162,8 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	// Setup test harness with USDC contract and balance priming enabled
 	factory := balancePrimingEndorserFactory(balancePriming)
 	th, err := integration.NewLocalTestHarnessWithFactory(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", "fabric", map[string]any{"Gateway.WorkerCount": processingWorkerCount}, factory)
-	// th, err = integration.NewFabricXTestHarnessWithFactory(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", map[string]any{"Gateway.WorkerCount": processingWorkerCount}, factory)
+	th, err = integration.NewFabricXTestHarnessWithFactory(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", map[string]any{"Gateway.WorkerCount": processingWorkerCount}, factory)
+	// th, err = integration.NewFabricTestHarnessWithFactory(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", map[string]any{"Gateway.WorkerCount": processingWorkerCount}, factory)
 	assert.NoError(t, err)
 
 	// Wrap the gateway with NonceBypassGateway to skip nonce validation

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"math/big"
 	"math/rand/v2"
+	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -362,10 +363,18 @@ func NewLocalTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig e
 	return th, nil
 }
 
-// newFabricTestHarness returns a client for integration testing with access to a peer, orderer and local committer.
+// NewFabricTestHarness returns a client for integration testing with access to a peer, orderer and local committer.
 // It follows the directory structure of a Fablo test network.
-func newFabricTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any) (*TestHarness, error) {
-	cfg, err := config.Load("fablo.yaml")
+func NewFabricTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any) (*TestHarness, error) {
+	return NewFabricTestHarnessWithFactory(t, logger, evmConfig, primeDbPath, configOverrides, defaultEndorserFactory)
+}
+
+func NewFabricTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory) (*TestHarness, error) {
+	cwd, _ := os.Getwd()
+	defer os.Chdir(cwd)
+	_ = os.Chdir("../")
+
+	cfg, err := config.Load("fablo.hardhat.yaml")
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
@@ -405,9 +414,9 @@ func NewFabricXTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.E
 // It follows the directory structure of a fabric samples test network.
 // Exported for use by eth-tests package.
 func NewFabricXTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory) (*TestHarness, error) {
-	// cwd, _ := os.Getwd()
-	// defer os.Chdir(cwd)
-	// _ = os.Chdir("../")
+	cwd, _ := os.Getwd()
+	defer os.Chdir(cwd)
+	_ = os.Chdir("../")
 
 	cfg, err := config.Load("fabx.yaml")
 	if err != nil {
