@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"math/big"
 	"math/rand/v2"
+	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -133,7 +134,7 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 		return nil, nil, err
 	}
 
-	chain, err := core.NewChain(cfg.Gateway.Database.ConnString, cfg.Gateway.Database.TriePath, false)
+	chain, err := core.NewChain(cfg.Gateway.Database.ConnString, cfg.Gateway.Database.TriePath, cfg.Network.Namespace, false)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -428,11 +429,15 @@ func NewFabricXTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig
 }
 
 func NewFabricXTestHarnessWithFactoryAndTxQueue(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory, txQueue core.TxQueueInterface) (*TestHarness, error) {
-	// cwd, _ := os.Getwd()
-	// defer os.Chdir(cwd)
-	// _ = os.Chdir("../")
+	configPath := os.Getenv("FABX_CONFIG_PATH")
+	if configPath == "" {
+		cwd, _ := os.Getwd()
+		defer os.Chdir(cwd)
+		_ = os.Chdir("../")
+		configPath = "fabx.yaml"
+	}
 
-	cfg, err := config.Load("fabx.yaml")
+	cfg, err := config.Load(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
