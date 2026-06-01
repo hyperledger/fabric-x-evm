@@ -37,6 +37,9 @@ type Gateway struct {
 	EnableTestRPC    bool   `mapstructure:"enable-test-rpc"    yaml:"enable-test-rpc"`    // Enable test-only RPC methods (eth_accounts, eth_sendTransaction) - UNSAFE for production
 
 	WorkerCount int `mapstructure:"worker-count" yaml:"worker-count"` // number of worker goroutines; defaults to 1 if not set
+
+	BlockRetention          int    `mapstructure:"block-retention"           yaml:"block-retention"`           // number of recent blocks to keep on the gateway DB; 0 uses storage default
+	BlockTruncationInterval uint64 `mapstructure:"block-truncation-interval" yaml:"block-truncation-interval"` // run truncation every N blocks; 0 uses storage default
 }
 
 // DB holds the database paths for the gateway.
