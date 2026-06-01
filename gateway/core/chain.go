@@ -28,19 +28,29 @@ import (
 // (for block ingestion) and core.Store (via the embedded *storage.Store, for API queries).
 type Chain struct {
 	*storage.Store
-	db       *sql.DB
-	ts       *trie.Store
-	prevHash common.Hash // Ethereum hash of last committed block; seeded from DB on startup
+	db        *sql.DB
+	ts        *trie.Store
+	prevHash  common.Hash // Ethereum hash of last committed block; seeded from DB on startup
+	namespace string      // Fabric namespace to filter; empty means accept all
 }
 
 // NewChain opens the SQLite database and trie store, seeds state from the latest committed
 // block, and returns a ready Chain. dbConnStr uses the modernc SQLite DSN format;
 // triePath is the directory for the PebbleDB trie (empty string = in-memory).
+// namespace filters delivered blocks to only those containing transactions for that Fabric
+// namespace; pass an empty string to accept all namespaces.
 // The caller must register the SQLite driver (e.g. _ "modernc.org/sqlite") before calling.
-func NewChain(dbConnStr, triePath string, withTrie bool) (*Chain, error) {
+func NewChain(dbConnStr, triePath, namespace string, withTrie bool) (*Chain, error) {
 	db, err := sqlite.Open(dbConnStr)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
+	}
+	// Store SQLite temp objects in memory. The release image is built from
+	// scratch and has no /tmp, so file-based temp storage would fail with
+	// SQLITE_IOERR_GETTEMPPATH (6410) during WAL operations like DELETE.
+	if _, err := db.Exec("PRAGMA temp_store=MEMORY"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("set temp_store pragma: %w", err)
 	}
 
 	blockStore := storage.NewStore(db)
@@ -66,13 +76,31 @@ func NewChain(dbConnStr, triePath string, withTrie bool) (*Chain, error) {
 		}
 	}
 
-	return &Chain{Store: blockStore, db: db, ts: ts, prevHash: prevHash}, nil
+	return &Chain{Store: blockStore, db: db, ts: ts, prevHash: prevHash, namespace: namespace}, nil
+}
+
+// convertToDomain applies namespace filtering then delegates to ConvertToDomain.
+func (c *Chain) convertToDomain(b blocks.Block) domain.Block {
+	if c.namespace == "" {
+		return ConvertToDomain(b)
+	}
+	filtered := b
+	filtered.Transactions = filtered.Transactions[:0:0]
+	for _, tx := range b.Transactions {
+		for _, nrws := range tx.NsRWS {
+			if nrws.Namespace == c.namespace {
+				filtered.Transactions = append(filtered.Transactions, tx)
+				break
+			}
+		}
+	}
+	return ConvertToDomain(filtered)
 }
 
 // Handle implements blocks.BlockHandler. It commits the block's write sets to the trie,
 // then persists the block and its transactions to the database.
 func (c *Chain) Handle(ctx context.Context, b blocks.Block) error {
-	ebl := ConvertToDomain(b)
+	ebl := c.convertToDomain(b)
 
 	ebl.ParentHash = c.prevHash.Bytes()
 	if c.ts != nil {
@@ -88,6 +116,12 @@ func (c *Chain) Handle(ctx context.Context, b blocks.Block) error {
 
 	if err := c.Store.InsertBlock(ctx, ebl); err != nil {
 		return err
+	}
+
+	if c.Store.BlockRetention > 0 && c.Store.BlockTruncationInterval > 0 && ebl.BlockNumber%c.Store.BlockTruncationInterval == 0 {
+		if err := c.Store.TruncateBlocks(ctx, c.Store.BlockRetention); err != nil {
+			logger.Warnf("block DB truncation failed at block %d: %v", ebl.BlockNumber, err)
+		}
 	}
 
 	return nil
@@ -115,8 +149,6 @@ func ConvertToDomain(b blocks.Block) domain.Block {
 
 	logIndex := int64(0) // logIndex is the index of the log in the block
 	for _, tx := range b.Transactions {
-		// TODO: filter on namespace?
-
 		// retrieve the Ethereum transaction from the chaincode invocation
 		if len(tx.InputArgs) < 2 || !bytes.Equal(tx.InputArgs[0], []byte{byte(fc.ProposalTypeEVMTx)}) {
 			// skip non-eth tx
@@ -129,7 +161,8 @@ func ConvertToDomain(b blocks.Block) domain.Block {
 
 		etx, err := convertTransaction(tx.InputArgs[1], b.Hash, b.Number, tx.Number, tx.ID, status, tx.Status, tx.Events, &logIndex)
 		if err != nil {
-			panic(err) // we surface this for now instead of swallowing it
+			logger.Warnf("skipping malformed tx %s in block %d: %v", tx.ID, b.Number, err)
+			continue
 		}
 
 		ebl.Transactions = append(ebl.Transactions, etx)

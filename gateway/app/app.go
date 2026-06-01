@@ -104,9 +104,9 @@ func buildApp(cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorse
 	var submitter core.Submitter
 	switch cfg.Network.Protocol {
 	case "fabric":
-		submitter, err = nfab.NewSubmitter(orderers, gwSigner, 0, logger)
+		submitter, err = nfab.NewSubmitter(context.Background(), orderers, gwSigner, 0, logger)
 	case "fabric-x", "":
-		submitter, err = nfabx.NewSubmitter(orderers, gwSigner, 0, logger)
+		submitter, err = nfabx.NewSubmitter(context.Background(), orderers, gwSigner, 0, logger)
 	default:
 		return nil, fmt.Errorf("unsupported protocol: %q", cfg.Network.Protocol)
 	}
@@ -114,7 +114,7 @@ func buildApp(cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorse
 		return nil, fmt.Errorf("failed to create submitter: %w", err)
 	}
 
-	chain, err := core.NewChain(cfg.Gateway.Database.ConnString, cfg.Gateway.Database.TriePath, false)
+	chain, err := core.NewChain(cfg.Gateway.Database.ConnString, cfg.Gateway.Database.TriePath, cfg.Network.Namespace, false)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create chain: %w", err)
 	}
@@ -196,8 +196,12 @@ func (a *App) Run(ctx context.Context) error {
 	g.Go(func() error { return a.gwSync.Start(gctx) })
 
 	// Wait for initial sync before serving traffic
+	syncTimeout := a.cfg.Gateway.SyncTimeout
+	if syncTimeout == 0 {
+		syncTimeout = 60 * time.Second
+	}
 	for i, sync := range a.endorserSyncs {
-		if err := waitUntilSynced(gctx, sync, 10*time.Second); err != nil {
+		if err := waitUntilSynced(gctx, sync, syncTimeout); err != nil {
 			return err
 		}
 		appLogger.Debugf("endorser %d synced", i)
