@@ -323,8 +323,17 @@ func (sp *StatePrimer) fakeEthTx() (*types.Transaction, []byte, error) {
 }
 
 func (sp *StatePrimer) commitAndWait(end sdk.Endorsement, tx *types.Transaction, wait bool) error {
-	if err := sp.gw.SubmitFabricTx(context.Background(), end); err != nil {
-		return err
+	if wait {
+		// submit through the gateway (asynchronous)
+		if err := sp.gw.SubmitFabricTx(context.Background(), end); err != nil {
+			return err
+		}
+	} else {
+		// Submit directly via the submitter (synchronous) instead of via gateway (async BatchSubmitter)
+		// This ensures priming completes before the test continues
+		if err := sp.gw.Submitter().Submit(context.Background(), end); err != nil {
+			return err
+		}
 	}
 
 	ec, err := NewNativeEthClient(sp.gw)

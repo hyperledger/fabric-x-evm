@@ -14,6 +14,8 @@ import (
 	"maps"
 	"sync/atomic"
 
+	"github.com/hyperledger/fabric-x-common/api/committerpb"
+	"github.com/hyperledger/fabric-x-evm/gateway/core"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 )
 
@@ -334,48 +336,30 @@ func (kvs *LightKVS) Update(updates []KeyValueVersion) error {
 	return nil
 }
 
-// Handle implements the blocks.BlockHandler interface.
-// It processes a block by extracting all valid transaction writes and applying them atomically.
-// This is called by the synchronizer when a new block is committed to the ledger.
-func (kvs *LightKVS) Handle(ctx context.Context, b blocks.Block) error {
-	// Collect all writes from all valid transactions in the block
-	var updates []KeyValueVersion
-
-	for _, tx := range b.Transactions {
-		if !tx.Valid {
-			continue
-		}
-
-		// Process all namespace read-write sets
-		for _, nsrws := range tx.NsRWS {
-			// Process all writes in this namespace
-			for _, w := range nsrws.RWS.Writes {
-				// Create a key that includes the namespace
-				key := nsrws.Namespace + ":" + w.Key
-
-				updates = append(updates, KeyValueVersion{
-					Key:      key,
-					Value:    w.Value,
-					BlockNum: b.Number,
-					TxNum:    uint64(tx.Number),
-					TxID:     tx.ID,
-					IsDelete: w.IsDelete,
-				})
-			}
-		}
+// processWrites is a private helper that extracts writes from namespace read-write sets
+// and applies them atomically. This is the common logic used by both Handle and HandleTx.
+func (kvs *LightKVS) processWrites(nsrwsList []blocks.NsReadWriteSet, blockNum, txNum uint64, txID string, valid bool) error {
+	if !valid {
+		// Skip invalid transactions
+		return nil
 	}
 
-	// Debug: JSON dump all updates with truncated values
-	if len(updates) > 0 {
-		logUpdates := make([]logUpdate, len(updates))
-		for i, u := range updates {
-			logUpdates[i] = u.toLogUpdate()
-		}
+	// Collect all writes
+	var updates []KeyValueVersion
 
-		if false {
-			if jsonData, err := json.MarshalIndent(logUpdates, "", "  "); err == nil {
-				fmt.Printf("[LightKVS Handle] Block %d, %d updates:\n%s\n", b.Number, len(updates), string(jsonData))
-			}
+	for _, nsrws := range nsrwsList {
+		for _, w := range nsrws.RWS.Writes {
+			// Create a key that includes the namespace
+			key := nsrws.Namespace + ":" + w.Key
+
+			updates = append(updates, KeyValueVersion{
+				Key:      key,
+				Value:    w.Value,
+				BlockNum: blockNum,
+				TxNum:    txNum,
+				TxID:     txID,
+				IsDelete: w.IsDelete,
+			})
 		}
 	}
 
@@ -384,6 +368,33 @@ func (kvs *LightKVS) Handle(ctx context.Context, b blocks.Block) error {
 		return kvs.Update(updates)
 	}
 
+	return nil
+}
+
+// Handle implements the blocks.BlockHandler interface.
+// It processes a block by extracting all valid transaction writes and applying them atomically.
+// This is called by the synchronizer when a new block is committed to the ledger.
+func (kvs *LightKVS) Handle(ctx context.Context, b blocks.Block) error {
+	for _, tx := range b.Transactions {
+		if err := kvs.processWrites(tx.NsRWS, b.Number, uint64(tx.Number), tx.ID, tx.Valid); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// HandleTx implements the core.TxHandler interface.
+// It processes a batch of transaction notifications by extracting writes and applying them.
+// This is called by the notification dispatcher when transactions are committed.
+func (kvs *LightKVS) HandleTx(ctx context.Context, notifs []core.TxNotification) error {
+	// Process each notification in the batch
+	for _, notif := range notifs {
+		// Status check: committerpb.Status_COMMITTED means success
+		valid := notif.Status == committerpb.Status_COMMITTED
+		if err := kvs.processWrites(notif.NsRWS, notif.BlockNum, notif.TxNum, notif.FabricTxID, valid); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

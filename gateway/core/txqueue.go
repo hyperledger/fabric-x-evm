@@ -12,6 +12,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/hyperledger/fabric-x-common/api/committerpb"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 )
 
@@ -139,6 +140,32 @@ func (q *TxQueue) Handle(ctx context.Context, block *domain.Block) error {
 			q.invalid++
 		}
 		q.Complete(txHash)
+	}
+
+	return nil
+}
+
+// HandleTx implements the TxHandler interface for processing transaction notifications.
+// It extracts ethereum transaction hashes from the notifications and marks them as complete.
+func (q *TxQueue) HandleTx(ctx context.Context, notifs []TxNotification) error {
+	for _, notif := range notifs {
+		// Parse the ethereum transaction to get its hash
+		ethTx := new(types.Transaction)
+		if err := ethTx.UnmarshalBinary(notif.EthTxBytes); err != nil {
+			// Log error but continue processing other transactions
+			continue
+		}
+
+		// Update statistics
+		q.mu.Lock()
+		q.total++
+		if notif.Status != committerpb.Status_COMMITTED { // Status 0 = COMMITTED = valid
+			q.invalid++
+		}
+		q.mu.Unlock()
+
+		// Mark transaction as complete
+		q.Complete(ethTx.Hash())
 	}
 
 	return nil

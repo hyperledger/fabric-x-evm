@@ -16,7 +16,6 @@ import (
 	"os"
 	"runtime"
 	"runtime/pprof"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -24,6 +23,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/hyperledger/fabric-x-common/api/committerpb"
 	"github.com/hyperledger/fabric-x-evm/endorser"
 	econf "github.com/hyperledger/fabric-x-evm/endorser/config"
 	"github.com/hyperledger/fabric-x-evm/endorser/testimpl"
@@ -35,6 +35,76 @@ import (
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/grpclog"
 )
+
+// TxCompletionTracker tracks pending transactions and notifies workers when they complete.
+// It implements gwcore.TxHandler to receive notifications from the notification system.
+type TxCompletionTracker struct {
+	mu      sync.RWMutex
+	pending map[common.Hash]chan gwcore.TxNotification // eth hash -> completion channel
+}
+
+// NewTxCompletionTracker creates a new tracker.
+func NewTxCompletionTracker() *TxCompletionTracker {
+	return &TxCompletionTracker{
+		pending: make(map[common.Hash]chan gwcore.TxNotification),
+	}
+}
+
+// Register creates and returns a completion channel for the given transaction hash.
+// The worker should call this before sending the transaction to avoid race conditions.
+func (t *TxCompletionTracker) Register(ethHash common.Hash) <-chan gwcore.TxNotification {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	// Use buffered channel to avoid blocking the notifier goroutine
+	ch := make(chan gwcore.TxNotification, 1)
+	t.pending[ethHash] = ch
+	return ch
+}
+
+// HandleTx implements gwcore.TxHandler. It receives notifications about completed transactions
+// and signals the corresponding worker via the completion channel.
+func (t *TxCompletionTracker) HandleTx(ctx context.Context, notifs []gwcore.TxNotification) error {
+	for _, notif := range notifs {
+		// Extract ethereum transaction hash from the notification
+		var ethTx types.Transaction
+		if err := ethTx.UnmarshalBinary(notif.EthTxBytes); err != nil {
+			// Log error but don't fail - this shouldn't happen in normal operation
+			fmt.Printf("TxCompletionTracker: failed to unmarshal eth tx: %v\n", err)
+			continue
+		}
+
+		ethHash := ethTx.Hash()
+
+		t.mu.Lock()
+		ch, exists := t.pending[ethHash]
+		if exists {
+			delete(t.pending, ethHash)
+		}
+		t.mu.Unlock()
+
+		if exists {
+			// Send notification and close channel
+			ch <- notif
+			close(ch)
+		}
+		// If not exists, the transaction wasn't registered (shouldn't happen in normal flow)
+	}
+
+	return nil
+}
+
+// Cleanup removes any pending registrations (useful for cleanup on shutdown).
+func (t *TxCompletionTracker) Cleanup() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	// Close all pending channels
+	for _, ch := range t.pending {
+		close(ch)
+	}
+	t.pending = make(map[common.Hash]chan gwcore.TxNotification)
+}
 
 // balancePrimingEndorserFactory creates endorsers with balance priming support for testing.
 func balancePrimingEndorserFactory(balancePriming *testimpl.BalancePrimingConfig) integration.EndorserFactory {
@@ -161,8 +231,17 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 
 	// Setup test harness with USDC contract and balance priming enabled
 	factory := balancePrimingEndorserFactory(balancePriming)
-	th, err := integration.NewLocalTestHarnessWithFactoryAndTxQueue(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", "fabric", map[string]any{"Gateway.WorkerCount": processingWorkerCount}, factory, gwcore.NewTxQueueV2())
-	// th, err = integration.NewFabricXTestHarnessWithFactoryAndTxQueue(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", map[string]any{"Gateway.WorkerCount": processingWorkerCount}, factory, gwcore.NewTxQueueV2())
+
+	// Create completion tracker for async transaction monitoring
+	tracker := NewTxCompletionTracker()
+	defer tracker.Cleanup()
+
+	// Choose test harness based on backend:
+	// - Local: Traditional block-based synchronization
+	// - Fabric: Traditional block-based synchronization
+	// - Fabric-X: Notification-based (MemoryStore + NotificationDispatcher)
+	// th, err := integration.NewLocalTestHarnessWithFactoryAndTxQueue(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", "fabric", map[string]any{"Gateway.WorkerCount": processingWorkerCount}, factory, gwcore.NewTxQueueV2())
+	th, err := integration.NewFabricXTestHarnessWithNotifications(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", map[string]any{"Gateway.WorkerCount": processingWorkerCount}, factory, gwcore.NewTxQueueV2(), tracker)
 	// th, err = integration.NewFabricTestHarnessWithFactoryAndTxQueue(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", map[string]any{"Gateway.WorkerCount": processingWorkerCount}, factory, gwcore.NewTxQueueV2())
 	assert.NoError(t, err)
 
@@ -228,10 +307,6 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 		go func(workerID int) {
 			defer wg.Done()
 
-			// Create native eth client for read operations (TransactionByHash, etc.)
-			ec, err := integration.NewNativeEthClient(th.Gateways[0])
-			assert.NoError(t, err)
-
 			for item := range workChan {
 				i := item.index
 				transfer := item.transfer
@@ -262,6 +337,9 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 						}
 					}()
 
+					// Register for completion notification BEFORE sending
+					completionCh := tracker.Register(tx.Hash())
+
 					// Use the wrapped gateway directly to bypass nonce validation
 					err = wrappedGateway.SendTransaction(context.Background(), tx)
 					if err != nil {
@@ -269,21 +347,17 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 						panic(err) // Trigger the defer recovery
 					}
 
-					// Wait for transaction to be committed
-					for pending := true; pending; {
-						_, pending, err = ec.TransactionByHash(t.Context(), tx.Hash())
-						if err != nil {
-							if !strings.Contains(err.Error(), "not found") {
-								t.Logf("Transfer %d: TransactionByHash error: %v", i, err)
-								panic(err)
-							} else {
-								pending = true
-							}
+					// Wait for transaction completion notification from the tracker
+					select {
+					case notif := <-completionCh:
+						// Transaction committed - check status
+						if notif.Status != committerpb.Status_COMMITTED { // 0 = COMMITTED in fabric-x
+							t.Logf("Transfer %d: Transaction failed with status: %v", i, notif.Status)
+							panic(fmt.Sprintf("transaction failed with status %v", notif.Status))
 						}
-
-						if pending {
-							time.Sleep(time.Millisecond)
-						}
+					case <-t.Context().Done():
+						// Test context cancelled
+						panic("test context cancelled")
 					}
 				}()
 			}

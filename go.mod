@@ -13,11 +13,12 @@ tool (
 
 require (
 	github.com/ethereum/go-ethereum v1.16.7
+	github.com/gogo/protobuf v1.3.2
 	github.com/holiman/uint256 v1.3.2
 	github.com/hyperledger/fabric-lib-go v1.1.3
 	github.com/hyperledger/fabric-protos-go-apiv2 v0.3.7
 	github.com/hyperledger/fabric-x-common v0.1.1-0.20260219094834-26c5a49ed548
-	github.com/hyperledger/fabric-x-sdk v0.0.0-20260529170509-baebbe88ff86
+	github.com/hyperledger/fabric-x-sdk v0.0.0-20260602083224-e1b1e08fa18c
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/crypto v0.52.0
@@ -80,7 +81,6 @@ require (
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
 	github.com/gofrs/flock v0.13.0 // indirect
-	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/golang/snappy v1.0.0 // indirect
