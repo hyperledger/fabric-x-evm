@@ -20,7 +20,6 @@ import (
 	"runtime"
 	"runtime/pprof"
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -246,8 +245,8 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 		go func(workerID int) {
 			defer wg.Done()
 
-			// Create native eth client for read operations (TransactionByHash, etc.)
-			ec, err := integration.NewNativeEthClient(th.Gateways[0])
+			// Native eth client not needed in the no-poll experiment variant.
+			_, err := integration.NewNativeEthClient(th.Gateways[0])
 			assert.NoError(t, err)
 
 			for item := range workChan {
@@ -293,22 +292,8 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 					}
 					sentCount.Add(1)
 
-					// Wait for transaction to be committed
-					for pending := true; pending; {
-						_, pending, err = ec.TransactionByHash(t.Context(), tx.Hash())
-						if err != nil {
-							if !strings.Contains(err.Error(), "not found") {
-								t.Logf("Transfer %d: TransactionByHash error: %v", i, err)
-								panic(err)
-							} else {
-								pending = true
-							}
-						}
-
-						if pending {
-							time.Sleep(time.Millisecond)
-						}
-					}
+					// EXPERIMENT : drop the commit poll, count sent as committed.
+					// Raw throughput observed via grafana on the committer side.
 					committedCount.Add(1)
 				}()
 			}
@@ -404,6 +389,13 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	// Close the work channel and wait for all workers to finish
 	close(workChan)
 	wg.Wait()
+
+	// EXPERIMENT : in no-poll mode, SendTransaction returns after queuing
+	// in the SDK; workers exit fast. Hold the test alive long enough for the queued
+	// broadcasts to drain through the backend so grafana captures sustained rate.
+	tailWait := 180 * time.Second
+	t.Logf("Tail wait: holding test alive %v for backend to drain", tailWait)
+	time.Sleep(tailWait)
 
 	// Stop the logging goroutine
 	close(stopLogging)
