@@ -159,6 +159,12 @@ func ConvertToDomain(b blocks.Block) domain.Block {
 			status = 1
 		}
 
+		// DIAG: log every non-success tx to understand staging vs local divergence.
+		if status != 1 {
+			logger.Warnf("DIAG block=%d tx=%s valid=%t isRevertEvent=%t fabricStatus=%d -> receiptStatus=%d",
+				b.Number, tx.ID, tx.Valid, fc.IsRevertEvent(tx.Events), tx.Status, status)
+		}
+
 		etx, err := convertTransaction(tx.InputArgs[1], b.Hash, b.Number, tx.Number, tx.ID, status, tx.Status, tx.Events, &logIndex)
 		if err != nil {
 			panic(err) // we surface this for now instead of swallowing it

@@ -20,7 +20,6 @@ import (
 	"runtime"
 	"runtime/pprof"
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -293,21 +292,26 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 					}
 					sentCount.Add(1)
 
-					// Wait for transaction to be committed
-					for pending := true; pending; {
-						_, pending, err = ec.TransactionByHash(t.Context(), tx.Hash())
+					// Wait for transaction to be committed and verify Status==1.
+					for {
+						receipt, err := ec.TransactionReceipt(t.Context(), tx.Hash())
 						if err != nil {
-							if !strings.Contains(err.Error(), "not found") {
-								t.Logf("Transfer %d: TransactionByHash error: %v", i, err)
-								panic(err)
-							} else {
-								pending = true
+							if err.Error() == "not found" {
+								time.Sleep(time.Millisecond)
+								continue
 							}
+							t.Logf("Transfer %d: TransactionReceipt error: %v", i, err)
+							panic(err)
 						}
-
-						if pending {
+						if receipt == nil {
 							time.Sleep(time.Millisecond)
+							continue
 						}
+						if receipt.Status != 1 {
+							t.Logf("Transfer %d: non-success status=%d, hash=%s", i, receipt.Status, tx.Hash().Hex())
+							panic(fmt.Errorf("tx %s: status=%d", tx.Hash().Hex(), receipt.Status))
+						}
+						break
 					}
 					committedCount.Add(1)
 				}()
