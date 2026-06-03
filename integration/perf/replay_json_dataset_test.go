@@ -36,74 +36,35 @@ import (
 	"google.golang.org/grpc/grpclog"
 )
 
-// TxCompletionTracker tracks pending transactions and notifies workers when they complete.
-// It implements gwcore.TxHandler to receive notifications from the notification system.
+// TxCompletionTracker tracks transaction completions for open-loop testing.
+// It implements gwcore.TxHandler to receive notifications from the notification system
+// and updates the test's atomic counters directly.
 type TxCompletionTracker struct {
-	mu      sync.RWMutex
-	pending map[common.Hash]chan gwcore.TxNotification // eth hash -> completion channel
+	successCount *int64
+	failCount    *int64
 }
 
-// NewTxCompletionTracker creates a new tracker.
-func NewTxCompletionTracker() *TxCompletionTracker {
+// NewTxCompletionTracker creates a new tracker that updates the provided counters.
+func NewTxCompletionTracker(successCount, failCount *int64) *TxCompletionTracker {
 	return &TxCompletionTracker{
-		pending: make(map[common.Hash]chan gwcore.TxNotification),
+		successCount: successCount,
+		failCount:    failCount,
 	}
-}
-
-// Register creates and returns a completion channel for the given transaction hash.
-// The worker should call this before sending the transaction to avoid race conditions.
-func (t *TxCompletionTracker) Register(ethHash common.Hash) <-chan gwcore.TxNotification {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	// Use buffered channel to avoid blocking the notifier goroutine
-	ch := make(chan gwcore.TxNotification, 1)
-	t.pending[ethHash] = ch
-	return ch
 }
 
 // HandleTx implements gwcore.TxHandler. It receives notifications about completed transactions
-// and signals the corresponding worker via the completion channel.
+// and updates the success/fail counters based on transaction status.
 func (t *TxCompletionTracker) HandleTx(ctx context.Context, notifs []gwcore.TxNotification) error {
 	for _, notif := range notifs {
-		// Extract ethereum transaction hash from the notification
-		var ethTx types.Transaction
-		if err := ethTx.UnmarshalBinary(notif.EthTxBytes); err != nil {
-			// Log error but don't fail - this shouldn't happen in normal operation
-			fmt.Printf("TxCompletionTracker: failed to unmarshal eth tx: %v\n", err)
-			continue
+		// Update counters based on status
+		if notif.Status == committerpb.Status_COMMITTED { // 0 = COMMITTED in fabric-x
+			atomic.AddInt64(t.successCount, 1)
+		} else {
+			atomic.AddInt64(t.failCount, 1)
 		}
-
-		ethHash := ethTx.Hash()
-
-		t.mu.Lock()
-		ch, exists := t.pending[ethHash]
-		if exists {
-			delete(t.pending, ethHash)
-		}
-		t.mu.Unlock()
-
-		if exists {
-			// Send notification and close channel
-			ch <- notif
-			close(ch)
-		}
-		// If not exists, the transaction wasn't registered (shouldn't happen in normal flow)
 	}
 
 	return nil
-}
-
-// Cleanup removes any pending registrations (useful for cleanup on shutdown).
-func (t *TxCompletionTracker) Cleanup() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	// Close all pending channels
-	for _, ch := range t.pending {
-		close(ch)
-	}
-	t.pending = make(map[common.Hash]chan gwcore.TxNotification)
 }
 
 // balancePrimingEndorserFactory creates endorsers with balance priming support for testing.
@@ -232,9 +193,12 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	// Setup test harness with USDC contract and balance priming enabled
 	factory := balancePrimingEndorserFactory(balancePriming)
 
-	// Create completion tracker for async transaction monitoring
-	tracker := NewTxCompletionTracker()
-	defer tracker.Cleanup()
+	// Replay transactions with parallel workers
+	// Atomic counters for thread-safe counting
+	var successCount, failCount, skippedCount int64
+
+	// Create completion tracker that updates our counters
+	tracker := NewTxCompletionTracker(&successCount, &failCount)
 
 	// Choose test harness based on backend:
 	// - Local: Traditional block-based synchronization
@@ -278,10 +242,6 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 		cfg.totalDispatches = int64(len(window)) * cfg.wrapCount
 	}
 
-	// Replay transactions with parallel workers
-	// Atomic counters for thread-safe counting
-	var successCount, failCount, skippedCount int64
-
 	runtime.GC()
 
 	// Track throughput
@@ -301,7 +261,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	numWorkers := submittingWorkerCount
 	var wg sync.WaitGroup
 
-	// Start worker goroutines
+	// Start worker goroutines (open-loop: submit without waiting for completion)
 	for w := 0; w < numWorkers; w++ {
 		wg.Add(1)
 		go func(workerID int) {
@@ -326,40 +286,16 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 					continue
 				}
 
-				// Send the transaction and wait for it to be committed
-				func() {
-					defer func() {
-						if r := recover(); r != nil {
-							// t.Logf("Transfer %d: Failed to send transaction (panic recovered): %v", i, r)
-							atomic.AddInt64(&failCount, 1)
-						} else {
-							atomic.AddInt64(&successCount, 1)
-						}
-					}()
+				// Send the transaction (open-loop: don't wait for completion)
+				err = wrappedGateway.SendTransaction(context.Background(), tx)
+				if err != nil {
+					t.Logf("Transfer %d: SendTransaction error: %v", i, err)
+					atomic.AddInt64(&failCount, 1)
+					continue
+				}
 
-					// Register for completion notification BEFORE sending
-					completionCh := tracker.Register(tx.Hash())
-
-					// Use the wrapped gateway directly to bypass nonce validation
-					err = wrappedGateway.SendTransaction(context.Background(), tx)
-					if err != nil {
-						t.Logf("Transfer %d: SendTransaction error: %v", i, err)
-						panic(err) // Trigger the defer recovery
-					}
-
-					// Wait for transaction completion notification from the tracker
-					select {
-					case notif := <-completionCh:
-						// Transaction committed - check status
-						if notif.Status != committerpb.Status_COMMITTED { // 0 = COMMITTED in fabric-x
-							t.Logf("Transfer %d: Transaction failed with status: %v", i, notif.Status)
-							panic(fmt.Sprintf("transaction failed with status %v", notif.Status))
-						}
-					case <-t.Context().Done():
-						// Test context cancelled
-						panic("test context cancelled")
-					}
-				}()
+				// Small sleep between submissions for open-loop pacing
+				time.Sleep(time.Millisecond)
 			}
 		}(w)
 	}
@@ -389,19 +325,25 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 
 				txProcessed := currentTotal - lastLogCount
 				throughput := float64(txProcessed) / elapsed
+				goodput := float64(currentSuccess-lastLogCount+currentFail-lastLogCount) / elapsed
+				if lastLogCount == 0 {
+					goodput = float64(currentSuccess) / elapsed
+				}
 
 				totalElapsed := now.Sub(startTime).Seconds()
 				overallThroughput := float64(currentTotal) / totalElapsed
+				overallGoodput := float64(currentSuccess) / totalElapsed
 
 				progressTarget := int64(len(window))
 				if cfg.wrapAround {
 					progressTarget = cfg.totalDispatches
 				}
 
-				t.Logf("Progress: %d/%d transfers processed (%d successful, %d failed, %d skipped) | Throughput: %.2f tx/s (recent), %.2f tx/s (overall)",
+				t.Logf("Progress: %d/%d completed (%d successful, %d failed, %d skipped) | Throughput: %.2f tx/s, Goodput: %.2f tx/s (recent) | Overall: %.2f tx/s, %.2f tx/s",
 					currentSuccess+currentFail+currentSkipped, progressTarget,
 					currentSuccess, currentFail, currentSkipped,
-					throughput, overallThroughput)
+					throughput, goodput,
+					overallThroughput, overallGoodput)
 
 				// Update for next interval
 				lastLogTime.Store(now)
@@ -450,9 +392,38 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 		}
 	}
 
-	// Close the work channel and wait for all workers to finish
+	// Close the work channel and wait for all workers to finish submitting
 	close(workChan)
 	wg.Wait()
+
+	t.Logf("All submissions complete, waiting for transaction completions...")
+
+	// Wait for all transactions to complete (open-loop: submissions are done, now wait for notifications)
+	expectedCompletions := dispatched - atomic.LoadInt64(&skippedCount)
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		currentSuccess := atomic.LoadInt64(&successCount)
+		currentFail := atomic.LoadInt64(&failCount)
+		currentTotal := currentSuccess + currentFail
+
+		if currentTotal >= expectedCompletions {
+			t.Logf("All transactions completed: %d/%d", currentTotal, expectedCompletions)
+			break
+		}
+
+		select {
+		case <-ticker.C:
+			t.Logf("Waiting for completions: %d/%d (%.1f%%)",
+				currentTotal, expectedCompletions,
+				float64(currentTotal)/float64(expectedCompletions)*100)
+		case <-t.Context().Done():
+			t.Logf("Context cancelled while waiting for completions: %d/%d received",
+				currentTotal, expectedCompletions)
+			break
+		}
+	}
 
 	// Stop the logging goroutine
 	close(stopLogging)
@@ -466,9 +437,13 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	t.Logf("Replay complete: %d successful, %d failed, %d skipped out of %d total transfers",
 		finalSuccess, finalFail, finalSkipped, dispatched)
 
-	// Calculate overall throughput
+	// Calculate overall throughput and goodput
 	totalElapsed := time.Since(startTime).Seconds()
 	overallThroughput := float64(finalSuccess+finalFail) / totalElapsed
+	overallGoodput := float64(finalSuccess) / totalElapsed
+
+	t.Logf("Final metrics: Throughput=%.2f tx/s, Goodput=%.2f tx/s, Success rate=%.2f%%",
+		overallThroughput, overallGoodput, float64(finalSuccess)/float64(finalSuccess+finalFail)*100)
 
 	// Return metrics (throughput, failed count, total dispatched transfers)
 	return overallThroughput, finalFail, dispatched
@@ -484,7 +459,7 @@ func TestReplayJSONDataset(t *testing.T) {
 	// flogging.ActivateSpec("gateway.core.txqueue_v2=debug")
 
 	// Run the test with single worker configuration
-	_, _, _ = runReplayTest(t, 1, 1, loadReplayConfigFromEnv(t))
+	_, _, _ = runReplayTest(t, 16, 32, loadReplayConfigFromEnv(t))
 }
 
 type performanceResult struct {
