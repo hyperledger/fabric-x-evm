@@ -21,15 +21,37 @@ import (
 var ddl string
 
 type Store struct {
-	queries           *Queries
-	DB                *sql.DB
-	CachedBlockNumber atomic.Uint64 // cached block number for fast reads
+	queries                 *Queries
+	DB                      *sql.DB
+	CachedBlockNumber       atomic.Uint64 // cached block number for fast reads
+	BlockRetention          int           // number of recent blocks to keep; 0 disables truncation
+	BlockTruncationInterval uint64        // run truncation every N blocks; 0 disables truncation
 }
 
-func NewStore(db *sql.DB) *Store {
+// StoreOpts carries optional tuning for NewStore. Zero values use built-in defaults
+// (DefaultBlockRetention / DefaultBlockTruncationInterval).
+type StoreOpts struct {
+	BlockRetention          int
+	BlockTruncationInterval uint64
+}
+
+const (
+	DefaultBlockRetention          = 10000
+	DefaultBlockTruncationInterval = 1000
+)
+
+func NewStore(db *sql.DB, opts StoreOpts) *Store {
+	if opts.BlockRetention == 0 {
+		opts.BlockRetention = DefaultBlockRetention
+	}
+	if opts.BlockTruncationInterval == 0 {
+		opts.BlockTruncationInterval = DefaultBlockTruncationInterval
+	}
 	return &Store{
-		queries: New(db),
-		DB:      db,
+		queries:                 New(db),
+		DB:                      db,
+		BlockRetention:          opts.BlockRetention,
+		BlockTruncationInterval: opts.BlockTruncationInterval,
 	}
 }
 
@@ -449,6 +471,34 @@ func (s *Store) GetLogs(ctx context.Context, filter domain.LogFilter) ([]domain.
 	}
 
 	return logs, nil
+}
+
+// TruncateBlocks deletes blocks older than the last keepLastN blocks, along with
+// their associated transactions and logs. All three tables are deleted in a single
+// transaction to maintain referential integrity (logs and transactions have foreign
+// keys on block_number with no CASCADE, so they must be deleted first).
+// Returns nil immediately if there is nothing to truncate.
+func (s *Store) TruncateBlocks(ctx context.Context, keepLastN int) error {
+	cutoff := int64(s.CachedBlockNumber.Load()) - int64(keepLastN)
+	if cutoff <= 0 {
+		return nil
+	}
+	sqlTx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer sqlTx.Rollback() //nolint:errcheck
+
+	for _, stmt := range []string{
+		`DELETE FROM logs WHERE block_number <= ?`,
+		`DELETE FROM transactions WHERE block_number <= ?`,
+		`DELETE FROM blocks WHERE block_number <= ?`,
+	} {
+		if _, err := sqlTx.Exec(stmt, cutoff); err != nil {
+			return err
+		}
+	}
+	return sqlTx.Commit()
 }
 
 // GetLogsByTxHash retrieves all logs for a specific transaction.

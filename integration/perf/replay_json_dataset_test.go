@@ -13,9 +13,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"runtime"
 	"runtime/pprof"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -33,6 +37,7 @@ import (
 	"github.com/hyperledger/fabric-x-evm/utils"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/grpclog"
 )
 
@@ -215,8 +220,18 @@ func writeHeapProfile(filename string) {
 // runReplayTest executes the replay test with configurable worker counts and returns metrics.
 // Returns: (overallThroughput, failedTransactionCount, totalTransactionCount)
 func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCount int, cfg replayConfig) (float64, int64, int64) {
+	if os.Getenv("PERF_PPROF") == "1" {
+		go func() {
+			t.Logf("Starting pprof server on http://localhost:6060/debug/pprof/")
+			if err := http.ListenAndServe("localhost:6060", nil); err != nil {
+				t.Logf("pprof server failed: %v", err)
+			}
+		}()
+	}
+
 	// Silence GRPC logging
 	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr))
+	t.Logf("Config: processingWorkers=%d submittingWorkers=%d", processingWorkerCount, submittingWorkerCount)
 
 	// USDC contract address
 	USDCAddr := common.HexToAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
@@ -236,14 +251,9 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	tracker := NewTxCompletionTracker()
 	defer tracker.Cleanup()
 
-	// Choose test harness based on backend:
-	// - Local: Traditional block-based synchronization
-	// - Fabric: Traditional block-based synchronization
-	// - Fabric-X: Notification-based (MemoryStore + NotificationDispatcher)
-	// th, err := integration.NewLocalTestHarnessWithFactoryAndTxQueue(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", "fabric", map[string]any{"Gateway.WorkerCount": processingWorkerCount}, factory, gwcore.NewTxQueueV2())
+	// Use notification-based harness from PR #190 for fabric-x.
 	th, err := integration.NewFabricXTestHarnessWithNotifications(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", map[string]any{"Gateway.WorkerCount": processingWorkerCount}, factory, gwcore.NewTxQueueV2(), tracker)
-	// th, err = integration.NewFabricTestHarnessWithFactoryAndTxQueue(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", map[string]any{"Gateway.WorkerCount": processingWorkerCount}, factory, gwcore.NewTxQueueV2())
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Wrap the gateway with NonceBypassGateway to skip nonce validation
 	// This is necessary for wrap-around replay where the same transactions are replayed
@@ -282,6 +292,11 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	// Atomic counters for thread-safe counting
 	var successCount, failCount, skippedCount int64
 
+	var latenciesMu sync.Mutex
+	var latencies []float64
+
+	var sentCount, committedCount atomic.Int64
+
 	runtime.GC()
 
 	// Track throughput
@@ -310,6 +325,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 			for item := range workChan {
 				i := item.index
 				transfer := item.transfer
+				txStart := time.Now()
 
 				// Skip transfers without transactions
 				if len(transfer.Transaction) == 0 {
@@ -334,6 +350,10 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 							atomic.AddInt64(&failCount, 1)
 						} else {
 							atomic.AddInt64(&successCount, 1)
+							latMs := float64(time.Since(txStart).Microseconds()) / 1000.0
+							latenciesMu.Lock()
+							latencies = append(latencies, latMs)
+							latenciesMu.Unlock()
 						}
 					}()
 
@@ -346,6 +366,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 						t.Logf("Transfer %d: SendTransaction error: %v", i, err)
 						panic(err) // Trigger the defer recovery
 					}
+					sentCount.Add(1)
 
 					// Wait for transaction completion notification from the tracker
 					select {
@@ -359,10 +380,15 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 						// Test context cancelled
 						panic("test context cancelled")
 					}
+					committedCount.Add(1)
 				}()
 			}
 		}(w)
 	}
+
+	// recentSamples collects windowed throughput values for stability reporting.
+	// Written only by the logging goroutine; safe to read after loggingWg.Wait().
+	var recentSamples []float64
 
 	// Progress logging goroutine
 	stopLogging := make(chan struct{})
@@ -372,8 +398,6 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 		defer loggingWg.Done()
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
-
-		itrctr := 0
 
 		for {
 			select {
@@ -389,6 +413,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 
 				txProcessed := currentTotal - lastLogCount
 				throughput := float64(txProcessed) / elapsed
+				recentSamples = append(recentSamples, throughput)
 
 				totalElapsed := now.Sub(startTime).Seconds()
 				overallThroughput := float64(currentTotal) / totalElapsed
@@ -398,20 +423,17 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 					progressTarget = cfg.totalDispatches
 				}
 
-				t.Logf("Progress: %d/%d transfers processed (%d successful, %d failed, %d skipped) | Throughput: %.2f tx/s (recent), %.2f tx/s (overall)",
+				sent := sentCount.Load()
+				committed := committedCount.Load()
+				t.Logf("Progress: %d/%d transfers processed (%d successful, %d failed, %d skipped) | Throughput: %.2f tx/s (recent), %.2f tx/s (overall) | sent=%d committed=%d inflight=%d",
 					currentSuccess+currentFail+currentSkipped, progressTarget,
 					currentSuccess, currentFail, currentSkipped,
-					throughput, overallThroughput)
+					throughput, overallThroughput,
+					sent, committed, sent-committed)
 
 				// Update for next interval
 				lastLogTime.Store(now)
 				lastLogCount = currentTotal
-
-				_ = itrctr
-				// runtime.GC()
-				// logMem("blah")
-				// itrctr++
-				// writeHeapProfile(fmt.Sprintf("heap_%d.prof", itrctr))
 
 			case <-stopLogging:
 				return
@@ -458,6 +480,50 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	close(stopLogging)
 	loggingWg.Wait()
 
+	if len(recentSamples) >= 2 {
+		var sum float64
+		minTPS, maxTPS := recentSamples[0], recentSamples[0]
+		for _, s := range recentSamples {
+			sum += s
+			if s < minTPS {
+				minTPS = s
+			}
+			if s > maxTPS {
+				maxTPS = s
+			}
+		}
+		mean := sum / float64(len(recentSamples))
+		var variance float64
+		for _, s := range recentSamples {
+			d := s - mean
+			variance += d * d
+		}
+		stddev := math.Sqrt(variance / float64(len(recentSamples)))
+		cv := 0.0
+		if mean > 0 {
+			cv = stddev / mean * 100
+		}
+		t.Logf("TPS stability (%d samples): min=%.2f max=%.2f avg=%.2f stddev=%.2f CV=%.1f%%",
+			len(recentSamples), minTPS, maxTPS, mean, stddev, cv)
+	}
+
+	if len(latencies) > 0 {
+		sortedLat := make([]float64, len(latencies))
+		copy(sortedLat, latencies)
+		sort.Float64s(sortedLat)
+
+		pct := func(p int) float64 {
+			idx := len(sortedLat) * p / 100
+			if idx >= len(sortedLat) {
+				idx = len(sortedLat) - 1
+			}
+			return sortedLat[idx]
+		}
+
+		t.Logf("Latency: p50=%.2fms p90=%.2fms p99=%.2fms max=%.2fms",
+			pct(50), pct(90), pct(99), sortedLat[len(sortedLat)-1])
+	}
+
 	// Final counts
 	finalSuccess := atomic.LoadInt64(&successCount)
 	finalFail := atomic.LoadInt64(&failCount)
@@ -469,6 +535,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	// Calculate overall throughput
 	totalElapsed := time.Since(startTime).Seconds()
 	overallThroughput := float64(finalSuccess+finalFail) / totalElapsed
+	t.Logf("Result: Throughput=%.2f tx/s", overallThroughput)
 
 	// Return metrics (throughput, failed count, total dispatched transfers)
 	return overallThroughput, finalFail, dispatched
@@ -483,8 +550,19 @@ func TestReplayJSONDataset(t *testing.T) {
 	}
 	// flogging.ActivateSpec("gateway.core.txqueue_v2=debug")
 
-	// Run the test with single worker configuration
-	_, _, _ = runReplayTest(t, 1, 1, loadReplayConfigFromEnv(t))
+	processingWorkers := 1
+	if v := os.Getenv("PERF_PROCESSING_WORKERS"); v != "" {
+		_, err := fmt.Sscanf(v, "%d", &processingWorkers)
+		assert.NoError(t, err, "PERF_PROCESSING_WORKERS must be a valid integer")
+		assert.True(t, processingWorkers >= 1, "PERF_PROCESSING_WORKERS must be >= 1")
+	}
+	submittingWorkers := 8
+	if v := os.Getenv("PERF_SUBMITTING_WORKERS"); v != "" {
+		_, err := fmt.Sscanf(v, "%d", &submittingWorkers)
+		assert.NoError(t, err, "PERF_SUBMITTING_WORKERS must be a valid integer")
+		assert.True(t, submittingWorkers >= 1, "PERF_SUBMITTING_WORKERS must be >= 1")
+	}
+	_, _, _ = runReplayTest(t, processingWorkers, submittingWorkers, loadReplayConfigFromEnv(t))
 }
 
 type performanceResult struct {
@@ -533,6 +611,8 @@ func TestReplayJSONDatasetPerformance(t *testing.T) {
 
 			t.Logf("Result: Throughput=%.2f tx/s, Failed=%d/%d (%.2f%%)",
 				throughput, failedTxs, totalTxs, failureRate*100)
+			t.Logf("PerfResult: pw=%d sw=%d throughput=%.2f failed=%d total=%d",
+				processingWorkers, submittingWorkers, throughput, failedTxs, totalTxs)
 		}
 	}
 

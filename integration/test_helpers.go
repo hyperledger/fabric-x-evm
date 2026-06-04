@@ -144,7 +144,13 @@ func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg confi
 		return nil, nil, err
 	}
 
-	chain, err := core.NewChain(cfg.Gateway.Database.ConnString, cfg.Gateway.Database.TriePath, false)
+	chain, err := core.NewChain(core.ChainOpts{
+		DBConnString:            cfg.Gateway.Database.ConnString,
+		TriePath:                cfg.Gateway.Database.TriePath,
+		Namespace:               cfg.Network.Namespace,
+		BlockRetention:          cfg.Gateway.BlockRetention,
+		BlockTruncationInterval: cfg.Gateway.BlockTruncationInterval,
+	})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -530,7 +536,15 @@ func NewFabricXTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig
 }
 
 func NewFabricXTestHarnessWithFactoryAndTxQueue(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory, txQueue core.TxQueueInterface) (*TestHarness, error) {
-	cfg, err := config.Load("fabx.yaml")
+	configPath := os.Getenv("FABX_CONFIG_PATH")
+	if configPath == "" {
+		cwd, _ := os.Getwd()
+		defer os.Chdir(cwd)
+		_ = os.Chdir("../")
+		configPath = "fabx.yaml"
+	}
+
+	cfg, err := config.Load(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
@@ -560,11 +574,15 @@ func NewFabricXTestHarnessWithFactoryAndTxQueue(t *testing.T, logger sdk.Logger,
 // Uses MemoryStore and NotificationDispatcher for better performance in replay scenarios.
 // If extraHandler is non-nil, it will be inserted into the handler chain right before the cleanup handler.
 func NewFabricXTestHarnessWithNotifications(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory, txQueue core.TxQueueInterface, extraHandler core.TxHandler) (*TestHarness, error) {
-	cwd, _ := os.Getwd()
-	defer os.Chdir(cwd)
-	_ = os.Chdir("../")
+	configPath := os.Getenv("FABX_CONFIG_PATH")
+	if configPath == "" {
+		cwd, _ := os.Getwd()
+		defer os.Chdir(cwd)
+		_ = os.Chdir("../")
+		configPath = "fabx.yaml"
+	}
 
-	cfg, err := config.Load("fabx.yaml")
+	cfg, err := config.Load(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
