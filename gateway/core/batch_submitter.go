@@ -15,6 +15,7 @@ import (
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-common/api/applicationpb"
 	"github.com/hyperledger/fabric-x-common/protoutil"
+	"github.com/hyperledger/fabric-x-evm/gateway/metrics"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"google.golang.org/protobuf/proto"
@@ -190,10 +191,12 @@ func (bs *BatchSubmitter) submitBatch(ctx context.Context, batch []sdk.Endorseme
 
 	// Submit all endorsements to the orderer
 	for i, end := range batch {
+		submitStart := time.Now()
 		if err := bs.submitter.Submit(ctx, end); err != nil {
 			// Log error but continue with remaining submissions
 			batchLogger.Errorf("Failed to submit endorsement %d/%d: %v", i+1, len(batch), err)
 		}
+		metrics.GatewaySubmitDuration.Observe(time.Since(submitStart).Seconds())
 	}
 
 	batchLogger.Debugf("Successfully submitted batch of %d transactions to orderer", len(batch))

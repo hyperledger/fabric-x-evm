@@ -10,12 +10,14 @@ import (
 	"container/list"
 	"context"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-x-common/api/committerpb"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
+	"github.com/hyperledger/fabric-x-evm/gateway/metrics"
 )
 
 var loggerV2 = flogging.MustGetLogger("gateway.core.txqueue_v2")
@@ -31,6 +33,7 @@ var loggerV2 = flogging.MustGetLogger("gateway.core.txqueue_v2")
 type txEntry struct {
 	tx           *types.Transaction
 	participants []common.Address // Cached participants (sender/recipient)
+	enqueuedAt   time.Time        // wall time the tx was Enqueued (for queue-wait metric)
 
 	// Linked list element in either readyList or waitingList
 	listElement *list.Element
@@ -60,7 +63,12 @@ type TxQueueV2 struct {
 	waitingList *list.List // Transactions waiting for dependencies
 
 	// Fast lookup maps
-	participantMap map[common.Address][]*txEntry      // Address -> transactions involving that address
+	// participantMap holds the SINGLE most-recent in-flight tx per participant address.
+	// A new tx touching the same participant only blocks on this one; transitive
+	// dependency chains ensure MVCC ordering with prior in-flight txs is preserved.
+	// This shrinks the dependency graph from O(N²) edges (every new tx → every prior
+	// in-flight tx touching the same participant) to O(N) edges.
+	participantMap map[common.Address]*txEntry
 	hashMap        map[common.Hash]*txEntry           // Tx hash -> transaction entry
 	pendingMap     map[common.Hash]*types.Transaction // Tx hash -> in-progress transactions
 
@@ -77,7 +85,7 @@ func NewTxQueueV2() *TxQueueV2 {
 	q := &TxQueueV2{
 		readyList:      list.New(),
 		waitingList:    list.New(),
-		participantMap: make(map[common.Address][]*txEntry),
+		participantMap: make(map[common.Address]*txEntry),
 		hashMap:        make(map[common.Hash]*txEntry),
 		pendingMap:     make(map[common.Hash]*types.Transaction),
 	}
@@ -89,32 +97,56 @@ func NewTxQueueV2() *TxQueueV2 {
 // The transaction is placed in the Ready list if it has no conflicts with
 // in-progress or waiting transactions, otherwise it's placed in the Waiting list
 // with appropriate dependency links.
+//
+// Lock-hold optimisation: tx.Hash() and participantsForTx() (which does an ECDSA
+// signature recovery, ~50-200µs) are both computed BEFORE acquiring the lock.
+// A fast read-locked dedup check short-circuits when the tx is already tracked,
+// so duplicate-heavy replay workloads pay only an RLock + map lookup, not the
+// crypto cost. Insertion takes the write lock and double-checks the dedup map
+// to handle the race between RUnlock and Lock.
 func (q *TxQueueV2) Enqueue(tx *types.Transaction) {
+	start := time.Now()
+	defer func() { metrics.GatewayTxQueueEnqueueDuration.Observe(time.Since(start).Seconds()) }()
+
+	// Compute tx hash outside any lock (~1µs, cached on first call).
+	txHash := tx.Hash()
+
+	// Fast read-locked dedup check. Replay workloads short-circuit here.
+	q.mu.RLock()
+	_, exists := q.hashMap[txHash]
+	q.mu.RUnlock()
+	if exists {
+		return
+	}
+
+	// Compute participants outside the write lock (~100µs ECDSA recovery).
+	participants := participantsForTx(tx)
+
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	txHash := tx.Hash()
-
-	// Check if already tracked
+	// Double-check: another goroutine may have inserted the same tx
+	// between our RUnlock and Lock.
 	if _, exists := q.hashMap[txHash]; exists {
 		return
 	}
 
-	// Create new entry
+	// Create new entry (participants already computed above)
 	entry := &txEntry{
 		tx:           tx,
-		participants: participantsForTx(tx),
+		participants: participants,
+		enqueuedAt:   time.Now(),
 		blocks:       make([]*txEntry, 0),
 		isBlockedBy:  make([]*txEntry, 0),
 	}
 
-	// Find all transactions that share at least one participant
+	// Find conflicting in-flight txs: only the most-recent prior tx per participant.
+	// Transitive ordering via existing dependency edges still serializes against
+	// older in-flight txs on the same participant.
 	conflictingTxs := make(map[*txEntry]bool)
 	for _, participant := range entry.participants {
-		if txList, exists := q.participantMap[participant]; exists {
-			for _, conflictTx := range txList {
-				conflictingTxs[conflictTx] = true
-			}
+		if mostRecent, exists := q.participantMap[participant]; exists {
+			conflictingTxs[mostRecent] = true
 		}
 	}
 
@@ -138,17 +170,24 @@ func (q *TxQueueV2) Enqueue(tx *types.Transaction) {
 			txHash.Hex()[:10], q.waitingList.Len(), q.readyList.Len())
 	}
 
-	// Update lookup maps
+	// Update lookup maps. Overwriting participantMap[p] makes this tx the new
+	// most-recent in-flight tx for that participant; the previous most-recent is
+	// already recorded as a dependency in our isBlockedBy list (and a transitive
+	// chain back to older in-flight txs sharing p).
 	q.hashMap[txHash] = entry
 	for _, participant := range entry.participants {
-		q.participantMap[participant] = append(q.participantMap[participant], entry)
+		q.participantMap[participant] = entry
 	}
+
+	metrics.GatewayTxQueueSize.Set(float64(q.readyList.Len() + q.waitingList.Len()))
 }
 
 // Dequeue removes a transaction from the ready list and moves it to the pending map.
 // Blocks if the ready list is empty until a transaction becomes available or the queue is closed.
 // Returns (transaction, true) if successful, or (nil, false) if queue is closed and empty.
 func (q *TxQueueV2) Dequeue() (*types.Transaction, bool) {
+	start := time.Now()
+	defer func() { metrics.GatewayTxQueueDequeueDuration.Observe(time.Since(start).Seconds()) }()
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -178,6 +217,11 @@ func (q *TxQueueV2) Dequeue() (*types.Transaction, bool) {
 
 			// Move to pending map
 			q.pendingMap[txHash] = tx
+
+			if !entry.enqueuedAt.IsZero() {
+				metrics.GatewayTxQueueWait.Observe(time.Since(entry.enqueuedAt).Seconds())
+			}
+			metrics.GatewayTxQueueSize.Set(float64(q.readyList.Len() + q.waitingList.Len()))
 
 			loggerV2.Debugf("Dequeue: tx %s, waiting=%d ready=%d pending=%d",
 				txHash.Hex()[:10], q.waitingList.Len(), q.readyList.Len(), len(q.pendingMap))
@@ -233,13 +277,12 @@ func (q *TxQueueV2) completeUnlocked(hash common.Hash) int {
 	// Clean up the completed transaction
 	delete(q.hashMap, hash)
 
-	// Remove from participant map (now safe for new transactions with same participants)
+	// Remove from participant map only if this tx is still the recorded most-recent
+	// for that participant. A newer tx touching the same participant will already
+	// have overwritten the entry — leave that alone.
 	for _, participant := range entry.participants {
-		if txList, exists := q.participantMap[participant]; exists {
-			q.participantMap[participant] = removeFromSlice(txList, entry)
-			if len(q.participantMap[participant]) == 0 {
-				delete(q.participantMap, participant)
-			}
+		if current, exists := q.participantMap[participant]; exists && current == entry {
+			delete(q.participantMap, participant)
 		}
 	}
 
