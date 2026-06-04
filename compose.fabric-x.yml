@@ -9,7 +9,7 @@ services:
   # For a real deployment, see:
   # https://github.com/LF-Decentralized-Trust-labs/fabric-x-ansible-collection
   test-committer:
-    image: docker.io/hyperledger/fabric-x-committer-test-node:0.1.9
+    image: docker.io/hyperledger/fabric-x-committer-test-node:1.0.0
     pull_policy: missing
     restart: unless-stopped
     container_name: test-committer
@@ -26,14 +26,14 @@ services:
       - ./testdata/crypto:/root/config/crypto:ro,Z
       - ./testdata/crypto/sc-genesis-block.proto.bin:/root/config/sc-genesis-block.proto.bin:ro,Z
       - ./testdata/crypto/sc-genesis-block.proto.bin:/root/artifacts/config-block.pb.bin:ro,Z
-      - ./testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.crt:/server-certs/public-key.pem:ro,Z
-      - ./testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.key:/server-certs/private-key.pem:ro,Z
-      - ./testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/ca.crt:/server-certs/ca-certificate.pem:ro,Z
-      - ./testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.crt:/client-certs/public-key.pem:ro,Z
-      - ./testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.key:/client-certs/private-key.pem:ro,Z
-      - ./testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/ca.crt:/client-certs/ca-certificate.pem:ro,Z
+      - ./testdata/crypto/peerOrganizations/org1.example.com/peers/committer.org1.example.com/tls/server.crt:/server-certs/public-key.pem:ro,Z
+      - ./testdata/crypto/peerOrganizations/org1.example.com/peers/committer.org1.example.com/tls/server.key:/server-certs/private-key.pem:ro,Z
+      - ./testdata/crypto/peerOrganizations/org1.example.com/peers/committer.org1.example.com/tls/ca.crt:/server-certs/ca-certificate.pem:ro,Z
+      - ./testdata/crypto/peerOrganizations/org1.example.com/peers/committer.org1.example.com/tls/server.crt:/client-certs/public-key.pem:ro,Z
+      - ./testdata/crypto/peerOrganizations/org1.example.com/peers/committer.org1.example.com/tls/server.key:/client-certs/private-key.pem:ro,Z
+      - ./testdata/crypto/peerOrganizations/org1.example.com/peers/committer.org1.example.com/tls/ca.crt:/client-certs/ca-certificate.pem:ro,Z
     environment:
-      SC_SIDECAR_ORDERER_IDENTITY_MSP_DIR: /root/config/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/msp
+      SC_SIDECAR_ORDERER_IDENTITY_MSP_DIR: /root/config/crypto/peerOrganizations/org1.example.com/peers/committer.org1.example.com/msp
       SC_SIDECAR_ORDERER_IDENTITY_MSP_ID: Org1MSP
       SC_SIDECAR_ORDERER_CHANNEL_ID: mychannel
       SC_SIDECAR_ORDERER_SIGNED_ENVELOPES: "true"

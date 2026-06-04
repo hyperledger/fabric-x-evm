@@ -3,7 +3,7 @@ Organizations:
   - &Org1MSP
     Name: Org1
     ID: Org1MSP
-    MSPDir: ./crypto/peerOrganizations/Org1/msp
+    MSPDir: ./crypto/peerOrganizations/org1.example.com/msp
     Policies:
       Readers:
         Type: Signature
@@ -23,7 +23,7 @@ Organizations:
   - &Org2MSP
     Name: Org2
     ID: Org2MSP
-    MSPDir: ./crypto/peerOrganizations/Org2/msp
+    MSPDir: ./crypto/peerOrganizations/org2.example.com/msp
     Policies:
       Readers:
         Type: Signature
@@ -43,7 +43,7 @@ Organizations:
   - &OrdererMSP
     Name: OrdererOrg
     ID: OrdererMSP
-    MSPDir: ./crypto/ordererOrganizations/OrdererOrg/msp
+    MSPDir: ./crypto/ordererOrganizations/example.com/msp
     Policies:
       Readers:
         Type: Signature
@@ -90,8 +90,8 @@ Profiles:
         Consenters:
           - Host: 127.0.0.1
             Port: 5427
-            ClientTLSCert: ./crypto/ordererOrganizations/OrdererOrg/orderers/orderer.example.com/tls/server.crt
-            ServerTLSCert: ./crypto/ordererOrganizations/OrdererOrg/orderers/orderer.example.com/tls/server.crt
+            ClientTLSCert: ./crypto/ordererOrganizations/example.com/orderers/orderer.example.com/tls/server.crt
+            ServerTLSCert: ./crypto/ordererOrganizations/example.com/orderers/orderer.example.com/tls/server.crt
       Organizations:
         - *OrdererMSP
       Policies:
