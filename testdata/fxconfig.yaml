@@ -3,33 +3,35 @@ logging:
 
 msp:
   localMspID: Org1MSP
-  configPath: testdata/crypto/peerOrganizations/Org1/users/channel_admin@org1.example.com/msp
+  configPath: /msp
 
 orderer:
-  address: localhost:7050
+  address: orderer-party1-router:7050
   channel: mychannel
   tls:
     enabled: true
-    clientCert: testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.crt
-    clientKey: testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.key
+    clientCert: /tls/server.crt
+    clientKey: /tls/server.key
     rootCerts:
-      - testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/ca.crt
+      - /orderer-tls-ca.pem  # full stack: orderer CA
+      - /org-tls-ca.pem      # dev: test-committer uses a peer cert
+
 queries:
-  address: localhost:7001
+  address: committer-query-service:7001
   tls:
     enabled: true
-    clientCert: testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.crt
-    clientKey: testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.key
+    clientCert: /tls/server.crt
+    clientKey: /tls/server.key
     rootCerts:
-      - testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/ca.crt
+      - /org-tls-ca.pem
 
 notifications:
-  address: localhost:4001
+  address: committer-sidecar:4001
   tls:
     enabled: true
-    clientCert: testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.crt
-    clientKey: testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.key
+    clientCert: /tls/server.crt
+    clientKey: /tls/server.key
     rootCerts:
-      - testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/ca.crt
+      - /org-tls-ca.pem
   connectionTimeout: 10s
-  waitingTimeout: 15s
+  waitingTimeout: 20s

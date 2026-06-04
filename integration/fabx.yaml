@@ -16,7 +16,7 @@ gateway:
 
   identity:
     msp-id: Org1MSP
-    msp-dir: ../testdata/crypto/peerOrganizations/Org1/users/User1@org1.example.com/msp
+    msp-dir: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/msp
 
   database:
     connection-string: "file:gateway.db?mode=memory&cache=shared"
@@ -28,10 +28,10 @@ gateway:
         port: 7050
       tls:
         mode: mtls
-        cert-path: ../testdata/crypto/peerOrganizations/Org1/users/User1@org1.example.com/tls/client.crt
-        key-path: ../testdata/crypto/peerOrganizations/Org1/users/User1@org1.example.com/tls/client.key
+        cert-path: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.crt
+        key-path: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.key
         ca-cert-paths:
-          - ../testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/ca.crt
+          - ../testdata/crypto/ordererOrganizations/orderer-org-1/tlsca/tlsca.orderer-org-1-cert.pem
 
   committer:
     endpoint:
@@ -39,26 +39,26 @@ gateway:
       port: 4001
     tls:
       mode: mtls
-      cert-path: ../testdata/crypto/peerOrganizations/Org1/users/User1@org1.example.com/tls/client.crt
-      key-path: ../testdata/crypto/peerOrganizations/Org1/users/User1@org1.example.com/tls/client.key
+      cert-path: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.crt
+      key-path: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.key
       ca-cert-paths:
-        - ../testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/ca.crt
+        - ../testdata/crypto/peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem
 
 endorsers:
   - name: org1
     identity:
       msp-id: Org1MSP
-      msp-dir: ../testdata/crypto/peerOrganizations/Org1/peers/endorser.org1.example.com/msp
+      msp-dir: ../testdata/crypto/peerOrganizations/org1.example.com/peers/endorser.org1.example.com/msp
     committer:
       endpoint:
         host: 127.0.0.1
         port: 4001
       tls:
         mode: mtls
-        cert-path: ../testdata/crypto/peerOrganizations/Org1/users/User1@org1.example.com/tls/client.crt
-        key-path: ../testdata/crypto/peerOrganizations/Org1/users/User1@org1.example.com/tls/client.key
+        cert-path: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.crt
+        key-path: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.key
         ca-cert-paths:
-          - ../testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/ca.crt
+          - ../testdata/crypto/peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem
     database:
       database: memory
       # connection-string: "file:endorser-org1.db?mode=memory&cache=shared"

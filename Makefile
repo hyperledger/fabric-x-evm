@@ -54,11 +54,44 @@ pre-pull-images:
 integration-tests: pre-pull-images
 	@VERBOSE=$(VERBOSE) FABRIC_VERSION=$(FABRIC_VERSION) ./scripts/run_integration_test.sh
 
+# Container images for fabric-x
+TOOLS_IMAGE          ?= ghcr.io/hyperledger/fabric-x-tools:1.0.0
+ORDERER_IMAGE        ?= ghcr.io/hyperledger/fabric-x-orderer:1.0.0
+TEST_COMMITTER_IMAGE ?= docker.io/hyperledger/fabric-x-committer-test-node:1.0.0
+
+# Namespace init defaults
+NS      ?= basic
+POLICY  ?= AND('Org1MSP.member')
+NETWORK ?= fabric-x
+
 .PHONY: init-x
 init-x:
 	@rm -rf testdata/crypto
-	@go tool cryptogen generate --config testdata/crypto-config.yaml --output testdata/crypto
-	@cd testdata && go tool configtxgen --channelID mychannel --profile OrgsChannel --outputBlock crypto/sc-genesis-block.proto.bin
+	@$(DOCKER) run --rm \
+		--user "$(UID):$(GID)" \
+		-v "$(PWD)/testdata:/config" \
+		$(TOOLS_IMAGE) \
+		cryptogen generate --config=/config/crypto-config.yaml --output=/config/crypto
+	@# Routers and assemblers accept client certs from any peer org — concatenate all peer TLS CAs.
+	@cat testdata/crypto/peerOrganizations/org1.example.com/msp/tlscacerts/tlsca.org1.example.com-cert.pem \
+		testdata/crypto/peerOrganizations/org2.example.com/msp/tlscacerts/tlsca.org2.example.com-cert.pem \
+		> testdata/crypto/client-tls-ca.pem
+	@$(DOCKER) run --rm \
+		--user "$(UID):$(GID)" \
+		-v "$(PWD)/testdata:/config" \
+		-v "$(PWD)/testdata/crypto:/crypto" \
+		--entrypoint /usr/local/bin/armageddon \
+		$(ORDERER_IMAGE) \
+		createSharedConfigProto \
+		--sharedConfigYaml=/config/shared_config.yaml \
+		--output=/config/crypto/
+	@$(DOCKER) run --rm \
+		--user "$(UID):$(GID)" \
+		-v "$(PWD)/testdata:/config" \
+		$(TOOLS_IMAGE) \
+		configtxgen --channelID mychannel --profile OrgsChannel \
+		--outputBlock /config/crypto/config-block.pb.bin \
+		--configPath /config
 
 .PHONY: clean-x
 clean-x:
@@ -68,8 +101,20 @@ clean-x:
 start-x:
 	@if nc -z localhost 7050 2>/dev/null; then echo "Error: port 7050 is already in use — stop any running Fabric orderer before starting."; exit 1; fi
 	@$(COMPOSE) -f compose.fabric-x.yml up -d
+	@echo "Waiting for test committer to be ready..."
 	@while ! nc -z localhost 7001 2>/dev/null; do sleep 1; done
-	@go tool fxconfig namespace create basic --policy="OR('Org1MSP.member')" --endorse --submit --wait --config=testdata/fxconfig.yaml
+	@$(DOCKER) run --rm --network $(NETWORK) \
+		--user "$(UID):$(GID)" \
+		--env "FX_NS=$(NS)" \
+		--env "FX_POLICY=$(POLICY)" \
+		-v "$(PWD)/testdata/fxconfig.yaml:/config/fxconfig.yaml:ro,Z" \
+		-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/peers/fxconfig.org1.example.com/tls:/tls:ro,Z" \
+		-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/users/channel_admin@org1.example.com/msp:/msp:ro,Z" \
+		-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/msp/tlscacerts/tlsca.org1.example.com-cert.pem:/org-tls-ca.pem:ro,Z" \
+		-v "$(PWD)/testdata/crypto/ordererOrganizations/orderer-org-1/msp/tlscacerts/tlsca.orderer-org-1-cert.pem:/orderer-tls-ca.pem:ro,Z" \
+		$(TOOLS_IMAGE) \
+		sh -c 'fxconfig namespace list --config=/config/fxconfig.yaml 2>/dev/null | grep -q ") $$FX_NS:" || \
+		fxconfig namespace create "$$FX_NS" --policy="$$FX_POLICY" --endorse --submit --wait --config=/config/fxconfig.yaml'
 
 .PHONY: test-x
 test-x:
