@@ -982,8 +982,6 @@ github.com/hyperledger/fabric-x-committer v0.1.9 h1:3lgl1g3FkONogjJraRzhrD7gr89X
 github.com/hyperledger/fabric-x-committer v0.1.9/go.mod h1:MjD6yyRfnCk3QjmwbKySoApvQerfnR++f0exQyFcZNw=
 github.com/hyperledger/fabric-x-common v0.1.1-0.20260219094834-26c5a49ed548 h1:KTmH/ZtM43z39lcLxGm7G3I5iC7J7iZSVHqbCFcUUNo=
 github.com/hyperledger/fabric-x-common v0.1.1-0.20260219094834-26c5a49ed548/go.mod h1:+VPYRRCGAZo7+rlT55yK3aRmUbRJwQGlWg7lz0SLdMY=
-github.com/hyperledger/fabric-x-sdk v0.0.0-20260602083224-e1b1e08fa18c h1:/dmjdoPLFTg36gVL3XEnwFyfExzOao9Rigex2aiNAuo=
-github.com/hyperledger/fabric-x-sdk v0.0.0-20260602083224-e1b1e08fa18c/go.mod h1:fOMpy5+efegUsET0d7RMH+CENyTpjZOD5D1bpZBWzos=
 github.com/iancoleman/strcase v0.2.0/go.mod h1:iwCmte+B7n89clKwxIoIXy/HfoL7AsD47ZCWhYzw7ho=
 github.com/ianlancetaylor/demangle v0.0.0-20181102032728-5e5cf60278f6/go.mod h1:aSSvb/t6k1mPoxDqO4vJh6VOCGPwU4O0C2/Eqndh1Sc=
 github.com/ianlancetaylor/demangle v0.0.0-20200824232613-28f6c0f3b639/go.mod h1:aSSvb/t6k1mPoxDqO4vJh6VOCGPwU4O0C2/Eqndh1Sc=
@@ -1033,6 +1031,8 @@ github.com/kr/pty v1.1.1/go.mod h1:pFQYn66WHrOpPYNljwOMqo10TkYh1fy3cYio2l3bCsQ=
 github.com/kr/text v0.1.0/go.mod h1:4Jbv+DJW3UT/LiOwJeYQe1efqtUx/iVham/4vfdArNI=
 github.com/kr/text v0.2.0 h1:5Nx0Ya0ZqY2ygV366QzturHI13Jq95ApcVaJBhpS+AY=
 github.com/kr/text v0.2.0/go.mod h1:eLer722TekiGuMkidMxC/pM04lWEeraHUUmBw8l2grE=
+github.com/kushnireyal/fabric-x-sdk v0.0.0-20260604123919-e435fa844f45 h1:cPwiDjYM5fp5wjkvsQB8262R30ISvqZencfQ3epLBuY=
+github.com/kushnireyal/fabric-x-sdk v0.0.0-20260604123919-e435fa844f45/go.mod h1:fOMpy5+efegUsET0d7RMH+CENyTpjZOD5D1bpZBWzos=
 github.com/kylelemons/godebug v1.1.0 h1:RPNrshWIDI6G2gRW9EHilWtl7Z6Sb1BR0xunSBf0SNc=
 github.com/kylelemons/godebug v1.1.0/go.mod h1:9/0rRGxNHcop5bhtWyNeEfOS8JIWk580+fNqagV/RAw=
 github.com/labstack/echo/v4 v4.2.1/go.mod h1:AA49e0DZ8kk5jTOOCKNuPR6oTnBS0dYiM4FW1e6jwpg=

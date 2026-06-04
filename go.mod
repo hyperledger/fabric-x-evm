@@ -13,7 +13,6 @@ tool (
 
 require (
 	github.com/ethereum/go-ethereum v1.16.7
-	github.com/gogo/protobuf v1.3.2
 	github.com/holiman/uint256 v1.3.2
 	github.com/hyperledger/fabric-lib-go v1.1.3
 	github.com/hyperledger/fabric-protos-go-apiv2 v0.3.7
@@ -81,6 +80,7 @@ require (
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
 	github.com/gofrs/flock v0.13.0 // indirect
+	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/golang/snappy v1.0.0 // indirect
@@ -196,3 +196,5 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
+
+replace github.com/hyperledger/fabric-x-sdk => github.com/kushnireyal/fabric-x-sdk v0.0.0-20260604123919-e435fa844f45
