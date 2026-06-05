@@ -125,11 +125,9 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 		return nil, fmt.Errorf("failed to create chain: %w", err)
 	}
 
-	// Create BatchSubmitter infrastructure (notifications disabled for production app)
+	// Create BatchSubmitter infrastructure (no cache needed — app uses chain-based synchronizer)
 	endorsementChan := make(chan sdk.Endorsement, 1000)
-	batchConfig := core.DefaultBatchSubmitterConfig()
-	batchConfig.EnableNotifications = false
-	batchSubmitter := core.NewBatchSubmitter(batchConfig, submitter, nil, endorsementChan, nil)
+	batchSubmitter := core.NewBatchSubmitter(submitter, nil, endorsementChan)
 	batchSubmitter.Start(ctx)
 
 	gateway, err := core.New(ec, submitter, chain, cfg.Network.ChainID, cfg.Gateway.WorkerCount, nil, batchSubmitter, endorsementChan)

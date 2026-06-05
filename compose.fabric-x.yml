@@ -9,7 +9,8 @@ services:
   # For a real deployment, see:
   # https://github.com/LF-Decentralized-Trust-labs/fabric-x-ansible-collection
   test-committer:
-    image: docker.io/hyperledger/fabric-x-committer-test-node:0.1.9
+    # FIXME: temporary, switch back to the upstream image after fabric-x-committer #620 is merged.
+    image: docker.io/arner/committer-test-node:alltx
     pull_policy: missing
     restart: unless-stopped
     container_name: test-committer

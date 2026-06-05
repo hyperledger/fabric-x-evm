@@ -369,20 +369,11 @@ func (q *TxQueueV2) HandleTx(ctx context.Context, notifs []TxNotification) error
 
 	// Mark all transactions in the batch as complete
 	for _, notif := range notifs {
-		// Unmarshal the ethereum transaction to get the hash
-		tx := new(types.Transaction)
-		if err := tx.UnmarshalBinary(notif.EthTxBytes); err != nil {
-			loggerV2.Errorf("Failed to unmarshal tx: %v", err)
-			continue
-		}
-
-		txHash := tx.Hash()
 		q.total++
 		if notif.Status != committerpb.Status_COMMITTED {
 			q.invalid++
 		}
-
-		totalPromoted += q.completeUnlocked(txHash)
+		totalPromoted += q.completeUnlocked(notif.EthTxHash)
 	}
 
 	// Signal workers based on how many transactions were promoted

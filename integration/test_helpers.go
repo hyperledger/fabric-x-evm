@@ -191,25 +191,14 @@ func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg confi
 	var cache *core.PendingTxCache
 	if useNotifications {
 		cache = core.NewPendingTxCache()
-		store = core.NewMemoryStore(cache)
+		store = core.NewMemoryStore()
 	} else {
 		store = chain
 	}
 
 	// Create BatchSubmitter infrastructure
 	endorsementChan := make(chan sdk.Endorsement, 1000)
-	var txIDsChan chan []string
-	var batchSubmitter *core.BatchSubmitter
-
-	batchConfig := core.DefaultBatchSubmitterConfig()
-	batchConfig.EnableNotifications = useNotifications
-
-	if useNotifications {
-		txIDsChan = make(chan []string, 100)
-		batchSubmitter = core.NewBatchSubmitter(batchConfig, submitter, cache, endorsementChan, txIDsChan)
-	} else {
-		batchSubmitter = core.NewBatchSubmitter(batchConfig, submitter, nil, endorsementChan, nil)
-	}
+	batchSubmitter := core.NewBatchSubmitter(submitter, cache, endorsementChan)
 
 	batchSubmitter.Start(t.Context())
 	t.Cleanup(func() { batchSubmitter.Stop() })
@@ -264,7 +253,7 @@ func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg confi
 			chain.Close()
 			logger.Infof("Synchronizer stopped cleanly")
 
-			// Set up notification system
+			// Set up AllTxStreamer notification system
 			txHandlers := make([]core.TxHandler, 0, len(dbs)+4)
 			for _, db := range dbs {
 				txHandlers = append(txHandlers, db.(core.TxHandler))
@@ -276,26 +265,24 @@ func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg confi
 			}
 			txHandlers = append(txHandlers, core.NewCleanupHandler(cache))
 
-			dispatcher := core.NewNotificationDispatcher(cache, txHandlers...)
-			processor := notification.NewProcessor([]notification.TxStatusHandler{dispatcher}, logger)
+			dispatcher := core.NewAllTxBatchDispatcher(cache, txHandlers...)
 
-			var notificationPeer notification.NotificationPeer
 			if cfg.Network.Protocol == "fabric-x" || cfg.Network.Protocol == "" {
 				peer, err := nfabx.NewPeer(cfg.Gateway.Committer.ToPeerConf(), cfg.Network.Channel, gwSigner)
 				if err != nil {
 					return nil, nil, fmt.Errorf("create notification peer: %w", err)
 				}
-				notificationPeer = peer
-			}
-
-			if notificationPeer != nil {
-				notifier := notification.NewNotifier(notificationPeer, processor)
+				streamer := notification.NewAllTxStreamer(peer, []notification.AllTxHandler{dispatcher}, logger)
 				go func() {
-					if err := notifier.Subscribe(t.Context(), txIDsChan); err != nil && t.Context().Err() == nil {
-						logger.Errorf("notification subscription error: %v", err)
+					req := &notification.StreamAllRequest{
+						FilterNamespaces:     []string{cfg.Network.Namespace},
+						IncludeReadWriteSets: true,
+					}
+					if err := streamer.Stream(t.Context(), req); err != nil && t.Context().Err() == nil {
+						logger.Errorf("AllTxStreamer error: %v", err)
 					}
 				}()
-				logger.Infof("Notification system active")
+				logger.Infof("AllTxStreamer active")
 			}
 
 			sync = nil

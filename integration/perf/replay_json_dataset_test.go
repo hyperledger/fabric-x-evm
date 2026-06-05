@@ -82,31 +82,19 @@ func (t *TxCompletionTracker) HandleTx(ctx context.Context, notifs []gwcore.TxNo
 			metrics.LoadgenCommittedTotal.WithLabelValues("failed").Inc()
 		}
 
-		// Extract ethereum transaction hash from the notification
-		var ethTx types.Transaction
-		if err := ethTx.UnmarshalBinary(notif.EthTxBytes); err != nil {
-			// Log error but don't fail - this shouldn't happen in normal operation
-			fmt.Printf("TxCompletionTracker: failed to unmarshal eth tx: %v\n", err)
-			continue
-		}
-
-		ethHash := ethTx.Hash()
-
 		t.mu.Lock()
-		ch, exists := t.pending[ethHash]
+		ch, exists := t.pending[notif.EthTxHash]
 		if exists {
-			delete(t.pending, ethHash)
+			delete(t.pending, notif.EthTxHash)
 		}
 		t.mu.Unlock()
 
 		if exists {
-			// Send notification and close channel
 			ch <- notif
 			close(ch)
 		}
 		// If not exists (open-loop mode), the tx wasn't registered; the metric bump above is the only signal.
 	}
-
 	return nil
 }
 

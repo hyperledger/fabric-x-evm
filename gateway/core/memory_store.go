@@ -32,8 +32,6 @@ const (
 // All other methods panic as they should not be called in the notification-based system.
 // It implements TxHandler to receive notifications about completed transactions.
 type MemoryStore struct {
-	cache *PendingTxCache // Used to get data during HandleTx before cleanup
-
 	// Transaction storage
 	txs     map[string]*domain.Transaction // Ethereum tx hash (hex) -> Transaction
 	txOrder []string                       // Circular buffer of tx hashes for eviction
@@ -43,14 +41,13 @@ type MemoryStore struct {
 }
 
 // NewMemoryStore creates a new MemoryStore with default size.
-func NewMemoryStore(cache *PendingTxCache) *MemoryStore {
-	return NewMemoryStoreWithSize(cache, DefaultMemoryStoreSize)
+func NewMemoryStore() *MemoryStore {
+	return NewMemoryStoreWithSize(DefaultMemoryStoreSize)
 }
 
 // NewMemoryStoreWithSize creates a new MemoryStore with specified buffer size.
-func NewMemoryStoreWithSize(cache *PendingTxCache, size int) *MemoryStore {
+func NewMemoryStoreWithSize(size int) *MemoryStore {
 	return &MemoryStore{
-		cache:   cache,
 		txs:     make(map[string]*domain.Transaction),
 		txOrder: make([]string, size),
 		size:    size,
@@ -59,38 +56,28 @@ func NewMemoryStoreWithSize(cache *PendingTxCache, size int) *MemoryStore {
 
 // HandleTx implements TxHandler. It stores completed transactions in the internal map
 // and manages the circular buffer for eviction.
-// Panics on any error as this indicates a bug in the system.
 func (s *MemoryStore) HandleTx(ctx context.Context, notifs []TxNotification) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	for _, notif := range notifs {
-		// Get the cached data before it's cleaned up
-		entry := s.cache.Get(notif.FabricTxID)
-		if entry == nil {
-			panic(fmt.Sprintf("cache miss for txid %s in MemoryStore.HandleTx - this indicates a bug", notif.FabricTxID))
-		}
-
-		// Unmarshal ethereum transaction
 		var ethTx types.Transaction
-		if err := ethTx.UnmarshalBinary(entry.EthTxBytes); err != nil {
-			panic(fmt.Sprintf("failed to unmarshal eth tx for %s: %v", notif.FabricTxID, err))
+		if err := ethTx.UnmarshalBinary(notif.EthTxBytes); err != nil {
+			return fmt.Errorf("unmarshal eth tx for %s: %w", notif.FabricTxID, err)
 		}
 
-		// Extract sender address
 		signer := types.LatestSignerForChainID(ethTx.ChainId())
 		from, err := types.Sender(signer, &ethTx)
 		if err != nil {
-			panic(fmt.Sprintf("failed to extract sender for %s: %v", notif.FabricTxID, err))
+			return fmt.Errorf("extract sender for %s: %w", notif.FabricTxID, err)
 		}
 
-		// Build domain.Transaction
 		tx := &domain.Transaction{
-			TxHash:         ethTx.Hash().Bytes(),
-			BlockHash:      make([]byte, 32), // Fake block hash
+			TxHash:         notif.EthTxHash.Bytes(),
+			BlockHash:      make([]byte, 32),
 			BlockNumber:    notif.BlockNum,
 			TxIndex:        int64(notif.TxNum),
-			RawTx:          entry.EthTxBytes,
+			RawTx:          notif.EthTxBytes,
 			FromAddress:    from.Bytes(),
 			FabricTxID:     notif.FabricTxID,
 			FabricTxStatus: int(notif.Status),
@@ -100,35 +87,27 @@ func (s *MemoryStore) HandleTx(ctx context.Context, notifs []TxNotification) err
 			tx.Status = 1
 		}
 
-		// Set To address
 		if ethTx.To() != nil {
 			tx.ToAddress = ethTx.To().Bytes()
-		}
-
-		// Extract contract address for contract creation
-		if ethTx.To() == nil {
+		} else {
 			contractAddr := crypto.CreateAddress(from, ethTx.Nonce())
 			tx.ContractAddress = contractAddr.Bytes()
 		}
 
-		// Extract logs from events
-		logs, err := extractLogsFromEvents(entry.Events, ethTx.Hash(), notif.BlockNum, int64(notif.TxNum))
+		logs, err := extractLogsFromEvents(notif.Events, notif.EthTxHash, notif.BlockNum, int64(notif.TxNum))
 		if err != nil {
-			panic(fmt.Sprintf("failed to extract logs for tx %s: %v", ethTx.Hash().String(), err))
+			return fmt.Errorf("extract logs for tx %s: %w", ethTx.Hash().String(), err)
 		}
 		tx.Logs = logs
 
-		// Store in map
-		txHashHex := ethTx.Hash().Hex()
+		txHashHex := notif.EthTxHash.Hex()
 
-		// Evict old transaction if buffer is full
+		// Evict old transaction if buffer slot is occupied
 		if s.txOrder[s.nextIdx] != "" {
-			oldTxHash := s.txOrder[s.nextIdx]
-			delete(s.txs, oldTxHash)
-			memStoreLogger.Debugf("Evicted old transaction: %s", oldTxHash)
+			delete(s.txs, s.txOrder[s.nextIdx])
+			memStoreLogger.Debugf("Evicted old transaction: %s", s.txOrder[s.nextIdx])
 		}
 
-		// Add new transaction
 		s.txs[txHashHex] = tx
 		s.txOrder[s.nextIdx] = txHashHex
 		s.nextIdx = (s.nextIdx + 1) % s.size
@@ -141,41 +120,29 @@ func (s *MemoryStore) HandleTx(ctx context.Context, notifs []TxNotification) err
 }
 
 // GetTransactionByHash retrieves a transaction from internal storage by its Ethereum hash.
-// Returns nil if the transaction is not found.
 func (s *MemoryStore) GetTransactionByHash(ctx context.Context, txHash []byte) (*domain.Transaction, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	txHashHex := common.BytesToHash(txHash).Hex()
-	memStoreLogger.Debugf("GetTransactionByHash called for txHash=%s", txHashHex)
-
 	tx := s.txs[txHashHex]
 	if tx == nil {
 		memStoreLogger.Debugf("Transaction not found for txHash=%s", txHashHex)
 		return nil, nil
 	}
-
-	memStoreLogger.Debugf("Returning transaction: txHash=%s, blockNum=%d, logs=%d",
-		txHashHex, tx.BlockNumber, len(tx.Logs))
 	return tx, nil
 }
 
 // GetLogsByTxHash retrieves logs for a transaction from internal storage by its Ethereum hash.
-// Returns empty slice if the transaction is not found.
 func (s *MemoryStore) GetLogsByTxHash(ctx context.Context, txHash []byte) ([]domain.Log, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	txHashHex := common.BytesToHash(txHash).Hex()
-	memStoreLogger.Debugf("GetLogsByTxHash called for txHash=%s", txHashHex)
-
 	tx := s.txs[txHashHex]
 	if tx == nil {
-		memStoreLogger.Debugf("Transaction not found for txHash=%s", txHashHex)
 		return []domain.Log{}, nil
 	}
-
-	memStoreLogger.Debugf("Returning %d logs for txHash=%s", len(tx.Logs), txHashHex)
 	return tx.Logs, nil
 }
 
@@ -230,42 +197,6 @@ func (s *MemoryStore) GetLogs(ctx context.Context, filter domain.LogFilter) ([]d
 }
 
 // extractLogsFromEvents parses the events bytes and extracts logs.
-// The events bytes contain serialized log data from the chaincode.
 func extractLogsFromEvents(eventsBytes []byte, ethTxHash common.Hash, blockNum uint64, txIndex int64) ([]domain.Log, error) {
 	return []domain.Log{}, nil
-
-	// if len(eventsBytes) == 0 {
-	// 	return []domain.Log{}, nil
-	// }
-
-	// // Parse the events bytes to extract logs
-	// // The format depends on how the endorser serializes events
-	// // For now, we'll use the types.Receipt unmarshaling
-
-	// var receipt types.Receipt
-	// if err := receipt.UnmarshalBinary(eventsBytes); err != nil {
-	// 	return nil, fmt.Errorf("unmarshal receipt from events: %w", err)
-	// }
-
-	// // Convert geth logs to domain logs
-	// logs := make([]domain.Log, len(receipt.Logs))
-	// for i, gethLog := range receipt.Logs {
-	// 	topics := make([][]byte, len(gethLog.Topics))
-	// 	for j, topic := range gethLog.Topics {
-	// 		topics[j] = topic.Bytes()
-	// 	}
-
-	// 	logs[i] = domain.Log{
-	// 		BlockNumber: blockNum,
-	// 		BlockHash:   nil, // We don't have block hash in cache
-	// 		TxHash:      ethTxHash.Bytes(),
-	// 		TxIndex:     txIndex,
-	// 		LogIndex:    int64(gethLog.Index),
-	// 		Address:     gethLog.Address.Bytes(),
-	// 		Data:        gethLog.Data,
-	// 		Topics:      topics,
-	// 	}
-	// }
-
-	// return logs, nil
 }
