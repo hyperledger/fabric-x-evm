@@ -13,6 +13,7 @@ import (
 	"math"
 	"math/big"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
@@ -21,6 +22,7 @@ import (
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	cmn "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
+	"github.com/hyperledger/fabric-x-evm/gateway/metrics"
 	"github.com/hyperledger/fabric-x-evm/utils"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
@@ -136,7 +138,14 @@ func (g *Gateway) Start(ctx context.Context) {
 func (g *Gateway) worker(ctx context.Context) {
 	defer g.wg.Done()
 
+	var prevCycleStart time.Time
 	for {
+		cycleStart := time.Now()
+		if !prevCycleStart.IsZero() {
+			metrics.GatewayWorkerCycleDuration.Observe(cycleStart.Sub(prevCycleStart).Seconds())
+		}
+		prevCycleStart = cycleStart
+
 		tx, ok := g.TxQueue.Dequeue()
 		if !ok {
 			// Queue is closed and empty
@@ -153,16 +162,22 @@ func (g *Gateway) worker(ctx context.Context) {
 
 // processTx handles the actual transaction processing
 func (g *Gateway) processTx(ctx context.Context, tx *types.Transaction) error {
+	endorseStart := time.Now()
 	end, err := g.ExecuteEthTx(ctx, tx, nil)
+	metrics.GatewayEndorseDuration.Observe(time.Since(endorseStart).Seconds())
 	if err != nil {
 		return err
 	}
 
-	// Send endorsement to BatchSubmitter via channel
+	// Send endorsement to BatchSubmitter via channel.
+	// Time blocked = downstream back-pressure (BatchSubmitter draining slowly).
+	chanSendStart := time.Now()
 	select {
 	case g.endorsementChan <- end:
+		metrics.GatewayWorkerChanSendDuration.Observe(time.Since(chanSendStart).Seconds())
 		return nil
 	case <-ctx.Done():
+		metrics.GatewayWorkerChanSendDuration.Observe(time.Since(chanSendStart).Seconds())
 		return fmt.Errorf("context canceled while sending endorsement: %w", ctx.Err())
 	}
 }
@@ -170,10 +185,15 @@ func (g *Gateway) processTx(ctx context.Context, tx *types.Transaction) error {
 // SendTransaction runs geth-style pre-flight validation, then enqueues the tx
 // for async endorse/submit. Mirrors eth_sendRawTransaction's failure model.
 func (g *Gateway) SendTransaction(ctx context.Context, tx *types.Transaction) error {
+	start := time.Now()
 	if err := ValidateTx(ctx, tx, g.ChainConfig, g.Signer, g); err != nil {
+		metrics.LoadgenSendTxTotal.WithLabelValues("validation_error").Inc()
+		metrics.LoadgenSendTxDuration.Observe(time.Since(start).Seconds())
 		return err
 	}
 	g.TxQueue.Enqueue(tx)
+	metrics.LoadgenSendTxTotal.WithLabelValues("enqueued").Inc()
+	metrics.LoadgenSendTxDuration.Observe(time.Since(start).Seconds())
 	return nil
 }
 
