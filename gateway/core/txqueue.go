@@ -9,11 +9,13 @@ package core
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/hyperledger/fabric-x-common/api/committerpb"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
+	"github.com/hyperledger/fabric-x-evm/gateway/metrics"
 )
 
 // TxQueue is a two-queue system for tracking transaction lifecycle.
@@ -52,11 +54,14 @@ func NewTxQueue() *TxQueue {
 // Enqueue adds a transaction to the queue.
 // This method uses a write lock to ensure exclusive access when modifying the queue.
 func (q *TxQueue) Enqueue(tx *types.Transaction) {
+	start := time.Now()
+	defer func() { metrics.GatewayTxQueueEnqueueDuration.Observe(time.Since(start).Seconds()) }()
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	q.pendingQueue = append(q.pendingQueue, tx)
 	q.cond.Signal() // Wake up one waiting worker
+	metrics.GatewayTxQueueSize.Set(float64(len(q.pendingQueue)))
 }
 
 // Dequeue removes a transaction from the pending queue and moves it to the in-progress map.
@@ -64,11 +69,17 @@ func (q *TxQueue) Enqueue(tx *types.Transaction) {
 // Returns (transaction, true) if successful, or (nil, false) if queue is closed and empty.
 // This method uses a write lock to ensure exclusive access during the queue modification.
 func (q *TxQueue) Dequeue() (*types.Transaction, bool) {
+	start := time.Now()
+	defer func() { metrics.GatewayTxQueueDequeueDuration.Observe(time.Since(start).Seconds()) }()
+	lockStart := time.Now()
 	q.mu.Lock()
+	metrics.GatewayTxQueueDequeueLockWait.Observe(time.Since(lockStart).Seconds())
 	defer q.mu.Unlock()
 
 	for len(q.pendingQueue) == 0 && !q.done {
+		waitStart := time.Now()
 		q.cond.Wait()
+		metrics.GatewayTxQueueDequeueCondWait.Observe(time.Since(waitStart).Seconds())
 	}
 
 	if q.done && len(q.pendingQueue) == 0 {
@@ -79,6 +90,7 @@ func (q *TxQueue) Dequeue() (*types.Transaction, bool) {
 	q.pendingQueue[0] = nil // Prevent memory leak
 	q.pendingQueue = q.pendingQueue[1:]
 	q.inProgressMap[tx.Hash()] = tx // Track as in-progress
+	metrics.GatewayTxQueueSize.Set(float64(len(q.pendingQueue)))
 	return tx, true
 }
 
@@ -122,6 +134,8 @@ func (q *TxQueue) IsPending(txHash common.Hash) *types.Transaction {
 // is committed to the ledger. This method is idempotent - safe to call multiple times.
 // This method uses a write lock to ensure exclusive access when modifying the map.
 func (q *TxQueue) Complete(hash common.Hash) {
+	start := time.Now()
+	defer func() { metrics.GatewayTxQueueCompleteDuration.Observe(time.Since(start).Seconds()) }()
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	delete(q.inProgressMap, hash)

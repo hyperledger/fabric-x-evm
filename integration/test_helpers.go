@@ -429,7 +429,7 @@ func NewLocalTestHarnessWithFactoryAndTxQueue(t *testing.T, logger sdk.Logger, e
 				ConnString: filepath.Join(dir, tname+"gateway.db"),
 				TriePath:   filepath.Join(dir, tname+"triedb.db"),
 			},
-			SyncTimeout: 2 * time.Second,
+			SyncTimeout: 60 * time.Second,
 			Orderers: []common.ClientConfig{
 				{Endpoint: orderer},
 			},

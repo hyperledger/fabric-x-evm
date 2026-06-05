@@ -112,12 +112,12 @@ func TestTxQueueV2_Enqueue_SingleTransaction(t *testing.T) {
 	assert.Len(t, entry.isBlockedBy, 0)
 	assert.Len(t, entry.blocks, 0)
 
-	// Should be in participant map
+	// Should be in participant map (single most-recent per participant)
 	participants := participantsForTx(tx)
 	for _, p := range participants {
-		entries, exists := q.participantMap[p]
+		mostRecent, exists := q.participantMap[p]
 		require.True(t, exists)
-		assert.Contains(t, entries, entry)
+		assert.Same(t, entry, mostRecent)
 	}
 }
 

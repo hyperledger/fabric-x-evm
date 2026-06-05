@@ -77,3 +77,180 @@ go run -tags=perf ./integration/perf -mode generate \
 ```
 
 Then copy `USDC_dataset.json.gz`, `USDC_contract.json`, and `USDC_fiattokenv2_2.gen.go` to dectrust6 and dectrust7 at the same paths.
+
+## Debug: open-loop runs, worker tuning, Grafana access
+
+The test exposes a Prometheus `/metrics` endpoint whose bind address comes from `loadgen.metrics-addr` in the fabx test config (`FABX_CONFIG_PATH`). Both `demo-local.sh` and `deploy-evm-staging.sh` set it to `0.0.0.0:9092` by default, matching the Prometheus scrape target. The `EVM_METRICS_ADDR` env var can still override it for ad-hoc runs without a config file. Both deployments (local Mac and staging) provision a Grafana dashboard "EVM Loadgen + In-Process Gateway" via the Ansible collection.
+
+### Loop modes and tuning knobs
+
+| Env var | Default | Effect |
+|---|---|---|
+| `PERF_LOOP_MODE` | `closed` | `closed` waits for commit per tx (uses TxQueueV2 dependency-graph queue). `open` is fire-and-forget at the orderer (uses V1 FIFO TxQueue, lets the committer reject MVCC conflicts). |
+| `PERF_FOREVER` | `0` | When `1`, the feeder wraps the dataset indefinitely. Needs `PERF_DURATION` to stop. |
+| `PERF_DURATION` | unset | Go duration string (`30s`, `2m`); cancels the feeder after that long. Timer arms after harness sync so a slow sync doesn't eat the budget. |
+| `PERF_REPLAY_WRAP_COUNT` | `1` | Closed-loop: wrap N times instead of running forever. |
+| `PERF_REPLAY_WINDOW_SIZE` | `3000` | Slice of dataset to use; `0` = full. |
+| `PERF_PROCESSING_WORKERS` | `1` | In-process gateway worker pool size. |
+| `PERF_SUBMITTING_WORKERS` | `8` | Loadgen submitter goroutine count. |
+| `PERF_TARGET_TPS` | `0` (unlimited) | Open-loop only: cap aggregate `SendTransaction` rate at N tx/s via a global `rate.Limiter` shared across all submitting workers. Use with a bounded `PERF_REPLAY_WINDOW_SIZE` for predictable, finite runs (e.g. 2000 tps × 10000 txs = ~5s submission + drain). `0` reverts to legacy fire-and-forget. |
+| `PERF_TXQUEUE` | `auto` | Force the in-process gateway's TxQueue impl: `v1` (FIFO, no dependency tracking) or `v2` (dependency graph). `auto` mirrors loop mode (closed→v2, open→v1). Set explicitly for A/B testing — e.g. `v1` + closed-loop quantifies what dependency tracking buys; `v2` + open-loop quantifies what it costs in fire-and-forget mode. |
+| `EVM_METRICS_ADDR` | unset | Override for the `/metrics` bind address (e.g. `0.0.0.0:9092`). When unset, the test reads `loadgen.metrics-addr` from the fabx config. |
+
+A typical open-loop bottleneck-hunt run:
+
+```bash
+PERF_LOOP_MODE=open PERF_FOREVER=1 PERF_DURATION=30s \
+PERF_PROCESSING_WORKERS=4 PERF_SUBMITTING_WORKERS=16 \
+LOCAL_ANSIBLE_HOST=host.docker.internal EVM_REPO=/path/to/fabric-x-evm \
+  ~/.ansible/collections/ansible_collections/hyperledger/fabricx/scripts/demo-local.sh --warm
+```
+
+### Reaching Grafana
+
+**Local** (Docker stack on the laptop): http://localhost:3000 — login `admin` / `adminPWD`. The "EVM Loadgen + In-Process Gateway" dashboard appears under Dashboards → Browse.
+
+**Staging** (Prometheus + Grafana run as podman containers on dectrust8 itself; the `ibmcloud` Ansible inventory has placeholder VM IPs and is not currently wired up):
+
+The EVM dashboard JSON + scrape job for `dectrust5/6/7:9092` were installed manually under `/data/staging-deployment/{prometheus,grafana}/config/` and the containers were restarted on 2026-06-08. They persist across `demo-staging.sh` runs. To re-apply (e.g. after a config rewrite that drops them):
+
+```bash
+# from a laptop with SSH access to dectrust8
+scp /path/to/fabric-x-ansible-collection/roles/evm_gateway/files/evm-loadgen-dashboard.json \
+    dectrust8.vpc.cloud9.ibm.com:/tmp/
+ssh dectrust8.vpc.cloud9.ibm.com '
+  sudo cp /tmp/evm-loadgen-dashboard.json /data/staging-deployment/grafana/config/dashboards/
+  PROM=/data/staging-deployment/prometheus/config/prometheus.yaml
+  if ! sudo grep -q "job_name: evm_loadgen.test_process" "$PROM"; then
+    sudo tee -a "$PROM" >/dev/null <<EOF
+  - job_name: evm_loadgen.test_process
+    scheme: http
+    static_configs:
+      - targets:
+        - dectrust5.vpc.cloud9.ibm.com:9092
+        - dectrust6.vpc.cloud9.ibm.com:9092
+        - dectrust7.vpc.cloud9.ibm.com:9092
+EOF
+  fi
+  sudo podman restart prometheus grafana'
+```
+
+Verify: `ssh dectrust8.vpc.cloud9.ibm.com 'curl -sk https://localhost:9090/api/v1/targets'` should list 3 `evm_loadgen.test_process` targets.
+
+Then open an SSH tunnel from your laptop:
+
+```bash
+ssh -L 3001:localhost:3000 root@dectrust8.vpc.cloud9.ibm.com -N
+# then browse to http://localhost:3001
+```
+
+Each per-replica fabx config (`/data/fabric-x-evm-test-config-${n}.yaml`) sets `loadgen.metrics-addr: 0.0.0.0:9092`, so the loadgen on each `evm-gateway-N` VM exposes `/metrics` for Prometheus on the monitoring VM to scrape — no env-var needed.
+
+### Reading the EVM dashboard
+
+Top row, "Run config": three stats — `Processing workers`, `Submitting workers`, `Failure ratio`. Always read these first; throughput numbers without the worker mix are not comparable across runs.
+
+The rest is grouped:
+
+- **Loadgen — workload generator**: `SendTransaction rate` (per outcome) vs `Committed rate` (per result). The gap is in-flight. On open-loop, send rate is the loadgen-side ceiling; committed rate is what Fabric-X actually accepted.
+- **Latency histograms**: per-stage p50/p95/p99. `SendTransaction duration` includes Enqueue.
+- **Gateway queue**: Enqueue vs Dequeue rate on a log scale — the gap is backlog buildup. `Gateway queue wait` is per-tx time between Enqueue and Dequeue.
+- **Fine-grained**: `Worker cycle` (1 / mean = max worker throughput), `Dequeue cond.Wait` (worker parked waiting for next ready tx — dominant if the queue is the cap), `Complete duration` (holds the lock — blocks Dequeue/Enqueue), `Worker → BatchSubmitter chan send` (downstream back-pressure).
+
+### Worker tuning sweeps
+
+Both `demo-local.sh` and `demo-staging.sh` accept `--perf-sweep`. The sweep test (`TestReplayJSONDatasetPerformance`) runs the matrix `processingWorkers=[1,4,8] × submittingWorkers=[4,8,16,24]` (12× single-run time) and writes `integration/perf/performance_results.csv`. The wrapper scripts also print a summary table with throughput + failure % per combo.
+
+The same `PERF_LOOP_MODE` / `PERF_FOREVER` / `PERF_DURATION` env vars apply inside the sweep, so each combo can be capped to a fixed wall-clock duration in open-loop mode.
+
+**Local — open-loop sweep:**
+
+```bash
+PERF_LOOP_MODE=open PERF_FOREVER=1 PERF_DURATION=30s \
+LOCAL_ANSIBLE_HOST=host.docker.internal EVM_REPO=/path/to/fabric-x-evm \
+  ~/.ansible/collections/ansible_collections/hyperledger/fabricx/scripts/demo-local.sh \
+  --warm --skip-teardown --perf-sweep
+```
+
+Watch live at `http://localhost:3000` (admin / adminPWD), dashboard "EVM Loadgen + In-Process Gateway". The "Run config" row top-left shows current processing/submitting workers; "Failure ratio" stat top-right shows the running failure %. The sweep walks combos sequentially; each one updates those stats as it runs. Final table prints to the script's stdout. Per-combo rows also live in `performance_results.csv`.
+
+**Staging — open-loop sweep:**
+
+`scripts/run-demo.sh` exposes `--loop-mode {closed|open}`, `--forever`, and `--duration DURATION` flags that ride through SSH to `demo-staging.sh` as env vars, which then propagate to every per-replica `go test`. Runs from a Mac, no SSH session needed:
+
+```bash
+cd /path/to/fabric-x-evm
+scripts/run-demo.sh \
+  --loop-mode open --forever --duration 30s \
+  --perf-sweep --skip-evm-teardown
+```
+
+For a closed-loop sweep, just omit the three new flags (defaults are `closed`/off/unset).
+
+Same thing directly via `demo-staging.sh` on dectrust8 (skip the local wrapper):
+
+```bash
+ssh dectrust8
+cd ~/fabric-x-ansible-collection
+PERF_LOOP_MODE=open PERF_FOREVER=1 PERF_DURATION=30s \
+  scripts/demo-staging.sh --perf-sweep --skip-teardown
+```
+
+Reach the staging Grafana via SSH tunnel from your laptop:
+
+```bash
+ssh -L 3001:localhost:3000 root@dectrust8.vpc.cloud9.ibm.com -N
+# then browse to http://localhost:3001
+```
+
+Prometheus on the monitoring VM scrapes `evm-gateway-{1..5}:9092`, so the dashboard aggregates across all replicas. To filter to a single replica, the dashboard panels use `sum(...)` — duplicate a panel and add `instance="evm-gateway-N:9092"` to the selector.
+
+## Notifier branch A/B (lowlatency, no batch submitter)
+
+`exp-loadgen-notifier` is the same as `exp-evm-loadgen-debug` plus the all-tx-notifier rewrite:
+
+- BatchSubmitter no longer batches or subscribes; submits each tx directly to the orderer (`gateway/core/batch_submitter.go`).
+- New `AllTxBatchDispatcher` uses the SDK's `notification.AllTxHandler` — gets `notif.EthTxHash` for free from the stream, no need to re-derive from `EthTxBytes`.
+- SDK pinned to a fork via a `replace` in `go.mod` (preview of fabric-x-sdk PR #30).
+- Test committer image switched to a preview build mirroring fabric-x-committer PR #620 — temporary until that merges.
+
+### Running the A/B locally
+
+```bash
+cd /path/to/fabric-x-evm
+
+# baseline
+git checkout exp-evm-loadgen-debug
+PERF_LOOP_MODE=open PERF_FOREVER=1 PERF_DURATION=30s \
+LOCAL_ANSIBLE_HOST=host.docker.internal EVM_REPO=$PWD \
+  ~/.ansible/collections/ansible_collections/hyperledger/fabricx/scripts/demo-local.sh \
+  --warm --skip-teardown
+
+# notifier variant — same workload
+git checkout exp-loadgen-notifier
+PERF_LOOP_MODE=open PERF_FOREVER=1 PERF_DURATION=30s \
+LOCAL_ANSIBLE_HOST=host.docker.internal EVM_REPO=$PWD \
+  ~/.ansible/collections/ansible_collections/hyperledger/fabricx/scripts/demo-local.sh \
+  --warm --skip-teardown
+```
+
+Grafana: `http://localhost:3000`. Look at "Committed rate" (per result) and "End-to-end commit latency" between the two runs. The notifier should narrow the cycle-time gap between Dequeue and the next Dequeue (visible in "Worker cycle" panel).
+
+### Running the A/B on staging — NOT runnable as-is
+
+The notifier branch requires `IncludeReadWriteSets: true` on the SDK `AllTxStreamer` notification, which depends on `fabric-x-committer` PR #620. Staging runs the production committer image; locally we use a preview committer image. Until #620 merges and the staging committer is rebuilt against it, an A/B on staging is not possible — only baseline (`exp-evm-loadgen-debug`) runs.
+
+Once the staging committer supports it, the run looks like:
+
+```bash
+ssh dectrust8
+cd /path/to/fabric-x-evm
+
+# baseline
+make run-demo EVM_BRANCH=exp-evm-loadgen-debug DEMO_ARGS="--skip-evm-teardown"
+
+# notifier variant
+make run-demo EVM_BRANCH=exp-loadgen-notifier DEMO_ARGS="--skip-evm-teardown"
+```
+
+Reach Grafana the same way: `ssh -L 3001:localhost:3000 root@dectrust8.vpc.cloud9.ibm.com -N`, then `http://localhost:3001`.

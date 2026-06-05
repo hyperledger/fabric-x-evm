@@ -20,6 +20,7 @@ import (
 	"runtime"
 	"runtime/pprof"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -31,13 +32,16 @@ import (
 	"github.com/hyperledger/fabric-x-evm/endorser"
 	econf "github.com/hyperledger/fabric-x-evm/endorser/config"
 	"github.com/hyperledger/fabric-x-evm/endorser/testimpl"
+	"github.com/hyperledger/fabric-x-evm/gateway/config"
 	gwcore "github.com/hyperledger/fabric-x-evm/gateway/core"
+	"github.com/hyperledger/fabric-x-evm/gateway/metrics"
 	gwtestimpl "github.com/hyperledger/fabric-x-evm/gateway/testimpl"
 	"github.com/hyperledger/fabric-x-evm/integration"
 	"github.com/hyperledger/fabric-x-evm/utils"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/time/rate"
 	"google.golang.org/grpc/grpclog"
 )
 
@@ -68,9 +72,18 @@ func (t *TxCompletionTracker) Register(ethHash common.Hash) <-chan gwcore.TxNoti
 }
 
 // HandleTx implements gwcore.TxHandler. It receives notifications about completed transactions
-// and signals the corresponding worker via the completion channel.
+// and signals the corresponding worker via the completion channel (if registered).
+// Also unconditionally increments evm_loadgen_committed_total so open-loop runs (which
+// don't register per tx) still get an accurate commit-rate metric.
 func (t *TxCompletionTracker) HandleTx(ctx context.Context, notifs []gwcore.TxNotification) error {
 	for _, notif := range notifs {
+		// Bookkeeping: every notification = a commit observed by the loadgen, regardless of mode.
+		if notif.Status == committerpb.Status_COMMITTED {
+			metrics.LoadgenCommittedTotal.WithLabelValues("success").Inc()
+		} else {
+			metrics.LoadgenCommittedTotal.WithLabelValues("failed").Inc()
+		}
+
 		// Extract ethereum transaction hash from the notification
 		var ethTx types.Transaction
 		if err := ethTx.UnmarshalBinary(notif.EthTxBytes); err != nil {
@@ -93,7 +106,7 @@ func (t *TxCompletionTracker) HandleTx(ctx context.Context, notifs []gwcore.TxNo
 			ch <- notif
 			close(ch)
 		}
-		// If not exists, the transaction wasn't registered (shouldn't happen in normal flow)
+		// If not exists (open-loop mode), the tx wasn't registered; the metric bump above is the only signal.
 	}
 
 	return nil
@@ -140,6 +153,26 @@ func balancePrimingEndorserFactory(balancePriming *testimpl.BalancePrimingConfig
 	}
 }
 
+// loopMode controls per-tx submission semantics. "closed" waits for each tx's
+// commit notification before continuing. "open" fires and continues — no per-tx
+// wait, no per-tx latency measurement.
+type loopMode string
+
+const (
+	loopModeClosed loopMode = "closed"
+	loopModeOpen   loopMode = "open"
+)
+
+// queueKind picks the in-process gateway's TxQueue implementation.
+// "auto" mirrors the loop mode (closed→v2, open→v1) — the historical default.
+type queueKind string
+
+const (
+	queueAuto queueKind = "auto"
+	queueV1   queueKind = "v1" // FIFO, no dependency tracking
+	queueV2   queueKind = "v2" // dependency graph
+)
+
 type replayConfig struct {
 	// windowSize is the number of transfers to use from the dataset.
 	// 0 means use the entire dataset.
@@ -157,10 +190,31 @@ type replayConfig struct {
 	// totalDispatches is the total number of transfers to dispatch when
 	// wrapAround is true. Ignored when wrapAround is false.
 	totalDispatches int64
+
+	// loop sets the per-tx mode. Default closed.
+	loop loopMode
+
+	// forever, when true, the feeder keeps wrapping the dataset until the
+	// test context is cancelled (e.g. via duration or Ctrl-C). Implies
+	// wrapAround=true; ignores wrapCount/totalDispatches.
+	forever bool
+
+	// duration, when > 0, cancels the test ctx after that long. Combine
+	// with forever for a steady-state TPS-for-N-seconds measurement.
+	duration time.Duration
+
+	// targetTPS, when > 0, throttles SendTransaction calls (open-loop only)
+	// via a global rate.Limiter shared across all submitting workers, so the
+	// aggregate submit rate is bounded. 0 = unlimited (legacy fire-and-forget).
+	targetTPS int
+
+	// queueKind picks the in-process gateway's TxQueue implementation.
+	// "auto" (default) mirrors loop mode; "v1" / "v2" force a specific queue.
+	queueKind queueKind
 }
 
 func loadReplayConfigFromEnv(t *testing.T) replayConfig {
-	cfg := replayConfig{windowSize: 3000, wrapAround: false}
+	cfg := replayConfig{windowSize: 3000, wrapAround: false, loop: loopModeClosed, queueKind: queueAuto}
 
 	windowSizeStr := os.Getenv("PERF_REPLAY_WINDOW_SIZE")
 	if windowSizeStr != "" {
@@ -185,6 +239,45 @@ func loadReplayConfigFromEnv(t *testing.T) replayConfig {
 		if wrapCount > 1 {
 			cfg.wrapAround = true
 		}
+	}
+
+	switch strings.ToLower(os.Getenv("PERF_LOOP_MODE")) {
+	case "", "closed":
+		cfg.loop = loopModeClosed
+	case "open":
+		cfg.loop = loopModeOpen
+	default:
+		t.Fatalf("PERF_LOOP_MODE must be 'closed' or 'open', got %q", os.Getenv("PERF_LOOP_MODE"))
+	}
+
+	if os.Getenv("PERF_FOREVER") == "1" {
+		cfg.forever = true
+		cfg.wrapAround = true
+	}
+
+	if v := os.Getenv("PERF_DURATION"); v != "" {
+		d, err := time.ParseDuration(v)
+		assert.NoError(t, err, "PERF_DURATION must be a valid Go duration (e.g. 60s, 2m)")
+		cfg.duration = d
+	}
+
+	if v := os.Getenv("PERF_TARGET_TPS"); v != "" {
+		var parsed int
+		_, err := fmt.Sscanf(v, "%d", &parsed)
+		assert.NoError(t, err, "PERF_TARGET_TPS must be a valid integer")
+		assert.True(t, parsed >= 0, "PERF_TARGET_TPS must be >= 0 (0 = unlimited)")
+		cfg.targetTPS = parsed
+	}
+
+	switch strings.ToLower(os.Getenv("PERF_TXQUEUE")) {
+	case "", "auto":
+		cfg.queueKind = queueAuto
+	case "v1":
+		cfg.queueKind = queueV1
+	case "v2":
+		cfg.queueKind = queueV2
+	default:
+		t.Fatalf("PERF_TXQUEUE must be 'v1', 'v2', or 'auto', got %q", os.Getenv("PERF_TXQUEUE"))
 	}
 
 	return cfg
@@ -231,7 +324,20 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 
 	// Silence GRPC logging
 	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr))
-	t.Logf("Config: processingWorkers=%d submittingWorkers=%d", processingWorkerCount, submittingWorkerCount)
+	t.Logf("Config: processingWorkers=%d submittingWorkers=%d loop=%s forever=%v duration=%s",
+		processingWorkerCount, submittingWorkerCount, cfg.loop, cfg.forever, cfg.duration)
+
+	// Publish worker config as gauges so any Grafana chart can render it alongside
+	// throughput — no need to flip back to the run log to know the worker mix.
+	metrics.LoadgenWorkers.WithLabelValues("processing").Set(float64(processingWorkerCount))
+	metrics.LoadgenWorkers.WithLabelValues("submitting").Set(float64(submittingWorkerCount))
+
+	// Derive a cancellable feeder context. The duration timer is ARMED later
+	// (just before the feeder loop), AFTER the harness has synced — otherwise on
+	// a stale chain with many blocks to catch up, the timer can expire during
+	// sync and the workload never runs.
+	feederCtx, feederCancel := context.WithCancel(t.Context())
+	defer feederCancel()
 
 	// USDC contract address
 	USDCAddr := common.HexToAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
@@ -251,8 +357,31 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	tracker := NewTxCompletionTracker()
 	defer tracker.Cleanup()
 
+	// Queue selection: controlled by PERF_TXQUEUE ("v1", "v2", or "auto"). "auto"
+	// mirrors loop mode — V2 for closed-loop (dependency-graph aware, avoids MVCC
+	// aborts) and V1 for open-loop (FIFO, no dependency tracking — push as fast as
+	// we can and let the committer's MVCC handle conflicts). Setting v1 or v2
+	// explicitly forces that queue regardless of loop mode, for A/B testing.
+	kind := cfg.queueKind
+	if kind == queueAuto {
+		if cfg.loop == loopModeOpen {
+			kind = queueV1
+		} else {
+			kind = queueV2
+		}
+	}
+	var txQueue gwcore.TxQueueInterface
+	switch kind {
+	case queueV1:
+		t.Logf("TxQueue: V1 FIFO (no dependency tracking)")
+		txQueue = gwcore.NewTxQueue()
+	case queueV2:
+		t.Logf("TxQueue: V2 dependency-graph")
+		txQueue = gwcore.NewTxQueueV2()
+	}
+
 	// Use notification-based harness from PR #190 for fabric-x.
-	th, err := integration.NewFabricXTestHarnessWithNotifications(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", map[string]any{"Gateway.WorkerCount": processingWorkerCount}, factory, gwcore.NewTxQueueV2(), tracker)
+	th, err := integration.NewFabricXTestHarnessWithNotifications(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", map[string]any{"Gateway.WorkerCount": processingWorkerCount}, factory, txQueue, tracker)
 	require.NoError(t, err)
 
 	// Wrap the gateway with NonceBypassGateway to skip nonce validation
@@ -316,6 +445,16 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	numWorkers := submittingWorkerCount
 	var wg sync.WaitGroup
 
+	// Optional rate limiter (open-loop only): one limiter shared across all
+	// submitting workers, so the AGGREGATE SendTransaction rate is bounded
+	// by cfg.targetTPS. nil = unlimited (legacy fire-and-forget).
+	var submitLimiter *rate.Limiter
+	if cfg.targetTPS > 0 && cfg.loop == loopModeOpen {
+		submitLimiter = rate.NewLimiter(rate.Limit(cfg.targetTPS), 1)
+		t.Logf("Open-loop rate limit: %d tx/s (shared across %d submitting workers)",
+			cfg.targetTPS, numWorkers)
+	}
+
 	// Start worker goroutines
 	for w := 0; w < numWorkers; w++ {
 		wg.Add(1)
@@ -342,18 +481,42 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 					continue
 				}
 
-				// Send the transaction and wait for it to be committed
+				if cfg.loop == loopModeOpen {
+					// Open-loop: fire and continue. No per-tx wait, no per-tx latency
+					// measurement on this side. Commit counts come from
+					// LoadgenCommittedTotal which TxCompletionTracker.HandleTx
+					// increments on every notification.
+					if submitLimiter != nil {
+						_ = submitLimiter.Wait(context.Background())
+					}
+					if err := wrappedGateway.SendTransaction(context.Background(), tx); err != nil {
+						t.Logf("Transfer %d: SendTransaction error: %v", i, err)
+						atomic.AddInt64(&failCount, 1)
+						continue
+					}
+					atomic.AddInt64(&successCount, 1) // "successfully submitted" in open-loop
+					sentCount.Add(1)
+					continue
+				}
+
+				// Closed-loop: send the transaction and wait for it to be committed
 				func() {
+					inflightBumped := false
 					defer func() {
 						if r := recover(); r != nil {
 							// t.Logf("Transfer %d: Failed to send transaction (panic recovered): %v", i, r)
 							atomic.AddInt64(&failCount, 1)
 						} else {
 							atomic.AddInt64(&successCount, 1)
-							latMs := float64(time.Since(txStart).Microseconds()) / 1000.0
+							latSec := time.Since(txStart).Seconds()
+							latMs := latSec * 1000
 							latenciesMu.Lock()
 							latencies = append(latencies, latMs)
 							latenciesMu.Unlock()
+							metrics.LoadgenCommittedLatency.Observe(latSec)
+						}
+						if inflightBumped {
+							metrics.LoadgenInflight.Dec()
 						}
 					}()
 
@@ -367,6 +530,8 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 						panic(err) // Trigger the defer recovery
 					}
 					sentCount.Add(1)
+					metrics.LoadgenInflight.Inc()
+					inflightBumped = true // track that we Inc'd so the defer knows to Dec
 
 					// Wait for transaction completion notification from the tracker
 					select {
@@ -441,33 +606,60 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 		}
 	}()
 
-	// Feed work to the workers
+	// Arm the duration timer NOW (just before the feeder loop) so that sync /
+	// dataset-load time isn't deducted from PERF_DURATION. The harness has
+	// finished syncing by the time we reach here.
+	if cfg.duration > 0 {
+		timer := time.AfterFunc(cfg.duration, func() {
+			t.Logf("PERF_DURATION reached (%s), cancelling feeder", cfg.duration)
+			feederCancel()
+		})
+		defer timer.Stop()
+	}
+
+	// Feed work to the workers. Termination has three paths:
+	//   - wrap-count: stop when dispatched >= cfg.totalDispatches (cfg.wrapAround && !cfg.forever)
+	//   - single-pass: stop when cursor exhausts window (no wrapAround, no forever)
+	//   - forever / duration: stop only when feederCtx is cancelled (cfg.forever)
 	var dispatched int64
 	cursor := 0
 
+feed:
 	for {
-		if cfg.wrapAround {
-			if dispatched >= cfg.totalDispatches {
-				break
-			}
-		} else {
-			if cursor >= len(window) {
-				break
-			}
+		select {
+		case <-feederCtx.Done():
+			break feed
+		default:
 		}
 
-		workChan <- workItem{index: dispatched, transfer: window[cursor]}
+		if cfg.forever {
+			// nothing to do — only feederCtx terminates us
+		} else if cfg.wrapAround {
+			if dispatched >= cfg.totalDispatches {
+				break feed
+			}
+		} else if cursor >= len(window) {
+			break feed
+		}
+
+		// blocking send — but respect feederCtx so we can exit cleanly.
+		select {
+		case workChan <- workItem{index: dispatched, transfer: window[cursor]}:
+		case <-feederCtx.Done():
+			break feed
+		}
+
 		dispatched++
 		cursor++
 
 		if cursor >= len(window) {
-			if cfg.wrapAround {
+			if cfg.wrapAround || cfg.forever {
 				cursor = 0
 				// BalancePrimingWrapper.GetNonce() handles nonce validation bypass automatically,
 				// so no explicit nonce priming is needed between wrap-around passes.
 				t.Logf("Wrap-around: restarting from beginning (dispatched %d so far)", dispatched)
 			} else {
-				break
+				break feed
 			}
 		}
 	}
@@ -543,6 +735,43 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 
 // TestReplayJSONDataset loads the USDC_dataset.json.gz file with pre-generated transactions
 // and replays them with batched priming of sender balances.
+// TestMain starts the EVM-side metrics HTTP server once for the whole package so
+// both TestReplayJSONDataset and the sweep TestReplayJSONDatasetPerformance can
+// be scraped by Prometheus.
+//
+// Resolution order for the bind addr:
+//  1. EVM_METRICS_ADDR env var (escape hatch for ad-hoc runs without a config file).
+//  2. loadgen.metrics-addr in the fabx.yaml at FABX_CONFIG_PATH (the canonical
+//     source — symmetric with how orderer/committer get their metrics ports).
+//  3. Otherwise, no metrics endpoint is started.
+func TestMain(m *testing.M) {
+	addr := os.Getenv("EVM_METRICS_ADDR")
+	if addr == "" {
+		if cfgPath := os.Getenv("FABX_CONFIG_PATH"); cfgPath != "" {
+			if cfg, err := config.Load(cfgPath); err == nil {
+				addr = cfg.Loadgen.MetricsAddr
+			}
+		}
+	}
+	var srv *http.Server
+	if addr != "" {
+		s, err := metrics.Listen(addr)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "EVM metrics Listen(%s) failed: %v\n", addr, err)
+			os.Exit(1)
+		}
+		if s != nil {
+			fmt.Fprintf(os.Stderr, "EVM-side metrics serving on http://%s/metrics\n", addr)
+			srv = s
+		}
+	}
+	code := m.Run()
+	if srv != nil {
+		metrics.Shutdown(srv)
+	}
+	os.Exit(code)
+}
+
 func TestReplayJSONDataset(t *testing.T) {
 	// Skip in short mode
 	if testing.Short() {

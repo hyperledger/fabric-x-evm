@@ -18,6 +18,13 @@ type Config struct {
 	Network   common.Network      `mapstructure:"network"   yaml:"network"`
 	Gateway   Gateway             `mapstructure:"gateway"   yaml:"gateway"`
 	Endorsers []endorser.Endorser `mapstructure:"endorsers" yaml:"endorsers"`
+	Loadgen   Loadgen             `mapstructure:"loadgen"   yaml:"loadgen"`
+}
+
+// Loadgen contains configuration consumed by the perf-test process (loadgen side),
+// not by the runtime gateway. Fields here are silently ignored by the gateway binary.
+type Loadgen struct {
+	MetricsAddr string `mapstructure:"metrics-addr" yaml:"metrics-addr"` // bind addr for the loadgen-side /metrics endpoint, e.g. "0.0.0.0:9092"
 }
 
 // Gateway contains configuration for the gateway component.

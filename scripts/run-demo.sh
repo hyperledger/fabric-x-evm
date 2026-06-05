@@ -21,6 +21,15 @@
 #   --wrap-count N            replay the dataset window N times (default: 1)
 #   --submitting-workers N    parallel submitting workers per replica
 #   --processing-workers N    gateway processing worker count per replica
+#   --loop-mode MODE          per-tx submission mode (closed|open). open is fire-and-forget
+#                             at the orderer (uses V1 FIFO TxQueue, lets the committer's MVCC
+#                             reject conflicts). default: closed.
+#   --forever                 keep wrapping the dataset until --duration elapses; requires
+#                             --duration (or external ctx cancel) to stop. shorthand for
+#                             PERF_FOREVER=1.
+#   --duration DURATION       Go duration string (30s, 2m); cancels the feeder after that
+#                             long. Pair with --forever for a steady-state TPS-for-N-seconds
+#                             measurement in open-loop mode.
 #   --reset-fabricx           full FabricX backend teardown + start on dectrust1-4 +
 #                             cert refresh on controller and gateway VMs + redeploy.
 #                             Forwarded to demo-staging.sh. Use this for reproducible
@@ -44,6 +53,9 @@ EVM_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)"
 WRAP_COUNT=1
 SUBMITTING_WORKERS=""
 PROCESSING_WORKERS=""
+LOOP_MODE=""
+FOREVER=false
+DURATION=""
 RESET_FABRICX=false
 SKIP_TESTDATA=false
 SKIP_EVM_DEPLOY=false
@@ -61,6 +73,9 @@ while [[ $# -gt 0 ]]; do
         --wrap-count)    WRAP_COUNT="$2"; shift 2 ;;
         --submitting-workers) SUBMITTING_WORKERS="$2"; shift 2 ;;
         --processing-workers) PROCESSING_WORKERS="$2"; shift 2 ;;
+        --loop-mode)     LOOP_MODE="$2"; shift 2 ;;
+        --forever)       FOREVER=true; shift ;;
+        --duration)      DURATION="$2"; shift 2 ;;
         --reset-fabricx|--restart-network) RESET_FABRICX=true; shift ;;
         --skip-testdata) SKIP_TESTDATA=true; shift ;;
         --skip-evm-deploy|--skip-deploy)     SKIP_EVM_DEPLOY=true; shift ;;
@@ -328,8 +343,20 @@ demo_args="--evm-branch ${EVM_BRANCH}"
 [[ "$QUIET"         == true ]] && demo_args+=" --quiet"
 [[ "$DRY_RUN"       == true ]] && demo_args+=" --dry-run"
 
+# Forward open-loop / duration knobs as remote env vars; demo-staging.sh propagates them
+# to every per-replica go test. The metrics endpoint addr comes from the fabx test
+# config (loadgen.metrics-addr), not from an env var.
+if [[ -n "$LOOP_MODE" && "$LOOP_MODE" != "closed" && "$LOOP_MODE" != "open" ]]; then
+    echo "error: --loop-mode must be 'closed' or 'open', got '${LOOP_MODE}'" >&2
+    exit 1
+fi
+remote_env=""
+[[ -n "$LOOP_MODE" ]] && remote_env+="PERF_LOOP_MODE=${LOOP_MODE} "
+[[ "$FOREVER" == true ]] && remote_env+="PERF_FOREVER=1 "
+[[ -n "$DURATION" ]] && remote_env+="PERF_DURATION=${DURATION} "
+
 if [[ "$QUIET" != true ]]; then
-    echo "+ ssh -tt $CTL 'bash ${DEMO_SCRIPT}${demo_args:+ $demo_args}'"
+    echo "+ ssh -tt $CTL '${remote_env}bash ${DEMO_SCRIPT}${demo_args:+ $demo_args}'"
 fi
 if [[ "$DRY_RUN" != true ]]; then
     LOCAL_LOG=$(mktemp /tmp/run-demo-$$.XXXXXX.log)
@@ -338,7 +365,7 @@ if [[ "$DRY_RUN" != true ]]; then
         # Use ssh -T (no PTY) to get clean \n-only output — PTY mode (-tt) translates \n to \r\n
         # and injects other control sequences that corrupt indentation.
         # Use a while-read loop (not tee|awk) to avoid block-buffering in the pipe chain.
-        ssh -T "$CTL" "bash ${DEMO_SCRIPT}${demo_args:+ $demo_args}" 2>&1 | \
+        ssh -T "$CTL" "${remote_env}bash ${DEMO_SCRIPT}${demo_args:+ $demo_args}" 2>&1 | \
             while IFS= read -r line; do
                 echo "$line" >> "$QUIET_LOG"
                 echo "$line" >> "$LOCAL_LOG"
@@ -349,7 +376,7 @@ if [[ "$DRY_RUN" != true ]]; then
                 [[ "$line" == *"Demo passed"* || "$line" == *"Demo FAIL"* ]] && echo "$line"
             done
     else
-        ssh -tt "$CTL" "bash ${DEMO_SCRIPT}${demo_args:+ $demo_args}" 2>&1 | tee "$LOCAL_LOG"
+        ssh -tt "$CTL" "${remote_env}bash ${DEMO_SCRIPT}${demo_args:+ $demo_args}" 2>&1 | tee "$LOCAL_LOG"
     fi
     demo_exit=${PIPESTATUS[0]}
     set -e
