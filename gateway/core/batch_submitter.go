@@ -79,8 +79,10 @@ func (bs *BatchSubmitter) run(ctx context.Context) {
 }
 
 func (bs *BatchSubmitter) submitOne(ctx context.Context, end sdk.Endorsement) error {
+	var txid string
 	if bs.cache != nil {
-		txid, err := extractTxIDFromProposal(end.Proposal)
+		var err error
+		txid, err = extractTxIDFromProposal(end.Proposal)
 		if err != nil {
 			return fmt.Errorf("extract txid: %w", err)
 		}
@@ -94,7 +96,9 @@ func (bs *BatchSubmitter) submitOne(ctx context.Context, end sdk.Endorsement) er
 	}
 	submitStart := time.Now()
 	err := bs.submitter.Submit(ctx, end)
-	metrics.GatewaySubmitDuration.Observe(time.Since(submitStart).Seconds())
+	took := time.Since(submitStart)
+	metrics.GatewaySubmitDuration.Observe(took.Seconds())
+	batchLogger.Debugf("[SUBMIT] txid=%s submit_took=%v", txid, took)
 	return err
 }
 

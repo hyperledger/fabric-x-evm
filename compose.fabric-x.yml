@@ -40,6 +40,7 @@ services:
       SC_SIDECAR_ORDERER_SIGNED_ENVELOPES: "true"
       SC_QUERY_SERVICE_SERVER_ENDPOINT: ":7001"
       SC_ORDERER_BLOCK_SIZE: "1"
+      # SC_ORDERER_BLOCK_TIMEOUT: "100ms"
     healthcheck:
       test: [ "CMD-SHELL", "nc -z localhost 7001" ]
       interval: 2s

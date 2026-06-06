@@ -160,14 +160,14 @@ func (q *TxQueueV2) Enqueue(tx *types.Transaction) {
 
 		// Add to waiting list
 		entry.listElement = q.waitingList.PushBack(entry)
-		loggerV2.Debugf("Enqueue: tx %s blocked by %d txs, waiting=%d ready=%d",
-			txHash.Hex()[:10], len(conflictingTxs), q.waitingList.Len(), q.readyList.Len())
+		loggerV2.Debugf("[QUEUE] Enqueue: tx %s WAITING (blocked by %d), ready=%d waiting=%d pending=%d",
+			txHash.Hex()[:10], len(conflictingTxs), q.readyList.Len(), q.waitingList.Len(), len(q.pendingMap))
 	} else {
 		// No conflicts - add to ready list
 		entry.listElement = q.readyList.PushBack(entry)
 		q.cond.Signal() // Wake up one waiting worker
-		loggerV2.Debugf("Enqueue: tx %s ready, waiting=%d ready=%d",
-			txHash.Hex()[:10], q.waitingList.Len(), q.readyList.Len())
+		loggerV2.Debugf("[QUEUE] Enqueue: tx %s READY, ready=%d waiting=%d pending=%d",
+			txHash.Hex()[:10], q.readyList.Len(), q.waitingList.Len(), len(q.pendingMap))
 	}
 
 	// Update lookup maps. Overwriting participantMap[p] makes this tx the new
@@ -375,6 +375,9 @@ func (q *TxQueueV2) HandleTx(ctx context.Context, notifs []TxNotification) error
 		}
 		totalPromoted += q.completeUnlocked(notif.EthTxHash)
 	}
+
+	loggerV2.Debugf("[QUEUE] HandleTx: notifs=%d promoted=%d ready=%d waiting=%d pending=%d",
+		len(notifs), totalPromoted, q.readyList.Len(), q.waitingList.Len(), len(q.pendingMap))
 
 	// Signal workers based on how many transactions were promoted
 	if totalPromoted == 1 {

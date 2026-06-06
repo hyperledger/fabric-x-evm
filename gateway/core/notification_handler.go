@@ -50,7 +50,7 @@ func NewAllTxBatchDispatcher(cache *PendingTxCache, handlers ...TxHandler) *AllT
 
 // HandleBatch implements notification.AllTxHandler.
 func (d *AllTxBatchDispatcher) HandleBatch(ctx context.Context, batch notification.AllTxBatch) error {
-	notifLogger.Debugf("Received batch of %d events (block %d)", len(batch.Events), batch.BlockNumber)
+	notifLogger.Debugf("[BLOCK] block=%d total_events=%d", batch.BlockNumber, len(batch.Events))
 
 	notifs := make([]TxNotification, 0, len(batch.Events))
 	for _, event := range batch.Events {
@@ -82,6 +82,8 @@ func (d *AllTxBatchDispatcher) HandleBatch(ctx context.Context, batch notificati
 	if len(notifs) == 0 {
 		return nil
 	}
+
+	notifLogger.Debugf("[NOTIFY] block=%d dispatching=%d/%d our_txs", batch.BlockNumber, len(notifs), len(batch.Events))
 
 	for _, h := range d.handlers {
 		if err := h.HandleTx(ctx, notifs); err != nil {
