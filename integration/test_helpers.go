@@ -561,6 +561,12 @@ func NewFabricXTestHarnessWithFactoryAndTxQueue(t *testing.T, logger sdk.Logger,
 // Uses MemoryStore and NotificationDispatcher for better performance in replay scenarios.
 // If extraHandler is non-nil, it will be inserted into the handler chain right before the cleanup handler.
 func NewFabricXTestHarnessWithNotifications(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory, txQueue core.TxQueueInterface, extraHandler core.TxHandler) (*TestHarness, error) {
+	// Resolve primeDbPath before any chdir so the original relative meaning survives.
+	if !filepath.IsAbs(primeDbPath) {
+		if abs, err := filepath.Abs(primeDbPath); err == nil {
+			primeDbPath = abs
+		}
+	}
 	configPath := os.Getenv("FABX_CONFIG_PATH")
 	if configPath == "" {
 		cwd, _ := os.Getwd()
