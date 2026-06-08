@@ -24,15 +24,17 @@ build-release:
 			-o release/linux-$$arch/fxevm ./cmd/fxevm || exit 1; \
 	done
 
+IMAGE_TAG ?= dev
+
 .PHONY: build-image
 build-image: build-release
 	$(DOCKER) buildx build \
 		--file Dockerfile.release \
 		--load \
-		--build-arg VERSION=dev \
+		--build-arg VERSION=$(IMAGE_TAG) \
 		--build-arg CREATED=$(shell date -u +%Y-%m-%dT%H:%M:%SZ) \
 		--build-arg REVISION=$(shell git rev-parse HEAD) \
-		--tag fabric-x-evm:dev \
+		--tag fabric-x-evm:$(IMAGE_TAG) \
 		.
 
 .PHONY: checks
