@@ -75,7 +75,6 @@ type Gateway struct {
 	workerCount     int
 	wg              sync.WaitGroup
 	stopOnce        sync.Once
-	batchSubmitter  *BatchSubmitter
 	endorsementChan chan sdk.Endorsement // Channel to send endorsements to BatchSubmitter
 }
 
@@ -98,7 +97,7 @@ type Store interface {
 // If txQueue is nil, NewTxQueue() will be used as the default.
 // batchSubmitter is required and handles all endorsement submissions.
 // endorsementChan is the channel to send endorsements to the BatchSubmitter.
-func New(ec *EndorsementClient, submitter Submitter, store Store, chainID int64, workerCount int, txQueue TxQueueInterface, batchSubmitter *BatchSubmitter, endorsementChan chan sdk.Endorsement) (*Gateway, error) {
+func New(ec *EndorsementClient, submitter Submitter, store Store, chainID int64, workerCount int, txQueue TxQueueInterface, endorsementChan chan sdk.Endorsement) (*Gateway, error) {
 	if workerCount <= 0 {
 		workerCount = 1
 	}
@@ -118,7 +117,6 @@ func New(ec *EndorsementClient, submitter Submitter, store Store, chainID int64,
 		Signer:          types.LatestSignerForChainID(cid),
 		TxQueue:         txQueue,
 		workerCount:     workerCount,
-		batchSubmitter:  batchSubmitter,
 		endorsementChan: endorsementChan,
 	}, nil
 }
@@ -156,14 +154,11 @@ func (g *Gateway) processTx(ctx context.Context, tx *types.Transaction) error {
 	if err != nil {
 		return err
 	}
-
-	// Send endorsement to BatchSubmitter via channel
-	select {
-	case g.endorsementChan <- end:
-		return nil
-	case <-ctx.Done():
-		return fmt.Errorf("context canceled while sending endorsement: %w", ctx.Err())
+	if err := g.SubmitFabricTx(ctx, end); err != nil {
+		return err
 	}
+
+	return nil
 }
 
 // SendTransaction runs geth-style pre-flight validation, then enqueues the tx
@@ -197,11 +192,6 @@ func (g *Gateway) SubmitFabricTx(ctx context.Context, end sdk.Endorsement) error
 	case <-ctx.Done():
 		return fmt.Errorf("context canceled while sending endorsement: %w", ctx.Err())
 	}
-}
-
-// Submitter returns the underlying submitter for use by BatchSubmitter.
-func (g *Gateway) Submitter() Submitter {
-	return g.submitter
 }
 
 // ChainID returns the configured chainID for this deployment.

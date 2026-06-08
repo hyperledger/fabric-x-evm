@@ -14,16 +14,6 @@ import (
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 )
 
-// TxCacheEntry stores the Ethereum transaction bytes for a pending Fabric transaction.
-// NsRWS and Events are no longer cached here — they are delivered by AllTxStreamer.
-type TxCacheEntry struct {
-	// EthTxBytes is the RLP-encoded Ethereum transaction
-	EthTxBytes []byte
-
-	// FabricTxID is the Fabric transaction ID
-	FabricTxID string
-}
-
 // TxNotification contains all data needed to process a transaction notification.
 // EthTxBytes and EthTxHash come from the cache; NsRWS and Events come from the AllTxStreamer event.
 type TxNotification struct {
@@ -46,27 +36,26 @@ type TxNotification struct {
 // between endorsement and commit notification.
 type PendingTxCache struct {
 	mu    sync.RWMutex
-	cache map[string]*TxCacheEntry // Fabric TxID -> Entry
+	cache map[string][]byte // Fabric TxID -> EthTxBytes
 }
 
 // NewPendingTxCache creates a new empty cache.
 func NewPendingTxCache() *PendingTxCache {
 	return &PendingTxCache{
-		cache: make(map[string]*TxCacheEntry),
+		cache: make(map[string][]byte),
 	}
 }
 
-// Add stores a transaction entry in the cache.
-func (c *PendingTxCache) Add(entry *TxCacheEntry) error {
+// Add stores Ethereum transaction bytes in the cache.
+func (c *PendingTxCache) Add(fabricTxID string, ethTxBytes []byte) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.cache[entry.FabricTxID] = entry
-	return nil
+	c.cache[fabricTxID] = ethTxBytes
 }
 
-// Get retrieves a transaction entry from the cache.
+// Get retrieves Ethereum transaction bytes from the cache.
 // Returns nil if the entry is not found.
-func (c *PendingTxCache) Get(fabricTxID string) *TxCacheEntry {
+func (c *PendingTxCache) Get(fabricTxID string) []byte {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.cache[fabricTxID]
@@ -77,11 +66,4 @@ func (c *PendingTxCache) Delete(fabricTxID string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.cache, fabricTxID)
-}
-
-// Size returns the current number of entries in the cache.
-func (c *PendingTxCache) Size() int {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return len(c.cache)
 }

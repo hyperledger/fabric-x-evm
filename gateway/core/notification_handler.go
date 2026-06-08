@@ -54,14 +54,14 @@ func (d *AllTxBatchDispatcher) HandleBatch(ctx context.Context, batch notificati
 
 	notifs := make([]TxNotification, 0, len(batch.Events))
 	for _, event := range batch.Events {
-		entry := d.cache.Get(event.TxID)
-		if entry == nil {
+		ethTxBytes := d.cache.Get(event.TxID)
+		if ethTxBytes == nil {
 			notifLogger.Debugf("Skipping tx %s: not in cache (not submitted by us)", event.TxID)
 			continue
 		}
 
 		var ethTx types.Transaction
-		if err := ethTx.UnmarshalBinary(entry.EthTxBytes); err != nil {
+		if err := ethTx.UnmarshalBinary(ethTxBytes); err != nil {
 			return fmt.Errorf("unmarshal eth tx for %s: %w", event.TxID, err)
 		}
 
@@ -72,7 +72,7 @@ func (d *AllTxBatchDispatcher) HandleBatch(ctx context.Context, batch notificati
 			TxNum:      uint64(event.TxNum),
 			FabricTxID: event.TxID,
 			Status:     event.Status,
-			EthTxBytes: entry.EthTxBytes,
+			EthTxBytes: ethTxBytes,
 			EthTxHash:  ethTx.Hash(),
 			NsRWS:      nsrws,
 			Events:     events,
@@ -87,9 +87,15 @@ func (d *AllTxBatchDispatcher) HandleBatch(ctx context.Context, batch notificati
 
 	for _, h := range d.handlers {
 		if err := h.HandleTx(ctx, notifs); err != nil {
-			return fmt.Errorf("handler failed: %w", err)
+			panic(fmt.Errorf("handler failed: %w", err))
 		}
 	}
+
+	// Clean up processed transactions from cache
+	for _, notif := range notifs {
+		d.cache.Delete(notif.FabricTxID)
+	}
+
 	return nil
 }
 
@@ -142,23 +148,4 @@ func namespacesToNsRWS(namespaces []*applicationpb.TxNamespace) ([]blocks.NsRead
 	}
 
 	return nsrws, events
-}
-
-// CleanupHandler removes completed transactions from the cache.
-// It should be the last handler in the chain.
-type CleanupHandler struct {
-	cache *PendingTxCache
-}
-
-// NewCleanupHandler creates a new cleanup handler.
-func NewCleanupHandler(cache *PendingTxCache) *CleanupHandler {
-	return &CleanupHandler{cache: cache}
-}
-
-// HandleTx removes the transactions from the cache.
-func (h *CleanupHandler) HandleTx(ctx context.Context, notifs []TxNotification) error {
-	for _, notif := range notifs {
-		h.cache.Delete(notif.FabricTxID)
-	}
-	return nil
 }

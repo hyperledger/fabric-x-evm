@@ -124,7 +124,7 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 	batchSubmitter := core.NewBatchSubmitter(submitter, nil, endorsementChan)
 	batchSubmitter.Start(ctx)
 
-	gateway, err := core.New(ec, submitter, chain, cfg.Network.ChainID, cfg.Gateway.WorkerCount, nil, batchSubmitter, endorsementChan)
+	gateway, err := core.New(ec, submitter, chain, cfg.Network.ChainID, cfg.Gateway.WorkerCount, nil, endorsementChan)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gateway: %w", err)
 	}

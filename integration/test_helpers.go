@@ -197,7 +197,7 @@ func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg confi
 	t.Cleanup(func() { batchSubmitter.Stop() })
 
 	// Create gateway before synchronizer so we can register it as a handler
-	gw, err := core.New(ec, submitter, store, cfg.Network.ChainID, cfg.Gateway.WorkerCount, txQueue, batchSubmitter, endorsementChan)
+	gw, err := core.New(ec, submitter, store, cfg.Network.ChainID, cfg.Gateway.WorkerCount, txQueue, endorsementChan)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -247,7 +247,7 @@ func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg confi
 			logger.Infof("Synchronizer stopped cleanly")
 
 			// Set up AllTxStreamer notification system
-			txHandlers := make([]core.TxHandler, 0, len(dbs)+4)
+			txHandlers := make([]core.TxHandler, 0, len(dbs)+3)
 			for _, db := range dbs {
 				txHandlers = append(txHandlers, db.(core.TxHandler))
 			}
@@ -256,7 +256,6 @@ func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg confi
 			if extraHandler != nil {
 				txHandlers = append(txHandlers, extraHandler)
 			}
-			txHandlers = append(txHandlers, core.NewCleanupHandler(cache))
 
 			dispatcher := core.NewAllTxBatchDispatcher(cache, txHandlers...)
 
@@ -289,7 +288,7 @@ func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg confi
 	t.Cleanup(func() { gw.Stop() })
 
 	// Create state primer
-	primer, err := NewStatePrimer(gw, dbs[0], cfg.Network.Namespace, gwSigner, builders, cfg.Network.Channel, cfg.Network.NsVersion, cfg.Network.Protocol == "fabric-x")
+	primer, err := NewStatePrimer(gw, submitter, dbs[0], cfg.Network.Namespace, gwSigner, builders, cfg.Network.Channel, cfg.Network.NsVersion, cfg.Network.Protocol == "fabric-x")
 	if err != nil {
 		return nil, nil, err
 	}

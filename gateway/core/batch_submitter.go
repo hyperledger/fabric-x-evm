@@ -14,6 +14,7 @@ import (
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-common/protoutil"
+	fc "github.com/hyperledger/fabric-x-evm/common"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 )
 
@@ -89,9 +90,7 @@ func (bs *BatchSubmitter) submitOne(ctx context.Context, end sdk.Endorsement) er
 		if err != nil {
 			return fmt.Errorf("extract eth tx bytes: %w", err)
 		}
-		if err := bs.cache.Add(&TxCacheEntry{FabricTxID: txid, EthTxBytes: ethTxBytes}); err != nil {
-			return fmt.Errorf("add to cache: %w", err)
-		}
+		bs.cache.Add(txid, ethTxBytes)
 	}
 	t0 := time.Now()
 	err := bs.submitter.Submit(ctx, end)
@@ -126,8 +125,13 @@ func extractEthTxBytes(proposal *peer.Proposal) ([]byte, error) {
 		return nil, fmt.Errorf("unmarshal chaincode invocation spec: %w", err)
 	}
 
-	if cis.ChaincodeSpec == nil || cis.ChaincodeSpec.Input == nil || len(cis.ChaincodeSpec.Input.Args) < 2 {
+	if cis.ChaincodeSpec == nil || cis.ChaincodeSpec.Input == nil || len(cis.ChaincodeSpec.Input.Args) != 2 {
 		return nil, fmt.Errorf("invalid chaincode spec: missing args")
+	}
+
+	// Validate that Args[0] is ProposalTypeEVMTx
+	if len(cis.ChaincodeSpec.Input.Args[0]) != 1 || cis.ChaincodeSpec.Input.Args[0][0] != byte(fc.ProposalTypeEVMTx) {
+		return nil, fmt.Errorf("invalid proposal type: expected ProposalTypeEVMTx")
 	}
 
 	// Args[0] is ProposalTypeEVMTx, Args[1] is the Ethereum tx bytes

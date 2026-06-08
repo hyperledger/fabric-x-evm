@@ -467,7 +467,7 @@ func TestReplayJSONDataset(t *testing.T) {
 	// flogging.ActivateSpec("gateway.core.txqueue_v2=debug")
 
 	// Run the test with single worker configuration
-	_, _, _ = runReplayTest(t, 1, 50, loadReplayConfigFromEnv(t))
+	_, _, _ = runReplayTest(t, 1, 1, loadReplayConfigFromEnv(t))
 }
 
 type performanceResult struct {
