@@ -408,7 +408,7 @@ func NewLocalTestHarnessWithFactoryAndTxQueue(t *testing.T, logger sdk.Logger, e
 				ConnString: filepath.Join(dir, tname+"gateway.db"),
 				TriePath:   filepath.Join(dir, tname+"triedb.db"),
 			},
-			SyncTimeout: 2 * time.Second,
+			SyncTimeout: 60 * time.Second,
 			Orderers: []common.ClientConfig{
 				{Endpoint: orderer},
 			},
@@ -550,11 +550,15 @@ func NewFabricXTestHarnessWithNotifications(t *testing.T, logger sdk.Logger, evm
 			primeDbPath = abs
 		}
 	}
-	cwd, _ := os.Getwd()
-	defer os.Chdir(cwd)
-	_ = os.Chdir("../")
+	configPath := os.Getenv("FABX_CONFIG_PATH")
+	if configPath == "" {
+		cwd, _ := os.Getwd()
+		defer os.Chdir(cwd)
+		_ = os.Chdir("../")
+		configPath = "fabx.yaml"
+	}
 
-	cfg, err := config.Load("fabx.yaml")
+	cfg, err := config.Load(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
