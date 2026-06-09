@@ -20,6 +20,7 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	cmn "github.com/hyperledger/fabric-x-evm/common"
+	"github.com/hyperledger/fabric-x-evm/common/txmonitor"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
@@ -140,6 +141,9 @@ func (g *Gateway) worker(ctx context.Context) {
 			return
 		}
 
+		// STEP 7: Worker starts processing transaction
+		txmonitor.Record(tx.Hash(), txmonitor.StepProcessTxStart)
+
 		// Process the transaction (old SendTransaction logic)
 		if err := g.processTx(ctx, tx); err != nil {
 			logger.Errorf("tx %s failed: %v", tx.Hash().Hex(), err)
@@ -154,6 +158,10 @@ func (g *Gateway) processTx(ctx context.Context, tx *types.Transaction) error {
 	if err != nil {
 		return err
 	}
+
+	// STEP 20: After ExecuteEthTx completes
+	txmonitor.Record(tx.Hash(), txmonitor.StepAfterExecuteEthTx)
+
 	if err := g.SubmitFabricTx(ctx, end); err != nil {
 		return err
 	}
@@ -164,9 +172,15 @@ func (g *Gateway) processTx(ctx context.Context, tx *types.Transaction) error {
 // SendTransaction runs geth-style pre-flight validation, then enqueues the tx
 // for async endorse/submit. Mirrors eth_sendRawTransaction's failure model.
 func (g *Gateway) SendTransaction(ctx context.Context, tx *types.Transaction) error {
+	// STEP 2: SendTransaction called
+	txmonitor.Record(tx.Hash(), txmonitor.StepSendTransaction)
+
 	if err := ValidateTx(ctx, tx, g.ChainConfig, g.Signer, g); err != nil {
 		return err
 	}
+
+	// STEP 3: Transaction enqueued for processing
+	txmonitor.Record(tx.Hash(), txmonitor.StepEnqueueTransaction)
 	g.TxQueue.Enqueue(tx)
 	return nil
 }

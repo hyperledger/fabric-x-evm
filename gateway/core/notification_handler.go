@@ -13,6 +13,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-x-common/api/applicationpb"
+	"github.com/hyperledger/fabric-x-evm/common/txmonitor"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/notification"
 )
@@ -59,6 +60,9 @@ func (d *AllTxBatchDispatcher) HandleBatch(ctx context.Context, batch notificati
 			notifLogger.Debugf("Skipping tx %s: not in cache (not submitted by us)", event.TxID)
 			continue
 		}
+
+		// STEP 24: Before unmarshaling transaction
+		txmonitor.Record(ethTx.Hash(), txmonitor.StepBeforeUnmarshalTx)
 
 		var ethTx types.Transaction
 		if err := ethTx.UnmarshalBinary(ethTxBytes); err != nil {

@@ -24,6 +24,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/hyperledger/fabric-x-common/api/committerpb"
+	"github.com/hyperledger/fabric-x-evm/common/txmonitor"
 	"github.com/hyperledger/fabric-x-evm/endorser"
 	econf "github.com/hyperledger/fabric-x-evm/endorser/config"
 	"github.com/hyperledger/fabric-x-evm/endorser/testimpl"
@@ -286,6 +287,9 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 					panic(err)
 				}
 
+				// STEP 0: Test starts sending transaction
+				txmonitor.Record(tx.Hash(), txmonitor.StepTestStart)
+
 				// Send the transaction without waiting for completion
 				// Use the wrapped gateway directly to bypass nonce validation
 				err = wrappedGateway.SendTransaction(context.Background(), tx)
@@ -382,6 +386,9 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 		for notif := range completionCh {
 			atomic.AddInt64(&outstandingTxCount, -1)
 
+			// STEP 25: Transaction committed
+			txmonitor.Record(notif.EthTxHash, txmonitor.StepTransactionCommitted)
+
 			// Update success/fail counts
 			if notif.Status == committerpb.Status_COMMITTED {
 				atomic.AddInt64(&successCount, 1)
@@ -467,8 +474,33 @@ func TestReplayJSONDataset(t *testing.T) {
 	}
 	// flogging.ActivateSpec("gateway.core.txqueue_v2=debug")
 
+	processingWorkerCount := 4
+	submittingWorkerCount := 16
+
 	// Run the test with single worker configuration
-	_, _, _ = runReplayTest(t, 1, 1, 100, loadReplayConfigFromEnv(t))
+	_, _, _ = runReplayTest(t, processingWorkerCount, submittingWorkerCount, 100, loadReplayConfigFromEnv(t))
+
+	// Dump transaction monitoring traces
+	csvPath := fmt.Sprintf("./tx_traces_p%d_s%d.csv", processingWorkerCount, submittingWorkerCount)
+	jsonPath := fmt.Sprintf("./tx_traces_p%d_s%d.json", processingWorkerCount, submittingWorkerCount)
+
+	t.Logf("Dumping transaction traces to %s and %s", csvPath, jsonPath)
+
+	if err := txmonitor.DumpCSV(csvPath); err != nil {
+		t.Logf("Warning: Failed to dump traces to CSV: %v", err)
+	} else {
+		t.Logf("Successfully dumped traces to CSV: %s", csvPath)
+	}
+
+	if err := txmonitor.DumpJSON(jsonPath); err != nil {
+		t.Logf("Warning: Failed to dump traces to JSON: %v", err)
+	} else {
+		t.Logf("Successfully dumped traces to JSON: %s", jsonPath)
+	}
+
+	// Print monitoring statistics
+	stats := txmonitor.GetStats()
+	t.Logf("Transaction monitoring stats: %+v", stats)
 }
 
 type performanceResult struct {

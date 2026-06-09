@@ -15,6 +15,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-x-common/api/committerpb"
+	"github.com/hyperledger/fabric-x-evm/common/txmonitor"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 )
 
@@ -98,6 +99,9 @@ func (q *TxQueueV2) Enqueue(tx *types.Transaction) {
 	txHash := tx.Hash()
 	participants := participantsForTx(tx)
 
+	// STEP 4: TxQueueV2.Enqueue called
+	txmonitor.Record(txHash, txmonitor.StepTxQueueEnqueue)
+
 	// Pre-allocate slices outside the lock
 	blocks := make([]*txEntry, 0)
 	isBlockedBy := make([]*txEntry, 0)
@@ -157,6 +161,9 @@ func (q *TxQueueV2) Enqueue(tx *types.Transaction) {
 	for _, participant := range entry.participants {
 		q.participantMap[participant] = append(q.participantMap[participant], entry)
 	}
+
+	// STEP 5: TxQueueV2.Enqueue completed
+	txmonitor.Record(txHash, txmonitor.StepTxQueueEnqueueEnd)
 }
 
 // Dequeue removes a transaction from the ready list and moves it to the pending map.
@@ -194,6 +201,9 @@ func (q *TxQueueV2) Dequeue() (*types.Transaction, bool) {
 
 			loggerV2.Debugf("Dequeue: tx %s, waiting=%d ready=%d pending=%d",
 				entry.txHash.Hex()[:10], q.waitingList.Len(), q.readyList.Len(), len(q.pendingMap))
+
+			// STEP 6: Worker dequeues transaction
+			txmonitor.Record(entry.txHash, txmonitor.StepWorkerDequeue)
 
 			return tx, true
 		}

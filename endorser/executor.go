@@ -22,6 +22,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/params"
 	fxcommon "github.com/hyperledger/fabric-x-evm/common"
+	"github.com/hyperledger/fabric-x-evm/common/txmonitor"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
@@ -108,6 +109,9 @@ func (e *EVMEngine) Execute(ctx context.Context, tx *types.Transaction) (endorse
 			return endorsement.ExecutionResult{}, errors.New("error marshaling logs")
 		}
 	}
+
+	// STEP 17: Executor ends
+	txmonitor.Record(tx.Hash(), txmonitor.StepExecutorEnd)
 
 	return endorsement.Success(ex.state.Result(), logs, ret), nil
 }
@@ -355,7 +359,7 @@ func CallMsgToMessage(msg ethereum.CallMsg, baseFee *big.Int, skipNonceCheck, sk
 // Call executes a read-only call (eth_call semantics).
 // An empty revert is treated as a non-error: many Ethereum tools probe contracts this way.
 func (h *Executor) Call(msg ethereum.CallMsg) ([]byte, error) {
-	ret, err := h.Execute(CallMsgToMessage(msg, h.BlockCtx.BaseFee, true, true))
+	ret, err := h.Execute(CallMsgToMessage(msg, h.BlockCtx.BaseFee, true, true), common.Hash{})
 	if errors.Is(err, vm.ErrExecutionReverted) && len(ret) == 0 {
 		return nil, nil // empty revert on a call is not an error
 	}
@@ -366,6 +370,9 @@ func (h *Executor) Call(msg ethereum.CallMsg) ([]byte, error) {
 // Exported for use by testimpl wrappers that need to build a message without
 // applying the production free-gas defaults.
 func (h *Executor) PrepareMessage(tx *types.Transaction) (*core.Message, error) {
+	// STEP 12: PrepareMessage starts
+	txmonitor.Record(tx.Hash(), txmonitor.StepPrepareMessageStart)
+
 	signer := types.MakeSigner(h.ChainCfg, h.BlockCtx.BlockNumber, h.BlockCtx.Time)
 
 	from, err := types.Sender(signer, tx)
@@ -373,6 +380,8 @@ func (h *Executor) PrepareMessage(tx *types.Transaction) (*core.Message, error) 
 		return nil, err
 	}
 
+	// STEP 13: After nonce validation
+	txmonitor.Record(tx.Hash(), txmonitor.StepAfterNonceValidation)
 	// Validate that the transaction nonce matches the ledger state nonce.
 	// This adds an explicit read dependency on the ledger key for the nonce.
 	ledgerNonce := h.state.GetNonce(from)
@@ -381,6 +390,9 @@ func (h *Executor) PrepareMessage(tx *types.Transaction) (*core.Message, error) 
 	} else if tx.Nonce() > ledgerNonce {
 		return nil, core.ErrNonceTooHigh
 	}
+
+	// STEP 14: Before converting to message
+	txmonitor.Record(tx.Hash(), txmonitor.StepBeforeTransactionToMessage)
 
 	return core.TransactionToMessage(tx, signer, h.BlockCtx.BaseFee)
 }
@@ -392,7 +404,7 @@ func (h *Executor) Send(tx *types.Transaction) ([]byte, error) {
 		return nil, err
 	}
 
-	ret, err := h.Execute(msg)
+	ret, err := h.Execute(msg, tx.Hash())
 	if err != nil {
 		return nil, formatRevert(ret, err)
 	}
@@ -403,7 +415,7 @@ func (h *Executor) Send(tx *types.Transaction) ([]byte, error) {
 // Execute applies production defaults then runs the EVM via ApplyMessage.
 // Gas prices are always zeroed (free gas) so buyGas never requires ETH balance.
 // If MaxTxGas is set, msg.GasLimit is capped before execution.
-func (h *Executor) Execute(msg *core.Message) ([]byte, error) {
+func (h *Executor) Execute(msg *core.Message, txHash common.Hash) ([]byte, error) {
 	if msg.GasLimit == 0 {
 		msg.GasLimit = 5_000_000
 	}
@@ -418,12 +430,15 @@ func (h *Executor) Execute(msg *core.Message) ([]byte, error) {
 		msg.GasLimit = h.maxTxGas
 	}
 
-	return h.ApplyMessage(msg)
+	return h.ApplyMessage(msg, txHash)
 }
 
 // ApplyMessage runs msg on the EVM exactly as provided, without production defaults.
 // Use this in test infrastructure (testimpl) when real gas pricing is needed.
-func (h *Executor) ApplyMessage(msg *core.Message) ([]byte, error) {
+func (h *Executor) ApplyMessage(msg *core.Message, txHash common.Hash) ([]byte, error) {
+	// STEP 15: ApplyMessage starts
+	txmonitor.Record(txHash, txmonitor.StepApplyMessageStart)
+
 	evm := vm.NewEVM(h.BlockCtx, h.state, h.ChainCfg, vm.Config{})
 
 	// Snapshot before execution mirrors geth's approach and allows reverting on error.
@@ -433,6 +448,9 @@ func (h *Executor) ApplyMessage(msg *core.Message) ([]byte, error) {
 	// limit. Otherwise a tx with gas limit above the block gas limit incorrectly
 	// passes preCheck and executes.
 	gp := new(core.GasPool).AddGas(h.BlockCtx.GasLimit)
+
+	// STEP 16: ApplyMessage called
+	txmonitor.Record(txHash, txmonitor.StepApplyMessageCalled)
 
 	// Use ApplyMessage to execute the transaction
 	result, err := core.ApplyMessage(evm, msg, gp)
