@@ -204,6 +204,10 @@ make stop-x
 
 The container does not keep state.
 
+### Mock Fabric-X for perf/loadgen
+
+To run the existing perf replay loadgen against an in-memory mock instead of real Fabric-X, see [`docs/mock-fabric-x.md`](docs/mock-fabric-x.md).
+
 ### Fablo
 
 Start the network, run the integration tests, and stop it again:

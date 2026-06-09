@@ -114,6 +114,24 @@ func loadReplayConfigFromEnv(t *testing.T) replayConfig {
 	return cfg
 }
 
+func loadReplayWorkerConfigFromEnv(t *testing.T) (int, int) {
+	processingWorkers := 1
+	if processingWorkersStr := os.Getenv("PERF_PROCESSING_WORKERS"); processingWorkersStr != "" {
+		_, err := fmt.Sscanf(processingWorkersStr, "%d", &processingWorkers)
+		assert.NoError(t, err, "PERF_PROCESSING_WORKERS must be a valid integer")
+		assert.True(t, processingWorkers >= 1, "PERF_PROCESSING_WORKERS must be >= 1")
+	}
+
+	submittingWorkers := 1
+	if submittingWorkersStr := os.Getenv("PERF_SUBMITTING_WORKERS"); submittingWorkersStr != "" {
+		_, err := fmt.Sscanf(submittingWorkersStr, "%d", &submittingWorkers)
+		assert.NoError(t, err, "PERF_SUBMITTING_WORKERS must be a valid integer")
+		assert.True(t, submittingWorkers >= 1, "PERF_SUBMITTING_WORKERS must be >= 1")
+	}
+
+	return processingWorkers, submittingWorkers
+}
+
 //lint:ignore U1000 kept for future tests / debugging
 func logMem(tag string) {
 	var m runtime.MemStats
@@ -408,8 +426,10 @@ func TestReplayJSONDataset(t *testing.T) {
 	}
 	// flogging.ActivateSpec("gateway.core.txqueue_v2=debug")
 
-	// Run the test with single worker configuration
-	_, _, _ = runReplayTest(t, 1, 1, loadReplayConfigFromEnv(t))
+	processingWorkers, submittingWorkers := loadReplayWorkerConfigFromEnv(t)
+	t.Logf("Running replay with processingWorkers=%d, submittingWorkers=%d", processingWorkers, submittingWorkers)
+
+	_, _, _ = runReplayTest(t, processingWorkers, submittingWorkers, loadReplayConfigFromEnv(t))
 }
 
 type performanceResult struct {
