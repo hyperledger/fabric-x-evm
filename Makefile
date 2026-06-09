@@ -16,6 +16,14 @@ COMPOSE ?= docker compose
 build:
 	go build -o bin/fxevm ./cmd/fxevm
 
+.PHONY: build-mock-fabric-x
+build-mock-fabric-x:
+	go build -o bin/mock-fabric-x ./cmd/mock-fabric-x
+
+.PHONY: start-mock-x
+start-mock-x: build-mock-fabric-x
+	./bin/mock-fabric-x
+
 .PHONY: build-release
 build-release:
 	@for arch in $(RELEASE_ARCHS); do \
