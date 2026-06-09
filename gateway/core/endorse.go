@@ -21,6 +21,7 @@ import (
 	"github.com/hyperledger/fabric-x-common/protoutil"
 
 	"github.com/hyperledger/fabric-x-evm/common"
+	"github.com/hyperledger/fabric-x-evm/common/txmonitor"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
@@ -57,6 +58,9 @@ func NewEndorsementClient(endorsers []Endorser, signer Signer, channel, namespac
 }
 
 func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Transaction) (sdk.Endorsement, error) {
+	// STEP 8: ExecuteTransaction starts
+	txmonitor.Record(tx.Hash(), txmonitor.StepExecuteTransactionStart)
+
 	// Marshal the transaction for the invocation args
 	ethTxBytes, err := tx.MarshalBinary()
 	if err != nil {
@@ -76,6 +80,9 @@ func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Tra
 	var wg sync.WaitGroup
 	res := make([]*peer.ProposalResponse, len(e.endorsers))
 	errs := make([]error, len(e.endorsers)) // indexed — deterministic error order
+
+	// STEP 9: Before calling endorser API
+	txmonitor.Record(tx.Hash(), txmonitor.StepBeforeEndorserCall)
 
 	for i, end := range e.endorsers {
 		processEndorsement := func(index int, endorser Endorser) {

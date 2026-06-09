@@ -13,6 +13,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-x-common/api/applicationpb"
+	"github.com/hyperledger/fabric-x-evm/common/txmonitor"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/notification"
 )
@@ -60,10 +61,13 @@ func (d *AllTxBatchDispatcher) HandleBatch(ctx context.Context, batch notificati
 			continue
 		}
 
+		// STEP 24: Before unmarshaling transaction
 		var ethTx types.Transaction
 		if err := ethTx.UnmarshalBinary(ethTxBytes); err != nil {
 			return fmt.Errorf("unmarshal eth tx for %s: %w", event.TxID, err)
 		}
+
+		txmonitor.Record(ethTx.Hash(), txmonitor.StepBeforeUnmarshalTx)
 
 		nsrws, events := namespacesToNsRWS(event.Namespaces)
 

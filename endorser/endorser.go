@@ -20,6 +20,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-evm/common"
+	"github.com/hyperledger/fabric-x-evm/common/txmonitor"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
 
@@ -69,10 +70,16 @@ func New(engine *EVMEngine, builder endorsement.Builder, chainID int64) (*Endors
 // Reverts are endorsed and submitted (so the receipt records status=0); pre-execution
 // failures (nonce, gas, signer, EIP-3860, etc.) are rejected before any envelope is cut.
 func (f *Endorser) ProcessEVMTransaction(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction) (*peer.ProposalResponse, error) {
+	// STEP 10: ProcessEVMTransaction starts
+	txmonitor.Record(ethTx.Hash(), txmonitor.StepProcessEVMTransactionStart)
+
 	// Validate the ethereum transaction signature
 	if _, err := types.Sender(f.ethSigner, ethTx); err != nil {
 		return nil, fmt.Errorf("invalid ethereum signature: %w", err)
 	}
+
+	// STEP 11: After extracting sender
+	txmonitor.Record(ethTx.Hash(), txmonitor.StepAfterSenderExtract)
 
 	// Execute the transaction
 	res, err := f.Engine.Execute(ctx, ethTx)
@@ -89,8 +96,16 @@ func (f *Endorser) ProcessEVMTransaction(ctx context.Context, inv endorsement.In
 		return response(nil, err), nil
 	}
 
+	// STEP 18: Before endorsement building
+	txmonitor.Record(ethTx.Hash(), txmonitor.StepBeforeEndorse)
+
 	// Build and sign the endorsement
-	return f.builder.Endorse(inv, res)
+	r, e := f.builder.Endorse(inv, res)
+
+	// STEP 19: After endorser call completes
+	txmonitor.Record(ethTx.Hash(), txmonitor.StepAfterEndorserCall)
+
+	return r, e
 }
 
 // ProcessCall processes an Ethereum call (query) and returns a proposal response

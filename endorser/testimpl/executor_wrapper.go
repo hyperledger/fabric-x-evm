@@ -78,7 +78,7 @@ func (w *ExecutorWrapper) Execute(tx *types.Transaction) (endorsement.ExecutionR
 		return endorsement.ExecutionResult{}, err
 	}
 
-	ret, err := w.Executor.ApplyMessage(msg)
+	ret, err := w.Executor.ApplyMessage(msg, tx.Hash())
 	if err != nil {
 		return endorsement.ExecutionResult{}, err
 	}

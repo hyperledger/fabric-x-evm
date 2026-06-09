@@ -11,10 +11,13 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-common/protoutil"
 	fc "github.com/hyperledger/fabric-x-evm/common"
+	"github.com/hyperledger/fabric-x-evm/common/txmonitor"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 )
 
@@ -80,20 +83,36 @@ func (bs *BatchSubmitter) run(ctx context.Context) {
 
 func (bs *BatchSubmitter) submitOne(ctx context.Context, end sdk.Endorsement) error {
 	var txid string
+	var ethTxHash common.Hash
+
+	// Extract Ethereum transaction hash for tracing
+	ethTxBytes, err := extractEthTxBytes(end.Proposal)
+	if err == nil && len(ethTxBytes) > 0 {
+		var tx types.Transaction
+		if err := tx.UnmarshalBinary(ethTxBytes); err == nil {
+			ethTxHash = tx.Hash()
+		}
+	}
+
+	// STEP 21: Before SubmitFabricTx
+	txmonitor.Record(ethTxHash, txmonitor.StepBeforeSubmitFabricTx)
+
 	if bs.cache != nil {
 		var err error
 		txid, err = extractTxIDFromProposal(end.Proposal)
 		if err != nil {
 			return fmt.Errorf("extract txid: %w", err)
 		}
-		ethTxBytes, err := extractEthTxBytes(end.Proposal)
-		if err != nil {
-			return fmt.Errorf("extract eth tx bytes: %w", err)
-		}
 		bs.cache.Add(txid, ethTxBytes)
 	}
 	t0 := time.Now()
-	err := bs.submitter.Submit(ctx, end)
+
+	// STEP 22: Submit called
+	txmonitor.Record(ethTxHash, txmonitor.StepSubmitCalled)
+	err = bs.submitter.Submit(ctx, end)
+
+	// STEP 23: After SubmitFabricTx completes
+	txmonitor.Record(ethTxHash, txmonitor.StepAfterSubmitFabricTx)
 	batchLogger.Debugf("[SUBMIT] txid=%s submit_took=%v", txid, time.Since(t0))
 	return err
 }

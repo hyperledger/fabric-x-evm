@@ -19,6 +19,7 @@ import (
 	"github.com/ethereum/go-ethereum/eth/filters"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
+	"github.com/hyperledger/fabric-x-evm/common/txmonitor"
 	"github.com/hyperledger/fabric-x-evm/gateway/api/rpcerr"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 )
@@ -242,6 +243,10 @@ func (api *EthAPI) SendRawTransaction(ctx context.Context, input hexutil.Bytes) 
 		logger.Debugf("EthAPI.SendRawTransaction() returning error: %v", err)
 		return common.Hash{}, rpcerr.InvalidParams("invalid raw transaction: %v", err)
 	}
+
+	// STEP 1: Record when gateway receives the raw transaction
+	txmonitor.Record(tx.Hash(), txmonitor.StepSendRawTransaction)
+
 	if b, err := tx.MarshalJSON(); err == nil {
 		logger.Debugf("EthAPI.SendRawTransaction() tx: %s", string(b))
 	}
