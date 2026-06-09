@@ -164,8 +164,8 @@ func (q *TxQueue) HandleTx(ctx context.Context, notifs []TxNotification) error {
 
 // Stats returns statistics about processed transactions.
 // Returns (total transactions processed, invalid transactions).
-func (q *TxQueue) Stats() (int, int) {
+func (q *TxQueue) Stats() (int, int, int, int) {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
-	return q.total, q.invalid
+	return q.total, q.invalid, 0, 0
 }

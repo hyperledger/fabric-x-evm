@@ -55,7 +55,7 @@ type TxQueueInterface interface {
 	Handle(ctx context.Context, block *domain.Block) error
 
 	// Stats returns statistics about processed transactions (total, invalid)
-	Stats() (total int, invalid int)
+	Stats() (total int, invalid int, totalEnq int, conflictEnq int)
 }
 
 var logger = flogging.MustGetLogger("gateway.core")
@@ -381,9 +381,10 @@ func (g *Gateway) Stop() error {
 		err = g.submitter.Close()
 	})
 
-	total, invalid := g.TxQueue.Stats()
+	total, invalid, totalEnq, conflictEnq := g.TxQueue.Stats()
 	if total > 0 {
-		fmt.Println("gw stats:", total, invalid, float64(invalid)/float64(total))
+		fmt.Println("gw stats: valid/invalid/invalid rate        ", total, invalid, float64(invalid)/float64(total))
+		fmt.Println("gw stats: total/conflicting/conflicting rate", totalEnq, conflictEnq, float64(conflictEnq)/float64(totalEnq))
 	}
 
 	return err

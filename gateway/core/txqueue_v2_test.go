@@ -511,7 +511,7 @@ func TestTxQueueV2_Handle_SingleTransaction(t *testing.T) {
 	assert.Nil(t, q.IsPending(tx.Hash()))
 
 	// Stats should be updated
-	total, invalid := q.Stats()
+	total, invalid, _, _ := q.Stats()
 	assert.Equal(t, 1, total)
 	assert.Equal(t, 0, invalid)
 }
@@ -535,7 +535,7 @@ func TestTxQueueV2_Handle_InvalidTransaction(t *testing.T) {
 	require.NoError(t, err)
 
 	// Stats should count invalid
-	total, invalid := q.Stats()
+	total, invalid, _, _ := q.Stats()
 	assert.Equal(t, 1, total)
 	assert.Equal(t, 1, invalid)
 }
@@ -572,7 +572,7 @@ func TestTxQueueV2_Handle_MultipleTransactions(t *testing.T) {
 	assert.Nil(t, q.IsPending(tx3.Hash()))
 
 	// Stats should be correct
-	total, invalid := q.Stats()
+	total, invalid, _, _ := q.Stats()
 	assert.Equal(t, 3, total)
 	assert.Equal(t, 1, invalid)
 }
@@ -588,7 +588,7 @@ func TestTxQueueV2_Handle_EmptyBlock(t *testing.T) {
 	err := q.Handle(context.Background(), block)
 	require.NoError(t, err)
 
-	total, invalid := q.Stats()
+	total, invalid, _, _ := q.Stats()
 	assert.Equal(t, 0, total)
 	assert.Equal(t, 0, invalid)
 }
@@ -630,7 +630,7 @@ func TestTxQueueV2_Stats(t *testing.T) {
 	q := NewTxQueueV2()
 
 	// Initially zero
-	total, invalid := q.Stats()
+	total, invalid, _, _ := q.Stats()
 	assert.Equal(t, 0, total)
 	assert.Equal(t, 0, invalid)
 
@@ -674,7 +674,7 @@ func TestTxQueueV2_Stats(t *testing.T) {
 	q.Handle(context.Background(), block2)
 
 	// Check stats
-	total, invalid = q.Stats()
+	total, invalid, _, _ = q.Stats()
 	assert.Equal(t, 2, total)
 	assert.Equal(t, 1, invalid)
 }
