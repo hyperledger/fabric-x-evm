@@ -141,6 +141,21 @@ func loadReplayConfigFromEnv(t *testing.T) replayConfig {
 	return cfg
 }
 
+// envIntDefault returns the integer value of env var key, or def when unset/empty.
+// Used so worker counts can be set at runtime (e.g. by demo-staging.sh's
+// --processing-workers/--submitting-workers) without re-deploying.
+func envIntDefault(t *testing.T, key string, def int) int {
+	s := os.Getenv(key)
+	if s == "" {
+		return def
+	}
+	var v int
+	_, err := fmt.Sscanf(s, "%d", &v)
+	assert.NoError(t, err, key+" must be a valid integer")
+	assert.True(t, v >= 1, key+" must be >= 1")
+	return v
+}
+
 //lint:ignore U1000 kept for future tests / debugging
 func logMem(tag string) {
 	var m runtime.MemStats
@@ -467,8 +482,16 @@ func TestReplayJSONDataset(t *testing.T) {
 	}
 	// flogging.ActivateSpec("gateway.core.txqueue_v2=debug")
 
-	// Run the test with single worker configuration
-	_, _, _ = runReplayTest(t, 1, 1, 100, loadReplayConfigFromEnv(t))
+	// Worker counts and outstanding-tx window default to Ale's 1/1/100 placeholder
+	// but are overridable via PERF_PROCESSING_WORKERS / PERF_SUBMITTING_WORKERS /
+	// PERF_NUM_OUTSTANDING_TX (forwarded by demo-staging.sh
+	// --processing-workers/--submitting-workers/--outstanding-tx) so we can sweep
+	// without re-deploying.
+	processingWorkers := envIntDefault(t, "PERF_PROCESSING_WORKERS", 1)
+	submittingWorkers := envIntDefault(t, "PERF_SUBMITTING_WORKERS", 1)
+	numOutstandingTx := envIntDefault(t, "PERF_NUM_OUTSTANDING_TX", 100)
+	t.Logf("Config: processingWorkers=%d submittingWorkers=%d numOutstandingTx=%d", processingWorkers, submittingWorkers, numOutstandingTx)
+	_, _, _ = runReplayTest(t, processingWorkers, submittingWorkers, numOutstandingTx, loadReplayConfigFromEnv(t))
 }
 
 type performanceResult struct {
