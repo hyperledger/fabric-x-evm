@@ -107,6 +107,7 @@ Use `--tls-mode none` only with configs that disable TLS.
 --max-tx-per-block    maximum transactions per mock block
 --block-timeout       maximum time before cutting a partial block
 --queue-size          accepted envelope queue size
+--retained-blocks     recent blocks/event batches retained in memory; 0 keeps all history
 ```
 
 Examples:
@@ -117,6 +118,9 @@ Examples:
 
 # Immediate one-transaction blocks
 ./bin/mock-fabric-x --max-tx-per-block=1 --block-timeout=0
+
+# Keep only latest 5000 blocks and event batches
+./bin/mock-fabric-x --retained-blocks=5000
 ```
 
 ## Troubleshooting

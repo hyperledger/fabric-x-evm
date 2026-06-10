@@ -34,6 +34,7 @@ type Config struct {
 	MaxTxPerBlock     int
 	BlockTimeout      time.Duration
 	QueueSize         int
+	RetainedBlocks    int
 }
 
 // DefaultConfig returns settings matching the integration Fabric-X defaults.
@@ -51,6 +52,7 @@ func DefaultConfig() Config {
 		MaxTxPerBlock:     1,
 		BlockTimeout:      0,
 		QueueSize:         65536,
+		RetainedBlocks:    5000,
 	}
 }
 
@@ -61,6 +63,9 @@ func (c Config) Validate() error {
 	}
 	if c.QueueSize <= 0 {
 		return errors.New("queue-size must be positive")
+	}
+	if c.RetainedBlocks < 0 {
+		return errors.New("retained-blocks must be non-negative")
 	}
 	if c.TLSMode != TLSModeNone && c.TLSMode != TLSModeMTLS {
 		return fmt.Errorf("tls-mode must be %q or %q", TLSModeNone, TLSModeMTLS)
@@ -82,4 +87,5 @@ func (c *Config) BindFlags(fs *flag.FlagSet) {
 	fs.IntVar(&c.MaxTxPerBlock, "max-tx-per-block", c.MaxTxPerBlock, "maximum transactions per mock block")
 	fs.DurationVar(&c.BlockTimeout, "block-timeout", c.BlockTimeout, "maximum time before cutting partial block")
 	fs.IntVar(&c.QueueSize, "queue-size", c.QueueSize, "accepted envelope queue size")
+	fs.IntVar(&c.RetainedBlocks, "retained-blocks", c.RetainedBlocks, "number of recent blocks and event batches to retain in memory; 0 keeps all history")
 }

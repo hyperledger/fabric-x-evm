@@ -35,7 +35,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Fprintf(os.Stderr, "mock-fabric-x listening orderer=%s committer=%s tls=%s\n", cfg.OrdererListen, cfg.CommitterListen, cfg.TLSMode)
+	fmt.Fprintf(os.Stderr, "mock-fabric-x listening orderer=%s committer=%s tls=%s retained-blocks=%d\n", cfg.OrdererListen, cfg.CommitterListen, cfg.TLSMode, cfg.RetainedBlocks)
 	if err := server.Run(ctx); err != nil && ctx.Err() == nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)

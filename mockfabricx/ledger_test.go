@@ -7,6 +7,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package mockfabricx
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -105,6 +106,26 @@ func TestSubscribeBlocksFromReturnsExistingAndFutureBlocks(t *testing.T) {
 	case <-time.After(time.Second):
 		require.Fail(t, "timed out waiting for new block")
 	}
+}
+
+func TestLedgerRetentionKeepsRecentBlocksAndEvents(t *testing.T) {
+	ledger := NewLedgerWithRetention(2)
+	for i := 1; i <= 4; i++ {
+		ledger.Commit([]*common.Envelope{newTestEnvelope(t, fmt.Sprintf("tx-%d", i), &applicationpb.Tx{Namespaces: []*applicationpb.TxNamespace{{NsId: "basic"}}})})
+	}
+
+	existingBlocks, _, cancelBlocks := ledger.SubscribeBlocksFrom(1)
+	defer cancelBlocks()
+	require.Len(t, existingBlocks, 2)
+	require.Equal(t, uint64(3), existingBlocks[0].Header.Number)
+	require.Equal(t, uint64(4), existingBlocks[1].Header.Number)
+
+	existingBatches, _, cancelBatches := ledger.SubscribeEventBatches()
+	defer cancelBatches()
+	require.Len(t, existingBatches, 2)
+	require.Equal(t, uint64(3), existingBatches[0].BlockNumber)
+	require.Equal(t, uint64(4), existingBatches[1].BlockNumber)
+	require.Equal(t, uint64(5), ledger.Height())
 }
 
 func TestSubscribeEventBatchesReturnsExistingAndFutureBatches(t *testing.T) {

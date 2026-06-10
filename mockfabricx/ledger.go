@@ -20,9 +20,10 @@ import (
 type Ledger struct {
 	mu sync.RWMutex
 
-	nextBlockNum uint64
-	blocks       []*common.Block
-	eventBatches []*committerpb.TxEventBatch
+	nextBlockNum   uint64
+	blocks         []*common.Block
+	eventBatches   []*committerpb.TxEventBatch
+	retainedBlocks int
 
 	blockSubs map[chan *common.Block]any
 	eventSubs map[chan *committerpb.TxEventBatch]any
@@ -30,10 +31,17 @@ type Ledger struct {
 
 // NewLedger returns an empty ledger with block numbering starting at 1.
 func NewLedger() *Ledger {
+	return NewLedgerWithRetention(0)
+}
+
+// NewLedgerWithRetention returns an empty ledger that keeps only the latest retainedBlocks blocks and event batches.
+// retainedBlocks <= 0 keeps all history.
+func NewLedgerWithRetention(retainedBlocks int) *Ledger {
 	return &Ledger{
-		nextBlockNum: 1,
-		blockSubs:    map[chan *common.Block]any{},
-		eventSubs:    map[chan *committerpb.TxEventBatch]any{},
+		nextBlockNum:   1,
+		retainedBlocks: retainedBlocks,
+		blockSubs:      map[chan *common.Block]any{},
+		eventSubs:      map[chan *committerpb.TxEventBatch]any{},
 	}
 }
 
@@ -90,6 +98,7 @@ func (l *Ledger) Commit(envs []*common.Envelope) *committerpb.TxEventBatch {
 	batch := &committerpb.TxEventBatch{BlockNumber: blockNum, Events: events}
 	l.blocks = append(l.blocks, block)
 	l.eventBatches = append(l.eventBatches, batch)
+	l.trimHistoryLocked()
 	l.notifyLocked(block, batch)
 	return cloneEventBatch(batch)
 }
@@ -140,6 +149,18 @@ func (l *Ledger) SubscribeEventBatches() ([]*committerpb.TxEventBatch, <-chan *c
 		l.mu.Unlock()
 	}
 	return existingBatches, chForNewBatches, cancel
+}
+
+func (l *Ledger) trimHistoryLocked() {
+	if l.retainedBlocks <= 0 {
+		return
+	}
+	if len(l.blocks) > l.retainedBlocks {
+		l.blocks = append([]*common.Block(nil), l.blocks[len(l.blocks)-l.retainedBlocks:]...)
+	}
+	if len(l.eventBatches) > l.retainedBlocks {
+		l.eventBatches = append([]*committerpb.TxEventBatch(nil), l.eventBatches[len(l.eventBatches)-l.retainedBlocks:]...)
+	}
 }
 
 func cloneEventBatch(batch *committerpb.TxEventBatch) *committerpb.TxEventBatch {

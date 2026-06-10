@@ -32,7 +32,7 @@ func NewServer(cfg Config) (*Server, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	ledger := NewLedger()
+	ledger := NewLedgerWithRetention(cfg.RetainedBlocks)
 	return &Server{
 		cfg:    cfg,
 		ledger: ledger,

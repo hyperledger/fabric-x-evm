@@ -22,6 +22,7 @@ func TestDefaultConfigMatchesFabXPortsAndBatchDefaults(t *testing.T) {
 	require.Equal(t, 1, cfg.MaxTxPerBlock)
 	require.Equal(t, time.Duration(0), cfg.BlockTimeout)
 	require.Equal(t, 65536, cfg.QueueSize)
+	require.Equal(t, 5000, cfg.RetainedBlocks)
 }
 
 func TestValidateRejectsBadConfig(t *testing.T) {
@@ -32,4 +33,8 @@ func TestValidateRejectsBadConfig(t *testing.T) {
 	cfg = DefaultConfig()
 	cfg.TLSMode = "bogus"
 	require.ErrorContains(t, cfg.Validate(), "tls-mode")
+
+	cfg = DefaultConfig()
+	cfg.RetainedBlocks = -1
+	require.ErrorContains(t, cfg.Validate(), "retained-blocks")
 }
