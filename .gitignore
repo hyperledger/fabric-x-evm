@@ -31,4 +31,7 @@ integration/contracts/USDC_fiattokenv2_2.gen.go
 integration/perf/testdata/*.json
 integration/perf/testdata/*.json.gz
 integration/perf/testdata/*.tsv.gz
-integration/perf/performance_results.csv
+integration/perf/*.png
+integration/perf/*.csv
+integration/perf/*.html
+integration/perf/*.json
