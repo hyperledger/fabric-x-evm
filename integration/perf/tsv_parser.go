@@ -11,6 +11,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
+	"log"
 	"math/big"
 	"os"
 	"strconv"
@@ -39,8 +40,9 @@ type TokenTransfer struct {
 // ParseTSVGZ parses a gzipped TSV file containing token transfer data
 // and returns a slice of TokenTransfer structs.
 //
-// The expected TSV format is:
-// block_id	transaction_hash	time	token_address	sender	recipient	value	token_name	token_symbol	token_decimals
+// The TSV file must have a header row with the following required columns
+// (order doesn't matter):
+// block_id, transaction_hash, time, token_address, sender, recipient, value, token_name, token_symbol, token_decimals
 //
 // Parameters:
 //   - filename: path to the .tsv.gz file
@@ -75,17 +77,26 @@ func ParseTSVGZ(filename string) ([]TokenTransfer, error) {
 		return nil, fmt.Errorf("failed to read header: %w", err)
 	}
 
-	// Validate header
-	expectedHeader := []string{
+	// Build a map of column names to indices
+	columnMap := make(map[string]int)
+	for i, col := range header {
+		columnMap[strings.TrimSpace(col)] = i
+	}
+
+	// Validate that all required columns are present
+	requiredColumns := []string{
 		"block_id", "transaction_hash", "time", "token_address",
 		"sender", "recipient", "value", "token_name", "token_symbol", "token_decimals",
 	}
-	if len(header) != len(expectedHeader) {
-		return nil, fmt.Errorf("invalid header: expected %d columns, got %d", len(expectedHeader), len(header))
+	for _, col := range requiredColumns {
+		if _, ok := columnMap[col]; !ok {
+			return nil, fmt.Errorf("missing required column: %s", col)
+		}
 	}
 
 	var transfers []TokenTransfer
 	lineNum := 1 // Start at 1 since we already read the header
+	skippedLines := 0
 
 	// Read data lines
 	for {
@@ -95,48 +106,58 @@ func ParseTSVGZ(filename string) ([]TokenTransfer, error) {
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("error reading line %d: %w", lineNum, err)
+			log.Printf("Warning: skipping line %d due to read error: %v", lineNum, err)
+			skippedLines++
+			continue
 		}
 
-		if len(record) != 10 {
-			return nil, fmt.Errorf("line %d: expected 10 columns, got %d", lineNum, len(record))
+		if len(record) != len(header) {
+			log.Printf("Warning: skipping line %d: expected %d columns, got %d", lineNum, len(header), len(record))
+			skippedLines++
+			continue
 		}
 
-		transfer, err := parseRecord(record, lineNum)
+		transfer, err := parseRecord(record, columnMap, lineNum)
 		if err != nil {
-			return nil, fmt.Errorf("line %d: %w", lineNum, err)
+			log.Printf("Warning: skipping line %d due to parse error: %v", lineNum, err)
+			skippedLines++
+			continue
 		}
 
 		transfers = append(transfers, transfer)
 	}
 
+	if skippedLines > 0 {
+		log.Printf("Skipped %d malformed lines out of %d total lines", skippedLines, lineNum-1)
+	}
+
 	return transfers, nil
 }
 
-// parseRecord parses a single TSV record into a TokenTransfer struct
-func parseRecord(record []string, lineNum int) (TokenTransfer, error) {
+// parseRecord parses a single TSV record into a TokenTransfer struct using the column map
+func parseRecord(record []string, columnMap map[string]int, lineNum int) (TokenTransfer, error) {
 	var transfer TokenTransfer
 
 	// Parse block_id (uint64)
-	blockID, err := strconv.ParseUint(strings.TrimSpace(record[0]), 10, 64)
+	blockID, err := strconv.ParseUint(strings.TrimSpace(record[columnMap["block_id"]]), 10, 64)
 	if err != nil {
 		return transfer, fmt.Errorf("invalid block_id: %w", err)
 	}
 	transfer.BlockID = blockID
 
 	// Parse transaction_hash (common.Hash)
-	txHashStr := strings.TrimSpace(record[1])
+	txHashStr := strings.TrimSpace(record[columnMap["transaction_hash"]])
 	if !strings.HasPrefix(txHashStr, "0x") {
 		txHashStr = "0x" + txHashStr
 	}
 	if !common.IsHexAddress(txHashStr) && len(txHashStr) == 66 { // 0x + 64 hex chars
 		transfer.TransactionHash = common.HexToHash(txHashStr)
 	} else {
-		return transfer, fmt.Errorf("invalid transaction hash: %s", record[1])
+		return transfer, fmt.Errorf("invalid transaction hash: %s", record[columnMap["transaction_hash"]])
 	}
 
 	// Parse time (time.Time)
-	timeStr := strings.TrimSpace(record[2])
+	timeStr := strings.TrimSpace(record[columnMap["time"]])
 	parsedTime, err := time.Parse("2006-01-02 15:04:05", timeStr)
 	if err != nil {
 		return transfer, fmt.Errorf("invalid time format: %w", err)
@@ -144,56 +165,56 @@ func parseRecord(record []string, lineNum int) (TokenTransfer, error) {
 	transfer.Time = parsedTime
 
 	// Parse token_address (common.Address)
-	tokenAddrStr := strings.TrimSpace(record[3])
+	tokenAddrStr := strings.TrimSpace(record[columnMap["token_address"]])
 	if !strings.HasPrefix(tokenAddrStr, "0x") {
 		tokenAddrStr = "0x" + tokenAddrStr
 	}
 	if !common.IsHexAddress(tokenAddrStr) {
-		return transfer, fmt.Errorf("invalid token address: %s", record[3])
+		return transfer, fmt.Errorf("invalid token address: %s", record[columnMap["token_address"]])
 	}
 	transfer.TokenAddress = common.HexToAddress(tokenAddrStr)
 
 	// Parse sender (common.Address)
-	senderStr := strings.TrimSpace(record[4])
+	senderStr := strings.TrimSpace(record[columnMap["sender"]])
 	if !strings.HasPrefix(senderStr, "0x") {
 		senderStr = "0x" + senderStr
 	}
 	if !common.IsHexAddress(senderStr) {
-		return transfer, fmt.Errorf("invalid sender address: %s", record[4])
+		return transfer, fmt.Errorf("invalid sender address: %s", record[columnMap["sender"]])
 	}
 	transfer.Sender = common.HexToAddress(senderStr)
 
 	// Parse recipient (common.Address)
-	recipientStr := strings.TrimSpace(record[5])
+	recipientStr := strings.TrimSpace(record[columnMap["recipient"]])
 	if !strings.HasPrefix(recipientStr, "0x") {
 		recipientStr = "0x" + recipientStr
 	}
 	if !common.IsHexAddress(recipientStr) {
-		return transfer, fmt.Errorf("invalid recipient address: %s", record[5])
+		return transfer, fmt.Errorf("invalid recipient address: %s", record[columnMap["recipient"]])
 	}
 	transfer.Recipient = common.HexToAddress(recipientStr)
 
 	// Parse value (uint256.Int for large ERC-20 values)
-	valueStr := strings.TrimSpace(record[6])
+	valueStr := strings.TrimSpace(record[columnMap["value"]])
 	valueBig := new(big.Int)
 	valueBig, ok := valueBig.SetString(valueStr, 10)
 	if !ok {
-		return transfer, fmt.Errorf("invalid value: %s", record[6])
+		return transfer, fmt.Errorf("invalid value: %s", record[columnMap["value"]])
 	}
 	value, overflow := uint256.FromBig(valueBig)
 	if overflow {
-		return transfer, fmt.Errorf("value overflow: %s", record[6])
+		return transfer, fmt.Errorf("value overflow: %s", record[columnMap["value"]])
 	}
 	transfer.Value = value
 
 	// Parse token_name (string)
-	transfer.TokenName = strings.TrimSpace(record[7])
+	transfer.TokenName = strings.TrimSpace(record[columnMap["token_name"]])
 
 	// Parse token_symbol (string)
-	transfer.TokenSymbol = strings.TrimSpace(record[8])
+	transfer.TokenSymbol = strings.TrimSpace(record[columnMap["token_symbol"]])
 
 	// Parse token_decimals (int)
-	decimals, err := strconv.Atoi(strings.TrimSpace(record[9]))
+	decimals, err := strconv.Atoi(strings.TrimSpace(record[columnMap["token_decimals"]]))
 	if err != nil {
 		return transfer, fmt.Errorf("invalid token_decimals: %w", err)
 	}
