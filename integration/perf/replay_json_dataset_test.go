@@ -188,7 +188,7 @@ func writeHeapProfile(filename string) {
 
 // runReplayTest executes the replay test with configurable worker counts and returns metrics.
 // Returns: (overallThroughput, failedTransactionCount, totalTransactionCount)
-func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCount int, numOutstandingTx int, cfg replayConfig, gwConfig string) (float64, int64, int64) {
+func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCount int, ordererSubmitterCount int, numOutstandingTx int, cfg replayConfig, gwConfig string) (float64, int64, int64) {
 	// Silence GRPC logging
 	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr))
 
@@ -216,9 +216,9 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	// - Local: Traditional block-based synchronization
 	// - Fabric: Traditional block-based synchronization
 	// - Fabric-X: Notification-based (MemoryStore + NotificationDispatcher)
-	// th, err := integration.NewLocalTestHarnessWithFactoryAndTxQueue(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", "fabric", map[string]any{"Gateway.WorkerCount": processingWorkerCount}, factory, gwcore.NewTxQueueV2())
-	th, err := integration.NewFabricXTestHarnessWithNotifications(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", map[string]any{"Gateway.WorkerCount": processingWorkerCount}, factory, gwcore.NewTxQueueV2(), tracker, gwConfig)
-	// th, err = integration.NewFabricTestHarnessWithFactoryAndTxQueue(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", map[string]any{"Gateway.WorkerCount": processingWorkerCount}, factory, gwcore.NewTxQueueV2())
+	// th, err := integration.NewLocalTestHarnessWithFactoryAndTxQueue(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", "fabric", map[string]any{"Gateway.WorkerCount": processingWorkerCount, "Gateway.SubmitterCount": ordererSubmitterCount}, factory, gwcore.NewTxQueueV2())
+	th, err := integration.NewFabricXTestHarnessWithNotifications(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", map[string]any{"Gateway.WorkerCount": processingWorkerCount, "Gateway.SubmitterCount": ordererSubmitterCount}, factory, gwcore.NewTxQueueV2(), tracker, gwConfig)
+	// th, err = integration.NewFabricTestHarnessWithFactoryAndTxQueue(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", map[string]any{"Gateway.WorkerCount": processingWorkerCount, "Gateway.SubmitterCount": ordererSubmitterCount}, factory, gwcore.NewTxQueueV2())
 	assert.NoError(t, err)
 
 	// Wrap the gateway with NonceBypassGateway to skip nonce validation
@@ -491,7 +491,12 @@ func TestReplayJSONDataset(t *testing.T) {
 	// flogging.ActivateSpec("gateway.core.txqueue_v2=debug")
 
 	// Run the test with single worker configuration
-	_, _, _ = runReplayTest(t, 1, 1, 100, loadReplayConfigFromEnv(t), *gatewayConfig)
+	processingWorkerCount := 1  // Number of gateway workers processing transactions
+	submittingWorkerCount := 1  // Number of goroutines submitting transactions TO the gateway
+	ordererSubmitterCount := 16 // Number of goroutines submitting transactions TO the orderer (BatchSubmitter workers)
+	numOutstandingTx := 100     // Maximum number of outstanding transactions
+
+	_, _, _ = runReplayTest(t, processingWorkerCount, submittingWorkerCount, ordererSubmitterCount, numOutstandingTx, loadReplayConfigFromEnv(t), *gatewayConfig)
 }
 
 type performanceResult struct {
@@ -514,6 +519,7 @@ func TestReplayJSONDatasetPerformance(t *testing.T) {
 	// Define the range of worker counts to test
 	processingWorkerCounts := []int{1, 4, 8}
 	submittingWorkerCounts := []int{4, 8, 16, 24}
+	ordererSubmitterCounts := []int{16} // Default orderer submitter count
 
 	// Store results
 	var results []performanceResult
@@ -523,23 +529,25 @@ func TestReplayJSONDatasetPerformance(t *testing.T) {
 	// Run tests with different worker configurations
 	for _, processingWorkers := range processingWorkerCounts {
 		for _, submittingWorkers := range submittingWorkerCounts {
-			t.Logf("\n=== Testing with processingWorkers=%d, submittingWorkers=%d ===",
-				processingWorkers, submittingWorkers)
+			for _, ordererSubmitters := range ordererSubmitterCounts {
+				t.Logf("\n=== Testing with processingWorkers=%d, submittingWorkers=%d, ordererSubmitters=%d ===",
+					processingWorkers, submittingWorkers, ordererSubmitters)
 
-			throughput, failedTxs, totalTxs := runReplayTest(t, processingWorkers, submittingWorkers, 100, loadReplayConfigFromEnv(t), *gatewayConfig)
-			failureRate := float64(failedTxs) / float64(totalTxs)
+				throughput, failedTxs, totalTxs := runReplayTest(t, processingWorkers, submittingWorkers, ordererSubmitters, 100, loadReplayConfigFromEnv(t), *gatewayConfig)
+				failureRate := float64(failedTxs) / float64(totalTxs)
 
-			results = append(results, performanceResult{
-				processingWorkers:  processingWorkers,
-				submittingWorkers:  submittingWorkers,
-				throughput:         throughput,
-				failedTransactions: failedTxs,
-				totalTransactions:  totalTxs,
-				failureRate:        failureRate,
-			})
+				results = append(results, performanceResult{
+					processingWorkers:  processingWorkers,
+					submittingWorkers:  submittingWorkers,
+					throughput:         throughput,
+					failedTransactions: failedTxs,
+					totalTransactions:  totalTxs,
+					failureRate:        failureRate,
+				})
 
-			t.Logf("Result: Throughput=%.2f tx/s, Failed=%d/%d (%.2f%%)",
-				throughput, failedTxs, totalTxs, failureRate*100)
+				t.Logf("Result: Throughput=%.2f tx/s, Failed=%d/%d (%.2f%%)",
+					throughput, failedTxs, totalTxs, failureRate*100)
+			}
 		}
 	}
 

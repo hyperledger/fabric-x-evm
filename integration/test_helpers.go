@@ -191,7 +191,7 @@ func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg confi
 
 	// Create BatchSubmitter infrastructure
 	endorsementChan := make(chan sdk.Endorsement, 1000)
-	batchSubmitter := core.NewBatchSubmitter(submitter, cache, endorsementChan)
+	batchSubmitter := core.NewBatchSubmitter(submitter, cache, endorsementChan, cfg.Gateway.SubmitterCount)
 
 	batchSubmitter.Start(t.Context())
 	t.Cleanup(func() { batchSubmitter.Stop() })

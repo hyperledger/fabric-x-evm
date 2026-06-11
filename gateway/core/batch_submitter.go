@@ -9,6 +9,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
@@ -24,36 +25,46 @@ var batchLogger = flogging.MustGetLogger("gateway.core.batch_submitter")
 // pending-tx cache (when cache != nil), then submits each one to the orderer.
 // The cache is used by AllTxBatchDispatcher to correlate commit events with the
 // originating Ethereum transaction.
+// Multiple worker goroutines read from inputChan and submit in parallel.
 type BatchSubmitter struct {
-	submitter Submitter
-	cache     *PendingTxCache // nil → skip cache; non-nil → store EthTxBytes keyed by FabricTxID
-	inputChan chan sdk.Endorsement
-	stopChan  chan struct{}
-	doneChan  chan struct{}
+	submitter  Submitter
+	cache      *PendingTxCache // nil → skip cache; non-nil → store EthTxBytes keyed by FabricTxID
+	inputChan  chan sdk.Endorsement
+	stopChan   chan struct{}
+	doneChan   chan struct{}
+	numWorkers int
 }
+
+const DefaultNumWorkers = 16
 
 // NewBatchSubmitter creates a new BatchSubmitter.
 // If cache is non-nil, EthTxBytes are stored per-transaction before submission.
+// numWorkers specifies the number of parallel submission goroutines (default: 16).
 func NewBatchSubmitter(
 	submitter Submitter,
 	cache *PendingTxCache,
 	inputChan chan sdk.Endorsement,
+	numWorkers int,
 ) *BatchSubmitter {
+	if numWorkers <= 0 {
+		numWorkers = DefaultNumWorkers
+	}
 	return &BatchSubmitter{
-		submitter: submitter,
-		cache:     cache,
-		inputChan: inputChan,
-		stopChan:  make(chan struct{}),
-		doneChan:  make(chan struct{}),
+		submitter:  submitter,
+		cache:      cache,
+		inputChan:  inputChan,
+		stopChan:   make(chan struct{}),
+		doneChan:   make(chan struct{}),
+		numWorkers: numWorkers,
 	}
 }
 
-// Start begins the submission loop in a goroutine.
+// Start begins the submission loop with multiple worker goroutines.
 func (bs *BatchSubmitter) Start(ctx context.Context) {
 	go bs.run(ctx)
 }
 
-// Stop signals the submitter to stop and waits for it to finish.
+// Stop signals the submitter to stop and waits for all workers to finish.
 func (bs *BatchSubmitter) Stop() {
 	close(bs.stopChan)
 	<-bs.doneChan
@@ -61,6 +72,24 @@ func (bs *BatchSubmitter) Stop() {
 
 func (bs *BatchSubmitter) run(ctx context.Context) {
 	defer close(bs.doneChan)
+
+	var wg sync.WaitGroup
+
+	// Start worker goroutines
+	for i := 0; i < bs.numWorkers; i++ {
+		wg.Add(1)
+		go bs.worker(ctx, i, &wg)
+	}
+
+	// Wait for all workers to complete
+	wg.Wait()
+}
+
+func (bs *BatchSubmitter) worker(ctx context.Context, workerID int, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	batchLogger.Debugf("Worker %d started", workerID)
+	defer batchLogger.Debugf("Worker %d stopped", workerID)
 
 	for {
 		select {
@@ -72,7 +101,7 @@ func (bs *BatchSubmitter) run(ctx context.Context) {
 				return
 			}
 			if err := bs.submitOne(ctx, end); err != nil {
-				batchLogger.Errorf("submit failed: %v", err)
+				batchLogger.Errorf("Worker %d: submit failed: %v", workerID, err)
 			}
 		}
 	}

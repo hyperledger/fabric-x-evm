@@ -57,7 +57,8 @@ type Gateway struct {
 	TestAccountsPath string `mapstructure:"test-accounts-path" yaml:"test-accounts-path"` // Path to JSON file with test accounts for eth_accounts RPC
 	EnableTestRPC    bool   `mapstructure:"enable-test-rpc"    yaml:"enable-test-rpc"`    // Enable test-only RPC methods (eth_accounts, eth_sendTransaction) - UNSAFE for production
 
-	WorkerCount int `mapstructure:"worker-count" yaml:"worker-count"` // number of worker goroutines; defaults to 1 if not set
+	WorkerCount    int `mapstructure:"worker-count"    yaml:"worker-count"`    // number of worker goroutines; defaults to 1 if not set
+	SubmitterCount int `mapstructure:"submitter-count" yaml:"submitter-count"` // number of batch submitter worker goroutines; defaults to 16 if not set
 }
 
 // DB holds the database paths for the gateway.
