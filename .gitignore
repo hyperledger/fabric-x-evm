@@ -20,6 +20,7 @@ testdata/*
 !testdata/fablo/**
 !testdata/fablo/fablo
 !testdata/fablo/fablo-config.json
+!testdata/config
 testdata/fablo/fablo-target
 testdata/fablo/triedb
 blockscout.env

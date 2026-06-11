@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -35,10 +36,14 @@ import (
 	"google.golang.org/grpc/grpclog"
 )
 
+var gatewayConfig = flag.String("gateway-config", "fabx.yaml", "gateway config file for the Fabric-X network")
+
 // TxCompletionTracker forwards all transaction completion notifications to a single channel.
 // It implements gwcore.TxHandler to receive notifications from the notification system.
 type TxCompletionTracker struct {
+	mu           sync.Mutex
 	completionCh chan gwcore.TxNotification
+	stopped      bool
 }
 
 // NewTxCompletionTracker creates a new tracker with a completion channel.
@@ -48,9 +53,22 @@ func NewTxCompletionTracker(completionCh chan gwcore.TxNotification) *TxCompleti
 	}
 }
 
+// Stop prevents any further sends to the completion channel. Must be called before
+// closing the channel to avoid panics from in-flight notification goroutines.
+func (t *TxCompletionTracker) Stop() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.stopped = true
+}
+
 // HandleTx implements gwcore.TxHandler. It receives notifications about completed transactions
 // and forwards them to the completion channel.
 func (t *TxCompletionTracker) HandleTx(ctx context.Context, notifs []gwcore.TxNotification) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.stopped {
+		return nil
+	}
 	for _, notif := range notifs {
 		select {
 		case t.completionCh <- notif:
@@ -170,7 +188,7 @@ func writeHeapProfile(filename string) {
 
 // runReplayTest executes the replay test with configurable worker counts and returns metrics.
 // Returns: (overallThroughput, failedTransactionCount, totalTransactionCount)
-func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCount int, numOutstandingTx int, cfg replayConfig) (float64, int64, int64) {
+func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCount int, numOutstandingTx int, cfg replayConfig, gwConfig string) (float64, int64, int64) {
 	// Silence GRPC logging
 	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr))
 
@@ -199,7 +217,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	// - Fabric: Traditional block-based synchronization
 	// - Fabric-X: Notification-based (MemoryStore + NotificationDispatcher)
 	// th, err := integration.NewLocalTestHarnessWithFactoryAndTxQueue(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", "fabric", map[string]any{"Gateway.WorkerCount": processingWorkerCount}, factory, gwcore.NewTxQueueV2())
-	th, err := integration.NewFabricXTestHarnessWithNotifications(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", map[string]any{"Gateway.WorkerCount": processingWorkerCount}, factory, gwcore.NewTxQueueV2(), tracker, "fabx-full.yaml")
+	th, err := integration.NewFabricXTestHarnessWithNotifications(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", map[string]any{"Gateway.WorkerCount": processingWorkerCount}, factory, gwcore.NewTxQueueV2(), tracker, gwConfig)
 	// th, err = integration.NewFabricTestHarnessWithFactoryAndTxQueue(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", map[string]any{"Gateway.WorkerCount": processingWorkerCount}, factory, gwcore.NewTxQueueV2())
 	assert.NoError(t, err)
 
@@ -432,6 +450,11 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	// Wait for all workers to finish processing
 	wg.Wait()
 
+	// Stop the tracker before closing the channel — the notification streaming
+	// goroutine (started by the test harness) outlives this function and would
+	// otherwise panic by sending on a closed channel.
+	tracker.Stop()
+
 	// Close completion channel to signal refill goroutine
 	close(completionCh)
 
@@ -468,7 +491,7 @@ func TestReplayJSONDataset(t *testing.T) {
 	// flogging.ActivateSpec("gateway.core.txqueue_v2=debug")
 
 	// Run the test with single worker configuration
-	_, _, _ = runReplayTest(t, 1, 1, 100, loadReplayConfigFromEnv(t))
+	_, _, _ = runReplayTest(t, 1, 1, 100, loadReplayConfigFromEnv(t), *gatewayConfig)
 }
 
 type performanceResult struct {
@@ -503,7 +526,7 @@ func TestReplayJSONDatasetPerformance(t *testing.T) {
 			t.Logf("\n=== Testing with processingWorkers=%d, submittingWorkers=%d ===",
 				processingWorkers, submittingWorkers)
 
-			throughput, failedTxs, totalTxs := runReplayTest(t, processingWorkers, submittingWorkers, 100, loadReplayConfigFromEnv(t))
+			throughput, failedTxs, totalTxs := runReplayTest(t, processingWorkers, submittingWorkers, 100, loadReplayConfigFromEnv(t), *gatewayConfig)
 			failureRate := float64(failedTxs) / float64(totalTxs)
 
 			results = append(results, performanceResult{
