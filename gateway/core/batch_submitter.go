@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
@@ -27,15 +28,18 @@ var batchLogger = flogging.MustGetLogger("gateway.core.batch_submitter")
 // originating Ethereum transaction.
 // Multiple worker goroutines read from inputChan and submit in parallel.
 type BatchSubmitter struct {
-	submitter  Submitter
-	cache      *PendingTxCache // nil → skip cache; non-nil → store EthTxBytes keyed by FabricTxID
-	inputChan  chan sdk.Endorsement
-	stopChan   chan struct{}
-	doneChan   chan struct{}
-	numWorkers int
+	submitter       Submitter
+	cache           *PendingTxCache // nil → skip cache; non-nil → store EthTxBytes keyed by FabricTxID
+	inputChan       chan sdk.Endorsement
+	stopChan        chan struct{}
+	doneChan        chan struct{}
+	numWorkers      int
+	submittedCount  atomic.Uint64 // Total number of successful submissions
+	metricsInterval time.Duration // Interval for metrics reporting (0 = disabled)
 }
 
 const DefaultNumWorkers = 16
+const DefaultMetricsInterval = 2 * time.Second
 
 // NewBatchSubmitter creates a new BatchSubmitter.
 // If cache is non-nil, EthTxBytes are stored per-transaction before submission.
@@ -50,12 +54,13 @@ func NewBatchSubmitter(
 		numWorkers = DefaultNumWorkers
 	}
 	return &BatchSubmitter{
-		submitter:  submitter,
-		cache:      cache,
-		inputChan:  inputChan,
-		stopChan:   make(chan struct{}),
-		doneChan:   make(chan struct{}),
-		numWorkers: numWorkers,
+		submitter:       submitter,
+		cache:           cache,
+		inputChan:       inputChan,
+		stopChan:        make(chan struct{}),
+		doneChan:        make(chan struct{}),
+		numWorkers:      numWorkers,
+		metricsInterval: DefaultMetricsInterval,
 	}
 }
 
@@ -75,6 +80,12 @@ func (bs *BatchSubmitter) run(ctx context.Context) {
 
 	var wg sync.WaitGroup
 
+	// Start metrics reporter if enabled
+	if bs.metricsInterval > 0 {
+		wg.Add(1)
+		go bs.metricsReporter(&wg)
+	}
+
 	// Start worker goroutines
 	for i := 0; i < bs.numWorkers; i++ {
 		wg.Add(1)
@@ -83,6 +94,51 @@ func (bs *BatchSubmitter) run(ctx context.Context) {
 
 	// Wait for all workers to complete
 	wg.Wait()
+}
+
+// metricsReporter periodically reports submission rate metrics and notification metrics
+func (bs *BatchSubmitter) metricsReporter(wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	ticker := time.NewTicker(bs.metricsInterval)
+	defer ticker.Stop()
+
+	var lastSubmitCount uint64
+	var lastNotifCount uint64
+	lastTime := time.Now()
+
+	for {
+		select {
+		case <-bs.stopChan:
+			return
+		case <-ticker.C:
+			currentSubmitCount := bs.submittedCount.Load()
+			currentNotifCount := NotificationEventCount.Load()
+			currentTime := time.Now()
+
+			elapsed := currentTime.Sub(lastTime).Seconds()
+
+			// Calculate submission metrics
+			submitted := currentSubmitCount - lastSubmitCount
+			submitRate := float64(submitted) / elapsed
+			pending := len(bs.inputChan)
+
+			// Calculate notification metrics
+			notified := currentNotifCount - lastNotifCount
+			notifRate := float64(notified) / elapsed
+
+			// Two separate printouts as requested
+			batchLogger.Infof("[METRICS-SUBMIT] Submission rate: %.2f tx/s (submitted %d in %.2fs, total: %d, pending: %d)",
+				submitRate, submitted, elapsed, currentSubmitCount, pending)
+
+			batchLogger.Infof("[METRICS-NOTIF] Notification rate: %.2f events/s (notified %d in %.2fs, total: %d)",
+				notifRate, notified, elapsed, currentNotifCount)
+
+			lastSubmitCount = currentSubmitCount
+			lastNotifCount = currentNotifCount
+			lastTime = currentTime
+		}
+	}
 }
 
 func (bs *BatchSubmitter) worker(ctx context.Context, workerID int, wg *sync.WaitGroup) {
@@ -123,6 +179,10 @@ func (bs *BatchSubmitter) submitOne(ctx context.Context, end sdk.Endorsement) er
 	}
 	t0 := time.Now()
 	err := bs.submitter.Submit(ctx, end)
+	if err == nil {
+		// Increment counter only on successful submission
+		bs.submittedCount.Add(1)
+	}
 	batchLogger.Debugf("[SUBMIT] txid=%s submit_took=%v", txid, time.Since(t0))
 	return err
 }
