@@ -263,6 +263,11 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	// Atomic counters for thread-safe counting
 	var successCount, failCount, skippedCount int64
 
+	// Latency tracking: map transaction hash to submission time
+	latencyMu := sync.Mutex{}
+	submissionTimes := make(map[common.Hash]time.Time)
+	latencies := []time.Duration{}
+
 	runtime.GC()
 
 	// Track throughput
@@ -304,6 +309,13 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 					panic(err)
 				}
 
+				// Record submission time
+				txHash := tx.Hash()
+				submissionTime := time.Now()
+				latencyMu.Lock()
+				submissionTimes[txHash] = submissionTime
+				latencyMu.Unlock()
+
 				// Send the transaction without waiting for completion
 				// Use the wrapped gateway directly to bypass nonce validation
 				err = wrappedGateway.SendTransaction(context.Background(), tx)
@@ -311,6 +323,10 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 					t.Logf("Transfer %d: SendTransaction error: %v", i, err)
 					atomic.AddInt64(&failCount, 1)
 					atomic.AddInt64(&outstandingTxCount, -1)
+					// Remove from tracking on failure
+					latencyMu.Lock()
+					delete(submissionTimes, txHash)
+					latencyMu.Unlock()
 					continue
 				}
 				// Transaction submitted successfully - it's now outstanding
@@ -400,6 +416,16 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 		for notif := range completionCh {
 			atomic.AddInt64(&outstandingTxCount, -1)
 
+			// Calculate latency
+			notificationTime := time.Now()
+			latencyMu.Lock()
+			if submissionTime, exists := submissionTimes[notif.EthTxHash]; exists {
+				latency := notificationTime.Sub(submissionTime)
+				latencies = append(latencies, latency)
+				delete(submissionTimes, notif.EthTxHash)
+			}
+			latencyMu.Unlock()
+
 			// Update success/fail counts
 			if notif.Status == committerpb.Status_COMMITTED {
 				atomic.AddInt64(&successCount, 1)
@@ -477,6 +503,24 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	totalElapsed := time.Since(startTime).Seconds()
 	overallThroughput := float64(finalSuccess+finalFail) / totalElapsed
 
+	// Save latencies to file
+	latencyMu.Lock()
+	defer latencyMu.Unlock()
+
+	if len(latencies) > 0 {
+		latencyFile, err := os.Create("latencies.txt")
+		if err != nil {
+			t.Logf("Failed to create latency file: %v", err)
+		} else {
+			defer latencyFile.Close()
+			for _, latency := range latencies {
+				// Write latency in nanoseconds, one per line
+				fmt.Fprintf(latencyFile, "%d\n", latency.Nanoseconds())
+			}
+			t.Logf("Saved %d latency measurements to latencies.txt", len(latencies))
+		}
+	}
+
 	// Return metrics (throughput, failed count, total dispatched transfers)
 	return overallThroughput, finalFail, dispatched
 }
@@ -491,12 +535,12 @@ func TestReplayJSONDataset(t *testing.T) {
 	// flogging.ActivateSpec("gateway.core.txqueue_v2=debug")
 
 	// Run the test with single worker configuration
-	processingWorkerCount := 1  // Number of gateway workers processing transactions
-	submittingWorkerCount := 1  // Number of goroutines submitting transactions TO the gateway
-	ordererSubmitterCount := 16 // Number of goroutines submitting transactions TO the orderer (BatchSubmitter workers)
-	numOutstandingTx := 100     // Maximum number of outstanding transactions
+	processingWorkerCount := 20 // Number of gateway workers processing transactions
+	submittingWorkerCount := 2  // Number of goroutines submitting transactions TO the gateway
+	ordererSubmitterCount := 4  // Number of goroutines submitting transactions TO the orderer (BatchSubmitter workers)
+	numOutstandingTx := 500     // Maximum number of outstanding transactions
 
-	_, _, _ = runReplayTest(t, processingWorkerCount, submittingWorkerCount, ordererSubmitterCount, numOutstandingTx, loadReplayConfigFromEnv(t), *gatewayConfig)
+	_, _, _ = runReplayTest(t, processingWorkerCount, submittingWorkerCount, ordererSubmitterCount, numOutstandingTx, replayConfig{windowSize: 100000}, *gatewayConfig)
 }
 
 type performanceResult struct {

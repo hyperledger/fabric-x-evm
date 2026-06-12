@@ -92,6 +92,12 @@ init-x:
 		configtxgen --channelID mychannel --profile OrgsChannel \
 		--outputBlock /config/crypto/config-block.pb.bin \
 		--configPath /config
+	@# Make crypto files readable by Prometheus (runs as nobody/uid 65534)
+	@find testdata/crypto -type d -exec chmod a+rx {} +
+	@find testdata/crypto -type f -exec chmod a+r {} +
+	@# Make config files readable by Grafana (runs as uid 472)
+	@find testdata/config -type d -exec chmod a+rx {} +
+	@find testdata/config -type f -exec chmod a+r {} +
 
 .PHONY: clean-x
 clean-x:
@@ -224,9 +230,8 @@ start-full:
 
 .PHONY: stop-full
 stop-full:
-	@$(COMPOSE) down -v
 	@$(COMPOSE) -f compose.fabric-x.full.yaml down
-	@rm -rf data/
+	@sudo rm -rf data/
 
 blockscout.env:
 	@echo "Generating $@..."

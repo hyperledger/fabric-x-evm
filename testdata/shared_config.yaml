@@ -108,9 +108,9 @@ Parties:
 
 Consensus:
   SmartBFT:
-    requestbatchmaxcount: 10000
+    requestbatchmaxcount: 1
     requestbatchmaxbytes: 10485760
-    requestbatchmaxinterval: 100ms
+    requestbatchmaxinterval: 50ms
     incomingmessagebuffersize: 200
     requestpoolsize: 500000
     requestforwardtimeout: 2s
@@ -127,12 +127,12 @@ Consensus:
 
 Batching:
   BatchTimeouts:
-    BatchCreationTimeout: 500ms
+    BatchCreationTimeout: 50ms
     FirstStrikeThreshold: 10s
     SecondStrikeThreshold: 10s
     AutoRemoveTimeout: 10s
   BatchSize:
-    MaxMessageCount: 10000
+    MaxMessageCount: 10
     AbsoluteMaxBytes: 10485760
     PreferredMaxBytes: 2097152
   RequestMaxBytes: 1048576

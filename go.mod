@@ -17,7 +17,7 @@ require (
 	github.com/hyperledger/fabric-lib-go v1.1.3
 	github.com/hyperledger/fabric-protos-go-apiv2 v0.3.7
 	github.com/hyperledger/fabric-x-common v0.2.5
-	github.com/hyperledger/fabric-x-sdk v0.0.0-20260608073702-8f2cdf81df8e
+	github.com/hyperledger/fabric-x-sdk v0.0.0-20260612073346-1382559366fc
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/crypto v0.52.0

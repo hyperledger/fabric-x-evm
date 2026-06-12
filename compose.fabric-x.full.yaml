@@ -315,8 +315,9 @@ services:
       POSTGRES_DB: sc_db
       POSTGRES_USER: sc_user
       POSTGRES_PASSWORD: sc_secret_pwd
+      PGDATA: /var/lib/postgresql/data
     volumes:
-      - ./data/committer-org1/db:/var/lib/postgresql:Z
+      - ./data/committer-org1/db:/var/lib/postgresql/data:Z
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U sc_user -d sc_db"]
       interval: 5s
@@ -422,5 +423,47 @@ services:
       timeout: 3s
       retries: 30
       start_period: 10s
+    networks:
+      - fabric-x
+
+  # ─── Monitoring Stack ───────────────────────────────────────────────────────
+
+  prometheus:
+    image: prom/prometheus:v3.3.1
+    pull_policy: missing
+    restart: unless-stopped
+    container_name: prometheus
+    volumes:
+      - ./testdata/config/prometheus.yml:/etc/prometheus/prometheus.yml:ro,Z
+      - ./testdata/crypto:/tls:ro,Z
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=1h"
+      - "--web.enable-remote-write-receiver"
+    ports:
+      - "9090:9090"
+    networks:
+      - fabric-x
+
+  grafana:
+    image: grafana/grafana:11.6.0
+    pull_policy: missing
+    restart: unless-stopped
+    container_name: grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/committer.json
+    volumes:
+      - ./testdata/config/grafana-datasource.yml:/etc/grafana/provisioning/datasources/prometheus.yml:ro,Z
+      - ./testdata/config/grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/dashboard.yml:ro,Z
+      - ./testdata/config/committer.json:/var/lib/grafana/dashboards/committer.json:ro,Z
+      - ./testdata/config/orderer.json:/var/lib/grafana/dashboards/orderer.json:ro,Z
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
     networks:
       - fabric-x
