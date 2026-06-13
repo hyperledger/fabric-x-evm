@@ -1,8 +1,8 @@
 name: fabric-x
 
 # Single-container Fabric-X dev setup: built-in orderer, committer, and database.
-# Run `make init` first to generate crypto and genesis block, then `make start-dev`.
-# After startup run `make init-namespace-org1` to create the application namespace.
+# Run `make init-x` first to generate crypto and the genesis block, then
+# `make start-x`, which brings this up and creates the application namespace.
 
 networks:
   fabric-x:

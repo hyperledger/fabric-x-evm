@@ -20,7 +20,6 @@ testdata/
 docs/
 
 # Compose / local dev
-compose.yml
 Makefile
 scripts/
 solidity/

@@ -73,7 +73,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./Dockerfile.release
+          file: ./Dockerfile
           platforms: linux/amd64,linux/arm64,linux/s390x
           push: true
           tags: |

@@ -7,7 +7,7 @@ export UID
 export GID
 
 # Container runtime — override for rootless Podman:
-#   make start DOCKER=podman COMPOSE="podman compose"
+#   make start-x DOCKER=podman COMPOSE="podman compose"
 # Note: build-image requires docker buildx (or podman buildx).
 DOCKER  ?= docker
 COMPOSE ?= docker compose
@@ -27,7 +27,7 @@ build-release:
 .PHONY: build-image
 build-image: build-release
 	$(DOCKER) buildx build \
-		--file Dockerfile.release \
+		--file Dockerfile \
 		--load \
 		--build-arg VERSION=dev \
 		--build-arg CREATED=$(shell date -u +%Y-%m-%dT%H:%M:%SZ) \
@@ -147,6 +147,7 @@ test-fablo:
 clean-fablo:
 	cd testdata/fablo && ./fablo prune || true
 	rm -rf testdata/fablo/snapshot.fablo.tar.gz
+
 .PHONY: test-local
 test-local:
 	@go test -timeout 30s -v -run ^TestLocal$$ ./integration
@@ -172,30 +173,9 @@ eth-tests-slow:
 eth-tests-slow-legacy:
 	@go test -test.fullpath=true -timeout 10000s -run ^TestEthereumTests$$ github.com/hyperledger/fabric-x-evm/integration -very_slow -legacy
 
-.PHONY: start
-start:
-	@if nc -z localhost 7050 2>/dev/null; then echo "Error: port 7050 is already in use — stop any running Fabric orderer before starting."; exit 1; fi
-	@$(COMPOSE) -f compose.fabric-x.yml up -d
-	@echo "Waiting for committer to be ready..."
-	@while ! nc -z localhost 7001 2>/dev/null; do sleep 1; done
-	@$(DOCKER) run --rm --network fabric-x-evm_default \
-		--user "$(UID):$(GID)" \
-		-v "$(PWD)/testdata/fxconfig-docker.yaml:/testdata/fxconfig-docker.yaml:ro,Z" \
-		-v "$(PWD)/testdata/crypto:/testdata/crypto:ro,Z" \
-		docker.io/hyperledger/fabric-x-tools:latest \
-		fxconfig namespace create basic --policy="OR('Org1MSP.member')" \
-		--endorse --submit --wait --config=/testdata/fxconfig-docker.yaml
-	@$(COMPOSE) up -d --build gateway
-
-.PHONY: stop
-stop:
-	@$(COMPOSE) down -v
-	@$(COMPOSE) -f compose.fabric-x.yml down
-
 .PHONY: hardhat-tests
 hardhat-tests:
 	@./scripts/run_hardhat_test.sh
-
 
 .PHONY: perf-tests
 perf-tests: pre-pull-images

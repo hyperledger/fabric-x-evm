@@ -10,7 +10,6 @@ testdata/*
 !testdata/configtx.yaml
 !testdata/crypto-config.yaml
 !testdata/fxconfig.yaml
-!testdata/fxconfig-docker.yaml
 !testdata/tether_txs.json
 !testdata/alloc_tether_replay.json
 !testdata/test_accounts.json

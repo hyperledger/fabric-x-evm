@@ -45,7 +45,7 @@ This section is for developing against locally built code. If you just want to
 use the chain, the [samples repo](https://github.com/hyperledger/fabric-x-samples/tree/main/evm)
 above is the easier path.
 
-You'll need [Go](https://go.dev/dl/) and Docker (or Podman) for the network targets.
+You'll need [Go](https://go.dev/dl/) and Docker (or Podman) for the Fabric-X network.
 
 Build the `fxevm` binary:
 
@@ -53,19 +53,25 @@ Build the `fxevm` binary:
 make build      # produces bin/fxevm
 ```
 
-Stand up a local network:
+Bring up a local Fabric-X network (committer + application namespace):
 
 ```shell
 make init-x     # generate crypto material (one-time)
-make start      # build the gateway image and start the network
+make start-x    # start the Fabric-X test network
+```
+
+Then run the gateway from your local build, pointed at that network. The sample
+config uses paths relative to `integration/`, so run it from there:
+
+```shell
+cd integration && ../bin/fxevm start -c fabx.yaml
 ```
 
 The gateway now serves Ethereum JSON-RPC at **http://localhost:8545**
-(chain ID `4011`) — point any Ethereum tooling at it. To stop the network and
-delete the ledger:
+(chain ID `4011`) — point any Ethereum tooling at it. Stop the network with:
 
 ```shell
-make stop
+make stop-x
 ```
 
 > [!NOTE]
