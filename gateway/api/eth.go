@@ -526,7 +526,7 @@ func argsToCallMsg(args map[string]any) (ethereum.CallMsg, error) {
 		msg.Value = val
 	}
 
-	// "input" is the canonical field; "data" is the legacy alias (used by Blockscout and others)
+	// "input" is the canonical field; "data" is the legacy alias (used by some clients)
 	inputKey := "input"
 	if _, ok := args["input"]; !ok {
 		if _, ok := args["data"]; ok {

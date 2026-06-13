@@ -4,130 +4,75 @@ SPDX-License-Identifier: Apache-2.0 AND LGPL-3.0-or-later
 
 # fabric-x-evm
 
-fabric-x-evm makes Hyperledger Fabric-x (and Fabric) compatible with the
-Ethereum ecosystem by providing an Ethereum-style JSON-RPC API and native
-support for EVM smart contracts within Fabric's permissioned environment. This
-integration combines the rich Ethereum tooling and contract ecosystem with
-Fabric's robust endorsement and consensus model.
+**Run Ethereum smart contracts on Hyperledger Fabric-X.**
 
-By embedding an Ethereum Virtual Machine (EVM) inside Fabric, developers can
-deploy and execute existing Ethereum smart contracts without modification,
-while benefiting from Fabric's enterprise-grade features including fine-grained
-access control, privacy, and deterministic consensus. The solution preserves
-Fabric's transaction flow, trust guarantees, and high performance while
-enabling seamless use of the Ethereum development toolchain—including Solidity,
-Hardhat, Foundry, and MetaMask.
+fabric-x-evm adds an Ethereum-style JSON-RPC API and a native EVM to Fabric, so
+you can deploy unmodified Solidity contracts and use the tooling you already
+know - Hardhat, Foundry, MetaMask - against a permissioned, enterprise
+blockchain.
 
-This approach broadens Fabric's appeal and lowers the barrier for organizations
-that want to leverage existing Ethereum assets, developer expertise, and
-tooling in a permissioned, enterprise blockchain setting.
+By embedding the EVM inside Fabric you get the Ethereum contract ecosystem and
+developer experience while keeping Fabric's enterprise strengths: fine-grained
+access control, privacy, deterministic consensus, and high performance. Existing
+Ethereum assets, skills, and tools carry over with no rewrite — lowering the
+barrier for organizations that want Ethereum compatibility in a permissioned
+setting.
 
-## Design
+## Highlights
 
-[Here](docs/ARCHITECTURE.md)
+- **Drop-in EVM** - deploy existing Solidity contracts without modification.
+- **Standard JSON-RPC** - point any Ethereum client at `:8545` (chain ID `4011` / `0xfab`).
+- **Familiar tooling** - Hardhat, Foundry, MetaMask, and block explorers just work.
+- **Fabric trust model** - endorsement, consensus, and access control preserved.
+- **Fabric and Fabric-X** - deploy into any existing or new network to add EVM capabilities.
 
-## Quick start
+## Try it out
 
-Stand up a full Fabric-X EVM network with a block explorer in two commands:
+The fastest way to see Fabric-X EVM in action is in the samples repository. It includes a full
+network, a block explorer, and a token deploy-and-transfer demo. No need to clone or build this repo.
 
-```shell
-make init-x   # generate crypto material (one-time)
-make start    # start the network + Blockscout explorer
-```
+👉 **[hyperledger/fabric-x-samples → evm](https://github.com/hyperledger/fabric-x-samples/tree/main/evm)**
 
-Once the stack is up, open the block explorer at **http://localhost:8000** and
-point any Ethereum tooling to **http://localhost:8545** (chain ID `4011`).
-You can now use the system as any other EVM-style chain! Backed by Fabric-X.
+## Documentation
 
-> [!NOTE]
-> `make start` builds the gateway image locally, so the first run takes a
-> minute or two. Subsequent starts are fast. To run without the block explorer,
-> use `make start-node` instead.
+- [Architecture](docs/ARCHITECTURE.md) — how the gateway, EVM, and Fabric fit together
+- [Compatibility](docs/COMPATIBILITY.md) — which Ethereum/EVM guarantees hold, and the caveats
+- [JSON-RPC errors](docs/JSON_RPC_ERRORS.md) — error codes the gateway returns
 
-> [!NOTE]
-> **Rootless Podman**: pass `DOCKER=podman COMPOSE="podman compose"` to any
-> `make` target that starts or stops containers:
-> ```shell
-> make start DOCKER=podman COMPOSE="podman compose"
-> ```
+## Building and running from source
 
-### Deploy a token and interact via MetaMask
+This section is for developing against locally built code. If you just want to
+use the chain, the [samples repo](https://github.com/hyperledger/fabric-x-samples/tree/main/evm)
+above is the easier path.
 
-You'll need:
-- [cast](https://book.getfoundry.sh/getting-started/installation) (part of Foundry)
-- [MetaMask](https://metamask.io/) browser extension
+You'll need [Go](https://go.dev/dl/) and Docker (or Podman) for the network targets.
 
-The commands below use built-in test accounts — gas is free so no prefunding is
-needed. Substitute any address or private key if you prefer your own accounts.
-
-To use MetaMask with the test wallet, import this private key
-([instructions](https://support.metamask.io/start/use-an-existing-wallet/#import-using-a-private-key)):
-open the extension → your account → Add Wallet → Private Key, and enter
-`0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80`.
-
-> [!WARNING]
-> This is the well-known Hardhat account #0. **Never use it on a public
-> network** — it will be drained instantly.
-
-> [!IMPORTANT]
-> If you've used MetaMask with this network before and restarted with a clean
-> state, reset the account: Settings → Developer tools → Delete activity and nonce data.
-
-#### Deploy a token
-
-Deploy an ERC-20 token by choosing a name and symbol:
+Build the `fxevm` binary:
 
 ```shell
-make demo-deploy NAME="Digital Euro" SYMBOL=EURX
+make build      # produces bin/fxevm
 ```
 
-The explorer URL is printed immediately:
-
-```
-Deployed Digital Euro (EURX): http://localhost:8000/address/0x...
-```
-
-Open the URL. Scroll to the bottom and click **"Add Fabric-X EVM"** 
-to add the network to MetaMask (only needed once):
-
-![Add Fabric-X EVM](docs/add_network.png)
-
-Then click the MetaMask logo next to the token contract address to add the
-token to your wallet:
-
-![Add token to MetaMask](docs/add_to_metamask.png)
-
-#### Transfer tokens
-
-Copy your MetaMask address and run:
+Stand up a local network:
 
 ```shell
-make demo-transfer TO=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 AMOUNT=500
+make init-x     # generate crypto material (one-time)
+make start      # build the gateway image and start the network
 ```
 
-The transaction URL is printed immediately:
-
-```
-Transferred 500 tokens to 0x...: http://localhost:8000/tx/0x...
-```
-
-Switch to MetaMask and confirm the tokens arrived. Try sending some back —
-there's no gas cost, so experimenting is free.
-
-**You're now running your own Fabric-X EVM network.** Deploy your own contracts
-with tooling you're familiar with, or explore the [architecture](./docs/ARCHITECTURE.md),
-[compatibility](./docs/COMPATIBILITY.md), and [JSON-RPC error codes](./docs/JSON_RPC_ERRORS.md)
-docs to learn more.
-
-To stop the network and delete the ledger, do:
+The gateway now serves Ethereum JSON-RPC at **http://localhost:8545**
+(chain ID `4011`) — point any Ethereum tooling at it. To stop the network and
+delete the ledger:
 
 ```shell
 make stop
 ```
 
-Reset your Metamask wallet in Settings → Developer tools → Delete activity and nonce data.
+> [!NOTE]
+> **Rootless Podman**: pass `DOCKER=podman COMPOSE="podman compose"` to any
+> `make` target that starts or stops containers.
 
-# Configuration
+## Configuration
 
 The gateway is configured via a YAML file passed to the `start` command with `-c`:
 
@@ -135,17 +80,17 @@ The gateway is configured via a YAML file passed to the `start` command with `-c
 fxevm -c path/to/config.yaml start
 ```
 
-See [`integration/fabx.yaml`](integration/fabx.yaml) for a complete annotated example. The
-top-level sections are:
+See [`integration/fabx.yaml`](integration/fabx.yaml) for a complete annotated
+example. The top-level sections are:
 
-| Section | Description |
-|---|---|
-| `logging` | Log format and level spec |
-| `network` | Channel, namespace, chain ID, and protocol (`fabric` or `fabric-x`) |
-| `gateway` | Listen address, identity, database, orderers, committer |
-| `endorsers` | One entry per embedded endorser peer |
+| Section     | Description                                                         |
+| ----------- | ------------------------------------------------------------------- |
+| `logging`   | Log format and level spec                                           |
+| `network`   | Channel, namespace, chain ID, and protocol (`fabric` or `fabric-x`) |
+| `gateway`   | Listen address, identity, database, orderers, committer             |
+| `endorsers` | One entry per embedded endorser peer                                |
 
-## Environment variable overrides
+### Environment variable overrides
 
 Any config field can be overridden at runtime without editing the file. The
 variable name is `GATEWAY_<SECTION>_<FIELD>`, uppercased with dots and hyphens
@@ -157,17 +102,17 @@ GATEWAY_NETWORK_CHANNEL=mychannel fxevm -c config.yaml start
 GATEWAY_GATEWAY_LISTEN=0.0.0.0:9545 fxevm -c config.yaml start
 ```
 
-# Testing
+## Testing
 
-## Unit tests
+### Unit tests
 
 ```shell
 make unit-tests
 ```
 
-## Integration tests
+### Integration tests
 
-Some integration tests rely on the `ethereum/tests` corpus vendored as a git
+Some integration tests rely on the `ethereum/tests` corpus, vendored as a git
 submodule under `testdata/ethereum-tests`. Initialize it once before running
 those tests:
 
@@ -175,7 +120,7 @@ those tests:
 git submodule update --init --recursive
 ```
 
-### Local
+#### Local
 
 The simplest integration tests don't require a Fabric network, but still
 exercise the basic functionality of creating read/write sets out of EVM
@@ -185,7 +130,7 @@ transactions, and subsequently reading them.
 make test-local
 ```
 
-### Fabric-X
+#### Fabric-X
 
 Generate the crypto material once:
 
@@ -204,7 +149,7 @@ make stop-x
 
 The container does not keep state.
 
-### Fablo
+#### Fablo
 
 Start the network, run the integration tests, and stop it again:
 
@@ -214,20 +159,29 @@ make test-fablo
 make stop-fablo
 ```
 
-## Compile other smart contracts
+## Build your own contracts
 
-Example contracts are provided in the `solidity/` directory. Requires [solc](https://docs.soliditylang.org/en/latest/installing-solidity.html) (`brew install solidity`).
+Because the gateway speaks standard Ethereum JSON-RPC, **any Solidity tutorial
+works unchanged** — just point the tool's network at the gateway instead of a
+public testnet:
 
-To recompile the `Token` contract used by `make demo-deploy`:
+| Setting  | Value                            |
+| -------- | -------------------------------- |
+| RPC URL  | `http://localhost:8545`          |
+| Chain ID | `4011`                           |
+| Gas      | free — no account funding needed |
+| Accounts | any key works                    |
 
-```shell
-cd solidity/OzepERC20 && npm install && cd ../..
+Good starting points, pointed at the URL above:
 
-solc --bin --overwrite -o testdata \
-  --base-path solidity/OzepERC20 \
-  --include-path solidity/OzepERC20/node_modules \
-  solidity/OzepERC20/Token.sol
-```
+- **[Foundry](https://book.getfoundry.sh/)** — deploy with `forge create --rpc-url http://localhost:8545 ...` or send transactions with `cast send --rpc-url http://localhost:8545 ...`.
+- **[Hardhat](https://hardhat.org/tutorial)** — add a network entry in `hardhat.config.js` with `url: "http://localhost:8545"` and `chainId: 4011`, then deploy as usual.
+- **[MetaMask](https://support.metamask.io/configure/networks/how-to-add-a-custom-network-rpc/)** — add a custom network with the RPC URL and chain ID to interact from the browser.
+
+A few things differ from a public chain — see [Compatibility](docs/COMPATIBILITY.md)
+for the details (gas/fee fields are stubbed, access control is Fabric's, etc.).
+For a complete worked example, see the
+[samples repo](https://github.com/hyperledger/fabric-x-samples/tree/main/evm).
 
 ## License
 
@@ -236,7 +190,7 @@ This repository uses different licenses for different components:
 - **Go code**: All Go source code in this repository is released under **LGPL-3.0-or-later** (see `LICENSE.LGPL3`)
 - **Scripts**: All scripts are released under **Apache-2.0** (see `LICENSE.Apache2`)
 
-## SPDX License Expression
+### SPDX License Expression
 
 ```
 SPDX-License-Identifier: Apache-2.0 AND LGPL-3.0-or-later

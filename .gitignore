@@ -23,8 +23,6 @@ testdata/*
 !testdata/config
 testdata/fablo/fablo-target
 testdata/fablo/triedb
-blockscout.env
-.demo-contract
 
 
 # Performance testing generated files
