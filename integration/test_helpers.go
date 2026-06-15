@@ -269,6 +269,7 @@ func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg confi
 					req := &notification.StreamAllRequest{
 						FilterNamespaces:     []string{cfg.Network.Namespace},
 						IncludeReadWriteSets: true,
+						IncludeMetadata:      true,
 					}
 					if err := streamer.Stream(t.Context(), req); err != nil && t.Context().Err() == nil {
 						logger.Errorf("AllTxStreamer error: %v", err)
