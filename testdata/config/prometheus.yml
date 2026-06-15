@@ -156,4 +156,14 @@ scrape_configs:
     static_configs:
       - targets: ["committer-coordinator:2119"]
 
+  # ---------------------------------------------------------------------------
+  # Loadgen test metrics (when running with -enable-metrics flag)
+  # The test runs on the host, accessible via host.docker.internal
+  # ---------------------------------------------------------------------------
+  - job_name: "loadgen"
+    static_configs:
+      - targets: ["host.docker.internal:2112"]
+    # Note: Requires iptables rule to allow Docker containers to access host
+    # Run: sudo iptables -I INPUT -i docker0 -p tcp --dport 2112 -j ACCEPT
+
 # Made with Bob

@@ -37,6 +37,8 @@ import (
 )
 
 var gatewayConfig = flag.String("gateway-config", "fabx.yaml", "gateway config file for the Fabric-X network")
+var metricsAddr = flag.String("metrics-addr", "0.0.0.0:2112", "address for Prometheus metrics endpoint")
+var enableMetrics = flag.Bool("enable-metrics", false, "enable Prometheus metrics export")
 
 // TxCompletionTracker forwards all transaction completion notifications to a single channel.
 // It implements gwcore.TxHandler to receive notifications from the notification system.
@@ -192,6 +194,18 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	// Silence GRPC logging
 	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr))
 
+	// Initialize Prometheus metrics if enabled
+	var metrics *LoadgenMetrics
+	if *enableMetrics {
+		metrics = NewLoadgenMetrics()
+		if err := metrics.StartServer(*metricsAddr); err != nil {
+			t.Logf("Failed to start metrics server: %v", err)
+		} else {
+			t.Logf("Prometheus metrics available at http://localhost%s/metrics", *metricsAddr)
+			defer metrics.StopServer()
+		}
+	}
+
 	// USDC contract address
 	USDCAddr := common.HexToAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
 
@@ -266,7 +280,6 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	// Latency tracking: map transaction hash to submission time
 	latencyMu := sync.Mutex{}
 	submissionTimes := make(map[common.Hash]time.Time)
-	latencies := []time.Duration{}
 
 	runtime.GC()
 
@@ -331,6 +344,9 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 				}
 				// Transaction submitted successfully - it's now outstanding
 				// The completion will be tracked by the refill goroutine
+				if metrics != nil {
+					metrics.RecordTransactionSent()
+				}
 			}
 		}()
 	}
@@ -374,6 +390,12 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 					currentSuccess+currentFail+currentSkipped, progressTarget,
 					currentSuccess, currentFail, currentSkipped, currentOutstanding,
 					throughput, overallThroughput)
+
+				// Update metrics
+				if metrics != nil {
+					metrics.SetOutstandingTransactions(currentOutstanding)
+					metrics.SetThroughput(overallThroughput)
+				}
 
 				// Update for next interval
 				lastLogTime.Store(now)
@@ -419,19 +441,26 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 			// Calculate latency
 			notificationTime := time.Now()
 			latencyMu.Lock()
-			if submissionTime, exists := submissionTimes[notif.EthTxHash]; exists {
-				latency := notificationTime.Sub(submissionTime)
-				latencies = append(latencies, latency)
+			submissionTime, exists := submissionTimes[notif.EthTxHash]
+			if exists {
 				delete(submissionTimes, notif.EthTxHash)
 			}
 			latencyMu.Unlock()
 
-			// Update success/fail counts
+			// Update success/fail counts and record metrics
 			if notif.Status == committerpb.Status_COMMITTED {
 				atomic.AddInt64(&successCount, 1)
+				if metrics != nil && exists {
+					latency := notificationTime.Sub(submissionTime)
+					metrics.RecordTransactionCommitted(latency)
+				}
 			} else {
 				atomic.AddInt64(&failCount, 1)
 				t.Logf("Transaction %s failed with status: %v", notif.EthTxHash.Hex(), notif.Status)
+				if metrics != nil && exists {
+					latency := notificationTime.Sub(submissionTime)
+					metrics.RecordTransactionAborted(latency)
+				}
 			}
 
 			// Check if we should dispatch more work
@@ -502,24 +531,6 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	// Calculate overall throughput
 	totalElapsed := time.Since(startTime).Seconds()
 	overallThroughput := float64(finalSuccess+finalFail) / totalElapsed
-
-	// Save latencies to file
-	latencyMu.Lock()
-	defer latencyMu.Unlock()
-
-	if len(latencies) > 0 {
-		latencyFile, err := os.Create("latencies.txt")
-		if err != nil {
-			t.Logf("Failed to create latency file: %v", err)
-		} else {
-			defer latencyFile.Close()
-			for _, latency := range latencies {
-				// Write latency in nanoseconds, one per line
-				fmt.Fprintf(latencyFile, "%d\n", latency.Nanoseconds())
-			}
-			t.Logf("Saved %d latency measurements to latencies.txt", len(latencies))
-		}
-	}
 
 	// Return metrics (throughput, failed count, total dispatched transfers)
 	return overallThroughput, finalFail, dispatched
