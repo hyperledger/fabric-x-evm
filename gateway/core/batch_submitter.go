@@ -10,9 +10,10 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"sync/atomic"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-common/protoutil"
@@ -22,24 +23,29 @@ import (
 
 var batchLogger = flogging.MustGetLogger("gateway.core.batch_submitter")
 
+// SubmissionTimestamps is an optional map for tracking submission timestamps.
+// If non-nil, timestamps are recorded when transactions are submitted to the orderer.
+// Key: Ethereum transaction hash, Value: T2 timestamp (when submitted to orderer)
+var SubmissionTimestamps map[common.Hash]time.Time
+
+// SubmissionTimestampsMu protects access to SubmissionTimestamps
+var SubmissionTimestampsMu sync.Mutex
+
 // BatchSubmitter reads endorsements from a channel, optionally records them in the
 // pending-tx cache (when cache != nil), then submits each one to the orderer.
 // The cache is used by AllTxBatchDispatcher to correlate commit events with the
 // originating Ethereum transaction.
 // Multiple worker goroutines read from inputChan and submit in parallel.
 type BatchSubmitter struct {
-	submitter       Submitter
-	cache           *PendingTxCache // nil → skip cache; non-nil → store EthTxBytes keyed by FabricTxID
-	inputChan       chan sdk.Endorsement
-	stopChan        chan struct{}
-	doneChan        chan struct{}
-	numWorkers      int
-	submittedCount  atomic.Uint64 // Total number of successful submissions
-	metricsInterval time.Duration // Interval for metrics reporting (0 = disabled)
+	submitter  Submitter
+	cache      *PendingTxCache // nil → skip cache; non-nil → store EthTxBytes keyed by FabricTxID
+	inputChan  chan sdk.Endorsement
+	stopChan   chan struct{}
+	doneChan   chan struct{}
+	numWorkers int
 }
 
 const DefaultNumWorkers = 16
-const DefaultMetricsInterval = 2 * time.Second
 
 // NewBatchSubmitter creates a new BatchSubmitter.
 // If cache is non-nil, EthTxBytes are stored per-transaction before submission.
@@ -54,13 +60,12 @@ func NewBatchSubmitter(
 		numWorkers = DefaultNumWorkers
 	}
 	return &BatchSubmitter{
-		submitter:       submitter,
-		cache:           cache,
-		inputChan:       inputChan,
-		stopChan:        make(chan struct{}),
-		doneChan:        make(chan struct{}),
-		numWorkers:      numWorkers,
-		metricsInterval: DefaultMetricsInterval,
+		submitter:  submitter,
+		cache:      cache,
+		inputChan:  inputChan,
+		stopChan:   make(chan struct{}),
+		doneChan:   make(chan struct{}),
+		numWorkers: numWorkers,
 	}
 }
 
@@ -80,12 +85,6 @@ func (bs *BatchSubmitter) run(ctx context.Context) {
 
 	var wg sync.WaitGroup
 
-	// Start metrics reporter if enabled
-	if bs.metricsInterval > 0 {
-		wg.Add(1)
-		go bs.metricsReporter(&wg)
-	}
-
 	// Start worker goroutines
 	for i := 0; i < bs.numWorkers; i++ {
 		wg.Add(1)
@@ -94,51 +93,6 @@ func (bs *BatchSubmitter) run(ctx context.Context) {
 
 	// Wait for all workers to complete
 	wg.Wait()
-}
-
-// metricsReporter periodically reports submission rate metrics and notification metrics
-func (bs *BatchSubmitter) metricsReporter(wg *sync.WaitGroup) {
-	defer wg.Done()
-
-	ticker := time.NewTicker(bs.metricsInterval)
-	defer ticker.Stop()
-
-	var lastSubmitCount uint64
-	var lastNotifCount uint64
-	lastTime := time.Now()
-
-	for {
-		select {
-		case <-bs.stopChan:
-			return
-		case <-ticker.C:
-			currentSubmitCount := bs.submittedCount.Load()
-			currentNotifCount := NotificationEventCount.Load()
-			currentTime := time.Now()
-
-			elapsed := currentTime.Sub(lastTime).Seconds()
-
-			// Calculate submission metrics
-			submitted := currentSubmitCount - lastSubmitCount
-			submitRate := float64(submitted) / elapsed
-			pending := len(bs.inputChan)
-
-			// Calculate notification metrics
-			notified := currentNotifCount - lastNotifCount
-			notifRate := float64(notified) / elapsed
-
-			// Two separate printouts as requested
-			batchLogger.Infof("[METRICS-SUBMIT] Submission rate: %.2f tx/s (submitted %d in %.2fs, total: %d, pending: %d)",
-				submitRate, submitted, elapsed, currentSubmitCount, pending)
-
-			batchLogger.Infof("[METRICS-NOTIF] Notification rate: %.2f events/s (notified %d in %.2fs, total: %d)",
-				notifRate, notified, elapsed, currentNotifCount)
-
-			lastSubmitCount = currentSubmitCount
-			lastNotifCount = currentNotifCount
-			lastTime = currentTime
-		}
-	}
 }
 
 func (bs *BatchSubmitter) worker(ctx context.Context, workerID int, wg *sync.WaitGroup) {
@@ -176,13 +130,20 @@ func (bs *BatchSubmitter) submitOne(ctx context.Context, end sdk.Endorsement) er
 			return fmt.Errorf("extract eth tx bytes: %w", err)
 		}
 		bs.cache.Add(txid, ethTxBytes)
+
+		// Record T2 timestamp if tracking is enabled
+		if SubmissionTimestamps != nil {
+			// Parse eth tx to get hash
+			ethTx := new(types.Transaction)
+			if err := ethTx.UnmarshalBinary(ethTxBytes); err == nil {
+				SubmissionTimestampsMu.Lock()
+				SubmissionTimestamps[ethTx.Hash()] = time.Now() // T2: submitted to orderer
+				SubmissionTimestampsMu.Unlock()
+			}
+		}
 	}
 	t0 := time.Now()
 	err := bs.submitter.Submit(ctx, end)
-	if err == nil {
-		// Increment counter only on successful submission
-		bs.submittedCount.Add(1)
-	}
 	batchLogger.Debugf("[SUBMIT] txid=%s submit_took=%v", txid, time.Since(t0))
 	return err
 }

@@ -277,9 +277,21 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	// Atomic counters for thread-safe counting
 	var successCount, failCount, skippedCount int64
 
-	// Latency tracking: map transaction hash to submission time
+	// Latency tracking: map transaction hash to submission time (T1)
 	latencyMu := sync.Mutex{}
 	submissionTimes := make(map[common.Hash]time.Time)
+
+	// Enable T2 timestamp tracking in txqueue (when dequeued for processing)
+	gwcore.ProcessingStartTimestamps = make(map[common.Hash]time.Time)
+	defer func() {
+		gwcore.ProcessingStartTimestamps = nil // Clean up after test
+	}()
+
+	// Enable T3 timestamp tracking in batch_submitter (when submitted to orderer)
+	gwcore.SubmissionTimestamps = make(map[common.Hash]time.Time)
+	defer func() {
+		gwcore.SubmissionTimestamps = nil // Clean up after test
+	}()
 
 	runtime.GC()
 
@@ -438,28 +450,53 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 		for notif := range completionCh {
 			atomic.AddInt64(&outstandingTxCount, -1)
 
-			// Calculate latency
-			notificationTime := time.Now()
+			// T4: notification received time
+			t4 := time.Now()
+
+			// Get T1 (test submission time)
 			latencyMu.Lock()
-			submissionTime, exists := submissionTimes[notif.EthTxHash]
-			if exists {
+			t1, existsT1 := submissionTimes[notif.EthTxHash]
+			if existsT1 {
 				delete(submissionTimes, notif.EthTxHash)
 			}
 			latencyMu.Unlock()
 
-			// Update success/fail counts and record metrics
+			// Get T2 (dequeue/processing start time)
+			gwcore.ProcessingStartTimestampsMu.Lock()
+			t2, existsT2 := gwcore.ProcessingStartTimestamps[notif.EthTxHash]
+			if existsT2 {
+				delete(gwcore.ProcessingStartTimestamps, notif.EthTxHash)
+			}
+			gwcore.ProcessingStartTimestampsMu.Unlock()
+
+			// Get T3 (batch submitter time)
+			gwcore.SubmissionTimestampsMu.Lock()
+			t3, existsT3 := gwcore.SubmissionTimestamps[notif.EthTxHash]
+			if existsT3 {
+				delete(gwcore.SubmissionTimestamps, notif.EthTxHash)
+			}
+			gwcore.SubmissionTimestampsMu.Unlock()
+
+			// Calculate and record latencies if we have all timestamps
+			if metrics != nil && existsT1 && existsT2 && existsT3 {
+				totalLatency := t4.Sub(t1)      // T4 - T1: total end-to-end latency
+				queueLatency := t2.Sub(t1)      // T2 - T1: queueing time
+				processingLatency := t3.Sub(t2) // T3 - T2: processing time by the app
+				backendLatency := t4.Sub(t3)    // T4 - T3: processing time by the backend
+				metrics.RecordLatencies(totalLatency, queueLatency, processingLatency, backendLatency)
+			}
+
+			// Update success/fail counts
 			if notif.Status == committerpb.Status_COMMITTED {
 				atomic.AddInt64(&successCount, 1)
-				if metrics != nil && exists {
-					latency := notificationTime.Sub(submissionTime)
-					metrics.RecordTransactionCommitted(latency)
+				if metrics != nil {
+					metrics.RecordTransactionCommitted()
 				}
 			} else {
 				atomic.AddInt64(&failCount, 1)
 				t.Logf("Transaction %s failed with status: %v", notif.EthTxHash.Hex(), notif.Status)
-				if metrics != nil && exists {
-					latency := notificationTime.Sub(submissionTime)
-					metrics.RecordTransactionAborted(latency)
+				if metrics != nil {
+					metrics.RecordTransactionAborted()
 				}
 			}
 
@@ -547,9 +584,9 @@ func TestReplayJSONDataset(t *testing.T) {
 
 	// Run the test with single worker configuration
 	processingWorkerCount := 20 // Number of gateway workers processing transactions
-	submittingWorkerCount := 2  // Number of goroutines submitting transactions TO the gateway
-	ordererSubmitterCount := 4  // Number of goroutines submitting transactions TO the orderer (BatchSubmitter workers)
-	numOutstandingTx := 500     // Maximum number of outstanding transactions
+	submittingWorkerCount := 4  // Number of goroutines submitting transactions TO the gateway
+	ordererSubmitterCount := 8  // Number of goroutines submitting transactions TO the orderer (BatchSubmitter workers)
+	numOutstandingTx := 200     // Maximum number of outstanding transactions
 
 	_, _, _ = runReplayTest(t, processingWorkerCount, submittingWorkerCount, ordererSubmitterCount, numOutstandingTx, replayConfig{windowSize: 100000}, *gatewayConfig)
 }

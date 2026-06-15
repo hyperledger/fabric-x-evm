@@ -9,7 +9,6 @@ package core
 import (
 	"context"
 	"fmt"
-	"sync/atomic"
 
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
@@ -19,10 +18,6 @@ import (
 )
 
 var notifLogger = flogging.MustGetLogger("gateway.core.notification")
-
-// NotificationEventCount is a public atomic counter tracking the total number of
-// notification events processed (one per transaction event, not per batch).
-var NotificationEventCount atomic.Uint64
 
 // TxHandler defines the interface for handlers that process transaction notifications in batches.
 type TxHandler interface {
@@ -82,9 +77,6 @@ func (d *AllTxBatchDispatcher) HandleBatch(ctx context.Context, batch notificati
 			NsRWS:      nsrws,
 			Events:     events,
 		})
-
-		// Increment the global notification event counter (one per event)
-		NotificationEventCount.Add(1)
 	}
 
 	if len(notifs) == 0 {

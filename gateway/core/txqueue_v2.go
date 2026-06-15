@@ -10,6 +10,7 @@ import (
 	"container/list"
 	"context"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -19,6 +20,14 @@ import (
 )
 
 var loggerV2 = flogging.MustGetLogger("gateway.core.txqueue_v2")
+
+// ProcessingStartTimestamps is an optional map for tracking when transactions start processing.
+// If non-nil, timestamps are recorded when transactions are dequeued from the queue.
+// Key: Ethereum transaction hash, Value: T2 timestamp (when dequeued for processing)
+var ProcessingStartTimestamps map[common.Hash]time.Time
+
+// ProcessingStartTimestampsMu protects access to ProcessingStartTimestamps
+var ProcessingStartTimestampsMu sync.Mutex
 
 // txEntry represents a transaction in the queue with its dependency information.
 // Each entry maintains two lists of pointers to other transactions:
@@ -191,6 +200,13 @@ func (q *TxQueueV2) Dequeue() (*types.Transaction, bool) {
 
 			// Move to pending map - use cached hash from entry
 			q.pendingMap[entry.txHash] = tx
+
+			// Record T2 timestamp if tracking is enabled
+			if ProcessingStartTimestamps != nil {
+				ProcessingStartTimestampsMu.Lock()
+				ProcessingStartTimestamps[entry.txHash] = time.Now() // T2: dequeued for processing
+				ProcessingStartTimestampsMu.Unlock()
+			}
 
 			loggerV2.Debugf("Dequeue: tx %s, waiting=%d ready=%d pending=%d",
 				entry.txHash.Hex()[:10], q.waitingList.Len(), q.readyList.Len(), len(q.pendingMap))

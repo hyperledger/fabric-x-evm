@@ -295,12 +295,12 @@
           "disableTextWrap": false,
           "editorMode": "code",
           "exemplar": true,
-          "expr": "histogram_quantile(0.50, rate(loadgen_valid_transaction_latency_seconds_bucket[$__rate_interval]))",
+          "expr": "histogram_quantile(0.50, rate(loadgen_total_latency_seconds_bucket[$__rate_interval]))",
           "fullMetaSearch": false,
           "hide": false,
           "includeNullMetadata": true,
           "instant": false,
-          "legendFormat": "Valid (P50)",
+          "legendFormat": "Total (P50)",
           "range": true,
           "refId": "A",
           "useBackend": false
@@ -313,14 +313,50 @@
           "disableTextWrap": false,
           "editorMode": "code",
           "exemplar": true,
-          "expr": "histogram_quantile(0.50, rate(loadgen_invalid_transaction_latency_seconds_bucket[$__rate_interval]))",
+          "expr": "histogram_quantile(0.50, rate(loadgen_queue_latency_seconds_bucket[$__rate_interval]))",
           "fullMetaSearch": false,
           "hide": false,
           "includeNullMetadata": true,
           "instant": false,
-          "legendFormat": "Invalid (P50)",
+          "legendFormat": "Queue (P50)",
           "range": true,
           "refId": "B",
+          "useBackend": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "disableTextWrap": false,
+          "editorMode": "code",
+          "exemplar": true,
+          "expr": "histogram_quantile(0.50, rate(loadgen_processing_latency_seconds_bucket[$__rate_interval]))",
+          "fullMetaSearch": false,
+          "hide": false,
+          "includeNullMetadata": true,
+          "instant": false,
+          "legendFormat": "Processing (P50)",
+          "range": true,
+          "refId": "C",
+          "useBackend": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "disableTextWrap": false,
+          "editorMode": "code",
+          "exemplar": true,
+          "expr": "histogram_quantile(0.50, rate(loadgen_backend_latency_seconds_bucket[$__rate_interval]))",
+          "fullMetaSearch": false,
+          "hide": false,
+          "includeNullMetadata": true,
+          "instant": false,
+          "legendFormat": "Backend (P50)",
+          "range": true,
+          "refId": "D",
           "useBackend": false
         }
       ],

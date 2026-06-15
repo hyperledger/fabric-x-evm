@@ -22,9 +22,11 @@ type LoadgenMetrics struct {
 	transactionCommitted prometheus.Counter
 	transactionAborted   prometheus.Counter
 
-	// Latency histograms
-	validTxLatency   prometheus.Histogram
-	invalidTxLatency prometheus.Histogram
+	// Latency breakdown histograms
+	totalLatency      prometheus.Histogram // T4 - T1: end-to-end latency
+	queueLatency      prometheus.Histogram // T2 - T1: queueing time
+	processingLatency prometheus.Histogram // T3 - T2: processing time by the app
+	backendLatency    prometheus.Histogram // T4 - T3: processing time by the backend
 
 	// Block counters (for compatibility with existing dashboard)
 	blockSent     prometheus.Counter
@@ -56,14 +58,24 @@ func NewLoadgenMetrics() *LoadgenMetrics {
 			Name: "loadgen_transaction_aborted_total",
 			Help: "Total number of transactions aborted or failed",
 		}),
-		validTxLatency: prometheus.NewHistogram(prometheus.HistogramOpts{
-			Name:    "loadgen_valid_transaction_latency_seconds",
-			Help:    "Latency of valid (committed) transactions in seconds",
+		totalLatency: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "loadgen_total_latency_seconds",
+			Help:    "End-to-end latency (T4-T1: test submit to notification) in seconds",
 			Buckets: prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms to ~524s
 		}),
-		invalidTxLatency: prometheus.NewHistogram(prometheus.HistogramOpts{
-			Name:    "loadgen_invalid_transaction_latency_seconds",
-			Help:    "Latency of invalid (aborted) transactions in seconds",
+		queueLatency: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "loadgen_queue_latency_seconds",
+			Help:    "Queueing latency (T2-T1: test submit to dequeue) in seconds",
+			Buckets: prometheus.ExponentialBuckets(0.0001, 2, 20), // 0.1ms to ~52s
+		}),
+		processingLatency: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "loadgen_processing_latency_seconds",
+			Help:    "Processing latency (T3-T2: dequeue to batch submit) in seconds",
+			Buckets: prometheus.ExponentialBuckets(0.0001, 2, 20), // 0.1ms to ~52s
+		}),
+		backendLatency: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "loadgen_backend_latency_seconds",
+			Help:    "Backend latency (T4-T3: batch submit to notification) in seconds",
 			Buckets: prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms to ~524s
 		}),
 		blockSent: prometheus.NewCounter(prometheus.CounterOpts{
@@ -90,8 +102,10 @@ func NewLoadgenMetrics() *LoadgenMetrics {
 		m.transactionSent,
 		m.transactionCommitted,
 		m.transactionAborted,
-		m.validTxLatency,
-		m.invalidTxLatency,
+		m.totalLatency,
+		m.queueLatency,
+		m.processingLatency,
+		m.backendLatency,
 		m.blockSent,
 		m.blockReceived,
 		m.outstandingTxGauge,
@@ -145,16 +159,22 @@ func (m *LoadgenMetrics) RecordTransactionSent() {
 	m.transactionSent.Inc()
 }
 
-// RecordTransactionCommitted increments the committed transaction counter and records latency
-func (m *LoadgenMetrics) RecordTransactionCommitted(latency time.Duration) {
+// RecordTransactionCommitted increments the committed transaction counter
+func (m *LoadgenMetrics) RecordTransactionCommitted() {
 	m.transactionCommitted.Inc()
-	m.validTxLatency.Observe(latency.Seconds())
 }
 
-// RecordTransactionAborted increments the aborted transaction counter and records latency
-func (m *LoadgenMetrics) RecordTransactionAborted(latency time.Duration) {
+// RecordTransactionAborted increments the aborted transaction counter
+func (m *LoadgenMetrics) RecordTransactionAborted() {
 	m.transactionAborted.Inc()
-	m.invalidTxLatency.Observe(latency.Seconds())
+}
+
+// RecordLatencies records the four latency measurements
+func (m *LoadgenMetrics) RecordLatencies(total, queue, processing, backend time.Duration) {
+	m.totalLatency.Observe(total.Seconds())
+	m.queueLatency.Observe(queue.Seconds())
+	m.processingLatency.Observe(processing.Seconds())
+	m.backendLatency.Observe(backend.Seconds())
 }
 
 // RecordBlockSent increments the block sent counter (for dashboard compatibility)
