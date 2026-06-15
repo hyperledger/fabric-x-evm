@@ -231,7 +231,7 @@ start-full:
 .PHONY: stop-full
 stop-full:
 	@$(COMPOSE) -f compose.fabric-x.full.yaml down
-	@sudo rm -rf data/
+	@rm -rf data/
 
 blockscout.env:
 	@echo "Generating $@..."

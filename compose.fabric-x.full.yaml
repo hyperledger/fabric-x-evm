@@ -311,6 +311,7 @@ services:
     image: docker.io/library/postgres:18.3-alpine3.23
     pull_policy: missing
     restart: unless-stopped
+    user: "${UID:-1000}:${GID:-1000}"
     environment:
       POSTGRES_DB: sc_db
       POSTGRES_USER: sc_user
