@@ -10,11 +10,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/hyperledger/fabric-x-evm/endorser"
+	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
 
@@ -125,5 +127,16 @@ func (e *BalancePrimingExecutor) Execute(tx *types.Transaction) (endorsement.Exe
 		}
 	}
 
-	return endorsement.Success(e.state.Result(), logs, ret), nil
+	r := e.state.Result()
+
+	// Remove all read dependencies whose key contains the suffix ":code"
+	filteredReads := make([]blocks.KVRead, 0, len(r.Reads))
+	for _, read := range r.Reads {
+		if !strings.HasSuffix(read.Key, ":code") && !strings.HasSuffix(read.Key, ":bal") {
+			filteredReads = append(filteredReads, read)
+		}
+	}
+	r.Reads = filteredReads
+
+	return endorsement.Success(r, logs, ret), nil
 }
