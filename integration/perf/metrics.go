@@ -231,4 +231,3 @@ func (m *LoadgenMetrics) SetTxQueueReadyListSize(size int) {
 func (m *LoadgenMetrics) SetTxQueueWaitingListSize(size int) {
 	m.txQueueWaitingListSize.Set(float64(size))
 }
-

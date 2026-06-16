@@ -328,7 +328,7 @@ services:
       - fabric-x
 
   committer-verifier:
-    image: ghcr.io/hyperledger/fabric-x-committer:1.0.2
+    image: ghcr.io/hyperledger/fabric-x-committer:1.0.3
     pull_policy: missing
     restart: unless-stopped
     user: "${UID:-1000}:${GID:-1000}"
@@ -341,7 +341,7 @@ services:
       - fabric-x
 
   committer-validator:
-    image: ghcr.io/hyperledger/fabric-x-committer:1.0.2
+    image: ghcr.io/hyperledger/fabric-x-committer:1.0.3
     pull_policy: missing
     restart: unless-stopped
     user: "${UID:-1000}:${GID:-1000}"
@@ -359,7 +359,7 @@ services:
       - fabric-x
 
   committer-coordinator:
-    image: ghcr.io/hyperledger/fabric-x-committer:1.0.2
+    image: ghcr.io/hyperledger/fabric-x-committer:1.0.3
     pull_policy: missing
     restart: unless-stopped
     user: "${UID:-1000}:${GID:-1000}"
@@ -378,7 +378,7 @@ services:
       - fabric-x
 
   committer-sidecar:
-    image: ghcr.io/hyperledger/fabric-x-committer:1.0.2
+    image: ghcr.io/hyperledger/fabric-x-committer:1.0.3
     pull_policy: missing
     restart: unless-stopped
     user: "${UID:-1000}:${GID:-1000}"
@@ -402,7 +402,7 @@ services:
       - fabric-x
 
   committer-query-service:
-    image: ghcr.io/hyperledger/fabric-x-committer:1.0.2
+    image: ghcr.io/hyperledger/fabric-x-committer:1.0.3
     pull_policy: missing
     restart: unless-stopped
     user: "${UID:-1000}:${GID:-1000}"

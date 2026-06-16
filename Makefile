@@ -57,7 +57,7 @@ integration-tests: pre-pull-images
 # Container images for fabric-x
 TOOLS_IMAGE          ?= ghcr.io/hyperledger/fabric-x-tools:1.0.0
 ORDERER_IMAGE        ?= ghcr.io/hyperledger/fabric-x-orderer:1.0.0
-TEST_COMMITTER_IMAGE ?= docker.io/hyperledger/fabric-x-committer-test-node:1.0.2
+TEST_COMMITTER_IMAGE ?= docker.io/hyperledger/fabric-x-committer-test-node:1.0.3
 
 # Namespace init defaults
 NS      ?= basic

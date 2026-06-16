@@ -17,7 +17,7 @@ require (
 	github.com/hyperledger/fabric-lib-go v1.1.5-0.20260607181445-fc4b05c5d38f
 	github.com/hyperledger/fabric-protos-go-apiv2 v0.3.7
 	github.com/hyperledger/fabric-x-common v0.2.6
-	github.com/hyperledger/fabric-x-sdk v0.0.0-20260615191202-b2f96c921abb
+	github.com/hyperledger/fabric-x-sdk v0.0.0-20260616145749-cbf8346ea95b
 	github.com/prometheus/client_golang v1.23.2
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
@@ -93,7 +93,7 @@ require (
 	github.com/hyperledger/aries-bbs-go v0.0.0-20240528091251-e950615f2e45 // indirect
 	github.com/hyperledger/fabric-amcl v0.0.0-20230602173724-9e02669dceb2 // indirect
 	github.com/hyperledger/fabric-x v1.0.0 // indirect
-	github.com/hyperledger/fabric-x-committer v1.0.2 // indirect
+	github.com/hyperledger/fabric-x-committer v1.0.3 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/influxdata/influxdb-client-go/v2 v2.4.0 // indirect
 	github.com/influxdata/influxdb1-client v0.0.0-20220302092344-a9ab5670611c // indirect
