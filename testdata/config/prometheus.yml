@@ -166,4 +166,3 @@ scrape_configs:
     # Note: Requires iptables rule to allow Docker containers to access host
     # Run: sudo iptables -I INPUT -i docker0 -p tcp --dport 2112 -j ACCEPT
 
-# Made with Bob

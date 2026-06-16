@@ -12,4 +12,3 @@ providers:
       path: /var/lib/grafana/dashboards
       foldersFromFilesStructure: false
 
-# Made with Bob

@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"log"
 	"math"
 	"math/big"
 	"sync"
@@ -383,8 +384,8 @@ func (g *Gateway) Stop() error {
 
 	total, invalid, totalEnq, conflictEnq := g.TxQueue.Stats()
 	if total > 0 {
-		fmt.Println("gw stats: valid/invalid/invalid rate        ", total, invalid, float64(invalid)/float64(total))
-		fmt.Println("gw stats: total/conflicting/conflicting rate", totalEnq, conflictEnq, float64(conflictEnq)/float64(totalEnq))
+		log.Println("gw stats: valid/invalid/invalid rate        ", total, invalid, float64(invalid)/float64(total))
+		log.Println("gw stats: total/conflicting/conflicting rate", totalEnq, conflictEnq, float64(conflictEnq)/float64(totalEnq))
 	}
 
 	return err

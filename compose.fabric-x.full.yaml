@@ -460,10 +460,10 @@ services:
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
       - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/committer.json
     volumes:
-      - ./testdata/config/grafana-datasource.yml:/etc/grafana/provisioning/datasources/prometheus.yml:ro,Z
-      - ./testdata/config/grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/dashboard.yml:ro,Z
-      - ./testdata/config/committer.json:/var/lib/grafana/dashboards/committer.json:ro,Z
-      - ./testdata/config/orderer.json:/var/lib/grafana/dashboards/orderer.json:ro,Z
+      - ./testdata/config/grafana/grafana-datasource.yml:/etc/grafana/provisioning/datasources/prometheus.yml:ro,Z
+      - ./testdata/config/grafana/grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/dashboard.yml:ro,Z
+      - ./testdata/config/grafana/committer.json:/var/lib/grafana/dashboards/committer.json:ro,Z
+      - ./testdata/config/grafana/orderer.json:/var/lib/grafana/dashboards/orderer.json:ro,Z
     ports:
       - "3000:3000"
     depends_on:
