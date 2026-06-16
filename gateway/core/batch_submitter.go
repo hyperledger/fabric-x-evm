@@ -31,6 +31,10 @@ var SubmissionTimestamps map[common.Hash]time.Time
 // SubmissionTimestampsMu protects access to SubmissionTimestamps
 var SubmissionTimestampsMu sync.Mutex
 
+// SetBatchSubmitterQueueSizeMetric is an optional callback for reporting the batch submitter input queue size.
+// If non-nil, it will be called to report the current queue size.
+var SetBatchSubmitterQueueSizeMetric func(size int)
+
 // BatchSubmitter reads endorsements from a channel, optionally records them in the
 // pending-tx cache (when cache != nil), then submits each one to the orderer.
 // The cache is used by AllTxBatchDispatcher to correlate commit events with the
@@ -102,6 +106,11 @@ func (bs *BatchSubmitter) worker(ctx context.Context, workerID int, wg *sync.Wai
 	defer batchLogger.Debugf("Worker %d stopped", workerID)
 
 	for {
+		// Report queue size metric if callback is set
+		if SetBatchSubmitterQueueSizeMetric != nil {
+			SetBatchSubmitterQueueSizeMetric(len(bs.inputChan))
+		}
+
 		select {
 		case <-bs.stopChan:
 			return

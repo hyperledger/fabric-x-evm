@@ -29,6 +29,14 @@ var ProcessingStartTimestamps map[common.Hash]time.Time
 // ProcessingStartTimestampsMu protects access to ProcessingStartTimestamps
 var ProcessingStartTimestampsMu sync.Mutex
 
+// SetTxQueueReadyListSizeMetric is an optional callback for reporting the ready list size.
+// If non-nil, it will be called to report the current ready list size.
+var SetTxQueueReadyListSizeMetric func(size int)
+
+// SetTxQueueWaitingListSizeMetric is an optional callback for reporting the waiting list size.
+// If non-nil, it will be called to report the current waiting list size.
+var SetTxQueueWaitingListSizeMetric func(size int)
+
 // txEntry represents a transaction in the queue with its dependency information.
 // Each entry maintains two lists of pointers to other transactions:
 // - Blocks: transactions that are waiting for this one to complete
@@ -176,6 +184,14 @@ func (q *TxQueueV2) Dequeue() (*types.Transaction, bool) {
 	defer q.mu.Unlock()
 
 	for {
+		// Report queue size metrics if callbacks are set (inside mutex to get accurate counts)
+		if SetTxQueueReadyListSizeMetric != nil {
+			SetTxQueueReadyListSizeMetric(q.readyList.Len())
+		}
+		if SetTxQueueWaitingListSizeMetric != nil {
+			SetTxQueueWaitingListSizeMetric(q.waitingList.Len())
+		}
+
 		// Wait while ready list is empty and queue is not closed
 		for q.readyList.Len() == 0 && !q.done {
 			q.cond.Wait()

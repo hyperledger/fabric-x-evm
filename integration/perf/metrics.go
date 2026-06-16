@@ -36,6 +36,11 @@ type LoadgenMetrics struct {
 	outstandingTxGauge prometheus.Gauge
 	throughputGauge    prometheus.Gauge
 
+	// Queue size gauges
+	batchSubmitterInputQueueSize prometheus.Gauge
+	txQueueReadyListSize         prometheus.Gauge
+	txQueueWaitingListSize       prometheus.Gauge
+
 	registry *prometheus.Registry
 	server   *http.Server
 	mu       sync.Mutex
@@ -94,6 +99,18 @@ func NewLoadgenMetrics() *LoadgenMetrics {
 			Name: "loadgen_throughput_tx_per_second",
 			Help: "Current throughput in transactions per second",
 		}),
+		batchSubmitterInputQueueSize: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "gateway_batch_submitter_input_queue_size",
+			Help: "Current size of the batch submitter input channel queue",
+		}),
+		txQueueReadyListSize: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "gateway_txqueue_ready_list_size",
+			Help: "Current size of the transaction queue ready list",
+		}),
+		txQueueWaitingListSize: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "gateway_txqueue_waiting_list_size",
+			Help: "Current size of the transaction queue waiting list",
+		}),
 		registry: registry,
 	}
 
@@ -110,6 +127,9 @@ func NewLoadgenMetrics() *LoadgenMetrics {
 		m.blockReceived,
 		m.outstandingTxGauge,
 		m.throughputGauge,
+		m.batchSubmitterInputQueueSize,
+		m.txQueueReadyListSize,
+		m.txQueueWaitingListSize,
 	)
 
 	return m
@@ -195,6 +215,21 @@ func (m *LoadgenMetrics) SetOutstandingTransactions(count int64) {
 // SetThroughput sets the current throughput in tx/s
 func (m *LoadgenMetrics) SetThroughput(txPerSecond float64) {
 	m.throughputGauge.Set(txPerSecond)
+}
+
+// SetBatchSubmitterInputQueueSize sets the current size of the batch submitter input queue
+func (m *LoadgenMetrics) SetBatchSubmitterInputQueueSize(size int) {
+	m.batchSubmitterInputQueueSize.Set(float64(size))
+}
+
+// SetTxQueueReadyListSize sets the current size of the transaction queue ready list
+func (m *LoadgenMetrics) SetTxQueueReadyListSize(size int) {
+	m.txQueueReadyListSize.Set(float64(size))
+}
+
+// SetTxQueueWaitingListSize sets the current size of the transaction queue waiting list
+func (m *LoadgenMetrics) SetTxQueueWaitingListSize(size int) {
+	m.txQueueWaitingListSize.Set(float64(size))
 }
 
 // Made with Bob

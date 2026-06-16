@@ -204,6 +204,11 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 			t.Logf("Prometheus metrics available at http://localhost%s/metrics", *metricsAddr)
 			defer metrics.StopServer()
 		}
+
+		// Wire up queue size metrics callbacks
+		gwcore.SetBatchSubmitterQueueSizeMetric = metrics.SetBatchSubmitterInputQueueSize
+		gwcore.SetTxQueueReadyListSizeMetric = metrics.SetTxQueueReadyListSize
+		gwcore.SetTxQueueWaitingListSizeMetric = metrics.SetTxQueueWaitingListSize
 	}
 
 	// USDC contract address
