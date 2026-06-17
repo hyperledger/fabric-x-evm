@@ -11,7 +11,6 @@ import (
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/hyperledger/fabric-x-common/api/committerpb"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 )
@@ -27,11 +26,11 @@ import (
 // Thread-safety: All map and slice operations are protected by the RWMutex.
 // The inProgressMap is safe for concurrent access as long as proper locking is used.
 type TxQueue struct {
-	mu            sync.RWMutex                       // Protects all fields below
-	cond          *sync.Cond                         // Signals when new transactions arrive
-	pendingQueue  []*types.Transaction               // FIFO queue of transactions waiting to be processed
-	inProgressMap map[common.Hash]*types.Transaction // Transactions currently being processed by workers
-	done          bool                               // Shutdown flag
+	mu            sync.RWMutex                  // Protects all fields below
+	cond          *sync.Cond                    // Signals when new transactions arrive
+	pendingQueue  []*TxWithSender               // FIFO queue of transactions waiting to be processed
+	inProgressMap map[common.Hash]*TxWithSender // Transactions currently being processed by workers
+	done          bool                          // Shutdown flag
 
 	// Statistics
 	total   int
@@ -41,8 +40,8 @@ type TxQueue struct {
 // NewTxQueue creates a new transaction queue
 func NewTxQueue() *TxQueue {
 	q := &TxQueue{
-		pendingQueue:  make([]*types.Transaction, 0),
-		inProgressMap: make(map[common.Hash]*types.Transaction),
+		pendingQueue:  make([]*TxWithSender, 0),
+		inProgressMap: make(map[common.Hash]*TxWithSender),
 	}
 	// sync.Cond requires a Locker; RWMutex implements Locker interface
 	q.cond = sync.NewCond(&q.mu)
@@ -51,19 +50,19 @@ func NewTxQueue() *TxQueue {
 
 // Enqueue adds a transaction to the queue.
 // This method uses a write lock to ensure exclusive access when modifying the queue.
-func (q *TxQueue) Enqueue(tx *types.Transaction) {
+func (q *TxQueue) Enqueue(txWithSender *TxWithSender) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	q.pendingQueue = append(q.pendingQueue, tx)
+	q.pendingQueue = append(q.pendingQueue, txWithSender)
 	q.cond.Signal() // Wake up one waiting worker
 }
 
 // Dequeue removes a transaction from the pending queue and moves it to the in-progress map.
 // Blocks if queue is empty until a transaction is available or queue is closed.
-// Returns (transaction, true) if successful, or (nil, false) if queue is closed and empty.
+// Returns (TxWithSender, true) if successful, or (nil, false) if queue is closed and empty.
 // This method uses a write lock to ensure exclusive access during the queue modification.
-func (q *TxQueue) Dequeue() (*types.Transaction, bool) {
+func (q *TxQueue) Dequeue() (*TxWithSender, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -75,11 +74,12 @@ func (q *TxQueue) Dequeue() (*types.Transaction, bool) {
 		return nil, false
 	}
 
-	tx := q.pendingQueue[0]
+	txWithSender := q.pendingQueue[0]
 	q.pendingQueue[0] = nil // Prevent memory leak
 	q.pendingQueue = q.pendingQueue[1:]
-	q.inProgressMap[tx.Hash()] = tx // Track as in-progress
-	return tx, true
+	q.inProgressMap[txWithSender.Tx.Hash()] = txWithSender // Track as in-progress
+
+	return txWithSender, true
 }
 
 // Close signals that no more transactions will be enqueued and initiates shutdown.
@@ -96,21 +96,21 @@ func (q *TxQueue) Close() {
 }
 
 // IsPending checks if a transaction is in either the pending queue or in-progress map.
-// Returns the transaction if found in either location, nil otherwise.
+// Returns the TxWithSender if found in either location, nil otherwise.
 // This method uses a read lock, allowing multiple concurrent queries without blocking writers.
-func (q *TxQueue) IsPending(txHash common.Hash) *types.Transaction {
+func (q *TxQueue) IsPending(txHash common.Hash) *TxWithSender {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
 
 	// Check if transaction is in the in-progress map (O(1) lookup)
-	if tx, exists := q.inProgressMap[txHash]; exists {
-		return tx
+	if txWithSender, exists := q.inProgressMap[txHash]; exists {
+		return txWithSender
 	}
 
 	// Check if transaction is in the pending queue (O(n) lookup)
-	for _, tx := range q.pendingQueue {
-		if tx.Hash() == txHash {
-			return tx
+	for _, txWithSender := range q.pendingQueue {
+		if txWithSender.Tx.Hash() == txHash {
+			return txWithSender
 		}
 	}
 

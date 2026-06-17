@@ -12,6 +12,7 @@ import (
 	"math/big"
 
 	"github.com/ethereum/go-ethereum"
+	ethcommon "github.com/ethereum/go-ethereum/common"
 	ethstate "github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
@@ -91,10 +92,11 @@ func (w *EVMEngineWrapper) SetBalancePriming(config *BalancePrimingConfig) {
 
 // Execute runs a state-changing transaction and returns the EVM result.
 // The behavior depends on the configured mode.
-func (w *EVMEngineWrapper) Execute(ctx context.Context, tx *types.Transaction) (endorsement.ExecutionResult, error) {
+// The from address is provided to avoid redundant signature verification.
+func (w *EVMEngineWrapper) Execute(ctx context.Context, tx *types.Transaction, from ethcommon.Address) (endorsement.ExecutionResult, error) {
 	// Create the appropriate executor based on mode
 	type executor interface {
-		Execute(*types.Transaction) (endorsement.ExecutionResult, error)
+		Execute(*types.Transaction, ethcommon.Address) (endorsement.ExecutionResult, error)
 		Close() error
 	}
 
@@ -115,7 +117,7 @@ func (w *EVMEngineWrapper) Execute(ctx context.Context, tx *types.Transaction) (
 	}
 	defer ex.Close()
 
-	return ex.Execute(tx)
+	return ex.Execute(tx, from)
 }
 
 // Call executes a read-only call against the state.

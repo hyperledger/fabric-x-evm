@@ -267,11 +267,15 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 	}
 	defer th.Stop()
 
+	signer := signerForTx(tx)
+
 	// run the tx through the pre-execution validation steps
-	preExecErr := core.ValidateTx(t.Context(), tx, config, signerForTx(tx), &nonceReader{th.endorsers[0].(*testimpl.EndorserWrapper).GetEthStateDB()})
+	_, preExecErr := core.ValidateTx(t.Context(), tx, config, signer, &nonceReader{th.endorsers[0].(*testimpl.EndorserWrapper).GetEthStateDB()})
+
+	from, _ := types.Sender(signer, tx)
 
 	// Execute transaction through gateway
-	env, execErr := th.Gateways[0].ExecuteEthTx(t.Context(), tx)
+	env, execErr := th.Gateways[0].ExecuteEthTx(t.Context(), tx, from)
 
 	// Get expected root from post-state
 	expectedRoot := common.Hash(post.Root)

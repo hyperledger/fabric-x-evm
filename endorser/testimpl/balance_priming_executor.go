@@ -98,10 +98,8 @@ func NewBalancePrimingExecutor(
 }
 
 // Execute runs a state-changing transaction with SenderAware notification.
-func (e *BalancePrimingExecutor) Execute(tx *types.Transaction) (endorsement.ExecutionResult, error) {
-	// Extract the sender to notify SenderAware wrappers
-	// This replicates the logic from the original Executor.Send
-
+// The from address is provided to avoid redundant signature verification.
+func (e *BalancePrimingExecutor) Execute(tx *types.Transaction, from common.Address) (endorsement.ExecutionResult, error) {
 	// Notify NonceAware wrappers of the expected nonce for this transaction
 	if na, ok := e.state.(NonceAware); ok {
 		na.SetExpectedNonce(tx.Nonce())
@@ -112,8 +110,8 @@ func (e *BalancePrimingExecutor) Execute(tx *types.Transaction) (endorsement.Exe
 		sa.SetSender()
 	}
 
-	// Execute the transaction using the base Executor
-	ret, err := e.Executor.Send(tx)
+	// Execute the transaction using the base Executor with the pre-verified sender
+	ret, err := e.Executor.Send(tx, from)
 	if err != nil {
 		return endorsement.ExecutionResult{}, err
 	}

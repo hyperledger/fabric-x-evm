@@ -15,6 +15,7 @@ import (
 	"math/big"
 
 	"github.com/ethereum/go-ethereum"
+	ethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	fabCommon "github.com/hyperledger/fabric-protos-go-apiv2/common"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
@@ -29,7 +30,7 @@ import (
 // Endorser interface defines the contract for endorsement providers.
 // This allows different implementations (e.g., local, gRPC client, mock).
 type Endorser interface {
-	ProcessEVMTransaction(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction) (*peer.ProposalResponse, error)
+	ProcessEVMTransaction(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction, from ethcommon.Address) (*peer.ProposalResponse, error)
 	ProcessCall(ctx context.Context, callMsg *ethereum.CallMsg, blockNumber *big.Int) (*peer.ProposalResponse, error)
 	ProcessStateQuery(ctx context.Context, query common.StateQuery) (*peer.ProposalResponse, error)
 }
@@ -56,7 +57,7 @@ func NewEndorsementClient(endorsers []Endorser, signer Signer, channel, namespac
 	}, nil
 }
 
-func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Transaction) (sdk.Endorsement, error) {
+func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Transaction, from ethcommon.Address) (sdk.Endorsement, error) {
 	// Marshal the transaction for the invocation args
 	ethTxBytes, err := tx.MarshalBinary()
 	if err != nil {
@@ -79,7 +80,7 @@ func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Tra
 
 	for i, end := range e.endorsers {
 		processEndorsement := func(index int, endorser Endorser) {
-			pResp, err := endorser.ProcessEVMTransaction(ctx, inv, tx)
+			pResp, err := endorser.ProcessEVMTransaction(ctx, inv, tx, from)
 			if err != nil {
 				errs[index] = fmt.Errorf("process EVM transaction: %w", err)
 				cancel() // signal other goroutines to stop early

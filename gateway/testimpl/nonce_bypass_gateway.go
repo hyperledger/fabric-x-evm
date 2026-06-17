@@ -32,6 +32,11 @@ func NewNonceBypassGateway(gw *core.Gateway) *NonceBypassGateway {
 // to preserve MVCC retry logic and worker pool control.
 func (g *NonceBypassGateway) SendTransaction(ctx context.Context, tx *types.Transaction) error {
 	// Skip ValidateTx (which includes nonce validation) and directly enqueue
-	g.Gateway.TxQueue.Enqueue(tx)
+	// We still need to extract the sender for the queue
+	from, err := types.Sender(g.Gateway.Signer, tx)
+	if err != nil {
+		return err
+	}
+	g.Gateway.TxQueue.Enqueue(&core.TxWithSender{Tx: tx, From: from})
 	return nil
 }

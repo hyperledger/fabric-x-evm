@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 
+	ethcommon "github.com/ethereum/go-ethereum/common"
 	ethstate "github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
@@ -72,8 +73,9 @@ func NewExecutorWrapper(
 }
 
 // Execute runs a state-changing transaction using real gas pricing (no free-gas defaults).
-func (w *ExecutorWrapper) Execute(tx *types.Transaction) (endorsement.ExecutionResult, error) {
-	msg, err := w.Executor.PrepareMessage(tx)
+// The from address is provided to avoid redundant signature verification.
+func (w *ExecutorWrapper) Execute(tx *types.Transaction, from ethcommon.Address) (endorsement.ExecutionResult, error) {
+	msg, err := w.Executor.PrepareMessage(tx, from)
 	if err != nil {
 		return endorsement.ExecutionResult{}, err
 	}

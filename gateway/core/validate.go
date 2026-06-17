@@ -37,17 +37,18 @@ const acceptedTxTypes = (1 << types.LegacyTxType) | (1 << types.AccessListTxType
 // the failure model tracks upstream. The only stateful check is nonce-too-low,
 // inlined from txpool.ValidateTransactionWithState to avoid building a per-tx
 // StateDB. Deviations are documented in docs/COMPATIBILITY.md.
+// Returns the sender address to avoid redundant signature verification downstream.
 func ValidateTx(
 	ctx context.Context,
 	tx *types.Transaction,
 	chainConfig *params.ChainConfig,
 	signer types.Signer,
 	state stateReader,
-) error {
+) (common.Address, error) {
 	// Geth rejects this in internal/ethapi.SubmitTransaction, above the txpool —
 	// the txpool's signer recovery accepts Frontier-style signatures.
 	if !tx.Protected() {
-		return errUnprotectedTx
+		return common.Address{}, errUnprotectedTx
 	}
 
 	head := &types.Header{
@@ -64,20 +65,20 @@ func ValidateTx(
 		MinTip:       new(big.Int),
 	}
 	if err := txpool.ValidateTransaction(tx, head, signer, opts); err != nil {
-		return err
+		return common.Address{}, err
 	}
 
 	from, err := types.Sender(signer, tx)
 	if err != nil {
-		return fmt.Errorf("%w: %v", txpool.ErrInvalidSender, err)
+		return common.Address{}, fmt.Errorf("%w: %v", txpool.ErrInvalidSender, err)
 	}
 
 	nonce, err := state.NonceAt(ctx, from, nil)
 	if err != nil {
-		return fmt.Errorf("look up nonce: %w", err)
+		return common.Address{}, fmt.Errorf("look up nonce: %w", err)
 	}
 	if nonce > tx.Nonce() {
-		return fmt.Errorf("%w: next nonce %d, tx nonce %d", ethcore.ErrNonceTooLow, nonce, tx.Nonce())
+		return common.Address{}, fmt.Errorf("%w: next nonce %d, tx nonce %d", ethcore.ErrNonceTooLow, nonce, tx.Nonce())
 	}
-	return nil
+	return from, nil
 }

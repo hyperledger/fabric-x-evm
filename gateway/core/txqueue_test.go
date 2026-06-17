@@ -29,6 +29,14 @@ func testTx(nonce uint64) *types.Transaction {
 	)
 }
 
+// Helper to create TxWithSender for testing
+func testTxWithSender(nonce uint64) *TxWithSender {
+	tx := testTx(nonce)
+	// Use a dummy sender address for tests
+	from := common.HexToAddress("0xabcdefabcdefabcdefabcdefabcdefabcdefabcd")
+	return &TxWithSender{Tx: tx, From: from}
+}
+
 func TestNewTxQueue_InitializesPendingAndInProgress(t *testing.T) {
 	q := NewTxQueue()
 
@@ -42,50 +50,50 @@ func TestNewTxQueue_InitializesPendingAndInProgress(t *testing.T) {
 
 func TestTxQueue_EnqueueAddsToPendingQueue(t *testing.T) {
 	q := NewTxQueue()
-	tx := testTx(1)
+	txWithSender := testTxWithSender(1)
 
-	q.Enqueue(tx)
+	q.Enqueue(txWithSender)
 
 	require.Len(t, q.pendingQueue, 1)
-	assert.Equal(t, tx, q.pendingQueue[0])
+	assert.Equal(t, txWithSender.Tx, q.pendingQueue[0].Tx)
 	assert.Len(t, q.inProgressMap, 0)
 }
 
 func TestTxQueue_DequeueMovesTxToInProgressMap(t *testing.T) {
 	q := NewTxQueue()
-	tx := testTx(1)
-	q.Enqueue(tx)
+	txWithSender := testTxWithSender(1)
+	q.Enqueue(txWithSender)
 
 	got, ok := q.Dequeue()
 	require.True(t, ok)
 	require.NotNil(t, got)
-	assert.Equal(t, tx.Hash(), got.Hash())
+	assert.Equal(t, txWithSender.Tx.Hash(), got.Tx.Hash())
 	assert.Len(t, q.pendingQueue, 0)
 
-	inProgressTx, exists := q.inProgressMap[tx.Hash()]
+	inProgressTx, exists := q.inProgressMap[txWithSender.Tx.Hash()]
 	require.True(t, exists)
-	assert.Equal(t, tx.Hash(), inProgressTx.Hash())
+	assert.Equal(t, txWithSender.Tx.Hash(), inProgressTx.Tx.Hash())
 }
 
 func TestTxQueue_IsPending_FindsInPendingQueue(t *testing.T) {
 	q := NewTxQueue()
-	tx := testTx(1)
-	q.Enqueue(tx)
+	txWithSender := testTxWithSender(1)
+	q.Enqueue(txWithSender)
 
-	result := q.IsPending(tx.Hash())
+	result := q.IsPending(txWithSender.Tx.Hash())
 	require.NotNil(t, result)
-	assert.Equal(t, tx.Hash(), result.Hash())
+	assert.Equal(t, txWithSender.Tx.Hash(), result.Tx.Hash())
 }
 
 func TestTxQueue_IsPending_FindsInProgressMap(t *testing.T) {
 	q := NewTxQueue()
-	tx := testTx(1)
-	q.Enqueue(tx)
+	txWithSender := testTxWithSender(1)
+	q.Enqueue(txWithSender)
 	q.Dequeue() // Moves to inProgressMap
 
-	result := q.IsPending(tx.Hash())
+	result := q.IsPending(txWithSender.Tx.Hash())
 	require.NotNil(t, result)
-	assert.Equal(t, tx.Hash(), result.Hash())
+	assert.Equal(t, txWithSender.Tx.Hash(), result.Tx.Hash())
 }
 
 func TestTxQueue_IsPending_ReturnsNilWhenNotFound(t *testing.T) {
@@ -98,37 +106,37 @@ func TestTxQueue_IsPending_ReturnsNilWhenNotFound(t *testing.T) {
 
 func TestTxQueue_IsPending_ReturnsNilAfterComplete(t *testing.T) {
 	q := NewTxQueue()
-	tx := testTx(1)
-	q.Enqueue(tx)
+	txWithSender := testTxWithSender(1)
+	q.Enqueue(txWithSender)
 	q.Dequeue() // Moves to inProgressMap
-	q.Complete(tx.Hash())
+	q.Complete(txWithSender.Tx.Hash())
 
-	result := q.IsPending(tx.Hash())
+	result := q.IsPending(txWithSender.Tx.Hash())
 	assert.Nil(t, result)
 }
 
 func TestTxQueue_Complete_RemovesFromInProgressMap(t *testing.T) {
 	q := NewTxQueue()
-	tx := testTx(1)
-	q.Enqueue(tx)
+	txWithSender := testTxWithSender(1)
+	q.Enqueue(txWithSender)
 	q.Dequeue() // Moves to inProgressMap
 
-	q.Complete(tx.Hash())
+	q.Complete(txWithSender.Tx.Hash())
 
-	_, exists := q.inProgressMap[tx.Hash()]
+	_, exists := q.inProgressMap[txWithSender.Tx.Hash()]
 	assert.False(t, exists)
 }
 
 func TestTxQueue_Complete_IsIdempotent(t *testing.T) {
 	q := NewTxQueue()
-	tx := testTx(1)
-	q.Enqueue(tx)
+	txWithSender := testTxWithSender(1)
+	q.Enqueue(txWithSender)
 	q.Dequeue()
 
 	// Call Complete multiple times
-	q.Complete(tx.Hash())
-	q.Complete(tx.Hash())
-	q.Complete(tx.Hash())
+	q.Complete(txWithSender.Tx.Hash())
+	q.Complete(txWithSender.Tx.Hash())
+	q.Complete(txWithSender.Tx.Hash())
 
 	// Should not panic and map should be empty
 	assert.Len(t, q.inProgressMap, 0)
@@ -136,25 +144,25 @@ func TestTxQueue_Complete_IsIdempotent(t *testing.T) {
 
 func TestTxQueue_Handle_MarksTransactionsComplete(t *testing.T) {
 	q := NewTxQueue()
-	tx1 := testTx(1)
-	tx2 := testTx(2)
+	txWithSender1 := testTxWithSender(1)
+	txWithSender2 := testTxWithSender(2)
 
 	// Enqueue and dequeue to move to inProgressMap
-	q.Enqueue(tx1)
-	q.Enqueue(tx2)
+	q.Enqueue(txWithSender1)
+	q.Enqueue(txWithSender2)
 	q.Dequeue()
 	q.Dequeue()
 
 	// Verify both are in progress
-	assert.NotNil(t, q.IsPending(tx1.Hash()))
-	assert.NotNil(t, q.IsPending(tx2.Hash()))
+	assert.NotNil(t, q.IsPending(txWithSender1.Tx.Hash()))
+	assert.NotNil(t, q.IsPending(txWithSender2.Tx.Hash()))
 
 	// Create a block with these transactions
 	block := &domain.Block{
 		BlockNumber: 1,
 		Transactions: []domain.Transaction{
-			{TxHash: tx1.Hash().Bytes()},
-			{TxHash: tx2.Hash().Bytes()},
+			{TxHash: txWithSender1.Tx.Hash().Bytes()},
+			{TxHash: txWithSender2.Tx.Hash().Bytes()},
 		},
 	}
 
@@ -163,8 +171,8 @@ func TestTxQueue_Handle_MarksTransactionsComplete(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify both are now complete (not pending)
-	assert.Nil(t, q.IsPending(tx1.Hash()))
-	assert.Nil(t, q.IsPending(tx2.Hash()))
+	assert.Nil(t, q.IsPending(txWithSender1.Tx.Hash()))
+	assert.Nil(t, q.IsPending(txWithSender2.Tx.Hash()))
 }
 
 func TestTxQueue_Handle_EmptyBlock(t *testing.T) {

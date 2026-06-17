@@ -291,7 +291,8 @@ func testNonceValidation(t *testing.T, th *TestHarness) {
 	}
 
 	// call should fail now - transaction has nonce 3 but ledger has nonce 5
-	_, err = node.ExecuteEthTx(t.Context(), tx)
+	from, _ := types.Sender(types.LatestSignerForChainID(tx.ChainId()), tx)
+	_, err = node.ExecuteEthTx(t.Context(), tx, from)
 	if err == nil {
 		t.Fatal("expected transaction with wrong nonce to fail, but it succeeded")
 	}

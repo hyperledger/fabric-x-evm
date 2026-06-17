@@ -36,18 +36,26 @@ type Submitter interface {
 	Close() error
 }
 
+// TxWithSender wraps a transaction with its pre-verified sender address
+// to avoid redundant signature verification.
+type TxWithSender struct {
+	Tx   *types.Transaction
+	From common.Address
+}
+
 // TxQueueInterface defines the interface that transaction queue implementations must satisfy.
 // This allows switching between different queue implementations (e.g., TxQueue and TxQueueV2).
 type TxQueueInterface interface {
-	// Enqueue adds a transaction to the queue
-	Enqueue(tx *types.Transaction)
+	// Enqueue adds a transaction with its sender to the queue
+	Enqueue(txWithSender *TxWithSender)
 
-	// Dequeue removes and returns a transaction from the queue
-	// Returns (transaction, true) if successful, or (nil, false) if queue is closed
-	Dequeue() (*types.Transaction, bool)
+	// Dequeue removes and returns a transaction with sender from the queue
+	// Returns (*txWithSender, true) if successful, or (nil, false) if queue is closed
+	Dequeue() (*TxWithSender, bool)
 
 	// IsPending checks if a transaction is currently in the queue or being processed
-	IsPending(txHash common.Hash) *types.Transaction
+	// Returns the TxWithSender if pending, nil otherwise
+	IsPending(txHash common.Hash) *TxWithSender
 
 	// Close signals shutdown of the queue
 	Close()
@@ -135,23 +143,24 @@ func (g *Gateway) worker(ctx context.Context) {
 	defer g.wg.Done()
 
 	for {
-		tx, ok := g.TxQueue.Dequeue()
+		txWithSender, ok := g.TxQueue.Dequeue()
 		if !ok {
 			// Queue is closed and empty
 			return
 		}
 
 		// Process the transaction (old SendTransaction logic)
-		if err := g.processTx(ctx, tx); err != nil {
-			logger.Errorf("tx %s failed: %v", tx.Hash().Hex(), err)
+		if err := g.processTx(ctx, txWithSender); err != nil {
+			logger.Errorf("tx %s failed: %v", txWithSender.Tx.Hash().Hex(), err)
 			continue
 		}
 	}
 }
 
 // processTx handles the actual transaction processing
-func (g *Gateway) processTx(ctx context.Context, tx *types.Transaction) error {
-	end, err := g.ExecuteEthTx(ctx, tx)
+func (g *Gateway) processTx(ctx context.Context, txWithSender *TxWithSender) error {
+	// Use the pre-verified sender address to avoid redundant signature verification
+	end, err := g.ExecuteEthTx(ctx, txWithSender.Tx, txWithSender.From)
 	if err != nil {
 		return err
 	}
@@ -165,10 +174,12 @@ func (g *Gateway) processTx(ctx context.Context, tx *types.Transaction) error {
 // SendTransaction runs geth-style pre-flight validation, then enqueues the tx
 // for async endorse/submit. Mirrors eth_sendRawTransaction's failure model.
 func (g *Gateway) SendTransaction(ctx context.Context, tx *types.Transaction) error {
-	if err := ValidateTx(ctx, tx, g.ChainConfig, g.Signer, g); err != nil {
+	// ValidateTx extracts and returns the sender address, avoiding redundant signature verification downstream
+	from, err := ValidateTx(ctx, tx, g.ChainConfig, g.Signer, g)
+	if err != nil {
 		return err
 	}
-	g.TxQueue.Enqueue(tx)
+	g.TxQueue.Enqueue(&TxWithSender{Tx: tx, From: from})
 	return nil
 }
 
@@ -180,8 +191,9 @@ func (g *Gateway) CallContract(ctx context.Context, call ethereum.CallMsg, block
 }
 
 // ExecuteEthTx requests endorsements for the submitted ethereum-style transaction.
-func (g *Gateway) ExecuteEthTx(ctx context.Context, tx *types.Transaction) (sdk.Endorsement, error) {
-	return g.endorsers.ExecuteTransaction(ctx, tx)
+// The from address is provided to avoid redundant signature verification in endorsers.
+func (g *Gateway) ExecuteEthTx(ctx context.Context, tx *types.Transaction, from common.Address) (sdk.Endorsement, error) {
+	return g.endorsers.ExecuteTransaction(ctx, tx, from)
 }
 
 // SubmitFabricTx submits a Fabric envelope via the BatchSubmitter.
@@ -303,21 +315,17 @@ func (g *Gateway) NonceAt(ctx context.Context, account common.Address, blockNumb
 // The pending status is signaled by BlockNumber=0, which the API layer converts to null.
 func (g *Gateway) TransactionByHash(ctx context.Context, hash common.Hash) (*domain.Transaction, error) {
 	// Check if transaction is pending in the queue (either waiting or being processed)
-	if pendingTx := g.TxQueue.IsPending(hash); pendingTx != nil {
+	if pendingTxWithSender := g.TxQueue.IsPending(hash); pendingTxWithSender != nil {
 		// Transaction is pending - return it with zero block fields
 		// The API layer will convert these to nil in the JSON response
-		rawTx, err := pendingTx.MarshalBinary()
+		rawTx, err := pendingTxWithSender.Tx.MarshalBinary()
 		if err != nil {
 			return nil, err
 		}
 
-		from, err := types.Sender(g.Signer, pendingTx)
-		if err != nil {
-			return nil, err
-		}
-
+		// Use the pre-verified sender address from the queue
 		var toAddr []byte
-		if to := pendingTx.To(); to != nil {
+		if to := pendingTxWithSender.Tx.To(); to != nil {
 			toAddr = to.Bytes()
 		}
 
@@ -327,7 +335,7 @@ func (g *Gateway) TransactionByHash(ctx context.Context, hash common.Hash) (*dom
 			BlockNumber: 0,   // 0 signals pending to API layer
 			TxIndex:     0,   // Value doesn't matter - API layer checks BlockNumber==0 for pending
 			RawTx:       rawTx,
-			FromAddress: from.Bytes(),
+			FromAddress: pendingTxWithSender.From.Bytes(),
 			ToAddress:   toAddr,
 		}, nil
 	}

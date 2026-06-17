@@ -11,36 +11,20 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 )
 
-// participantsForTx extracts the sender and recipient addresses from a transaction.
+// participantsForTx extracts the sender and recipient addresses from a transaction with sender.
 // Returns a slice containing unique participant addresses (1 or 2 elements).
-func participantsForTx(tx *types.Transaction) []common.Address {
+// The sender is already verified and provided, avoiding redundant signature verification.
+func participantsForTx(txWithSender TxWithSender) []common.Address {
 	participants := make([]common.Address, 0, 2)
 
-	if sender, ok := senderForTx(tx); ok {
-		participants = append(participants, sender)
-	}
+	// Use the pre-verified sender address
+	participants = append(participants, txWithSender.From)
 
-	if recipient, ok := recipientForTx(tx); ok && !containsAddress(participants, recipient) {
+	if recipient, ok := recipientForTx(txWithSender.Tx); ok && !containsAddress(participants, recipient) {
 		participants = append(participants, recipient)
 	}
 
 	return participants
-}
-
-// senderForTx extracts the sender address from a transaction.
-// Returns (address, true) if successful, (zero address, false) otherwise.
-func senderForTx(tx *types.Transaction) (common.Address, bool) {
-	if !tx.Protected() && tx.Type() == types.LegacyTxType {
-		return common.Address{}, false
-	}
-
-	signer := types.LatestSignerForChainID(tx.ChainId())
-	sender, err := types.Sender(signer, tx)
-	if err != nil {
-		return common.Address{}, false
-	}
-
-	return sender, true
 }
 
 // recipientForTx extracts the recipient address from a transaction.

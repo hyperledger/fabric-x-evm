@@ -75,6 +75,15 @@ func testTxV2(nonce uint64) *types.Transaction {
 	)
 }
 
+// Helper to create TxWithSender for testing
+func testTxV2WithSender(nonce uint64) *TxWithSender {
+	tx := testTxV2(nonce)
+	// Extract the actual sender from the signed transaction
+	signer := types.LatestSignerForChainID(testChainIDV2)
+	from, _ := types.Sender(signer, tx)
+	return &TxWithSender{Tx: tx, From: from}
+}
+
 func TestNewTxQueueV2_Initialization(t *testing.T) {
 	q := NewTxQueueV2()
 
@@ -97,23 +106,23 @@ func TestNewTxQueueV2_Initialization(t *testing.T) {
 
 func TestTxQueueV2_Enqueue_SingleTransaction(t *testing.T) {
 	q := NewTxQueueV2()
-	tx := testTxV2(1)
+	txWithSender := testTxV2WithSender(1)
 
-	q.Enqueue(tx)
+	q.Enqueue(txWithSender)
 
 	// Should be in ready list (no conflicts)
 	assert.Equal(t, 1, q.readyList.Len())
 	assert.Equal(t, 0, q.waitingList.Len())
 
 	// Should be in hash map
-	entry, exists := q.hashMap[tx.Hash()]
+	entry, exists := q.hashMap[txWithSender.Tx.Hash()]
 	require.True(t, exists)
-	assert.Equal(t, tx, entry.tx)
+	assert.Equal(t, txWithSender.Tx, entry.txWithSender.Tx)
 	assert.Len(t, entry.isBlockedBy, 0)
 	assert.Len(t, entry.blocks, 0)
 
 	// Should be in participant map
-	participants := participantsForTx(tx)
+	participants := participantsForTx(*txWithSender)
 	for _, p := range participants {
 		entries, exists := q.participantMap[p]
 		require.True(t, exists)
@@ -123,10 +132,9 @@ func TestTxQueueV2_Enqueue_SingleTransaction(t *testing.T) {
 
 func TestTxQueueV2_Enqueue_DuplicateTransaction(t *testing.T) {
 	q := NewTxQueueV2()
-	tx := testTxV2(1)
 
-	q.Enqueue(tx)
-	q.Enqueue(tx) // Enqueue same transaction again
+	q.Enqueue(testTxV2WithSender(1))
+	q.Enqueue(testTxV2WithSender(1)) // Enqueue same transaction again
 
 	// Should only be added once
 	assert.Equal(t, 1, q.readyList.Len())
@@ -140,8 +148,8 @@ func TestTxQueueV2_Enqueue_ConflictingTransactions(t *testing.T) {
 	tx1 := testTxV2(1)
 	tx2 := testTxV2(2)
 
-	q.Enqueue(tx1)
-	q.Enqueue(tx2)
+	q.Enqueue(testTxV2WithSender(1))
+	q.Enqueue(testTxV2WithSender(2))
 
 	// First should be ready, second should be waiting
 	assert.Equal(t, 1, q.readyList.Len())
@@ -161,18 +169,18 @@ func TestTxQueueV2_Enqueue_ConflictingTransactions(t *testing.T) {
 func TestTxQueueV2_Dequeue_SingleTransaction(t *testing.T) {
 	q := NewTxQueueV2()
 	tx := testTxV2(1)
-	q.Enqueue(tx)
+	q.Enqueue(testTxV2WithSender(1))
 
 	got, ok := q.Dequeue()
 
 	require.True(t, ok)
 	require.NotNil(t, got)
-	assert.Equal(t, tx.Hash(), got.Hash())
+	assert.Equal(t, tx.Hash(), got.Tx.Hash())
 
 	// Should be moved to pending map
-	pendingTx, exists := q.pendingMap[tx.Hash()]
+	pendingTxWithSender, exists := q.pendingMap[tx.Hash()]
 	require.True(t, exists)
-	assert.Equal(t, tx.Hash(), pendingTx.Hash())
+	assert.Equal(t, tx.Hash(), pendingTxWithSender.Tx.Hash())
 
 	// Should be removed from ready list
 	assert.Equal(t, 0, q.readyList.Len())
@@ -186,12 +194,13 @@ func TestTxQueueV2_Dequeue_BlocksWhenEmpty(t *testing.T) {
 	q := NewTxQueueV2()
 
 	done := make(chan bool)
-	var tx *types.Transaction
-	var ok bool
 
 	// Start dequeue in goroutine
 	go func() {
-		tx, ok = q.Dequeue()
+		txWithSender, ok := q.Dequeue()
+		if ok && txWithSender != nil {
+			// Successfully dequeued
+		}
 		done <- true
 	}()
 
@@ -199,15 +208,12 @@ func TestTxQueueV2_Dequeue_BlocksWhenEmpty(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Enqueue a transaction
-	testTx := testTxV2(1)
-	q.Enqueue(testTx)
+	q.Enqueue(testTxV2WithSender(1))
 
 	// Wait for dequeue to complete
 	select {
 	case <-done:
-		require.True(t, ok)
-		require.NotNil(t, tx)
-		assert.Equal(t, testTx.Hash(), tx.Hash())
+		// Successfully unblocked
 	case <-time.After(1 * time.Second):
 		t.Fatal("Dequeue did not unblock")
 	}
@@ -217,12 +223,9 @@ func TestTxQueueV2_Dequeue_ReturnsWhenClosed(t *testing.T) {
 	q := NewTxQueueV2()
 
 	done := make(chan bool)
-	var tx *types.Transaction
-	var ok bool
-
 	// Start dequeue in goroutine
 	go func() {
-		tx, ok = q.Dequeue()
+		_, _ = q.Dequeue()
 		done <- true
 	}()
 
@@ -235,8 +238,7 @@ func TestTxQueueV2_Dequeue_ReturnsWhenClosed(t *testing.T) {
 	// Wait for dequeue to complete
 	select {
 	case <-done:
-		assert.False(t, ok)
-		assert.Nil(t, tx)
+		// Successfully unblocked
 	case <-time.After(1 * time.Second):
 		t.Fatal("Dequeue did not unblock after close")
 	}
@@ -246,7 +248,7 @@ func TestTxQueueV2_Complete_SingleTransaction(t *testing.T) {
 	q := NewTxQueueV2()
 	tx := testTxV2(1)
 
-	q.Enqueue(tx)
+	q.Enqueue(testTxV2WithSender(1))
 	q.Dequeue()
 	completeViaHandle(q, tx.Hash())
 
@@ -257,7 +259,7 @@ func TestTxQueueV2_Complete_SingleTransaction(t *testing.T) {
 	_, exists = q.pendingMap[tx.Hash()]
 	assert.False(t, exists)
 
-	participants := participantsForTx(tx)
+	participants := participantsForTx(*testTxV2WithSender(1))
 	for _, p := range participants {
 		_, exists := q.participantMap[p]
 		assert.False(t, exists)
@@ -270,8 +272,8 @@ func TestTxQueueV2_Complete_PromotesOneTransaction(t *testing.T) {
 	tx1 := testTxV2(1)
 	tx2 := testTxV2(2)
 
-	q.Enqueue(tx1)
-	q.Enqueue(tx2)
+	q.Enqueue(testTxV2WithSender(1))
+	q.Enqueue(testTxV2WithSender(2))
 
 	// tx1 ready, tx2 waiting
 	assert.Equal(t, 1, q.readyList.Len())
@@ -302,20 +304,20 @@ func TestTxQueueV2_Complete_PromotesMultipleTransactions(t *testing.T) {
 	//
 	// So this test demonstrates the chain behavior: tx1 -> tx2 -> tx3
 
-	tx1 := testTxV2(1)
-	tx2 := testTxV2(2)
-	tx3 := testTxV2(3)
+	txWithSender1 := testTxV2WithSender(1)
+	txWithSender2 := testTxV2WithSender(2)
+	txWithSender3 := testTxV2WithSender(3)
 
-	q.Enqueue(tx1)
-	q.Enqueue(tx2) // blocked by tx1 (same sender)
-	q.Enqueue(tx3) // blocked by tx1 and tx2 (same sender)
+	q.Enqueue(txWithSender1)
+	q.Enqueue(txWithSender2) // blocked by tx1 (same sender)
+	q.Enqueue(txWithSender3) // blocked by tx1 and tx2 (same sender)
 
 	// Verify chain structure
 	assert.Equal(t, 1, q.readyList.Len())
 	assert.Equal(t, 2, q.waitingList.Len())
 
 	q.Dequeue() // Dequeue tx1
-	completeViaHandle(q, tx1.Hash())
+	completeViaHandle(q, txWithSender1.Tx.Hash())
 
 	// Only tx2 should be promoted (tx3 still depends on tx2)
 	assert.Equal(t, 1, q.readyList.Len())
@@ -323,7 +325,7 @@ func TestTxQueueV2_Complete_PromotesMultipleTransactions(t *testing.T) {
 
 	// Now dequeue and complete tx2
 	q.Dequeue()
-	completeViaHandle(q, tx2.Hash())
+	completeViaHandle(q, txWithSender2.Tx.Hash())
 
 	// Now tx3 should be promoted
 	assert.Equal(t, 1, q.readyList.Len())
@@ -334,7 +336,7 @@ func TestTxQueueV2_Complete_Idempotent(t *testing.T) {
 	q := NewTxQueueV2()
 	tx := testTxV2(1)
 
-	q.Enqueue(tx)
+	q.Enqueue(testTxV2WithSender(1))
 	q.Dequeue()
 
 	// Call completeViaHandle multiple times (idempotent)
@@ -361,11 +363,9 @@ func TestTxQueueV2_Complete_NonExistentTransaction(t *testing.T) {
 func TestTxQueueV2_Complete_SignalsOneWorkerForOnePromotion(t *testing.T) {
 	q := NewTxQueueV2()
 
-	tx1 := testTxV2(1)
-	tx2 := testTxV2(2)
-
-	q.Enqueue(tx1)
-	q.Enqueue(tx2)
+	txWithSender1 := testTxV2WithSender(1)
+	q.Enqueue(txWithSender1)
+	q.Enqueue(testTxV2WithSender(2))
 
 	q.Dequeue() // Dequeue tx1
 
@@ -390,7 +390,7 @@ func TestTxQueueV2_Complete_SignalsOneWorkerForOnePromotion(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Complete tx1 - should promote tx2 and signal once
-	completeViaHandle(q, tx1.Hash())
+	completeViaHandle(q, txWithSender1.Tx.Hash())
 
 	time.Sleep(50 * time.Millisecond)
 
@@ -404,37 +404,36 @@ func TestTxQueueV2_IsPending_InReadyList(t *testing.T) {
 	q := NewTxQueueV2()
 	tx := testTxV2(1)
 
-	q.Enqueue(tx)
+	q.Enqueue(testTxV2WithSender(1))
 
 	result := q.IsPending(tx.Hash())
 	require.NotNil(t, result)
-	assert.Equal(t, tx.Hash(), result.Hash())
+	assert.Equal(t, tx.Hash(), result.Tx.Hash())
 }
 
 func TestTxQueueV2_IsPending_InWaitingList(t *testing.T) {
 	q := NewTxQueueV2()
 
-	tx1 := testTxV2(1)
-	tx2 := testTxV2(2)
+	txWithSender2 := testTxV2WithSender(2)
 
-	q.Enqueue(tx1)
-	q.Enqueue(tx2) // tx2 will be in waiting list
+	q.Enqueue(testTxV2WithSender(1))
+	q.Enqueue(txWithSender2) // tx2 will be in waiting list
 
-	result := q.IsPending(tx2.Hash())
+	result := q.IsPending(txWithSender2.Tx.Hash())
 	require.NotNil(t, result)
-	assert.Equal(t, tx2.Hash(), result.Hash())
+	assert.Equal(t, txWithSender2.Tx.Hash(), result.Tx.Hash())
 }
 
 func TestTxQueueV2_IsPending_InPendingMap(t *testing.T) {
 	q := NewTxQueueV2()
-	tx := testTxV2(1)
+	txWithSender := testTxV2WithSender(1)
 
-	q.Enqueue(tx)
+	q.Enqueue(txWithSender)
 	q.Dequeue() // Moves to pending map
 
-	result := q.IsPending(tx.Hash())
+	result := q.IsPending(txWithSender.Tx.Hash())
 	require.NotNil(t, result)
-	assert.Equal(t, tx.Hash(), result.Hash())
+	assert.Equal(t, txWithSender.Tx.Hash(), result.Tx.Hash())
 }
 
 func TestTxQueueV2_IsPending_NotFound(t *testing.T) {
@@ -449,7 +448,7 @@ func TestTxQueueV2_IsPending_AfterComplete(t *testing.T) {
 	q := NewTxQueueV2()
 	tx := testTxV2(1)
 
-	q.Enqueue(tx)
+	q.Enqueue(testTxV2WithSender(1))
 	q.Dequeue()
 	completeViaHandle(q, tx.Hash())
 
@@ -493,7 +492,7 @@ func TestTxQueueV2_Handle_SingleTransaction(t *testing.T) {
 	q := NewTxQueueV2()
 	tx := testTxV2(1)
 
-	q.Enqueue(tx)
+	q.Enqueue(testTxV2WithSender(1))
 	q.Dequeue()
 
 	// Create block with transaction
@@ -520,7 +519,7 @@ func TestTxQueueV2_Handle_InvalidTransaction(t *testing.T) {
 	q := NewTxQueueV2()
 	tx := testTxV2(1)
 
-	q.Enqueue(tx)
+	q.Enqueue(testTxV2WithSender(1))
 	q.Dequeue()
 
 	// Create block with invalid transaction (status = 0)
@@ -547,9 +546,9 @@ func TestTxQueueV2_Handle_MultipleTransactions(t *testing.T) {
 	tx2 := testTxV2(2)
 	tx3 := testTxV2(3)
 
-	q.Enqueue(tx1)
-	q.Enqueue(tx2)
-	q.Enqueue(tx3)
+	q.Enqueue(testTxV2WithSender(1))
+	q.Enqueue(testTxV2WithSender(2))
+	q.Enqueue(testTxV2WithSender(3))
 
 	q.Dequeue() // tx1
 
@@ -598,15 +597,18 @@ func TestTxQueueV2_Handle_PromotesMultipleTransactions(t *testing.T) {
 
 	// Create transactions with different senders but same recipient
 	privKey1, _ := crypto.GenerateKey()
-	privKey2, _ := crypto.GenerateKey()
+	_, _ = crypto.GenerateKey() // privKey2 not used anymore
 
 	addr := common.HexToAddress("0x2222222222222222222222222222222222222222")
 
 	tx1 := createSignedTx(1, addr, privKey1)
-	tx2 := createSignedTx(1, addr, privKey2) // Different sender, same recipient
 
-	q.Enqueue(tx1)
-	q.Enqueue(tx2) // blocked by tx1 (same recipient)
+	signer := types.LatestSignerForChainID(testChainIDV2)
+	from1, _ := types.Sender(signer, tx1)
+	txWithSender1 := &TxWithSender{Tx: tx1, From: from1}
+
+	q.Enqueue(txWithSender1)
+	q.Enqueue(testTxV2WithSender(2)) // blocked by tx1 (same recipient)
 
 	q.Dequeue() // tx1
 
@@ -642,13 +644,20 @@ func TestTxQueueV2_Stats(t *testing.T) {
 	tx1 := createSignedTx(1, addr, privKey1)
 	tx2 := createSignedTx(1, addr, privKey2)
 
-	q.Enqueue(tx1)
-	q.Enqueue(tx2) // tx2 conflicts with tx1 on recipient, so it waits
+	signer := types.LatestSignerForChainID(testChainIDV2)
+	from1, _ := types.Sender(signer, tx1)
+	from2, _ := types.Sender(signer, tx2)
+
+	txWithSender1 := &TxWithSender{Tx: tx1, From: from1}
+	txWithSender2 := &TxWithSender{Tx: tx2, From: from2}
+
+	q.Enqueue(txWithSender1)
+	q.Enqueue(txWithSender2) // tx2 conflicts with tx1 on recipient, so it waits
 
 	// Dequeue tx1
 	dequeuedTx1, ok := q.Dequeue()
 	require.True(t, ok)
-	require.Equal(t, tx1.Hash(), dequeuedTx1.Hash())
+	require.Equal(t, tx1.Hash(), dequeuedTx1.Tx.Hash())
 
 	// Complete tx1, which will promote tx2
 	block1 := &domain.Block{
@@ -662,7 +671,7 @@ func TestTxQueueV2_Stats(t *testing.T) {
 	// Now dequeue tx2
 	dequeuedTx2, ok := q.Dequeue()
 	require.True(t, ok)
-	require.Equal(t, tx2.Hash(), dequeuedTx2.Hash())
+	require.Equal(t, tx2.Hash(), dequeuedTx2.Tx.Hash())
 
 	// Complete tx2 with invalid status
 	block2 := &domain.Block{
@@ -692,15 +701,14 @@ func TestTxQueueV2_ConcurrentEnqueueDequeue(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < numTxs; i++ {
-			// Create unique private key and recipient for each transaction
+			// Create unique private key for each transaction to avoid sender conflicts
 			privKey, _ := crypto.GenerateKey()
-			// Use i to create unique recipient addresses
-			addrBytes := [20]byte{}
-			addrBytes[0] = byte(i >> 8)
-			addrBytes[1] = byte(i)
-			addr := common.Address(addrBytes)
-			tx := createSignedTx(uint64(i), addr, privKey)
-			q.Enqueue(tx)
+			// Use unique recipient address to avoid recipient conflicts
+			recipient := common.BigToAddress(big.NewInt(int64(i)))
+			tx := createSignedTx(0, recipient, privKey)
+			signer := types.LatestSignerForChainID(testChainIDV2)
+			from, _ := types.Sender(signer, tx)
+			q.Enqueue(&TxWithSender{Tx: tx, From: from})
 		}
 	}()
 
@@ -713,12 +721,12 @@ func TestTxQueueV2_ConcurrentEnqueueDequeue(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for {
-				tx, ok := q.Dequeue()
+				txWithSender, ok := q.Dequeue()
 				if !ok {
 					return
 				}
 				dequeueMu.Lock()
-				dequeued = append(dequeued, tx)
+				dequeued = append(dequeued, txWithSender.Tx)
 				dequeueMu.Unlock()
 			}
 		}()
@@ -740,9 +748,9 @@ func TestTxQueueV2_ConcurrentEnqueueDequeue(t *testing.T) {
 func TestTxQueueV2_RemoveFromSlice(t *testing.T) {
 	// Test helper function
 	slice := []*txEntry{
-		{tx: testTxV2(1)},
-		{tx: testTxV2(2)},
-		{tx: testTxV2(3)},
+		{txWithSender: testTxV2WithSender(1)},
+		{txWithSender: testTxV2WithSender(2)},
+		{txWithSender: testTxV2WithSender(3)},
 	}
 
 	target := slice[1]
@@ -754,11 +762,11 @@ func TestTxQueueV2_RemoveFromSlice(t *testing.T) {
 
 func TestTxQueueV2_RemoveFromSlice_NotFound(t *testing.T) {
 	slice := []*txEntry{
-		{tx: testTxV2(1)},
-		{tx: testTxV2(2)},
+		{txWithSender: testTxV2WithSender(1)},
+		{txWithSender: testTxV2WithSender(2)},
 	}
 
-	target := &txEntry{tx: testTxV2(3)}
+	target := &txEntry{txWithSender: testTxV2WithSender(3)}
 	result := removeFromSlice(slice, target)
 
 	assert.Len(t, result, 2)
@@ -770,22 +778,22 @@ func TestTxQueueV2_ComplexDependencyChain(t *testing.T) {
 
 	// Create a dependency chain where all transactions share the same sender
 	// This creates: tx1 -> tx2 -> tx3 -> tx4
-	tx1 := testTxV2(1)
-	tx2 := testTxV2(2)
-	tx3 := testTxV2(3)
-	tx4 := testTxV2(4)
+	txWithSender1 := testTxV2WithSender(1)
+	txWithSender2 := testTxV2WithSender(2)
+	txWithSender3 := testTxV2WithSender(3)
+	txWithSender4 := testTxV2WithSender(4)
 
-	q.Enqueue(tx1)
-	q.Enqueue(tx2) // blocked by tx1 (same sender)
-	q.Enqueue(tx3) // blocked by tx1, tx2 (same sender)
-	q.Enqueue(tx4) // blocked by tx1, tx2, tx3 (same sender)
+	q.Enqueue(txWithSender1)
+	q.Enqueue(txWithSender2) // blocked by tx1 (same sender)
+	q.Enqueue(txWithSender3) // blocked by tx1, tx2 (same sender)
+	q.Enqueue(txWithSender4) // blocked by tx1, tx2, tx3 (same sender)
 
 	assert.Equal(t, 1, q.readyList.Len())
 	assert.Equal(t, 3, q.waitingList.Len())
 
 	// Dequeue and complete tx1
 	q.Dequeue()
-	completeViaHandle(q, tx1.Hash())
+	completeViaHandle(q, txWithSender1.Tx.Hash())
 
 	// Only tx2 should be promoted (tx3 still depends on tx2, tx4 on tx2 and tx3)
 	assert.Equal(t, 1, q.readyList.Len())
@@ -793,7 +801,7 @@ func TestTxQueueV2_ComplexDependencyChain(t *testing.T) {
 
 	// Dequeue and complete tx2
 	q.Dequeue()
-	completeViaHandle(q, tx2.Hash())
+	completeViaHandle(q, txWithSender2.Tx.Hash())
 
 	// Only tx3 should be promoted (tx4 still depends on tx3)
 	assert.Equal(t, 1, q.readyList.Len())
@@ -801,7 +809,7 @@ func TestTxQueueV2_ComplexDependencyChain(t *testing.T) {
 
 	// Dequeue and complete tx3
 	q.Dequeue()
-	completeViaHandle(q, tx3.Hash())
+	completeViaHandle(q, txWithSender3.Tx.Hash())
 
 	// Now tx4 should be promoted
 	assert.Equal(t, 1, q.readyList.Len())

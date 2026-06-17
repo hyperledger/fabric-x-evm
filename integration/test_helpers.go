@@ -666,7 +666,12 @@ func (th *TestHarness) Stop() error {
 func processCommon(t *testing.T, gw *core.Gateway, commit bool, tx *types.Transaction) sdk.Endorsement {
 	t.Helper()
 
-	env, err := gw.ExecuteEthTx(t.Context(), tx)
+	from, err := types.Sender(types.LatestSignerForChainID(tx.ChainId()), tx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	env, err := gw.ExecuteEthTx(t.Context(), tx, from)
 	if err != nil {
 		t.Fatal(err)
 	}

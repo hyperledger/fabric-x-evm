@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/ethereum/go-ethereum"
+	ethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-evm/common"
@@ -26,7 +27,7 @@ type stubEndorser struct {
 	callErr  error
 }
 
-func (s *stubEndorser) ProcessEVMTransaction(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction) (*peer.ProposalResponse, error) {
+func (s *stubEndorser) ProcessEVMTransaction(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction, from ethcommon.Address) (*peer.ProposalResponse, error) {
 	return nil, nil
 }
 func (s *stubEndorser) ProcessCall(ctx context.Context, callMsg *ethereum.CallMsg, _ *big.Int) (*peer.ProposalResponse, error) {

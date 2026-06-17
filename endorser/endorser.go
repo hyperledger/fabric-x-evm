@@ -43,7 +43,7 @@ type Endorser struct {
 // EVMEngineInterface defines the interface for EVM execution engines.
 // This allows both *EVMEngine and *testimpl.EVMEngineWrapper to be used.
 type EVMEngineInterface interface {
-	Execute(ctx context.Context, tx *types.Transaction) (endorsement.ExecutionResult, error)
+	Execute(ctx context.Context, tx *types.Transaction, from ethcommon.Address) (endorsement.ExecutionResult, error)
 	Call(msg ethereum.CallMsg, blockNumber *big.Int) ([]byte, error)
 	BalanceAt(ctx context.Context, account ethcommon.Address, blockNumber *big.Int) (*big.Int, error)
 	StorageAt(ctx context.Context, account ethcommon.Address, key ethcommon.Hash, blockNumber *big.Int) ([]byte, error)
@@ -68,14 +68,10 @@ func New(engine *EVMEngine, builder endorsement.Builder, chainID int64) (*Endors
 // ProcessEVMTransaction processes an Ethereum transaction and returns a signed proposal response.
 // Reverts are endorsed and submitted (so the receipt records status=0); pre-execution
 // failures (nonce, gas, signer, EIP-3860, etc.) are rejected before any envelope is cut.
-func (f *Endorser) ProcessEVMTransaction(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction) (*peer.ProposalResponse, error) {
-	// Validate the ethereum transaction signature
-	if _, err := types.Sender(f.ethSigner, ethTx); err != nil {
-		return nil, fmt.Errorf("invalid ethereum signature: %w", err)
-	}
-
-	// Execute the transaction
-	res, err := f.Engine.Execute(ctx, ethTx)
+// The from address is provided by the gateway to avoid redundant signature verification.
+func (f *Endorser) ProcessEVMTransaction(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction, from ethcommon.Address) (*peer.ProposalResponse, error) {
+	// Execute the transaction with the pre-verified sender address
+	res, err := f.Engine.Execute(ctx, ethTx, from)
 	if err != nil {
 		// Distinguish between pre-execution validation errors and execution errors.
 		// Pre-execution errors (from ApplyMessage) indicate the transaction is invalid

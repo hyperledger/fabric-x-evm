@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-x-common/api/committerpb"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
@@ -46,7 +45,7 @@ var SetTxQueueWaitingListSizeMetric func(size int)
 // - Entries in the Ready list have empty IsBlockedBy (no dependencies)
 // - Entries in the Waiting list have non-empty IsBlockedBy (have dependencies)
 type txEntry struct {
-	tx           *types.Transaction
+	txWithSender *TxWithSender    // Transaction with pre-verified sender
 	txHash       common.Hash      // Cached transaction hash
 	participants []common.Address // Cached participants (sender/recipient)
 
@@ -78,9 +77,9 @@ type TxQueueV2 struct {
 	waitingList *list.List // Transactions waiting for dependencies
 
 	// Fast lookup maps
-	participantMap map[common.Address][]*txEntry      // Address -> transactions involving that address
-	hashMap        map[common.Hash]*txEntry           // Tx hash -> transaction entry
-	pendingMap     map[common.Hash]*types.Transaction // Tx hash -> in-progress transactions
+	participantMap map[common.Address][]*txEntry // Address -> transactions involving that address
+	hashMap        map[common.Hash]*txEntry      // Tx hash -> transaction entry
+	pendingMap     map[common.Hash]*TxWithSender // Tx hash -> in-progress transactions
 
 	// Shutdown flag
 	done bool
@@ -100,20 +99,20 @@ func NewTxQueueV2() *TxQueueV2 {
 		waitingList:    list.New(),
 		participantMap: make(map[common.Address][]*txEntry),
 		hashMap:        make(map[common.Hash]*txEntry),
-		pendingMap:     make(map[common.Hash]*types.Transaction),
+		pendingMap:     make(map[common.Hash]*TxWithSender),
 	}
 	q.cond = sync.NewCond(&q.mu)
 	return q
 }
 
-// Enqueue adds a transaction to the queue.
+// Enqueue adds a transaction with its sender to the queue.
 // The transaction is placed in the Ready list if it has no conflicts with
 // in-progress or waiting transactions, otherwise it's placed in the Waiting list
 // with appropriate dependency links.
-func (q *TxQueueV2) Enqueue(tx *types.Transaction) {
+func (q *TxQueueV2) Enqueue(txWithSender *TxWithSender) {
 	// Compute hash and participants outside the lock
-	txHash := tx.Hash()
-	participants := participantsForTx(tx)
+	txHash := txWithSender.Tx.Hash()
+	participants := participantsForTx(*txWithSender)
 
 	// Pre-allocate slices outside the lock
 	blocks := make([]*txEntry, 0)
@@ -121,7 +120,7 @@ func (q *TxQueueV2) Enqueue(tx *types.Transaction) {
 
 	// Create new entry with pre-computed values
 	entry := &txEntry{
-		tx:           tx,
+		txWithSender: txWithSender,
 		txHash:       txHash,
 		participants: participants,
 		blocks:       blocks,
@@ -176,10 +175,10 @@ func (q *TxQueueV2) Enqueue(tx *types.Transaction) {
 	}
 }
 
-// Dequeue removes a transaction from the ready list and moves it to the pending map.
+// Dequeue removes a transaction with sender from the ready list and moves it to the pending map.
 // Blocks if the ready list is empty until a transaction becomes available or the queue is closed.
-// Returns (transaction, true) if successful, or (nil, false) if queue is closed and empty.
-func (q *TxQueueV2) Dequeue() (*types.Transaction, bool) {
+// Returns (*txWithSender, true) if successful, or (nil, false) if queue is closed and empty.
+func (q *TxQueueV2) Dequeue() (*TxWithSender, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -205,7 +204,7 @@ func (q *TxQueueV2) Dequeue() (*types.Transaction, bool) {
 		// Get transaction from front of ready list
 		if elem := q.readyList.Front(); elem != nil {
 			entry := elem.Value.(*txEntry)
-			tx := entry.tx
+			txWithSender := entry.txWithSender
 
 			// Remove from ready list
 			q.readyList.Remove(elem)
@@ -215,7 +214,7 @@ func (q *TxQueueV2) Dequeue() (*types.Transaction, bool) {
 			// Will be removed when Complete is called
 
 			// Move to pending map - use cached hash from entry
-			q.pendingMap[entry.txHash] = tx
+			q.pendingMap[entry.txHash] = txWithSender
 
 			// Record T2 timestamp if tracking is enabled
 			if ProcessingStartTimestamps != nil {
@@ -227,7 +226,7 @@ func (q *TxQueueV2) Dequeue() (*types.Transaction, bool) {
 			loggerV2.Debugf("Dequeue: tx %s, waiting=%d ready=%d pending=%d",
 				entry.txHash.Hex()[:10], q.waitingList.Len(), q.readyList.Len(), len(q.pendingMap))
 
-			return tx, true
+			return txWithSender, true
 		}
 
 		// Ready list became empty while we were waiting, loop again
@@ -292,19 +291,19 @@ func (q *TxQueueV2) completeUnlocked(hash common.Hash) int {
 }
 
 // IsPending checks if a transaction is in the queue (ready, waiting, or being processed).
-// Returns the transaction if found in any location, nil otherwise.
-func (q *TxQueueV2) IsPending(txHash common.Hash) *types.Transaction {
+// Returns the TxWithSender if found in any location, nil otherwise.
+func (q *TxQueueV2) IsPending(txHash common.Hash) *TxWithSender {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
 
 	// Check if transaction is in the pending map (being processed by workers)
-	if tx, exists := q.pendingMap[txHash]; exists {
-		return tx
+	if txWithSender, exists := q.pendingMap[txHash]; exists {
+		return txWithSender
 	}
 
 	// Check if transaction is in the hash map (ready or waiting list)
 	if entry, exists := q.hashMap[txHash]; exists {
-		return entry.tx
+		return entry.txWithSender
 	}
 
 	return nil

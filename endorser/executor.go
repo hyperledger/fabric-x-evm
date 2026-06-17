@@ -76,14 +76,15 @@ func NewEVMEngine(namespace string, kvs KVSSnapshotter, evmConfig EVMConfig, mon
 // State is always read from the latest block: endorsement must simulate against current state
 // so that the resulting read-write set passes MVCC validation at commit time.
 // Reverts produce a valid endorsement (Status 201 + revert event) instead of an error.
-func (e *EVMEngine) Execute(ctx context.Context, tx *types.Transaction) (endorsement.ExecutionResult, error) {
+// The from address is provided to avoid redundant signature verification.
+func (e *EVMEngine) Execute(ctx context.Context, tx *types.Transaction, from common.Address) (endorsement.ExecutionResult, error) {
 	ex, err := e.newExecutor(nil)
 	if err != nil {
 		return endorsement.ExecutionResult{}, err
 	}
 	defer ex.Close()
 
-	ret, err := ex.Send(tx)
+	ret, err := ex.Send(tx, from)
 	if err != nil && !errors.Is(err, vm.ErrExecutionReverted) {
 		return endorsement.ExecutionResult{}, err
 	}
@@ -365,14 +366,8 @@ func (h *Executor) Call(msg ethereum.CallMsg) ([]byte, error) {
 // PrepareMessage validates the sender nonce and converts tx to a core.Message.
 // Exported for use by testimpl wrappers that need to build a message without
 // applying the production free-gas defaults.
-func (h *Executor) PrepareMessage(tx *types.Transaction) (*core.Message, error) {
-	signer := types.MakeSigner(h.ChainCfg, h.BlockCtx.BlockNumber, h.BlockCtx.Time)
-
-	from, err := types.Sender(signer, tx)
-	if err != nil {
-		return nil, err
-	}
-
+// The from address is provided to avoid redundant signature verification.
+func (h *Executor) PrepareMessage(tx *types.Transaction, from common.Address) (*core.Message, error) {
 	// Validate that the transaction nonce matches the ledger state nonce.
 	// This adds an explicit read dependency on the ledger key for the nonce.
 	ledgerNonce := h.state.GetNonce(from)
@@ -382,12 +377,43 @@ func (h *Executor) PrepareMessage(tx *types.Transaction) (*core.Message, error) 
 		return nil, core.ErrNonceTooHigh
 	}
 
-	return core.TransactionToMessage(tx, signer, h.BlockCtx.BaseFee)
+	return TransactionToMessage(tx, from, h.BlockCtx.BaseFee), nil
+}
+
+// TransactionToMessage converts a transaction into a Message.
+func TransactionToMessage(tx *types.Transaction, from common.Address, baseFee *big.Int) *core.Message {
+	msg := &core.Message{
+		Nonce:                 tx.Nonce(),
+		GasLimit:              tx.Gas(),
+		GasPrice:              new(big.Int).Set(tx.GasPrice()),
+		GasFeeCap:             new(big.Int).Set(tx.GasFeeCap()),
+		GasTipCap:             new(big.Int).Set(tx.GasTipCap()),
+		To:                    tx.To(),
+		Value:                 tx.Value(),
+		Data:                  tx.Data(),
+		AccessList:            tx.AccessList(),
+		SetCodeAuthorizations: tx.SetCodeAuthorizations(),
+		SkipNonceChecks:       false,
+		SkipTransactionChecks: false,
+		BlobHashes:            tx.BlobHashes(),
+		BlobGasFeeCap:         tx.BlobGasFeeCap(),
+	}
+	// If baseFee provided, set gasPrice to effectiveGasPrice.
+	if baseFee != nil {
+		msg.GasPrice = msg.GasPrice.Add(msg.GasTipCap, baseFee)
+		if msg.GasPrice.Cmp(msg.GasFeeCap) > 0 {
+			msg.GasPrice = msg.GasFeeCap
+		}
+	}
+
+	msg.From = from
+	return msg
 }
 
 // Send validates nonce, converts tx to a message, applies production defaults, and executes.
-func (h *Executor) Send(tx *types.Transaction) ([]byte, error) {
-	msg, err := h.PrepareMessage(tx)
+// The from address is provided to avoid redundant signature verification.
+func (h *Executor) Send(tx *types.Transaction, from common.Address) ([]byte, error) {
+	msg, err := h.PrepareMessage(tx, from)
 	if err != nil {
 		return nil, err
 	}
