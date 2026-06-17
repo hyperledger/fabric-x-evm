@@ -40,8 +40,9 @@ var SetBatchSubmitterQueueSizeMetric func(size int)
 // The cache is used by AllTxBatchDispatcher to correlate commit events with the
 // originating Ethereum transaction.
 // Multiple worker goroutines read from inputChan and submit in parallel.
+// Each worker has its own submitter instance for better performance.
 type BatchSubmitter struct {
-	submitter  Submitter
+	submitters []Submitter     // One submitter per worker for parallel submission
 	cache      *PendingTxCache // nil → skip cache; non-nil → store EthTxBytes keyed by FabricTxID
 	inputChan  chan sdk.Endorsement
 	stopChan   chan struct{}
@@ -54,8 +55,9 @@ const DefaultNumWorkers = 16
 // NewBatchSubmitter creates a new BatchSubmitter.
 // If cache is non-nil, EthTxBytes are stored per-transaction before submission.
 // numWorkers specifies the number of parallel submission goroutines (default: 16).
+// Creates one submitter instance per worker for optimal parallel performance.
 func NewBatchSubmitter(
-	submitter Submitter,
+	submitters []Submitter,
 	cache *PendingTxCache,
 	inputChan chan sdk.Endorsement,
 	numWorkers int,
@@ -63,8 +65,14 @@ func NewBatchSubmitter(
 	if numWorkers <= 0 {
 		numWorkers = DefaultNumWorkers
 	}
+
+	// Ensure we have enough submitters for the workers
+	if len(submitters) < numWorkers {
+		panic(fmt.Sprintf("Only %d submitters provided for %d workers.", len(submitters), numWorkers))
+	}
+
 	return &BatchSubmitter{
-		submitter:  submitter,
+		submitters: submitters,
 		cache:      cache,
 		inputChan:  inputChan,
 		stopChan:   make(chan struct{}),
@@ -82,6 +90,20 @@ func (bs *BatchSubmitter) Start(ctx context.Context) {
 func (bs *BatchSubmitter) Stop() {
 	close(bs.stopChan)
 	<-bs.doneChan
+}
+
+// Close closes all submitter connections.
+func (bs *BatchSubmitter) Close() error {
+	var firstErr error
+	for i, submitter := range bs.submitters {
+		if err := submitter.Close(); err != nil {
+			batchLogger.Errorf("Failed to close submitter %d: %v", i, err)
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+	return firstErr
 }
 
 func (bs *BatchSubmitter) run(ctx context.Context) {
@@ -119,14 +141,14 @@ func (bs *BatchSubmitter) worker(ctx context.Context, workerID int, wg *sync.Wai
 			if !ok {
 				return
 			}
-			if err := bs.submitOne(ctx, end); err != nil {
+			if err := bs.submitOne(ctx, workerID, end); err != nil {
 				batchLogger.Errorf("Worker %d: submit failed: %v", workerID, err)
 			}
 		}
 	}
 }
 
-func (bs *BatchSubmitter) submitOne(ctx context.Context, end sdk.Endorsement) error {
+func (bs *BatchSubmitter) submitOne(ctx context.Context, workerID int, end sdk.Endorsement) error {
 	var txid string
 	if bs.cache != nil {
 		var err error
@@ -152,8 +174,8 @@ func (bs *BatchSubmitter) submitOne(ctx context.Context, end sdk.Endorsement) er
 		}
 	}
 	t0 := time.Now()
-	err := bs.submitter.Submit(ctx, end)
-	batchLogger.Debugf("[SUBMIT] txid=%s submit_took=%v", txid, time.Since(t0))
+	err := bs.submitters[workerID].Submit(ctx, end)
+	batchLogger.Debugf("[SUBMIT] worker=%d txid=%s submit_took=%v", workerID, txid, time.Since(t0))
 	return err
 }
 

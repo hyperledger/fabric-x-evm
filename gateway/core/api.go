@@ -66,7 +66,7 @@ var logger = flogging.MustGetLogger("gateway.core")
 // contract, the gateway requests endorsement from a set of EVM endorsers. It then
 // submits a signed transaction with the read/writeset to the Fabric orderers.
 type Gateway struct {
-	submitter       Submitter
+	batchSubmitter  *BatchSubmitter
 	endorsers       *EndorsementClient
 	store           Store
 	chainID         *big.Int
@@ -96,9 +96,9 @@ type Store interface {
 
 // New creates a new Ethereum Gateway.
 // If txQueue is nil, NewTxQueue() will be used as the default.
-// batchSubmitter is required and handles all endorsement submissions.
+// batchSubmitter handles all endorsement submissions and is owned by the Gateway.
 // endorsementChan is the channel to send endorsements to the BatchSubmitter.
-func New(ec *EndorsementClient, submitter Submitter, store Store, chainID int64, workerCount int, txQueue TxQueueInterface, endorsementChan chan sdk.Endorsement) (*Gateway, error) {
+func New(ec *EndorsementClient, batchSubmitter *BatchSubmitter, store Store, chainID int64, workerCount int, txQueue TxQueueInterface, endorsementChan chan sdk.Endorsement) (*Gateway, error) {
 	if workerCount <= 0 {
 		workerCount = 1
 	}
@@ -111,7 +111,7 @@ func New(ec *EndorsementClient, submitter Submitter, store Store, chainID int64,
 	cid := big.NewInt(chainID)
 	return &Gateway{
 		endorsers:       ec,
-		submitter:       submitter,
+		batchSubmitter:  batchSubmitter,
 		store:           store,
 		chainID:         cid,
 		ChainConfig:     cmn.BuildChainConfig(chainID),
@@ -368,7 +368,7 @@ func (g *Gateway) GetLogs(ctx context.Context, query domain.LogFilter) ([]domain
 }
 
 // Stop performs an orderly shutdown of the gateway.
-// It closes the transaction queue, waits for all workers to finish, and closes connections.
+// It closes the transaction queue, waits for all workers to finish, and closes the batch submitter.
 func (g *Gateway) Stop() error {
 	var err error
 	g.stopOnce.Do(func() {
@@ -378,8 +378,9 @@ func (g *Gateway) Stop() error {
 		// Wait for all workers to finish processing
 		g.wg.Wait()
 
-		// Close submitter connection
-		err = g.submitter.Close()
+		// Stop and close batch submitter
+		g.batchSubmitter.Stop()
+		err = g.batchSubmitter.Close()
 	})
 
 	total, invalid, totalEnq, conflictEnq := g.TxQueue.Stats()

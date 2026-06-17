@@ -151,31 +151,39 @@ func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg confi
 		t.Cleanup(func() { chain.Close() })
 	}
 
-	// Build submitter
+	// Build submitters (one per worker for parallel submission)
 	orderers := make([]network.OrdererConf, len(cfg.Gateway.Orderers))
 	for i, o := range cfg.Gateway.Orderers {
 		orderers[i] = o.ToOrdererConf()
 	}
 
-	var submitter core.Submitter
+	submitterCount := cfg.Gateway.SubmitterCount
+	if submitterCount <= 0 {
+		submitterCount = core.DefaultNumWorkers
+	}
+	submitters := make([]core.Submitter, submitterCount)
 	var sync *network.Synchronizer
 	var err1 error
 
 	if bypass {
-		// Use local submitter for bypass mode (no network communication)
-		submitter = local.NewLocalSubmitter(dbs[0], cfg.Network.Channel, cfg.Network.Namespace, nfab.NewTxPackager(gwSigner), bfab.NewBlockParser(logger), false)
-	} else {
-		// Create network submitter
-		switch cfg.Network.Protocol {
-		case "fabric":
-			submitter, err1 = nfab.NewSubmitter(t.Context(), orderers, gwSigner, 0, logger)
-		case "fabric-x", "":
-			submitter, err1 = nfabx.NewSubmitter(t.Context(), orderers, gwSigner, 0, logger)
-		default:
-			return nil, nil, fmt.Errorf("unsupported protocol: %q", cfg.Network.Protocol)
+		// Use local submitters for bypass mode (no network communication)
+		for i := 0; i < submitterCount; i++ {
+			submitters[i] = local.NewLocalSubmitter(dbs[0], cfg.Network.Channel, cfg.Network.Namespace, nfab.NewTxPackager(gwSigner), bfab.NewBlockParser(logger), false)
 		}
-		if err1 != nil {
-			return nil, nil, err1
+	} else {
+		// Create network submitters
+		for i := 0; i < submitterCount; i++ {
+			switch cfg.Network.Protocol {
+			case "fabric":
+				submitters[i], err1 = nfab.NewSubmitter(t.Context(), orderers, gwSigner, 0, logger)
+			case "fabric-x", "":
+				submitters[i], err1 = nfabx.NewSubmitter(t.Context(), orderers, gwSigner, 0, logger)
+			default:
+				return nil, nil, fmt.Errorf("unsupported protocol: %q", cfg.Network.Protocol)
+			}
+			if err1 != nil {
+				return nil, nil, fmt.Errorf("failed to create submitter %d: %w", i, err1)
+			}
 		}
 	}
 
@@ -191,13 +199,13 @@ func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg confi
 
 	// Create BatchSubmitter infrastructure
 	endorsementChan := make(chan sdk.Endorsement, 1000)
-	batchSubmitter := core.NewBatchSubmitter(submitter, cache, endorsementChan, cfg.Gateway.SubmitterCount)
+	batchSubmitter := core.NewBatchSubmitter(submitters, cache, endorsementChan, cfg.Gateway.SubmitterCount)
 
 	batchSubmitter.Start(t.Context())
-	t.Cleanup(func() { batchSubmitter.Stop() })
 
 	// Create gateway before synchronizer so we can register it as a handler
-	gw, err := core.New(ec, submitter, store, cfg.Network.ChainID, cfg.Gateway.WorkerCount, txQueue, endorsementChan)
+	// Gateway owns the BatchSubmitter and will handle its lifecycle
+	gw, err := core.New(ec, batchSubmitter, store, cfg.Network.ChainID, cfg.Gateway.WorkerCount, txQueue, endorsementChan)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -288,8 +296,8 @@ func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg confi
 	gw.Start(t.Context())
 	t.Cleanup(func() { gw.Stop() })
 
-	// Create state primer
-	primer, err := NewStatePrimer(gw, submitter, dbs[0], cfg.Network.Namespace, gwSigner, builders, cfg.Network.Channel, cfg.Network.NsVersion, cfg.Network.Protocol == "fabric-x")
+	// Create state primer (use first submitter)
+	primer, err := NewStatePrimer(gw, submitters[0], dbs[0], cfg.Network.Namespace, gwSigner, builders, cfg.Network.Channel, cfg.Network.NsVersion, cfg.Network.Protocol == "fabric-x")
 	if err != nil {
 		return nil, nil, err
 	}

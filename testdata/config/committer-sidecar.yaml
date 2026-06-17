@@ -16,7 +16,7 @@ monitoring:
   tls: *tlsConfig
 
 orderer:
-  fault-tolerance-level: BFT
+  fault-tolerance-level: CFT
   latest-known-config-block-path: /bootstrap/genesis.block
   tls:
     mode: mtls

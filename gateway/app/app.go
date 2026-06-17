@@ -39,7 +39,6 @@ type App struct {
 	endorserSyncs []*network.Synchronizer
 	gwSync        *network.Synchronizer
 	gateway       *core.Gateway
-	submitter     core.Submitter
 	chain         *core.Chain
 	rpcServer     *rpc.Server
 	httpServer    *http.Server
@@ -101,17 +100,24 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 		orderers[i] = o.ToOrdererConf()
 	}
 
-	var submitter core.Submitter
-	switch cfg.Network.Protocol {
-	case "fabric":
-		submitter, err = nfab.NewSubmitter(ctx, orderers, gwSigner, 0, logger)
-	case "fabric-x", "":
-		submitter, err = nfabx.NewSubmitter(ctx, orderers, gwSigner, 0, logger)
-	default:
-		return nil, fmt.Errorf("unsupported protocol: %q", cfg.Network.Protocol)
+	// Create multiple submitter instances for parallel submission (one per worker)
+	submitterCount := cfg.Gateway.SubmitterCount
+	if submitterCount <= 0 {
+		submitterCount = core.DefaultNumWorkers
 	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to create submitter: %w", err)
+	submitters := make([]core.Submitter, submitterCount)
+	for i := 0; i < submitterCount; i++ {
+		switch cfg.Network.Protocol {
+		case "fabric":
+			submitters[i], err = nfab.NewSubmitter(ctx, orderers, gwSigner, 0, logger)
+		case "fabric-x", "":
+			submitters[i], err = nfabx.NewSubmitter(ctx, orderers, gwSigner, 0, logger)
+		default:
+			return nil, fmt.Errorf("unsupported protocol: %q", cfg.Network.Protocol)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to create submitter %d: %w", i, err)
+		}
 	}
 
 	chain, err := core.NewChain(cfg.Gateway.Database.ConnString, cfg.Gateway.Database.TriePath, false)
@@ -121,10 +127,11 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 
 	// Create BatchSubmitter infrastructure (no cache needed — app uses chain-based synchronizer)
 	endorsementChan := make(chan sdk.Endorsement, 1000)
-	batchSubmitter := core.NewBatchSubmitter(submitter, nil, endorsementChan, cfg.Gateway.SubmitterCount)
+	batchSubmitter := core.NewBatchSubmitter(submitters, nil, endorsementChan, cfg.Gateway.SubmitterCount)
 	batchSubmitter.Start(ctx)
 
-	gateway, err := core.New(ec, submitter, chain, cfg.Network.ChainID, cfg.Gateway.WorkerCount, nil, endorsementChan)
+	// Gateway owns the BatchSubmitter and will handle its lifecycle
+	gateway, err := core.New(ec, batchSubmitter, chain, cfg.Network.ChainID, cfg.Gateway.WorkerCount, nil, endorsementChan)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gateway: %w", err)
 	}
@@ -181,7 +188,6 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 		endorserSyncs: endorserSyncs,
 		gwSync:        gwSync,
 		gateway:       gateway,
-		submitter:     submitter,
 		chain:         chain,
 		rpcServer:     rpcServer,
 	}, nil
@@ -245,12 +251,12 @@ func (a *App) Shutdown() error {
 		}
 	}
 
-	// Stop gateway workers
-	appLogger.Debug("stopping gateway workers...")
+	// Stop gateway workers and batch submitter
+	appLogger.Debug("stopping gateway...")
 	if err := a.gateway.Stop(); err != nil {
 		appLogger.Warnf("gateway stop error: %v", err)
 	} else {
-		appLogger.Debug("gateway workers stopped")
+		appLogger.Debug("gateway stopped")
 	}
 
 	// Close chain (trie + database)
