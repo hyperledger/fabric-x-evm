@@ -4,7 +4,7 @@ General:
   ListenAddress: 0.0.0.0
   ListenPort: 7252
   TLS:
-    Enabled: false
+    Enabled: true
     PrivateKey: /node-tls/server.key
     Certificate: /node-tls/server.crt
     RootCAs:

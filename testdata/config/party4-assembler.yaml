@@ -56,7 +56,7 @@ Metrics:
 Assembler:
   PrefetchBufferMemoryBytes: 1073741824
   LedgerScanTimeout: 5s
-  EvictionTtlL: 1h
+  PrefetchEvictionTtl: 1h
   PopWaitMonitorTimeout: 1s
   ReplicationChannelSize: 100
   BatchRequestsChannelSize: 1000

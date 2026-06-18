@@ -173,7 +173,7 @@ Application: &ApplicationDefaults
 
 Orderer: &OrdererDefaults
   OrdererType: arma
-  BatchTimeout: 500ms
+  BatchTimeout: 25ms
   BatchSize:
     MaxMessageCount: 3500
     AbsoluteMaxBytes: 16 MB

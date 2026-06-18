@@ -1,5 +1,6 @@
 bin
 release
+data
 node_modules
 .gomodcache
 .vscode
@@ -13,6 +14,7 @@ testdata/*
 !testdata/tether_txs.json
 !testdata/alloc_tether_replay.json
 !testdata/test_accounts.json
+!testdata/shared_config.yaml
 *.un~
 *.swp
 !testdata/fablo
@@ -33,3 +35,5 @@ integration/perf/*.png
 integration/perf/*.csv
 integration/perf/*.html
 integration/perf/*.json
+
+*.log

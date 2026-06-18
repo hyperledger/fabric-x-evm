@@ -14,6 +14,7 @@ services:
   # ─── Orderer Party 1 ───────────────────────────────────────────────────────
 
   orderer-party1-router:
+    container_name: orderer-party1-router
     image: ghcr.io/hyperledger/fabric-x-orderer:1.0.0
     pull_policy: missing
     restart: unless-stopped
@@ -39,11 +40,14 @@ services:
       - fabric-x
 
   orderer-party1-batcher:
+    container_name: orderer-party1-batcher
     image: ghcr.io/hyperledger/fabric-x-orderer:1.0.0
     pull_policy: missing
     restart: unless-stopped
     user: "${UID:-1000}:${GID:-1000}"
     command: batcher --config=/config/node_config.yaml
+    ports:
+      - "7051:7051"
     volumes:
       - ./testdata/config/party1-batcher.yaml:/config/node_config.yaml:ro,Z
       - ./testdata/crypto/ordererOrganizations/orderer-org-1/orderers/party1/batcher1.orderer-org-1/tls:/node-tls:ro,Z
@@ -55,11 +59,14 @@ services:
       - fabric-x
 
   orderer-party1-consenter:
+    container_name: orderer-party1-consenter
     image: ghcr.io/hyperledger/fabric-x-orderer:1.0.0
     pull_policy: missing
     restart: unless-stopped
     user: "${UID:-1000}:${GID:-1000}"
     command: consensus --config=/config/node_config.yaml
+    ports:
+      - "7052:7052"
     volumes:
       - ./testdata/config/party1-consenter.yaml:/config/node_config.yaml:ro,Z
       - ./testdata/crypto/ordererOrganizations/orderer-org-1/orderers/party1/consenter.orderer-org-1/tls:/node-tls:ro,Z
@@ -71,6 +78,7 @@ services:
       - fabric-x
 
   orderer-party1-assembler:
+    container_name: orderer-party1-assembler
     image: ghcr.io/hyperledger/fabric-x-orderer:1.0.0
     pull_policy: missing
     restart: unless-stopped
@@ -92,6 +100,7 @@ services:
   # ─── Orderer Party 2 ───────────────────────────────────────────────────────
 
   orderer-party2-router:
+    container_name: orderer-party2-router
     image: ghcr.io/hyperledger/fabric-x-orderer:1.0.0
     pull_policy: missing
     restart: unless-stopped
@@ -111,11 +120,14 @@ services:
       - fabric-x
 
   orderer-party2-batcher:
+    container_name: orderer-party2-batcher
     image: ghcr.io/hyperledger/fabric-x-orderer:1.0.0
     pull_policy: missing
     restart: unless-stopped
     user: "${UID:-1000}:${GID:-1000}"
     command: batcher --config=/config/node_config.yaml
+    ports:
+      - "7151:7151"
     volumes:
       - ./testdata/config/party2-batcher.yaml:/config/node_config.yaml:ro,Z
       - ./testdata/crypto/ordererOrganizations/orderer-org-2/orderers/party2/batcher1.orderer-org-2/tls:/node-tls:ro,Z
@@ -127,11 +139,14 @@ services:
       - fabric-x
 
   orderer-party2-consenter:
+    container_name: orderer-party2-consenter
     image: ghcr.io/hyperledger/fabric-x-orderer:1.0.0
     pull_policy: missing
     restart: unless-stopped
     user: "${UID:-1000}:${GID:-1000}"
     command: consensus --config=/config/node_config.yaml
+    ports:
+      - "7152:7152"
     volumes:
       - ./testdata/config/party2-consenter.yaml:/config/node_config.yaml:ro,Z
       - ./testdata/crypto/ordererOrganizations/orderer-org-2/orderers/party2/consenter.orderer-org-2/tls:/node-tls:ro,Z
@@ -143,6 +158,7 @@ services:
       - fabric-x
 
   orderer-party2-assembler:
+    container_name: orderer-party2-assembler
     image: ghcr.io/hyperledger/fabric-x-orderer:1.0.0
     pull_policy: missing
     restart: unless-stopped
@@ -164,6 +180,7 @@ services:
   # ─── Orderer Party 3 ───────────────────────────────────────────────────────
 
   orderer-party3-router:
+    container_name: orderer-party3-router
     image: ghcr.io/hyperledger/fabric-x-orderer:1.0.0
     pull_policy: missing
     restart: unless-stopped
@@ -183,11 +200,14 @@ services:
       - fabric-x
 
   orderer-party3-batcher:
+    container_name: orderer-party3-batcher
     image: ghcr.io/hyperledger/fabric-x-orderer:1.0.0
     pull_policy: missing
     restart: unless-stopped
     user: "${UID:-1000}:${GID:-1000}"
     command: batcher --config=/config/node_config.yaml
+    ports:
+      - "7251:7251"
     volumes:
       - ./testdata/config/party3-batcher.yaml:/config/node_config.yaml:ro,Z
       - ./testdata/crypto/ordererOrganizations/orderer-org-3/orderers/party3/batcher1.orderer-org-3/tls:/node-tls:ro,Z
@@ -199,11 +219,14 @@ services:
       - fabric-x
 
   orderer-party3-consenter:
+    container_name: orderer-party3-consenter
     image: ghcr.io/hyperledger/fabric-x-orderer:1.0.0
     pull_policy: missing
     restart: unless-stopped
     user: "${UID:-1000}:${GID:-1000}"
     command: consensus --config=/config/node_config.yaml
+    ports:
+      - "7252:7252"
     volumes:
       - ./testdata/config/party3-consenter.yaml:/config/node_config.yaml:ro,Z
       - ./testdata/crypto/ordererOrganizations/orderer-org-3/orderers/party3/consenter.orderer-org-3/tls:/node-tls:ro,Z
@@ -215,6 +238,7 @@ services:
       - fabric-x
 
   orderer-party3-assembler:
+    container_name: orderer-party3-assembler
     image: ghcr.io/hyperledger/fabric-x-orderer:1.0.0
     pull_policy: missing
     restart: unless-stopped
@@ -236,6 +260,7 @@ services:
   # ─── Orderer Party 4 ───────────────────────────────────────────────────────
 
   orderer-party4-router:
+    container_name: orderer-party4-router
     image: ghcr.io/hyperledger/fabric-x-orderer:1.0.0
     pull_policy: missing
     restart: unless-stopped
@@ -255,11 +280,14 @@ services:
       - fabric-x
 
   orderer-party4-batcher:
+    container_name: orderer-party4-batcher
     image: ghcr.io/hyperledger/fabric-x-orderer:1.0.0
     pull_policy: missing
     restart: unless-stopped
     user: "${UID:-1000}:${GID:-1000}"
     command: batcher --config=/config/node_config.yaml
+    ports:
+      - "7351:7351"
     volumes:
       - ./testdata/config/party4-batcher.yaml:/config/node_config.yaml:ro,Z
       - ./testdata/crypto/ordererOrganizations/orderer-org-4/orderers/party4/batcher1.orderer-org-4/tls:/node-tls:ro,Z
@@ -271,11 +299,14 @@ services:
       - fabric-x
 
   orderer-party4-consenter:
+    container_name: orderer-party4-consenter
     image: ghcr.io/hyperledger/fabric-x-orderer:1.0.0
     pull_policy: missing
     restart: unless-stopped
     user: "${UID:-1000}:${GID:-1000}"
     command: consensus --config=/config/node_config.yaml
+    ports:
+      - "7352:7352"
     volumes:
       - ./testdata/config/party4-consenter.yaml:/config/node_config.yaml:ro,Z
       - ./testdata/crypto/ordererOrganizations/orderer-org-4/orderers/party4/consenter.orderer-org-4/tls:/node-tls:ro,Z
@@ -287,6 +318,7 @@ services:
       - fabric-x
 
   orderer-party4-assembler:
+    container_name: orderer-party4-assembler
     image: ghcr.io/hyperledger/fabric-x-orderer:1.0.0
     pull_policy: missing
     restart: unless-stopped
