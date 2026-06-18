@@ -1,5 +1,3 @@
-
-
 #!/bin/bash
 
 # Party 1
