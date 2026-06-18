@@ -36,6 +36,9 @@ services:
       timeout: 3s
       retries: 20
       start_period: 10s
+    depends_on:
+      orderer-party1-assembler:
+        condition: service_healthy
     networks:
       - fabric-x
 
@@ -55,6 +58,21 @@ services:
       - ./testdata/crypto/ordererOrganizations/orderer-org-1/msp/tlscacerts/tlsca.orderer-org-1-cert.pem:/org-tls-ca.pem:ro,Z
       - ./testdata/crypto/config-block.pb.bin:/bootstrap/genesis.block:ro,Z
       - ./data/orderers/party1-batcher:/data:Z
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9443/metrics"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    depends_on:
+      orderer-party1-consenter:
+        condition: service_healthy
+      orderer-party2-consenter:
+        condition: service_healthy
+      orderer-party3-consenter:
+        condition: service_healthy
+      orderer-party4-consenter:
+        condition: service_healthy
     networks:
       - fabric-x
 
@@ -74,6 +92,12 @@ services:
       - ./testdata/crypto/ordererOrganizations/orderer-org-1/msp/tlscacerts/tlsca.orderer-org-1-cert.pem:/org-tls-ca.pem:ro,Z
       - ./testdata/crypto/config-block.pb.bin:/bootstrap/genesis.block:ro,Z
       - ./data/orderers/party1-consenter:/data:Z
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9443/metrics"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
     networks:
       - fabric-x
 
@@ -94,6 +118,15 @@ services:
       - ./testdata/crypto/client-tls-ca.pem:/client-tls-ca.pem:ro,Z
       - ./testdata/crypto/config-block.pb.bin:/bootstrap/genesis.block:ro,Z
       - ./data/orderers/party1-assembler:/data:Z
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9443/metrics"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    depends_on:
+      orderer-party1-batcher:
+        condition: service_healthy
     networks:
       - fabric-x
 
@@ -116,6 +149,15 @@ services:
       - ./testdata/crypto/client-tls-ca.pem:/client-tls-ca.pem:ro,Z
       - ./testdata/crypto/config-block.pb.bin:/bootstrap/genesis.block:ro,Z
       - ./data/orderers/party2-router:/data:Z
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9443/metrics"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    depends_on:
+      orderer-party2-assembler:
+        condition: service_healthy
     networks:
       - fabric-x
 
@@ -135,6 +177,21 @@ services:
       - ./testdata/crypto/ordererOrganizations/orderer-org-2/msp/tlscacerts/tlsca.orderer-org-2-cert.pem:/org-tls-ca.pem:ro,Z
       - ./testdata/crypto/config-block.pb.bin:/bootstrap/genesis.block:ro,Z
       - ./data/orderers/party2-batcher:/data:Z
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9443/metrics"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    depends_on:
+      orderer-party1-consenter:
+        condition: service_healthy
+      orderer-party2-consenter:
+        condition: service_healthy
+      orderer-party3-consenter:
+        condition: service_healthy
+      orderer-party4-consenter:
+        condition: service_healthy
     networks:
       - fabric-x
 
@@ -154,6 +211,12 @@ services:
       - ./testdata/crypto/ordererOrganizations/orderer-org-2/msp/tlscacerts/tlsca.orderer-org-2-cert.pem:/org-tls-ca.pem:ro,Z
       - ./testdata/crypto/config-block.pb.bin:/bootstrap/genesis.block:ro,Z
       - ./data/orderers/party2-consenter:/data:Z
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9443/metrics"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
     networks:
       - fabric-x
 
@@ -174,6 +237,15 @@ services:
       - ./testdata/crypto/client-tls-ca.pem:/client-tls-ca.pem:ro,Z
       - ./testdata/crypto/config-block.pb.bin:/bootstrap/genesis.block:ro,Z
       - ./data/orderers/party2-assembler:/data:Z
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9443/metrics"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    depends_on:
+      orderer-party2-batcher:
+        condition: service_healthy
     networks:
       - fabric-x
 
@@ -196,6 +268,15 @@ services:
       - ./testdata/crypto/client-tls-ca.pem:/client-tls-ca.pem:ro,Z
       - ./testdata/crypto/config-block.pb.bin:/bootstrap/genesis.block:ro,Z
       - ./data/orderers/party3-router:/data:Z
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9443/metrics"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    depends_on:
+      orderer-party3-assembler:
+        condition: service_healthy
     networks:
       - fabric-x
 
@@ -215,6 +296,21 @@ services:
       - ./testdata/crypto/ordererOrganizations/orderer-org-3/msp/tlscacerts/tlsca.orderer-org-3-cert.pem:/org-tls-ca.pem:ro,Z
       - ./testdata/crypto/config-block.pb.bin:/bootstrap/genesis.block:ro,Z
       - ./data/orderers/party3-batcher:/data:Z
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9443/metrics"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    depends_on:
+      orderer-party1-consenter:
+        condition: service_healthy
+      orderer-party2-consenter:
+        condition: service_healthy
+      orderer-party3-consenter:
+        condition: service_healthy
+      orderer-party4-consenter:
+        condition: service_healthy
     networks:
       - fabric-x
 
@@ -234,6 +330,12 @@ services:
       - ./testdata/crypto/ordererOrganizations/orderer-org-3/msp/tlscacerts/tlsca.orderer-org-3-cert.pem:/org-tls-ca.pem:ro,Z
       - ./testdata/crypto/config-block.pb.bin:/bootstrap/genesis.block:ro,Z
       - ./data/orderers/party3-consenter:/data:Z
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9443/metrics"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
     networks:
       - fabric-x
 
@@ -254,6 +356,15 @@ services:
       - ./testdata/crypto/client-tls-ca.pem:/client-tls-ca.pem:ro,Z
       - ./testdata/crypto/config-block.pb.bin:/bootstrap/genesis.block:ro,Z
       - ./data/orderers/party3-assembler:/data:Z
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9443/metrics"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    depends_on:
+      orderer-party3-batcher:
+        condition: service_healthy
     networks:
       - fabric-x
 
@@ -276,6 +387,15 @@ services:
       - ./testdata/crypto/client-tls-ca.pem:/client-tls-ca.pem:ro,Z
       - ./testdata/crypto/config-block.pb.bin:/bootstrap/genesis.block:ro,Z
       - ./data/orderers/party4-router:/data:Z
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9443/metrics"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    depends_on:
+      orderer-party4-assembler:
+        condition: service_healthy
     networks:
       - fabric-x
 
@@ -295,6 +415,21 @@ services:
       - ./testdata/crypto/ordererOrganizations/orderer-org-4/msp/tlscacerts/tlsca.orderer-org-4-cert.pem:/org-tls-ca.pem:ro,Z
       - ./testdata/crypto/config-block.pb.bin:/bootstrap/genesis.block:ro,Z
       - ./data/orderers/party4-batcher:/data:Z
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9443/metrics"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    depends_on:
+      orderer-party1-consenter:
+        condition: service_healthy
+      orderer-party2-consenter:
+        condition: service_healthy
+      orderer-party3-consenter:
+        condition: service_healthy
+      orderer-party4-consenter:
+        condition: service_healthy
     networks:
       - fabric-x
 
@@ -314,6 +449,12 @@ services:
       - ./testdata/crypto/ordererOrganizations/orderer-org-4/msp/tlscacerts/tlsca.orderer-org-4-cert.pem:/org-tls-ca.pem:ro,Z
       - ./testdata/crypto/config-block.pb.bin:/bootstrap/genesis.block:ro,Z
       - ./data/orderers/party4-consenter:/data:Z
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9443/metrics"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
     networks:
       - fabric-x
 
@@ -334,6 +475,15 @@ services:
       - ./testdata/crypto/client-tls-ca.pem:/client-tls-ca.pem:ro,Z
       - ./testdata/crypto/config-block.pb.bin:/bootstrap/genesis.block:ro,Z
       - ./data/orderers/party4-assembler:/data:Z
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9443/metrics"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    depends_on:
+      orderer-party4-batcher:
+        condition: service_healthy
     networks:
       - fabric-x
 
@@ -429,6 +579,12 @@ services:
       committer-coordinator:
         condition: service_started
       orderer-party1-router:
+        condition: service_healthy
+      orderer-party2-router:
+        condition: service_healthy
+      orderer-party3-router:
+        condition: service_healthy
+      orderer-party4-router:
         condition: service_healthy
     networks:
       - fabric-x
