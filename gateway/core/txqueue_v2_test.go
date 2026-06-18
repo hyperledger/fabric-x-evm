@@ -291,16 +291,16 @@ func TestTxQueueV2_Complete_PromotesOneTransaction(t *testing.T) {
 func TestTxQueueV2_Complete_PromotesMultipleTransactions(t *testing.T) {
 	q := NewTxQueueV2()
 
-	// This test verifies that when multiple transactions depend on a single transaction,
-	// they all get promoted when that transaction completes (if they have no other dependencies).
+	// With the new queue jumping logic, when transactions share participants:
+	// - tx1 goes to ready (no conflicts)
+	// - tx2 waits for tx1 (same sender)
+	// - tx3 waits for tx1 (same sender) AND makes tx2 also wait for tx3
 	//
-	// Given the current participant extraction logic (sender + ERC20 recipient from calldata),
-	// it's actually difficult to create a scenario where multiple transactions depend ONLY on
-	// one transaction but not on each other, because:
-	// - If they share the same sender, they form a chain
-	// - If they share the same ERC20 recipient, they form a chain
+	// This creates a dependency structure where:
+	// - tx1 blocks both tx2 and tx3
+	// - tx3 also blocks tx2
 	//
-	// So this test demonstrates the chain behavior: tx1 -> tx2 -> tx3
+	// So the completion order is: tx1 -> tx3 -> tx2 (or tx1 -> tx2 -> tx3 depending on which becomes ready first)
 
 	tx1 := testTxV2(1)
 	tx2 := testTxV2(2)
@@ -308,24 +308,25 @@ func TestTxQueueV2_Complete_PromotesMultipleTransactions(t *testing.T) {
 
 	q.Enqueue(tx1)
 	q.Enqueue(tx2) // blocked by tx1 (same sender)
-	q.Enqueue(tx3) // blocked by tx1 and tx2 (same sender)
+	q.Enqueue(tx3) // blocked by tx1 (same sender), and makes tx2 also wait for tx3
 
-	// Verify chain structure
+	// Verify initial structure
 	assert.Equal(t, 1, q.readyList.Len())
 	assert.Equal(t, 2, q.waitingList.Len())
 
 	q.Dequeue() // Dequeue tx1
 	completeViaHandle(q, tx1.Hash())
 
-	// Only tx2 should be promoted (tx3 still depends on tx2)
+	// After tx1 completes, both tx2 and tx3 lose one blocker
+	// But tx2 still waits for tx3, so only tx3 should be promoted
 	assert.Equal(t, 1, q.readyList.Len())
 	assert.Equal(t, 1, q.waitingList.Len())
 
-	// Now dequeue and complete tx2
+	// Now dequeue and complete tx3
 	q.Dequeue()
-	completeViaHandle(q, tx2.Hash())
+	completeViaHandle(q, tx3.Hash())
 
-	// Now tx3 should be promoted
+	// Now tx2 should be promoted
 	assert.Equal(t, 1, q.readyList.Len())
 	assert.Equal(t, 0, q.waitingList.Len())
 }
@@ -768,8 +769,19 @@ func TestTxQueueV2_RemoveFromSlice_NotFound(t *testing.T) {
 func TestTxQueueV2_ComplexDependencyChain(t *testing.T) {
 	q := NewTxQueueV2()
 
-	// Create a dependency chain where all transactions share the same sender
-	// This creates: tx1 -> tx2 -> tx3 -> tx4
+	// With the new queue jumping logic, when all transactions share the same sender:
+	// - tx1 goes to ready
+	// - tx2 waits for tx1
+	// - tx3 waits for tx1 AND makes tx2 also wait for tx3
+	// - tx4 waits for tx1 AND makes both tx2 and tx3 also wait for tx4
+	//
+	// Dependency structure after all enqueues:
+	// - tx1 blocks: tx2, tx3, tx4
+	// - tx3 blocks: tx2
+	// - tx4 blocks: tx2, tx3
+	//
+	// So completion order is: tx1 -> tx4 -> tx3 -> tx2
+
 	tx1 := testTxV2(1)
 	tx2 := testTxV2(2)
 	tx3 := testTxV2(3)
@@ -777,9 +789,10 @@ func TestTxQueueV2_ComplexDependencyChain(t *testing.T) {
 
 	q.Enqueue(tx1)
 	q.Enqueue(tx2) // blocked by tx1 (same sender)
-	q.Enqueue(tx3) // blocked by tx1, tx2 (same sender)
-	q.Enqueue(tx4) // blocked by tx1, tx2, tx3 (same sender)
+	q.Enqueue(tx3) // blocked by tx1, and makes tx2 wait for tx3
+	q.Enqueue(tx4) // blocked by tx1, and makes tx2 and tx3 wait for tx4
 
+	// Verify initial structure
 	assert.Equal(t, 1, q.readyList.Len())
 	assert.Equal(t, 3, q.waitingList.Len())
 
@@ -787,15 +800,15 @@ func TestTxQueueV2_ComplexDependencyChain(t *testing.T) {
 	q.Dequeue()
 	completeViaHandle(q, tx1.Hash())
 
-	// Only tx2 should be promoted (tx3 still depends on tx2, tx4 on tx2 and tx3)
+	// After tx1 completes, tx4 should be promoted (tx2 still waits for tx3 and tx4, tx3 still waits for tx4)
 	assert.Equal(t, 1, q.readyList.Len())
 	assert.Equal(t, 2, q.waitingList.Len())
 
-	// Dequeue and complete tx2
+	// Dequeue and complete tx4
 	q.Dequeue()
-	completeViaHandle(q, tx2.Hash())
+	completeViaHandle(q, tx4.Hash())
 
-	// Only tx3 should be promoted (tx4 still depends on tx3)
+	// After tx4 completes, tx3 should be promoted (tx2 still waits for tx3)
 	assert.Equal(t, 1, q.readyList.Len())
 	assert.Equal(t, 1, q.waitingList.Len())
 
@@ -803,7 +816,7 @@ func TestTxQueueV2_ComplexDependencyChain(t *testing.T) {
 	q.Dequeue()
 	completeViaHandle(q, tx3.Hash())
 
-	// Now tx4 should be promoted
+	// Now tx2 should be promoted
 	assert.Equal(t, 1, q.readyList.Len())
 	assert.Equal(t, 0, q.waitingList.Len())
 }

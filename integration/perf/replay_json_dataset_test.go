@@ -236,7 +236,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	// - Fabric: Traditional block-based synchronization
 	// - Fabric-X: Notification-based (MemoryStore + NotificationDispatcher)
 	// th, err := integration.NewLocalTestHarnessWithFactoryAndTxQueue(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", "fabric", map[string]any{"Gateway.WorkerCount": processingWorkerCount, "Gateway.SubmitterCount": ordererSubmitterCount}, factory, gwcore.NewTxQueueV2())
-	th, err := integration.NewFabricXTestHarnessWithNotifications(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", map[string]any{"Gateway.WorkerCount": processingWorkerCount, "Gateway.SubmitterCount": ordererSubmitterCount}, factory, gwcore.NewTxQueueV2(), tracker, gwConfig)
+	th, err := integration.NewFabricXTestHarnessWithNotifications(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", map[string]any{"Gateway.WorkerCount": processingWorkerCount, "Gateway.SubmitterCount": ordererSubmitterCount}, factory, gwcore.NewTxQueue(), tracker, gwConfig)
 	// th, err = integration.NewFabricTestHarnessWithFactoryAndTxQueue(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", map[string]any{"Gateway.WorkerCount": processingWorkerCount, "Gateway.SubmitterCount": ordererSubmitterCount}, factory, gwcore.NewTxQueueV2())
 	assert.NoError(t, err)
 
@@ -590,7 +590,7 @@ func TestReplayJSONDataset(t *testing.T) {
 	processingWorkerCount := 20 // Number of gateway workers processing transactions
 	submittingWorkerCount := 4  // Number of goroutines submitting transactions TO the gateway
 	ordererSubmitterCount := 8  // Number of goroutines submitting transactions TO the orderer (BatchSubmitter workers)
-	numOutstandingTx := 3000    // Maximum number of outstanding transactions
+	numOutstandingTx := 5000    // Maximum number of outstanding transactions
 
 	_, _, _ = runReplayTest(t, processingWorkerCount, submittingWorkerCount, ordererSubmitterCount, numOutstandingTx, replayConfig{windowSize: 1000000}, *gatewayConfig)
 }

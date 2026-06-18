@@ -42,9 +42,15 @@ var SetTxQueueWaitingListSizeMetric func(size int)
 // - Blocks: transactions that are waiting for this one to complete
 // - IsBlockedBy: transactions that must complete before this one can start
 //
+// State values:
+// - 0 (stateReady): Transaction is in ready list, no dependencies
+// - 1 (stateWaiting): Transaction is in waiting list, has dependencies
+// - 2 (statePending): Transaction is being processed by a worker
+//
 // Invariants:
-// - Entries in the Ready list have empty IsBlockedBy (no dependencies)
-// - Entries in the Waiting list have non-empty IsBlockedBy (have dependencies)
+// - Entries in the Ready list have state=stateReady and empty IsBlockedBy
+// - Entries in the Waiting list have state=stateWaiting and non-empty IsBlockedBy
+// - Entries in the Pending map have state=statePending
 type txEntry struct {
 	tx           *types.Transaction
 	txHash       common.Hash      // Cached transaction hash
@@ -53,10 +59,19 @@ type txEntry struct {
 	// Linked list element in either readyList or waitingList
 	listElement *list.Element
 
+	// State tracking: 0=ready, 1=waiting, 2=pending
+	state int
+
 	// Dependency tracking
 	blocks      []*txEntry // Transactions blocked by this one
 	isBlockedBy []*txEntry // Transactions blocking this one
 }
+
+const (
+	stateReady   = 0
+	stateWaiting = 1
+	statePending = 2
+)
 
 // TxQueueV2 is a dependency-aware transaction queue that ensures transactions
 // touching the same participants (sender/recipient addresses) are processed sequentially.
@@ -108,8 +123,9 @@ func NewTxQueueV2() *TxQueueV2 {
 
 // Enqueue adds a transaction to the queue.
 // The transaction is placed in the Ready list if it has no conflicts with
-// in-progress or waiting transactions, otherwise it's placed in the Waiting list
-// with appropriate dependency links.
+// in-flight (ready or pending) transactions. Conflicts with waiting transactions
+// are ignored to allow "queue jumping" for independent transaction chains.
+// If there are conflicts with in-flight transactions, it's placed in the Waiting list.
 func (q *TxQueueV2) Enqueue(tx *types.Transaction) {
 	// Compute hash and participants outside the lock
 	txHash := tx.Hash()
@@ -126,6 +142,7 @@ func (q *TxQueueV2) Enqueue(tx *types.Transaction) {
 		participants: participants,
 		blocks:       blocks,
 		isBlockedBy:  isBlockedBy,
+		state:        stateReady, // Optimistically assume ready
 	}
 
 	q.mu.Lock()
@@ -136,37 +153,63 @@ func (q *TxQueueV2) Enqueue(tx *types.Transaction) {
 		return
 	}
 
-	// Find all transactions that share at least one participant
+	// Find conflicts with in-flight transactions (ready or pending only)
+	// For waiting transactions that share participants, make them wait for us instead
 	conflictingTxs := make(map[*txEntry]bool)
+	waitingTxsToBlock := make([]*txEntry, 0)
+
 	for _, participant := range entry.participants {
 		if txList, exists := q.participantMap[participant]; exists {
 			for _, conflictTx := range txList {
-				conflictingTxs[conflictTx] = true
+				if conflictTx.state == stateReady || conflictTx.state == statePending {
+					// Direct conflict with ready/pending transaction - we must wait
+					conflictingTxs[conflictTx] = true
+				} else if conflictTx.state == stateWaiting {
+					// Waiting transaction shares a participant
+					// Make it wait for us to prevent MVCC conflicts when it's promoted
+					waitingTxsToBlock = append(waitingTxsToBlock, conflictTx)
+				}
 			}
 		}
 	}
 
 	q.totalEnq++
 
-	// If there are conflicts, add dependency links and place in waiting list
+	// If there are conflicts with in-flight txs, add dependency links and place in waiting list
 	if len(conflictingTxs) > 0 {
 		q.conflictEnq++
+		entry.state = stateWaiting
 		for conflictTx := range conflictingTxs {
 			// Add bidirectional dependency links
 			entry.isBlockedBy = append(entry.isBlockedBy, conflictTx)
 			conflictTx.blocks = append(conflictTx.blocks, entry)
 		}
 
+		// Also make waiting transactions that share participants wait for us
+		// This ensures proper ordering when we're both promoted
+		for _, waitingTx := range waitingTxsToBlock {
+			waitingTx.isBlockedBy = append(waitingTx.isBlockedBy, entry)
+			entry.blocks = append(entry.blocks, waitingTx)
+		}
+
 		// Add to waiting list
 		entry.listElement = q.waitingList.PushBack(entry)
-		loggerV2.Debugf("[QUEUE] Enqueue: tx %s WAITING (blocked by %d), ready=%d waiting=%d pending=%d",
-			txHash.Hex()[:10], len(conflictingTxs), q.readyList.Len(), q.waitingList.Len(), len(q.pendingMap))
+		loggerV2.Debugf("[QUEUE] Enqueue: tx %s WAITING (blocked by %d in-flight, blocking %d waiting), ready=%d waiting=%d pending=%d",
+			txHash.Hex()[:10], len(conflictingTxs), len(waitingTxsToBlock), q.readyList.Len(), q.waitingList.Len(), len(q.pendingMap))
 	} else {
-		// No conflicts - add to ready list
+		// No conflicts with in-flight transactions - add to ready list (queue jump!)
+		entry.state = stateReady
 		entry.listElement = q.readyList.PushBack(entry)
+
+		// Make waiting transactions that share participants wait for us
+		for _, waitingTx := range waitingTxsToBlock {
+			waitingTx.isBlockedBy = append(waitingTx.isBlockedBy, entry)
+			entry.blocks = append(entry.blocks, waitingTx)
+		}
+
 		q.cond.Signal() // Wake up one waiting worker
-		loggerV2.Debugf("[QUEUE] Enqueue: tx %s READY, ready=%d waiting=%d pending=%d",
-			txHash.Hex()[:10], q.readyList.Len(), q.waitingList.Len(), len(q.pendingMap))
+		loggerV2.Debugf("[QUEUE] Enqueue: tx %s READY (blocking %d waiting txs), ready=%d waiting=%d pending=%d",
+			txHash.Hex()[:10], len(waitingTxsToBlock), q.readyList.Len(), q.waitingList.Len(), len(q.pendingMap))
 	}
 
 	// Update lookup maps
@@ -210,6 +253,9 @@ func (q *TxQueueV2) Dequeue() (*types.Transaction, bool) {
 			// Remove from ready list
 			q.readyList.Remove(elem)
 			entry.listElement = nil
+
+			// Update state to pending
+			entry.state = statePending
 
 			// Keep in participant map so new transactions can find and block on it
 			// Will be removed when Complete is called
@@ -264,7 +310,8 @@ func (q *TxQueueV2) completeUnlocked(hash common.Hash) int {
 				q.waitingList.Remove(blockedTx.listElement)
 			}
 
-			// Add to ready list
+			// Update state and add to ready list
+			blockedTx.state = stateReady
 			blockedTx.listElement = q.readyList.PushBack(blockedTx)
 			numPromoted++
 		}
