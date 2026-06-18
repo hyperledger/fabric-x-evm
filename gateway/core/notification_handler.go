@@ -10,12 +10,34 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
+	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-common/api/applicationpb"
+	"github.com/hyperledger/fabric-x-common/api/committerpb"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/notification"
+	"google.golang.org/protobuf/proto"
 )
+
+// TxNotification contains all data needed to process a transaction notification.
+// EthTxBytes and EthTxHash come from the cache; NsRWS and Events come from the AllTxStreamer event.
+type TxNotification struct {
+	// From notification service
+	BlockNum   uint64
+	TxNum      uint64
+	FabricTxID string
+	Status     committerpb.Status
+
+	// From cache
+	EthTxBytes []byte
+	EthTxHash  common.Hash // pre-computed; handlers that only need the hash skip UnmarshalBinary
+
+	// From AllTxStreamer (IncludeReadWriteSets must be true)
+	NsRWS  []blocks.NsReadWriteSet
+	Events []byte
+}
 
 var notifLogger = flogging.MustGetLogger("gateway.core.notification")
 
@@ -28,24 +50,18 @@ type TxHandler interface {
 // (which delivers every committed transaction) to the internal TxHandler chain.
 //
 // For each committed transaction event it:
-//  1. Looks up the corresponding Ethereum tx bytes from the pending cache.
-//  2. If not in cache (transaction not submitted by us), skips the event entirely.
-//  3. Converts the event's Namespaces to NsRWS + Events.
-//  4. Builds a TxNotification and dispatches it to all registered TxHandlers.
-//
-// NOTE: only transactions present in the cache (i.e. submitted by this gateway) are
-// dispatched. In a multi-tenant namespace this means state updates from other
-// participants are not forwarded to handlers such as LightKVS. For the current
-// single-tenant perf-test use-case this is acceptable.
+//  1. Extracts the Ethereum transaction bytes from the event metadata.
+//  2. Converts the event's Namespaces to NsRWS + Events.
+//  3. Builds a TxNotification and dispatches it to all registered TxHandlers.
 type AllTxBatchDispatcher struct {
-	cache    *PendingTxCache
 	handlers []TxHandler
 }
 
-// NewAllTxBatchDispatcher creates a dispatcher that augments AllTxBatch events
-// with cached EthTxBytes and dispatches them as TxNotifications to the handler chain.
-func NewAllTxBatchDispatcher(cache *PendingTxCache, handlers ...TxHandler) *AllTxBatchDispatcher {
-	return &AllTxBatchDispatcher{cache: cache, handlers: handlers}
+// NewAllTxBatchDispatcher creates a dispatcher that extracts EthTxBytes from event metadata
+// and dispatches them as TxNotifications to the handler chain.
+func NewAllTxBatchDispatcher(handlers ...TxHandler) *AllTxBatchDispatcher {
+	// cache parameter is ignored (kept for API compatibility)
+	return &AllTxBatchDispatcher{handlers: handlers}
 }
 
 // HandleBatch implements notification.AllTxHandler.
@@ -54,9 +70,10 @@ func (d *AllTxBatchDispatcher) HandleBatch(ctx context.Context, batch notificati
 
 	notifs := make([]TxNotification, 0, len(batch.Events))
 	for _, event := range batch.Events {
-		ethTxBytes := d.cache.Get(event.TxID)
-		if ethTxBytes == nil {
-			notifLogger.Debugf("Skipping tx %s: not in cache (not submitted by us)", event.TxID)
+		// Extract Ethereum transaction from metadata
+		ethTxBytes, err := extractEthTxFromMetadata(event.Metadata)
+		if err != nil {
+			notifLogger.Debugf("Skipping tx %s: %v", event.TxID, err)
 			continue
 		}
 
@@ -83,7 +100,7 @@ func (d *AllTxBatchDispatcher) HandleBatch(ctx context.Context, batch notificati
 		return nil
 	}
 
-	notifLogger.Debugf("[NOTIFY] block=%d dispatching=%d/%d our_txs", batch.BlockNumber, len(notifs), len(batch.Events))
+	notifLogger.Debugf("[NOTIFY] block=%d dispatching=%d/%d txs", batch.BlockNumber, len(notifs), len(batch.Events))
 
 	for _, h := range d.handlers {
 		if err := h.HandleTx(ctx, notifs); err != nil {
@@ -91,12 +108,26 @@ func (d *AllTxBatchDispatcher) HandleBatch(ctx context.Context, batch notificati
 		}
 	}
 
-	// Clean up processed transactions from cache
-	for _, notif := range notifs {
-		d.cache.Delete(notif.FabricTxID)
+	return nil
+}
+
+// extractEthTxFromMetadata extracts the Ethereum transaction bytes from the event metadata.
+// Metadata[0] contains the marshaled ChaincodeInput, which has Args[1] = eth tx bytes.
+func extractEthTxFromMetadata(metadata [][]byte) ([]byte, error) {
+	if len(metadata) == 0 {
+		return nil, fmt.Errorf("no metadata")
 	}
 
-	return nil
+	var input peer.ChaincodeInput
+	if err := proto.Unmarshal(metadata[0], &input); err != nil {
+		return nil, fmt.Errorf("unmarshal input: %w", err)
+	}
+
+	if len(input.Args) < 2 {
+		return nil, fmt.Errorf("insufficient args: %d", len(input.Args))
+	}
+
+	return input.Args[1], nil
 }
 
 // namespacesToNsRWS converts applicationpb.TxNamespace slices (as delivered by

@@ -127,7 +127,7 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 
 	// Create BatchSubmitter infrastructure (no cache needed — app uses chain-based synchronizer)
 	endorsementChan := make(chan sdk.Endorsement, 1000)
-	batchSubmitter := core.NewBatchSubmitter(submitters, nil, endorsementChan, cfg.Gateway.SubmitterCount)
+	batchSubmitter := core.NewBatchSubmitter(submitters, endorsementChan, cfg.Gateway.SubmitterCount)
 	batchSubmitter.Start(ctx)
 
 	// Gateway owns the BatchSubmitter and will handle its lifecycle
