@@ -437,7 +437,7 @@ func NewLocalTestHarnessWithFactoryAndTxQueue(t *testing.T, logger sdk.Logger, e
 	dbs, builders, ends := buildEndorsers(t, cfg, evmConfig, factory)
 
 	if !bypass {
-		nw, err := fabrictest.Start(t.Context(), "basic", networkType, fabrictest.Config{}, dbs[0])
+		nw, err := fabrictest.Start(t.Context(), cfg.Network.Namespace, networkType, fabrictest.Config{}, dbs[0])
 		if err != nil {
 			t.Fatalf("fabrictest.Start: %v", err)
 		}

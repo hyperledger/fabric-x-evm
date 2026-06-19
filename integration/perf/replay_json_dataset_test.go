@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime"
 	"runtime/pprof"
 	"sync"
@@ -39,6 +40,13 @@ import (
 var gatewayConfig = flag.String("gateway-config", "fabx.yaml", "gateway config file for the Fabric-X network")
 var metricsAddr = flag.String("metrics-addr", "0.0.0.0:2112", "address for Prometheus metrics endpoint")
 var enableMetrics = flag.Bool("enable-metrics", false, "enable Prometheus metrics export")
+var namespace = flag.String("namespace", "real", "namespace to commit transactions to")
+var dataset = flag.String("dataset", "testdata/USDC_dataset.json.gz", "dataset to use")
+var oldqueue = flag.Bool("oldqueue", false, "enable old queue")
+var workers = flag.Int("workers", 20, "number of gateway workers processing transactions")
+var submitters = flag.Int("submitters", 4, "number of goroutines submitting transactions to the gateway")
+var orderers = flag.Int("orderers", 8, "number of goroutines submitting transactions to the orderer (BatchSubmitter workers)")
+var outstanding = flag.Int("outstanding", 1000, "maximum number of outstanding transactions")
 
 // TxCompletionTracker forwards all transaction completion notifications to a single channel.
 // It implements gwcore.TxHandler to receive notifications from the notification system.
@@ -235,9 +243,30 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	// - Local: Traditional block-based synchronization
 	// - Fabric: Traditional block-based synchronization
 	// - Fabric-X: Notification-based (MemoryStore + NotificationDispatcher)
-	// th, err := integration.NewLocalTestHarnessWithFactoryAndTxQueue(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", "fabric", map[string]any{"Gateway.WorkerCount": processingWorkerCount, "Gateway.SubmitterCount": ordererSubmitterCount}, factory, gwcore.NewTxQueueV2())
-	th, err := integration.NewFabricXTestHarnessWithNotifications(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", map[string]any{"Gateway.WorkerCount": processingWorkerCount, "Gateway.SubmitterCount": ordererSubmitterCount}, factory, gwcore.NewTxQueueV2(), tracker, gwConfig)
-	// th, err = integration.NewFabricTestHarnessWithFactoryAndTxQueue(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", map[string]any{"Gateway.WorkerCount": processingWorkerCount, "Gateway.SubmitterCount": ordererSubmitterCount}, factory, gwcore.NewTxQueueV2())
+	// th, err := integration.NewLocalTestHarnessWithFactoryAndTxQueue(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", "fabric", map[string]any{"Gateway.WorkerCount": processingWorkerCount, "Gateway.SubmitterCount": ordererSubmitterCount, "Network.Namespace": *namespace}, factory, gwcore.NewTxQueueV2())
+	var queue gwcore.TxQueueInterface
+	if *oldqueue {
+		queue = gwcore.NewTxQueue()
+	} else {
+		queue = gwcore.NewTxQueueV2()
+	}
+	fmt.Printf("using queue type %T\n", queue)
+	fmt.Printf("using namespace %s", *namespace)
+	th, err := integration.NewFabricXTestHarnessWithNotifications(
+		t,
+		integration.TestLogger{T: t},
+		evmConfig,
+		"testdata/USDC_contract.json",
+		map[string]any{
+			"Gateway.WorkerCount":    processingWorkerCount,
+			"Gateway.SubmitterCount": ordererSubmitterCount,
+			"Network.Namespace":      *namespace,
+		},
+		factory,
+		queue,
+		tracker,
+		gwConfig)
+	// th, err = integration.NewFabricTestHarnessWithFactoryAndTxQueue(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", map[string]any{"Gateway.WorkerCount": processingWorkerCount, "Gateway.SubmitterCount": ordererSubmitterCount, "Network.Namespace": *namespace}, factory, gwcore.NewTxQueueV2())
 	assert.NoError(t, err)
 
 	// wait for the priming tx to be committed: we can no longer
@@ -249,12 +278,41 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	wrappedGateway := gwtestimpl.NewNonceBypassGateway(th.Gateways[0])
 
 	// Load the JSON dataset
-	datasetPath := "testdata/USDC_dataset.json.gz"
-	t.Logf("Loading dataset from %s", datasetPath)
+	// The dataset path can be:
+	// 1. An absolute path
+	// 2. A relative path from the current working directory
+	// 3. A relative path from the repo root (../../ from this test file)
+	//
+	// When running `go test ./integration/perf/...` from repo root, the test's
+	// working directory becomes integration/perf/, so we try both cwd and repo root.
+	datasetPath := *dataset
 
-	file, err := os.Open(datasetPath)
-	assert.NoError(t, err)
+	var file *os.File
+	var fileErr error
+
+	if filepath.IsAbs(datasetPath) {
+		// Absolute path - use as-is
+		file, fileErr = os.Open(datasetPath)
+		if fileErr != nil {
+			t.Fatalf("Failed to open dataset file %s: %v", datasetPath, fileErr)
+		}
+	} else {
+		// Relative path - try from cwd first, then from repo root
+		file, fileErr = os.Open(datasetPath)
+		if fileErr != nil {
+			// Try from repo root (../../ from integration/perf/)
+			repoRootPath := filepath.Join("..", "..", datasetPath)
+			file, fileErr = os.Open(repoRootPath)
+			if fileErr != nil {
+				t.Fatalf("Failed to open dataset file. Tried:\n  1. %s\n  2. %s\nError: %v",
+					datasetPath, repoRootPath, fileErr)
+			}
+			datasetPath = repoRootPath
+		}
+	}
 	defer file.Close()
+
+	t.Logf("Loading dataset from %s", datasetPath)
 
 	gzReader, err := gzip.NewReader(file)
 	assert.NoError(t, err)
@@ -592,11 +650,11 @@ func TestReplayJSONDataset(t *testing.T) {
 	}
 	// flogging.ActivateSpec("gateway.core.txqueue_v2=debug")
 
-	// Run the test with single worker configuration
-	processingWorkerCount := 20 // Number of gateway workers processing transactions
-	submittingWorkerCount := 4  // Number of goroutines submitting transactions TO the gateway
-	ordererSubmitterCount := 8  // Number of goroutines submitting transactions TO the orderer (BatchSubmitter workers)
-	numOutstandingTx := 5000    // Maximum number of outstanding transactions
+	// Use flag values for worker configuration
+	processingWorkerCount := *workers    // Number of gateway workers processing transactions
+	submittingWorkerCount := *submitters // Number of goroutines submitting transactions TO the gateway
+	ordererSubmitterCount := *orderers   // Number of goroutines submitting transactions TO the orderer (BatchSubmitter workers)
+	numOutstandingTx := *outstanding     // Maximum number of outstanding transactions
 
 	_, _, _ = runReplayTest(t, processingWorkerCount, submittingWorkerCount, ordererSubmitterCount, numOutstandingTx, replayConfig{windowSize: 1000000}, *gatewayConfig)
 }
