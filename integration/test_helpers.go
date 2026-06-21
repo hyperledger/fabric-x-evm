@@ -8,10 +8,11 @@ package integration
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"math/big"
-	"math/rand/v2"
+	mathrand "math/rand/v2"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -27,8 +28,14 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
+	fabriccommon "github.com/hyperledger/fabric-protos-go-apiv2/common"
+	"github.com/hyperledger/fabric-protos-go-apiv2/msp"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
+	"github.com/hyperledger/fabric-x-common/api/applicationpb"
+	"github.com/hyperledger/fabric-x-common/api/msppb"
 	"github.com/hyperledger/fabric-x-common/protoutil"
 	"github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/endorser"
@@ -291,12 +298,19 @@ func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg confi
 		return nil, nil, err
 	}
 
+	// Convert orderer configs
+	ordererConfigs := make([]network.OrdererConf, len(cfg.Gateway.Orderers))
+	for i, o := range cfg.Gateway.Orderers {
+		ordererConfigs[i] = o.ToOrdererConf()
+	}
+
 	th := &TestHarness{
 		Gateways:       []*core.Gateway{gw},
 		endorsers:      ends,
 		ethChainConfig: evmConfig.ChainConfig,
 		Primer:         primer,
 		DBs:            dbs,
+		OrdererConfigs: ordererConfigs,
 	}
 
 	if err := th.PrimeStateFromJSON(t.Context(), primeDBPath, !bypass); err != nil {
@@ -474,7 +488,7 @@ func NewFabricTestHarnessWithFactoryAndTxQueue(t *testing.T, logger sdk.Logger, 
 		return nil, fmt.Errorf("load config: %w", err)
 	}
 
-	x := rand.Int64()
+	x := mathrand.Int64()
 	for i := range cfg.Endorsers {
 		cfg.Endorsers[i].Database.ConnString = fmt.Sprintf("file:endorser%d-%d.db?mode=memory&cache=shared", i, x)
 	}
@@ -640,6 +654,238 @@ type TestHarness struct {
 	endorsers      []core.Endorser
 	ethChainConfig *params.ChainConfig
 	Primer         *StatePrimer
+	OrdererConfigs []network.OrdererConf
+}
+
+// BuildMSPMemberPolicy creates a SignaturePolicyEnvelope for "MSPID.member" policy.
+// This policy requires a signature from any member of the specified MSP.
+func BuildMSPMemberPolicy(mspID string) ([]byte, error) {
+	// Create MSP principal for "member" role
+	mspRole := &msp.MSPRole{
+		Role:          msp.MSPRole_MEMBER,
+		MspIdentifier: mspID,
+	}
+
+	mspRoleBytes, err := proto.Marshal(mspRole)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal MSP role: %w", err)
+	}
+
+	principal := &msp.MSPPrincipal{
+		PrincipalClassification: msp.MSPPrincipal_ROLE,
+		Principal:               mspRoleBytes,
+	}
+
+	// Create signature policy: SignedBy(0) - requires signature from principal at index 0
+	policy := &fabriccommon.SignaturePolicy{}
+	policy.Type = &fabriccommon.SignaturePolicy_SignedBy{
+		SignedBy: 0,
+	}
+
+	// Wrap in envelope
+	policyEnvelope := &fabriccommon.SignaturePolicyEnvelope{
+		Version:    0,
+		Rule:       policy,
+		Identities: []*msp.MSPPrincipal{principal},
+	}
+
+	// Marshal the SignaturePolicyEnvelope
+	mspRuleBytes, err := proto.Marshal(policyEnvelope)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal signature policy envelope: %w", err)
+	}
+
+	// Wrap in NamespacePolicy with msp_rule
+	namespacePolicy := &applicationpb.NamespacePolicy{
+		Rule: &applicationpb.NamespacePolicy_MspRule{
+			MspRule: mspRuleBytes,
+		},
+	}
+
+	return proto.Marshal(namespacePolicy)
+}
+
+// CreateNamespaces creates multiple namespaces in a single transaction by writing to the meta-namespace.
+// It bypasses the proposal/endorsement layer and creates the transaction envelope directly.
+// All namespaces will use the same endorsementPolicy.
+func CreateNamespaces(ctx context.Context, t *testing.T, ordererConfigs []network.OrdererConf, adminMSPDir, adminMSPID, channel string, namespaceIDs []string, endorsementPolicy []byte) error {
+	t.Helper()
+
+	if len(namespaceIDs) == 0 {
+		return nil
+	}
+
+	// Resolve adminMSPDir to absolute path before changing directories
+	absAdminMSPDir, err := filepath.Abs(adminMSPDir)
+	if err != nil {
+		return fmt.Errorf("failed to resolve admin MSP directory: %w", err)
+	}
+
+	// Change to integration directory for correct relative paths in config
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get working directory: %w", err)
+	}
+	defer os.Chdir(cwd)
+
+	// If we're in integration/perf, go up one level to integration
+	if filepath.Base(cwd) == "perf" {
+		if err := os.Chdir("../"); err != nil {
+			return fmt.Errorf("failed to change to integration directory: %w", err)
+		}
+	}
+
+	// Create orderer connections
+	orderers := make([]*network.Orderer, len(ordererConfigs))
+	for i, cfg := range ordererConfigs {
+		orderer, err := network.NewOrderer(ctx, cfg)
+		if err != nil {
+			return fmt.Errorf("failed to create orderer %d: %w", i, err)
+		}
+		defer orderer.Close()
+		orderers[i] = orderer
+	}
+
+	// Load admin signer from MSP directory (use absolute path)
+	adminSigner, err := identity.SignerFromMSP(absAdminMSPDir, adminMSPID)
+	if err != nil {
+		return fmt.Errorf("failed to load admin signer: %w", err)
+	}
+
+	creator, err := adminSigner.Serialize()
+	if err != nil {
+		return fmt.Errorf("failed to serialize admin identity: %w", err)
+	}
+
+	// Generate nonce and compute TxID
+	nonce := make([]byte, 24)
+	if _, err := rand.Read(nonce); err != nil {
+		return fmt.Errorf("failed to generate nonce: %w", err)
+	}
+	txID := protoutil.ComputeTxID(nonce, creator)
+
+	// Build write set for all namespaces in the meta-namespace
+	var readWrites []*applicationpb.ReadWrite
+	for _, nsID := range namespaceIDs {
+		readWrites = append(readWrites, &applicationpb.ReadWrite{
+			Key:   []byte(nsID),
+			Value: endorsementPolicy,
+		})
+	}
+
+	// Create Fabric-X transaction with writes to meta-namespace (without endorsements first)
+	txNamespace := &applicationpb.TxNamespace{
+		NsId:        "_meta",
+		NsVersion:   0,
+		ReadsOnly:   nil,
+		ReadWrites:  readWrites,
+		BlindWrites: nil,
+	}
+
+	// Use ASN1Marshal to create the digest for signing (same as endorser does)
+	// No metadata needed for meta-namespace writes
+	digest, err := txNamespace.ASN1Marshal(txID, nil)
+	if err != nil {
+		return fmt.Errorf("failed to ASN1 marshal tx namespace: %w", err)
+	}
+
+	// Sign the digest with admin signer
+	endorsementSig, err := adminSigner.Sign(digest)
+	if err != nil {
+		return fmt.Errorf("failed to sign endorsement: %w", err)
+	}
+
+	// Deserialize the creator to extract certificate bytes (same as packager.go does)
+	var si msp.SerializedIdentity
+	if err := proto.Unmarshal(creator, &si); err != nil {
+		return fmt.Errorf("failed to unmarshal creator identity: %w", err)
+	}
+
+	// Create admin identity for endorsement using certificate bytes
+	adminIdentity := msppb.NewIdentity(si.Mspid, si.IdBytes)
+
+	// Create endorsement with identity (Fabric-X format)
+	endorsements := &applicationpb.Endorsements{
+		EndorsementsWithIdentity: []*applicationpb.EndorsementWithIdentity{{
+			Endorsement: endorsementSig,
+			Identity:    adminIdentity,
+		}},
+	}
+
+	// Create complete transaction with endorsement
+	tx := &applicationpb.Tx{
+		Metadata:     nil,
+		Namespaces:   []*applicationpb.TxNamespace{txNamespace},
+		Endorsements: []*applicationpb.Endorsements{endorsements},
+	}
+
+	txBytes, err := proto.Marshal(tx)
+	if err != nil {
+		return fmt.Errorf("failed to marshal tx: %w", err)
+	}
+
+	// Create channel header with MESSAGE type (not ENDORSER_TRANSACTION)
+	channelHeader := &fabriccommon.ChannelHeader{
+		Type:      int32(fabriccommon.HeaderType_MESSAGE),
+		TxId:      txID,
+		Timestamp: timestamppb.Now(),
+		ChannelId: channel,
+		Epoch:     0,
+	}
+	channelHeaderBytes, err := proto.Marshal(channelHeader)
+	if err != nil {
+		return fmt.Errorf("failed to marshal channel header: %w", err)
+	}
+
+	// Create signature header
+	signatureHeaderBytes, err := proto.Marshal(&fabriccommon.SignatureHeader{
+		Creator: creator,
+		Nonce:   nonce,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to marshal signature header: %w", err)
+	}
+
+	// Create payload
+	payload := &fabriccommon.Payload{
+		Header: &fabriccommon.Header{
+			ChannelHeader:   channelHeaderBytes,
+			SignatureHeader: signatureHeaderBytes,
+		},
+		Data: txBytes,
+	}
+	payloadBytes, err := proto.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	// Sign the payload
+	signature, err := adminSigner.Sign(payloadBytes)
+	if err != nil {
+		return fmt.Errorf("failed to sign payload: %w", err)
+	}
+
+	// Create envelope
+	envelope := &fabriccommon.Envelope{
+		Payload:   payloadBytes,
+		Signature: signature,
+	}
+
+	// Broadcast to all orderers
+	var errs int
+	for _, orderer := range orderers {
+		if err := orderer.Broadcast(ctx, envelope); err != nil {
+			t.Logf("Failed to broadcast to orderer: %v", err)
+			errs++
+		}
+	}
+
+	if errs*2 > len(orderers) {
+		return fmt.Errorf("failed to broadcast to majority of orderers")
+	}
+
+	t.Logf("Created %d namespaces successfully: %v", len(namespaceIDs), namespaceIDs)
+	return nil
 }
 
 func (th *TestHarness) Stop() error {

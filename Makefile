@@ -60,11 +60,9 @@ ORDERER_IMAGE        ?= ghcr.io/hyperledger/fabric-x-orderer:1.0.0
 TEST_COMMITTER_IMAGE ?= docker.io/hyperledger/fabric-x-committer-test-node:1.0.3
 
 # Namespace init defaults
-NS      ?= basic
-NS1     ?= real
-NS2     ?= synthetic
-POLICY  ?= AND('Org1MSP.member')
-NETWORK ?= fabric-x
+NS             ?= basic
+POLICY         ?= AND('Org1MSP.member')
+NETWORK        ?= fabric-x
 
 .PHONY: init-x
 init-x:
@@ -168,30 +166,7 @@ start-full:
 	@while ! nc -z localhost 7001 2>/dev/null; do sleep 1; done
 	@echo "Waiting for committer sidecar to be ready..."
 	@while ! nc -z localhost 4001 2>/dev/null; do sleep 1; done
-	@$(DOCKER) run --rm --network $(NETWORK) \
-		--user "$(UID):$(GID)" \
-		--env "FX_NS=$(NS1)" \
-		--env "FX_POLICY=$(POLICY)" \
-		-v "$(PWD)/testdata/fxconfig.yaml:/config/fxconfig.yaml:ro,Z" \
-		-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/peers/fxconfig.org1.example.com/tls:/tls:ro,Z" \
-		-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/users/channel_admin@org1.example.com/msp:/msp:ro,Z" \
-		-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/msp/tlscacerts/tlsca.org1.example.com-cert.pem:/org-tls-ca.pem:ro,Z" \
-		-v "$(PWD)/testdata/crypto/ordererOrganizations/orderer-org-1/msp/tlscacerts/tlsca.orderer-org-1-cert.pem:/orderer-tls-ca.pem:ro,Z" \
-		$(TOOLS_IMAGE) \
-		sh -c 'fxconfig namespace list --config=/config/fxconfig.yaml 2>/dev/null | grep -q ") $$FX_NS:" || \
-		fxconfig namespace create "$$FX_NS" --policy="$$FX_POLICY" --endorse --submit --wait --config=/config/fxconfig.yaml'
-	@$(DOCKER) run --rm --network $(NETWORK) \
-		--user "$(UID):$(GID)" \
-		--env "FX_NS=$(NS2)" \
-		--env "FX_POLICY=$(POLICY)" \
-		-v "$(PWD)/testdata/fxconfig.yaml:/config/fxconfig.yaml:ro,Z" \
-		-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/peers/fxconfig.org1.example.com/tls:/tls:ro,Z" \
-		-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/users/channel_admin@org1.example.com/msp:/msp:ro,Z" \
-		-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/msp/tlscacerts/tlsca.org1.example.com-cert.pem:/org-tls-ca.pem:ro,Z" \
-		-v "$(PWD)/testdata/crypto/ordererOrganizations/orderer-org-1/msp/tlscacerts/tlsca.orderer-org-1-cert.pem:/orderer-tls-ca.pem:ro,Z" \
-		$(TOOLS_IMAGE) \
-		sh -c 'fxconfig namespace list --config=/config/fxconfig.yaml 2>/dev/null | grep -q ") $$FX_NS:" || \
-		fxconfig namespace create "$$FX_NS" --policy="$$FX_POLICY" --endorse --submit --wait --config=/config/fxconfig.yaml'
+	@echo "Fabric-X network started. Namespaces will be created programmatically by the test."
 
 .PHONY: stop-full
 stop-full:

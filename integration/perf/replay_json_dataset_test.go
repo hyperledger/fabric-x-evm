@@ -41,6 +41,7 @@ var gatewayConfig = flag.String("gateway-config", "fabx.yaml", "gateway config f
 var metricsAddr = flag.String("metrics-addr", "0.0.0.0:2112", "address for Prometheus metrics endpoint")
 var enableMetrics = flag.Bool("enable-metrics", false, "enable Prometheus metrics export")
 var namespace = flag.String("namespace", "real", "namespace to commit transactions to")
+var namespaces = flag.Int("namespaces", 0, "number of namespaces to create programmatically (0 = use existing namespace)")
 var dataset = flag.String("dataset", "testdata/USDC_dataset.json.gz", "dataset to use")
 var oldqueue = flag.Bool("oldqueue", false, "enable old queue")
 var workers = flag.Int("workers", 20, "number of gateway workers processing transactions")
@@ -251,7 +252,11 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 		queue = gwcore.NewTxQueueV2()
 	}
 	fmt.Printf("using queue type %T\n", queue)
-	fmt.Printf("using namespace %s", *namespace)
+	if *namespaces > 0 {
+		fmt.Printf("using %d namespaces (base000-base%03d)\n", *namespaces, *namespaces-1)
+	} else {
+		fmt.Printf("using namespace %s\n", *namespace)
+	}
 	th, err := integration.NewFabricXTestHarnessWithNotifications(
 		t,
 		integration.TestLogger{T: t},
@@ -272,6 +277,45 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	// wait for the priming tx to be committed: we can no longer
 	// rely on commit checks because we have disabled the block store
 	time.Sleep(time.Second)
+
+	// Create namespaces programmatically if requested
+	if *namespaces > 0 {
+		t.Logf("Creating %d namespaces programmatically", *namespaces)
+
+		// Build MSP member policy for Org1MSP
+		endorsementPolicy, err := integration.BuildMSPMemberPolicy("Org1MSP")
+		if err != nil {
+			t.Fatalf("Failed to build endorsement policy: %v", err)
+		}
+
+		// Admin MSP directory - relative to integration/perf directory
+		adminMSPDir := "../../testdata/crypto/peerOrganizations/org1.example.com/users/channel_admin@org1.example.com/msp"
+		adminMSPID := "Org1MSP"
+
+		// Generate namespace names: base000, base001, ..., base999
+		namespaceIDs := make([]string, *namespaces)
+		for i := 0; i < *namespaces; i++ {
+			namespaceIDs[i] = fmt.Sprintf("base%03d", i)
+		}
+
+		// Create all namespaces
+		err = integration.CreateNamespaces(
+			t.Context(),
+			t,
+			th.OrdererConfigs,
+			adminMSPDir,
+			adminMSPID,
+			"mychannel",
+			namespaceIDs,
+			endorsementPolicy,
+		)
+		if err != nil {
+			t.Fatalf("Failed to create namespaces: %v", err)
+		}
+
+		t.Logf("All %d namespaces created successfully, waiting for commit...", *namespaces)
+		time.Sleep(2 * time.Second)
+	}
 
 	// Wrap the gateway with NonceBypassGateway to skip nonce validation
 	// This is necessary for wrap-around replay where the same transactions are replayed
@@ -656,7 +700,7 @@ func TestReplayJSONDataset(t *testing.T) {
 	ordererSubmitterCount := *orderers   // Number of goroutines submitting transactions TO the orderer (BatchSubmitter workers)
 	numOutstandingTx := *outstanding     // Maximum number of outstanding transactions
 
-	_, _, _ = runReplayTest(t, processingWorkerCount, submittingWorkerCount, ordererSubmitterCount, numOutstandingTx, replayConfig{windowSize: 1000000}, *gatewayConfig)
+	_, _, _ = runReplayTest(t, processingWorkerCount, submittingWorkerCount, ordererSubmitterCount, numOutstandingTx, replayConfig{wrapAround: true, wrapCount: 10000000}, *gatewayConfig)
 }
 
 type performanceResult struct {
