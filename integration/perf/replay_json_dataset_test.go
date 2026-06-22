@@ -41,6 +41,7 @@ var gatewayConfig = flag.String("gateway-config", "fabx.yaml", "gateway config f
 var metricsAddr = flag.String("metrics-addr", "0.0.0.0:2112", "address for Prometheus metrics endpoint")
 var enableMetrics = flag.Bool("enable-metrics", false, "enable Prometheus metrics export")
 var namespace = flag.String("namespace", "real", "namespace to commit transactions to")
+var namespaces = flag.Int("namespaces", 1, "number of namespaces (1 for single-namespace mode, >1 for multi-namespace mode)")
 var dataset = flag.String("dataset", "testdata/USDC_dataset.json.gz", "dataset to use")
 var oldqueue = flag.Bool("oldqueue", false, "enable old queue")
 var workers = flag.Int("workers", 20, "number of gateway workers processing transactions")
@@ -237,26 +238,36 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	completionCh := make(chan gwcore.TxNotification, numOutstandingTx*2)
 
 	// Create completion tracker for async transaction monitoring
-	tracker := NewTxCompletionTracker(completionCh)
+	tracker := NewTxCompletionTracker(completionCh) // here we can only monitor completion for one namespace - it'll be ok...
 
 	// Choose test harness based on backend:
 	// - Local: Traditional block-based synchronization
 	// - Fabric: Traditional block-based synchronization
 	// - Fabric-X: Notification-based (MemoryStore + NotificationDispatcher)
-	// th, err := integration.NewLocalTestHarnessWithFactoryAndTxQueue(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", "fabric", map[string]any{"Gateway.WorkerCount": processingWorkerCount, "Gateway.SubmitterCount": ordererSubmitterCount, "Network.Namespace": *namespace}, factory, gwcore.NewTxQueueV2())
+	// Create queue based on mode
 	var queue gwcore.TxQueueInterface
 	if *oldqueue {
 		queue = gwcore.NewTxQueue()
+	} else if *namespaces == 1 {
+		// Single namespace mode: create queue with nil work channel
+		queue = gwcore.NewTxQueueV2(nil, 0)
 	} else {
-		queue = gwcore.NewTxQueueV2()
+		// Multi-namespace mode: queue will be created by test harness
+		queue = nil
 	}
+
 	fmt.Printf("using queue type %T\n", queue)
-	fmt.Printf("using namespace %s", *namespace)
+	if *namespaces == 1 {
+		fmt.Printf("using single namespace %s\n", *namespace)
+	} else {
+		fmt.Printf("using %d namespaces (base000-base%03d)\n", *namespaces, *namespaces-1)
+	}
+
 	th, err := integration.NewFabricXTestHarnessWithNotifications(
 		t,
 		integration.TestLogger{T: t},
 		evmConfig,
-		"testdata/USDC_contract.json",
+		"", // Will prime contract in namespace(s)
 		map[string]any{
 			"Gateway.WorkerCount":    processingWorkerCount,
 			"Gateway.SubmitterCount": ordererSubmitterCount,
@@ -265,9 +276,61 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 		factory,
 		queue,
 		tracker,
-		gwConfig)
+		gwConfig,
+		*namespaces)
 	// th, err = integration.NewFabricTestHarnessWithFactoryAndTxQueue(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", map[string]any{"Gateway.WorkerCount": processingWorkerCount, "Gateway.SubmitterCount": ordererSubmitterCount, "Network.Namespace": *namespace}, factory, gwcore.NewTxQueueV2())
 	assert.NoError(t, err)
+
+	// Prime USDC contract in all namespaces (multi-namespace mode)
+	if *namespaces > 1 {
+		t.Logf("Priming USDC contract in %d namespaces (base000-base%03d)", *namespaces, *namespaces-1)
+
+		// Get parameters from the existing primer for later use
+		gw := th.Primer.Gw
+		submitter := th.Primer.Submitter
+
+		// Prime USDC contract in all namespaces
+		t.Logf("Priming %d namespaces with USDC contract from testdata/USDC_contract.json", *namespaces)
+		signer := th.Primer.Signer
+		builders := th.Primer.Builders
+		channel := th.Primer.Channel
+		nsVersion := th.Primer.NsVersion
+		monotonicVersions := th.Primer.MonotonicVersions
+
+		for i := 0; i < *namespaces; i++ {
+			ns := fmt.Sprintf("base%03d", i)
+
+			// Create primer for this namespace using the correct KVS
+			primer, err := integration.NewStatePrimer(
+				gw,
+				submitter,
+				th.DBs[i], // Use the KVS for this namespace
+				ns,        // Set the correct namespace
+				signer,
+				builders,
+				channel,
+				nsVersion,
+				monotonicVersions,
+			)
+			if err != nil {
+				t.Fatalf("Failed to create primer for namespace %s: %v", ns, err)
+			}
+
+			// Load USDC contract state
+			primer, err = primer.LoadFromJSON("testdata/USDC_contract.json")
+			if err != nil {
+				t.Fatalf("Failed to load USDC contract for namespace %s: %v", ns, err)
+			}
+
+			// Commit the state
+			if err := primer.Commit(context.Background(), true); err != nil {
+				t.Fatalf("Failed to commit USDC contract for namespace %s: %v", ns, err)
+			}
+
+			t.Logf("Primed namespace %s (%d/%d)", ns, i+1, *namespaces)
+		}
+		t.Logf("All %d namespaces primed successfully", *namespaces)
+	}
 
 	// wait for the priming tx to be committed: we can no longer
 	// rely on commit checks because we have disabled the block store
@@ -410,7 +473,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 
 				// Send the transaction without waiting for completion
 				// Use the wrapped gateway directly to bypass nonce validation
-				err = wrappedGateway.SendTransaction(context.Background(), tx)
+				err = wrappedGateway.SendTransaction(context.Background(), tx) // here we send the transaction. We just send one...
 				if err != nil {
 					t.Logf("Transfer %d: SendTransaction error: %v", i, err)
 					atomic.AddInt64(&failCount, 1)
@@ -514,9 +577,39 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 		}
 		t.Logf("Pre-fill complete, %d transactions dispatched", dispatched)
 
+		// Track completions per transaction per namespace
+		// Map: txHash -> count of completions received
+		txCompletions := make(map[common.Hash]int)
+		var txCompletionsMu sync.Mutex
+
+		// Calculate threshold: min(N/4, 5)
+		completionThreshold := *namespaces / 4
+		if completionThreshold > 5 {
+			completionThreshold = 5
+		}
+		if completionThreshold < 1 {
+			completionThreshold = 1
+		}
+
 		// Process completions and refill
 		for notif := range completionCh {
-			atomic.AddInt64(&outstandingTxCount, -1)
+			// Track this completion
+			txCompletionsMu.Lock()
+			txCompletions[notif.EthTxHash]++
+			completionCount := txCompletions[notif.EthTxHash]
+
+			// Fire completion when threshold is reached (allows refill)
+			shouldDispatchMore := completionCount == completionThreshold
+			if shouldDispatchMore {
+				atomic.AddInt64(&outstandingTxCount, -1)
+			}
+
+			// Clean up when all N namespaces have completed
+			allNamespacesCompleted := completionCount == *namespaces
+			if allNamespacesCompleted {
+				delete(txCompletions, notif.EthTxHash)
+			}
+			txCompletionsMu.Unlock()
 
 			// T4: notification received time
 			t4 := time.Now()
@@ -566,6 +659,11 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 				if metrics != nil {
 					metrics.RecordTransactionAborted()
 				}
+			}
+
+			// Only dispatch more work if we hit the completion threshold
+			if !shouldDispatchMore {
+				continue
 			}
 
 			// Check if we should dispatch more work
@@ -656,7 +754,7 @@ func TestReplayJSONDataset(t *testing.T) {
 	ordererSubmitterCount := *orderers   // Number of goroutines submitting transactions TO the orderer (BatchSubmitter workers)
 	numOutstandingTx := *outstanding     // Maximum number of outstanding transactions
 
-	_, _, _ = runReplayTest(t, processingWorkerCount, submittingWorkerCount, ordererSubmitterCount, numOutstandingTx, replayConfig{windowSize: 1000000}, *gatewayConfig)
+	_, _, _ = runReplayTest(t, processingWorkerCount, submittingWorkerCount, ordererSubmitterCount, numOutstandingTx, replayConfig{wrapAround: true, wrapCount: 10000}, *gatewayConfig)
 }
 
 type performanceResult struct {

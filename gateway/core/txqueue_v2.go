@@ -9,6 +9,7 @@ package core
 import (
 	"container/list"
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -106,16 +107,23 @@ type TxQueueV2 struct {
 
 	totalEnq    int
 	conflictEnq int
+
+	// Work publishing (multi-namespace mode)
+	workChan     chan<- *WorkItem // Where to publish ready work
+	namespaceIdx int              // Which namespace this queue manages
 }
 
 // NewTxQueueV2 creates a new dependency-aware transaction queue.
-func NewTxQueueV2() *TxQueueV2 {
+// For multi-namespace mode, pass workChan and namespaceIdx. For single-namespace mode, pass nil and 0.
+func NewTxQueueV2(workChan chan<- *WorkItem, namespaceIdx int) *TxQueueV2 {
 	q := &TxQueueV2{
 		readyList:      list.New(),
 		waitingList:    list.New(),
 		participantMap: make(map[common.Address][]*txEntry),
 		hashMap:        make(map[common.Hash]*txEntry),
 		pendingMap:     make(map[common.Hash]*types.Transaction),
+		workChan:       workChan,
+		namespaceIdx:   namespaceIdx,
 	}
 	q.cond = sync.NewCond(&q.mu)
 	return q
@@ -126,7 +134,7 @@ func NewTxQueueV2() *TxQueueV2 {
 // in-flight (ready or pending) transactions. Conflicts with waiting transactions
 // are ignored to allow "queue jumping" for independent transaction chains.
 // If there are conflicts with in-flight transactions, it's placed in the Waiting list.
-func (q *TxQueueV2) Enqueue(tx *types.Transaction) {
+func (q *TxQueueV2) Enqueue(tx *types.Transaction) { // the transaction is received here - with the assumption that there are `n` queues. each queue is responsible for one namespace
 	// Compute hash and participants outside the lock
 	txHash := tx.Hash()
 	participants := participantsForTx(tx)
@@ -146,10 +154,10 @@ func (q *TxQueueV2) Enqueue(tx *types.Transaction) {
 	}
 
 	q.mu.Lock()
-	defer q.mu.Unlock()
 
 	// Check if already tracked
 	if _, exists := q.hashMap[txHash]; exists {
+		q.mu.Unlock()
 		return
 	}
 
@@ -207,7 +215,6 @@ func (q *TxQueueV2) Enqueue(tx *types.Transaction) {
 			entry.blocks = append(entry.blocks, waitingTx)
 		}
 
-		q.cond.Signal() // Wake up one waiting worker
 		loggerV2.Debugf("[QUEUE] Enqueue: tx %s READY (blocking %d waiting txs), ready=%d waiting=%d pending=%d",
 			txHash.Hex()[:10], len(waitingTxsToBlock), q.readyList.Len(), q.waitingList.Len(), len(q.pendingMap))
 	}
@@ -216,6 +223,21 @@ func (q *TxQueueV2) Enqueue(tx *types.Transaction) {
 	q.hashMap[txHash] = entry
 	for _, participant := range entry.participants {
 		q.participantMap[participant] = append(q.participantMap[participant], entry)
+	}
+
+	// Publish to work channel if transaction is ready (do this AFTER releasing mutex)
+	shouldPublish := entry.state == stateReady
+	q.mu.Unlock()
+
+	if shouldPublish {
+		// Blocking send with timeout - safe because we've released the mutex
+		select {
+		case q.workChan <- &WorkItem{Tx: tx, NamespaceIdx: q.namespaceIdx}:
+			loggerV2.Debugf("[QUEUE] Enqueue: tx %s published to workChan (ns=%d)", txHash.Hex()[:10], q.namespaceIdx)
+		case <-time.After(100 * time.Millisecond):
+			loggerV2.Errorf("Work channel blocked for 100ms during Enqueue - channel may be undersized")
+			panic("work channel blocked for 100ms - increase buffer size")
+		}
 	}
 }
 
@@ -284,18 +306,18 @@ func (q *TxQueueV2) Dequeue() (*types.Transaction, bool) {
 }
 
 // completeUnlocked is the internal implementation of Complete that assumes the lock is held.
-// Returns the number of transactions promoted to the ready list.
-func (q *TxQueueV2) completeUnlocked(hash common.Hash) int {
+// Returns the promoted transactions (if any).
+func (q *TxQueueV2) completeUnlocked(hash common.Hash) []*types.Transaction {
 	// Remove from pending map
 	delete(q.pendingMap, hash)
 
 	// Find the transaction entry
 	entry, exists := q.hashMap[hash]
 	if !exists {
-		return 0
+		return nil
 	}
 
-	numPromoted := 0
+	var promotedTxs []*types.Transaction
 	numBlocked := len(entry.blocks)
 
 	// Process all transactions blocked by this one
@@ -313,13 +335,13 @@ func (q *TxQueueV2) completeUnlocked(hash common.Hash) int {
 			// Update state and add to ready list
 			blockedTx.state = stateReady
 			blockedTx.listElement = q.readyList.PushBack(blockedTx)
-			numPromoted++
+			promotedTxs = append(promotedTxs, blockedTx.tx)
 		}
 	}
 
 	if numBlocked > 0 {
 		loggerV2.Debugf("Complete: tx %s unblocked %d txs, promoted=%d, waiting=%d ready=%d",
-			hash.Hex()[:10], numBlocked, numPromoted, q.waitingList.Len(), q.readyList.Len())
+			hash.Hex()[:10], numBlocked, len(promotedTxs), q.waitingList.Len(), q.readyList.Len())
 	}
 
 	// Clean up the completed transaction
@@ -335,7 +357,7 @@ func (q *TxQueueV2) completeUnlocked(hash common.Hash) int {
 		}
 	}
 
-	return numPromoted
+	return promotedTxs
 }
 
 // IsPending checks if a transaction is in the queue (ready, waiting, or being processed).
@@ -379,9 +401,8 @@ func (q *TxQueueV2) Handle(ctx context.Context, block *domain.Block) error {
 	}
 
 	q.mu.Lock()
-	defer q.mu.Unlock()
 
-	totalPromoted := 0
+	var allPromotedTxs []*types.Transaction
 
 	// Mark all transactions in the block as complete
 	for i, txHash := range txHashes {
@@ -390,16 +411,21 @@ func (q *TxQueueV2) Handle(ctx context.Context, block *domain.Block) error {
 			q.invalid++
 		}
 
-		totalPromoted += q.completeUnlocked(txHash)
+		promotedTxs := q.completeUnlocked(txHash)
+		allPromotedTxs = append(allPromotedTxs, promotedTxs...)
 	}
 
-	// Signal workers based on how many transactions were promoted
-	if totalPromoted == 1 {
-		// Only one transaction promoted - wake up one worker
-		q.cond.Signal()
-	} else if totalPromoted > 1 {
-		// Multiple transactions promoted - wake up all workers
-		q.cond.Broadcast()
+	q.mu.Unlock()
+
+	// Publish promoted transactions to work channel (after releasing mutex)
+	for _, tx := range allPromotedTxs {
+		select {
+		case q.workChan <- &WorkItem{Tx: tx, NamespaceIdx: q.namespaceIdx}:
+			// Published successfully
+		case <-time.After(100 * time.Millisecond):
+			loggerV2.Errorf("Work channel blocked for 100ms - channel may be undersized")
+			return fmt.Errorf("work channel blocked")
+		}
 	}
 
 	return nil
@@ -409,7 +435,7 @@ func (q *TxQueueV2) Handle(ctx context.Context, block *domain.Block) error {
 // Returns (total transactions processed, invalid transactions).
 // HandleTx processes transaction notifications and marks transactions as complete.
 // This method implements the TxHandler interface for use with the notification system.
-func (q *TxQueueV2) HandleTx(ctx context.Context, notifs []TxNotification) error {
+func (q *TxQueueV2) HandleTx(ctx context.Context, notifs []TxNotification) error { // given that we have multiple queues, each queue needs to be notified of txes committing in its namespace
 	// Pre-extract transaction hashes and statuses outside the lock
 	numNotifs := len(notifs)
 	txHashes := make([]common.Hash, numNotifs)
@@ -420,9 +446,8 @@ func (q *TxQueueV2) HandleTx(ctx context.Context, notifs []TxNotification) error
 	}
 
 	q.mu.Lock()
-	defer q.mu.Unlock()
 
-	totalPromoted := 0
+	var allPromotedTxs []*types.Transaction
 
 	// Mark all transactions in the batch as complete
 	for i := 0; i < numNotifs; i++ {
@@ -430,19 +455,25 @@ func (q *TxQueueV2) HandleTx(ctx context.Context, notifs []TxNotification) error
 		if statuses[i] != committerpb.Status_COMMITTED {
 			q.invalid++
 		}
-		totalPromoted += q.completeUnlocked(txHashes[i])
+
+		promotedTxs := q.completeUnlocked(txHashes[i])
+		allPromotedTxs = append(allPromotedTxs, promotedTxs...)
 	}
 
 	loggerV2.Debugf("[QUEUE] HandleTx: notifs=%d promoted=%d ready=%d waiting=%d pending=%d",
-		numNotifs, totalPromoted, q.readyList.Len(), q.waitingList.Len(), len(q.pendingMap))
+		numNotifs, len(allPromotedTxs), q.readyList.Len(), q.waitingList.Len(), len(q.pendingMap))
 
-	// Signal workers based on how many transactions were promoted
-	if totalPromoted == 1 {
-		// Only one transaction promoted - wake up one worker
-		q.cond.Signal()
-	} else if totalPromoted > 1 {
-		// Multiple transactions promoted - wake up all workers
-		q.cond.Broadcast()
+	q.mu.Unlock()
+
+	// Publish promoted transactions to work channel (after releasing mutex)
+	for _, tx := range allPromotedTxs {
+		select {
+		case q.workChan <- &WorkItem{Tx: tx, NamespaceIdx: q.namespaceIdx}:
+			// Published successfully
+		case <-time.After(100 * time.Millisecond):
+			loggerV2.Errorf("Work channel blocked for 100ms - channel may be undersized")
+			return fmt.Errorf("work channel blocked")
+		}
 	}
 
 	return nil

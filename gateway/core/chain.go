@@ -115,6 +115,16 @@ func ConvertToDomain(b blocks.Block) domain.Block {
 
 	logIndex := int64(0) // logIndex is the index of the log in the block
 	for _, tx := range b.Transactions {
+
+		// fmt.Println("got tx:", tx.Status, tx.Valid, len(tx.NsRWS))
+		// for _, ns := range tx.NsRWS {
+		// 	b, err := json.MarshalIndent(ns, "", "  ")
+		// 	if err != nil {
+		// 		panic(err)
+		// 	}
+
+		// 	fmt.Println(string(b))
+		// }
 		// TODO: filter on namespace?
 
 		// retrieve the Ethereum transaction from the chaincode invocation

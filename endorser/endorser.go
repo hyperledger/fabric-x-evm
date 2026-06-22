@@ -75,7 +75,7 @@ func (f *Endorser) ProcessEVMTransaction(ctx context.Context, inv endorsement.In
 	}
 
 	// Execute the transaction
-	res, err := f.Engine.Execute(ctx, ethTx)
+	res, err := f.Engine.Execute(ctx, ethTx) // execution of the transaction - if the namespace and the KVS is set up correctly - is just fine
 	if err != nil {
 		// Distinguish between pre-execution validation errors and execution errors.
 		// Pre-execution errors (from ApplyMessage) indicate the transaction is invalid

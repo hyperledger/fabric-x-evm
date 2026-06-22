@@ -8,10 +8,11 @@ package integration
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"math/big"
-	"math/rand/v2"
+	mathrand "math/rand/v2"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -27,8 +28,14 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
+	fabriccommon "github.com/hyperledger/fabric-protos-go-apiv2/common"
+	"github.com/hyperledger/fabric-protos-go-apiv2/msp"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
+	"github.com/hyperledger/fabric-x-common/api/applicationpb"
+	"github.com/hyperledger/fabric-x-common/api/msppb"
 	"github.com/hyperledger/fabric-x-common/protoutil"
 	"github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/endorser"
@@ -120,12 +127,13 @@ func (th *TestHarness) PrimeStateFromJSON(ctx context.Context, jsonFilePath stri
 // If useNotifications is true, uses NotificationDispatcher + MemoryStore instead of
 // Synchronizer + Chain. This is intended for fabric-x performance testing.
 func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmConfig endorser.EVMConfig, primeDBPath string, bypass bool, ends []core.Endorser, dbs []endorser.KVS, builders []endorsement.Builder, txQueue core.TxQueueInterface, useNotifications bool) (*TestHarness, *network.Synchronizer, error) {
-	return buildTestHarnessWithExtraHandler(t, logger, cfg, evmConfig, primeDBPath, bypass, ends, dbs, builders, txQueue, useNotifications, nil)
+	return buildTestHarnessWithExtraHandler(t, logger, cfg, evmConfig, primeDBPath, bypass, ends, dbs, builders, txQueue, useNotifications, nil, 1, defaultEndorserFactory)
 }
 
 // buildTestHarnessWithExtraHandler is like buildTestHarness but accepts an optional extra TxHandler
 // that will be inserted into the notification handler chain right before the cleanup handler.
-func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg config.Config, evmConfig endorser.EVMConfig, primeDBPath string, bypass bool, ends []core.Endorser, dbs []endorser.KVS, builders []endorsement.Builder, txQueue core.TxQueueInterface, useNotifications bool, extraHandler core.TxHandler) (*TestHarness, *network.Synchronizer, error) {
+// If numNamespaces > 1, creates multi-namespace infrastructure with N queues, N endorsers, and N KVS instances.
+func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg config.Config, evmConfig endorser.EVMConfig, primeDBPath string, bypass bool, ends []core.Endorser, dbs []endorser.KVS, builders []endorsement.Builder, txQueue core.TxQueueInterface, useNotifications bool, extraHandler core.TxHandler, numNamespaces int, factory EndorserFactory) (*TestHarness, *network.Synchronizer, error) {
 	// Build gateway signer.
 	var gwSigner sdk.Signer
 	if cfg.Gateway.Identity.MSPDir != "" {
@@ -138,9 +146,61 @@ func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg confi
 		gwSigner = localSigner{}
 	}
 
-	ec, err := core.NewEndorsementClient(ends, gwSigner, cfg.Network.Channel, cfg.Network.Namespace, cfg.Network.NsVersion)
-	if err != nil {
-		return nil, nil, err
+	// Multi-namespace mode: create N endorsers, N queues, N KVS instances
+	var multiNsEndorsers []*core.EndorsementClient
+	var multiNsQueues []*core.TxQueueV2
+	var multiNsDbs []endorser.KVS
+	var multiNsBuilders []endorsement.Builder
+	var multiNsEnds []core.Endorser
+	var namespaces []string
+	var workChan chan *core.WorkItem
+
+	if numNamespaces > 1 {
+		// Create work channel for multi-namespace mode
+		workerCount := cfg.Gateway.WorkerCount
+		if workerCount <= 0 {
+			workerCount = core.DefaultNumWorkers
+		}
+		workChan = make(chan *core.WorkItem, workerCount+numNamespaces*50)
+
+		// Create N namespaces, N queues, N endorsers, N KVS instances
+		multiNsEndorsers = make([]*core.EndorsementClient, numNamespaces)
+		multiNsQueues = make([]*core.TxQueueV2, numNamespaces)
+		multiNsDbs = make([]endorser.KVS, numNamespaces)
+		multiNsBuilders = make([]endorsement.Builder, numNamespaces)
+		multiNsEnds = make([]core.Endorser, numNamespaces)
+		namespaces = make([]string, numNamespaces)
+
+		for i := 0; i < numNamespaces; i++ {
+			// Create namespace name: base000, base001, ..., base999
+			namespaces[i] = fmt.Sprintf("base%03d", i)
+
+			// Create queue for this namespace
+			multiNsQueues[i] = core.NewTxQueueV2(workChan, i)
+
+			// Create endorser components for this namespace using the provided factory
+			if len(cfg.Endorsers) > 0 {
+				ecfg := cfg.Endorsers[0] // Use first endorser config as template
+				multiNsDbs[i], multiNsBuilders[i], multiNsEnds[i] = factory(t, ecfg, cfg.Network.Channel, namespaces[i], evmConfig, cfg.Network.Protocol)
+			} else {
+				return nil, nil, fmt.Errorf("no endorser configuration found")
+			}
+
+			// Create endorsement client for this namespace
+			var ecErr error
+			multiNsEndorsers[i], ecErr = core.NewEndorsementClient([]core.Endorser{multiNsEnds[i]}, gwSigner, cfg.Network.Channel, namespaces[i], cfg.Network.NsVersion)
+			if ecErr != nil {
+				return nil, nil, fmt.Errorf("create endorsement client for namespace %s: %w", namespaces[i], ecErr)
+			}
+		}
+	} else {
+		// Single namespace mode (backward compatibility)
+		ec, err := core.NewEndorsementClient(ends, gwSigner, cfg.Network.Channel, cfg.Network.Namespace, cfg.Network.NsVersion)
+		if err != nil {
+			return nil, nil, err
+		}
+		multiNsEndorsers = []*core.EndorsementClient{ec}
+		namespaces = []string{cfg.Network.Namespace}
 	}
 
 	chain, err := core.NewChain(cfg.Gateway.Database.ConnString, cfg.Gateway.Database.TriePath, false)
@@ -195,15 +255,35 @@ func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg confi
 
 	// Create gateway before synchronizer so we can register it as a handler
 	// Gateway owns the BatchSubmitter and will handle its lifecycle
-	gw, err := core.New(ec, batchSubmitter, chain, cfg.Network.ChainID, cfg.Gateway.WorkerCount, txQueue, endorsementChan)
-	if err != nil {
-		return nil, nil, err
+	var gw *core.Gateway
+	if numNamespaces > 1 {
+		// Multi-namespace mode: use first endorser client for compatibility, but set multi-namespace fields
+		gw, err = core.New(multiNsEndorsers[0], batchSubmitter, chain, cfg.Network.ChainID, cfg.Gateway.WorkerCount, nil, endorsementChan)
+		if err != nil {
+			return nil, nil, err
+		}
+		// Set multi-namespace fields
+		gw.Queues = multiNsQueues
+		gw.EndorserClients = multiNsEndorsers
+		gw.WorkChan = workChan
+	} else {
+		// Single namespace mode
+		gw, err = core.New(multiNsEndorsers[0], batchSubmitter, chain, cfg.Network.ChainID, cfg.Gateway.WorkerCount, txQueue, endorsementChan)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 
 	// Create synchronizer with handlers (endorsers, chain, and gateway) - only for non-bypass mode
 	if !bypass {
-		handlers := make([]blocks.BlockHandler, 0, len(dbs)+2)
-		for _, db := range dbs {
+		// Use appropriate DBs based on mode
+		dbsToUse := dbs
+		if numNamespaces > 1 {
+			dbsToUse = multiNsDbs
+		}
+
+		handlers := make([]blocks.BlockHandler, 0, len(dbsToUse)+2)
+		for _, db := range dbsToUse {
 			handlers = append(handlers, db)
 		}
 		// Add chain before gateway to ensure blocks are persisted before marking transactions complete
@@ -235,6 +315,40 @@ func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg confi
 				}
 			}()
 
+			// Create namespaces if in multi-namespace mode
+			if numNamespaces > 1 {
+				logger.Infof("Creating %d namespaces: %v", numNamespaces, namespaces)
+
+				// Build MSP member policy for Org1MSP
+				endorsementPolicy, err := BuildMSPMemberPolicy("Org1MSP")
+				if err != nil {
+					return nil, nil, fmt.Errorf("failed to build endorsement policy: %w", err)
+				}
+
+				// Admin MSP directory - relative to integration/ directory
+				// Use channel_admin (same as Makefile used for fxconfig namespace create)
+				adminMSPDir := "../testdata/crypto/peerOrganizations/org1.example.com/users/channel_admin@org1.example.com/msp"
+				adminMSPID := "Org1MSP"
+
+				// Create all namespaces
+				err = CreateNamespaces(
+					t.Context(),
+					t,
+					orderers,
+					adminMSPDir,
+					adminMSPID,
+					cfg.Network.Channel,
+					namespaces,
+					endorsementPolicy,
+				)
+				if err != nil {
+					return nil, nil, fmt.Errorf("failed to create namespaces: %w", err)
+				}
+
+				logger.Infof("Namespaces created successfully, waiting for commit...")
+				time.Sleep(2 * time.Second)
+			}
+
 			logger.Infof("Waiting for synchronizer to catch up...")
 			waitUntilSynced(t, sync, 60*time.Second)
 			logger.Infof("Synchronizer caught up - stopping and switching to notifications")
@@ -245,16 +359,31 @@ func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg confi
 			logger.Infof("Synchronizer stopped cleanly")
 
 			// Set up AllTxStreamer notification system
-			txHandlers := make([]core.TxHandler, 0, len(dbs)+2)
-			for _, db := range dbs {
-				txHandlers = append(txHandlers, db.(core.TxHandler))
-			}
-			txHandlers = append(txHandlers, gw.TxQueue.(core.TxHandler))
-			if extraHandler != nil {
-				txHandlers = append(txHandlers, extraHandler)
-			}
+			var dispatcher notification.AllTxHandler
 
-			dispatcher := core.NewAllTxBatchDispatcher(txHandlers...)
+			if numNamespaces > 1 {
+				// Multi-namespace mode: use NamespaceMultiplexer
+				multiplexer := core.NewNamespaceMultiplexer()
+				for i := 0; i < numNamespaces; i++ {
+					handlers := []core.TxHandler{multiNsDbs[i].(core.TxHandler), multiNsQueues[i]}
+					if extraHandler != nil {
+						handlers = append(handlers, extraHandler)
+					}
+					multiplexer.RegisterHandlers(namespaces[i], handlers...)
+				}
+				dispatcher = multiplexer
+			} else {
+				// Single namespace mode: use AllTxBatchDispatcher
+				txHandlers := make([]core.TxHandler, 0, len(dbs)+2)
+				for _, db := range dbs {
+					txHandlers = append(txHandlers, db.(core.TxHandler))
+				}
+				txHandlers = append(txHandlers, gw.TxQueue.(core.TxHandler))
+				if extraHandler != nil {
+					txHandlers = append(txHandlers, extraHandler)
+				}
+				dispatcher = core.NewAllTxBatchDispatcher(txHandlers...)
+			}
 
 			if cfg.Network.Protocol == "fabric-x" || cfg.Network.Protocol == "" {
 				peer, err := nfabx.NewPeer(cfg.Gateway.Committer.ToPeerConf(), cfg.Network.Channel, gwSigner)
@@ -264,7 +393,7 @@ func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg confi
 				streamer := notification.NewAllTxStreamer(peer, []notification.AllTxHandler{dispatcher}, logger)
 				go func() {
 					req := &notification.StreamAllRequest{
-						FilterNamespaces:     []string{cfg.Network.Namespace},
+						FilterNamespaces:     nil, // No filtering - receive notifications for all namespaces
 						IncludeReadWriteSets: true,
 						IncludeMetadata:      true,
 					}
@@ -285,18 +414,42 @@ func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg confi
 	gw.Start(t.Context())
 	t.Cleanup(func() { gw.Stop() })
 
-	// Create state primer (use first submitter)
-	primer, err := NewStatePrimer(gw, submitters[0], dbs[0], cfg.Network.Namespace, gwSigner, builders, cfg.Network.Channel, cfg.Network.NsVersion, cfg.Network.Protocol == "fabric-x")
-	if err != nil {
-		return nil, nil, err
+	// Create state primer (use first submitter and first DB/namespace)
+	var primer *StatePrimer
+	var thDBs []endorser.KVS
+	var thEnds []core.Endorser
+
+	if numNamespaces > 1 {
+		// Multi-namespace mode: use first namespace for primer
+		primer, err = NewStatePrimer(gw, submitters[0], multiNsDbs[0], namespaces[0], gwSigner, multiNsBuilders, cfg.Network.Channel, cfg.Network.NsVersion, cfg.Network.Protocol == "fabric-x")
+		if err != nil {
+			return nil, nil, err
+		}
+		thDBs = multiNsDbs
+		thEnds = multiNsEnds
+	} else {
+		// Single namespace mode
+		primer, err = NewStatePrimer(gw, submitters[0], dbs[0], cfg.Network.Namespace, gwSigner, builders, cfg.Network.Channel, cfg.Network.NsVersion, cfg.Network.Protocol == "fabric-x")
+		if err != nil {
+			return nil, nil, err
+		}
+		thDBs = dbs
+		thEnds = ends
+	}
+
+	// Convert orderer configs
+	ordererConfigs := make([]network.OrdererConf, len(cfg.Gateway.Orderers))
+	for i, o := range cfg.Gateway.Orderers {
+		ordererConfigs[i] = o.ToOrdererConf()
 	}
 
 	th := &TestHarness{
 		Gateways:       []*core.Gateway{gw},
-		endorsers:      ends,
+		endorsers:      thEnds,
 		ethChainConfig: evmConfig.ChainConfig,
 		Primer:         primer,
-		DBs:            dbs,
+		DBs:            thDBs,
+		OrdererConfigs: ordererConfigs,
 	}
 
 	if err := th.PrimeStateFromJSON(t.Context(), primeDBPath, !bypass); err != nil {
@@ -474,7 +627,7 @@ func NewFabricTestHarnessWithFactoryAndTxQueue(t *testing.T, logger sdk.Logger, 
 		return nil, fmt.Errorf("load config: %w", err)
 	}
 
-	x := rand.Int64()
+	x := mathrand.Int64()
 	for i := range cfg.Endorsers {
 		cfg.Endorsers[i].Database.ConnString = fmt.Sprintf("file:endorser%d-%d.db?mode=memory&cache=shared", i, x)
 	}
@@ -542,7 +695,8 @@ func NewFabricXTestHarnessWithFactoryAndTxQueue(t *testing.T, logger sdk.Logger,
 // transaction completion tracking instead of block-based synchronization.
 // Uses MemoryStore and NotificationDispatcher for better performance in replay scenarios.
 // If extraHandler is non-nil, it will be inserted into the handler chain right before the cleanup handler.
-func NewFabricXTestHarnessWithNotifications(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory, txQueue core.TxQueueInterface, extraHandler core.TxHandler, confFile string) (*TestHarness, error) {
+// If numNamespaces > 1, creates multi-namespace infrastructure with N queues, N endorsers, and N KVS instances.
+func NewFabricXTestHarnessWithNotifications(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory, txQueue core.TxQueueInterface, extraHandler core.TxHandler, confFile string, numNamespaces int) (*TestHarness, error) {
 	if primeDbPath != "" && !filepath.IsAbs(primeDbPath) {
 		if abs, err := filepath.Abs(primeDbPath); err == nil {
 			primeDbPath = abs
@@ -570,7 +724,7 @@ func NewFabricXTestHarnessWithNotifications(t *testing.T, logger sdk.Logger, evm
 	dbs, builders, ends := buildEndorsers(t, cfg, evmConfig, factory)
 
 	// Use buildTestHarness with useNotifications=true and extraHandler
-	th, _, err := buildTestHarnessWithExtraHandler(t, logger, cfg, evmConfig, primeDbPath, false, ends, dbs, builders, txQueue, true, extraHandler)
+	th, _, err := buildTestHarnessWithExtraHandler(t, logger, cfg, evmConfig, primeDbPath, false, ends, dbs, builders, txQueue, true, extraHandler, numNamespaces, factory)
 	if err != nil {
 		return nil, err
 	}
@@ -640,6 +794,238 @@ type TestHarness struct {
 	endorsers      []core.Endorser
 	ethChainConfig *params.ChainConfig
 	Primer         *StatePrimer
+	OrdererConfigs []network.OrdererConf
+}
+
+// BuildMSPMemberPolicy creates a SignaturePolicyEnvelope for "MSPID.member" policy.
+// This policy requires a signature from any member of the specified MSP.
+func BuildMSPMemberPolicy(mspID string) ([]byte, error) {
+	// Create MSP principal for "member" role
+	mspRole := &msp.MSPRole{
+		Role:          msp.MSPRole_MEMBER,
+		MspIdentifier: mspID,
+	}
+
+	mspRoleBytes, err := proto.Marshal(mspRole)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal MSP role: %w", err)
+	}
+
+	principal := &msp.MSPPrincipal{
+		PrincipalClassification: msp.MSPPrincipal_ROLE,
+		Principal:               mspRoleBytes,
+	}
+
+	// Create signature policy: SignedBy(0) - requires signature from principal at index 0
+	policy := &fabriccommon.SignaturePolicy{}
+	policy.Type = &fabriccommon.SignaturePolicy_SignedBy{
+		SignedBy: 0,
+	}
+
+	// Wrap in envelope
+	policyEnvelope := &fabriccommon.SignaturePolicyEnvelope{
+		Version:    0,
+		Rule:       policy,
+		Identities: []*msp.MSPPrincipal{principal},
+	}
+
+	// Marshal the SignaturePolicyEnvelope
+	mspRuleBytes, err := proto.Marshal(policyEnvelope)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal signature policy envelope: %w", err)
+	}
+
+	// Wrap in NamespacePolicy with msp_rule
+	namespacePolicy := &applicationpb.NamespacePolicy{
+		Rule: &applicationpb.NamespacePolicy_MspRule{
+			MspRule: mspRuleBytes,
+		},
+	}
+
+	return proto.Marshal(namespacePolicy)
+}
+
+// CreateNamespaces creates multiple namespaces in a single transaction by writing to the meta-namespace.
+// It bypasses the proposal/endorsement layer and creates the transaction envelope directly.
+// All namespaces will use the same endorsementPolicy.
+func CreateNamespaces(ctx context.Context, t *testing.T, ordererConfigs []network.OrdererConf, adminMSPDir, adminMSPID, channel string, namespaceIDs []string, endorsementPolicy []byte) error {
+	t.Helper()
+
+	if len(namespaceIDs) == 0 {
+		return nil
+	}
+
+	// Resolve adminMSPDir to absolute path before changing directories
+	absAdminMSPDir, err := filepath.Abs(adminMSPDir)
+	if err != nil {
+		return fmt.Errorf("failed to resolve admin MSP directory: %w", err)
+	}
+
+	// Change to integration directory for correct relative paths in config
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get working directory: %w", err)
+	}
+	defer os.Chdir(cwd)
+
+	// If we're in integration/perf, go up one level to integration
+	if filepath.Base(cwd) == "perf" {
+		if err := os.Chdir("../"); err != nil {
+			return fmt.Errorf("failed to change to integration directory: %w", err)
+		}
+	}
+
+	// Create orderer connections
+	orderers := make([]*network.Orderer, len(ordererConfigs))
+	for i, cfg := range ordererConfigs {
+		orderer, err := network.NewOrderer(ctx, cfg)
+		if err != nil {
+			return fmt.Errorf("failed to create orderer %d: %w", i, err)
+		}
+		defer orderer.Close()
+		orderers[i] = orderer
+	}
+
+	// Load admin signer from MSP directory (use absolute path)
+	adminSigner, err := identity.SignerFromMSP(absAdminMSPDir, adminMSPID)
+	if err != nil {
+		return fmt.Errorf("failed to load admin signer: %w", err)
+	}
+
+	creator, err := adminSigner.Serialize()
+	if err != nil {
+		return fmt.Errorf("failed to serialize admin identity: %w", err)
+	}
+
+	// Generate nonce and compute TxID
+	nonce := make([]byte, 24)
+	if _, err := rand.Read(nonce); err != nil {
+		return fmt.Errorf("failed to generate nonce: %w", err)
+	}
+	txID := protoutil.ComputeTxID(nonce, creator)
+
+	// Build write set for all namespaces in the meta-namespace
+	var readWrites []*applicationpb.ReadWrite
+	for _, nsID := range namespaceIDs {
+		readWrites = append(readWrites, &applicationpb.ReadWrite{
+			Key:   []byte(nsID),
+			Value: endorsementPolicy,
+		})
+	}
+
+	// Create Fabric-X transaction with writes to meta-namespace (without endorsements first)
+	txNamespace := &applicationpb.TxNamespace{
+		NsId:        "_meta",
+		NsVersion:   0,
+		ReadsOnly:   nil,
+		ReadWrites:  readWrites,
+		BlindWrites: nil,
+	}
+
+	// Use ASN1Marshal to create the digest for signing (same as endorser does)
+	// No metadata needed for meta-namespace writes
+	digest, err := txNamespace.ASN1Marshal(txID, nil)
+	if err != nil {
+		return fmt.Errorf("failed to ASN1 marshal tx namespace: %w", err)
+	}
+
+	// Sign the digest with admin signer
+	endorsementSig, err := adminSigner.Sign(digest)
+	if err != nil {
+		return fmt.Errorf("failed to sign endorsement: %w", err)
+	}
+
+	// Deserialize the creator to extract certificate bytes (same as packager.go does)
+	var si msp.SerializedIdentity
+	if err := proto.Unmarshal(creator, &si); err != nil {
+		return fmt.Errorf("failed to unmarshal creator identity: %w", err)
+	}
+
+	// Create admin identity for endorsement using certificate bytes
+	adminIdentity := msppb.NewIdentity(si.Mspid, si.IdBytes)
+
+	// Create endorsement with identity (Fabric-X format)
+	endorsements := &applicationpb.Endorsements{
+		EndorsementsWithIdentity: []*applicationpb.EndorsementWithIdentity{{
+			Endorsement: endorsementSig,
+			Identity:    adminIdentity,
+		}},
+	}
+
+	// Create complete transaction with endorsement
+	tx := &applicationpb.Tx{
+		Metadata:     nil,
+		Namespaces:   []*applicationpb.TxNamespace{txNamespace},
+		Endorsements: []*applicationpb.Endorsements{endorsements},
+	}
+
+	txBytes, err := proto.Marshal(tx)
+	if err != nil {
+		return fmt.Errorf("failed to marshal tx: %w", err)
+	}
+
+	// Create channel header with MESSAGE type (not ENDORSER_TRANSACTION)
+	channelHeader := &fabriccommon.ChannelHeader{
+		Type:      int32(fabriccommon.HeaderType_MESSAGE),
+		TxId:      txID,
+		Timestamp: timestamppb.Now(),
+		ChannelId: channel,
+		Epoch:     0,
+	}
+	channelHeaderBytes, err := proto.Marshal(channelHeader)
+	if err != nil {
+		return fmt.Errorf("failed to marshal channel header: %w", err)
+	}
+
+	// Create signature header
+	signatureHeaderBytes, err := proto.Marshal(&fabriccommon.SignatureHeader{
+		Creator: creator,
+		Nonce:   nonce,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to marshal signature header: %w", err)
+	}
+
+	// Create payload
+	payload := &fabriccommon.Payload{
+		Header: &fabriccommon.Header{
+			ChannelHeader:   channelHeaderBytes,
+			SignatureHeader: signatureHeaderBytes,
+		},
+		Data: txBytes,
+	}
+	payloadBytes, err := proto.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	// Sign the payload
+	signature, err := adminSigner.Sign(payloadBytes)
+	if err != nil {
+		return fmt.Errorf("failed to sign payload: %w", err)
+	}
+
+	// Create envelope
+	envelope := &fabriccommon.Envelope{
+		Payload:   payloadBytes,
+		Signature: signature,
+	}
+
+	// Broadcast to all orderers
+	var errs int
+	for _, orderer := range orderers {
+		if err := orderer.Broadcast(ctx, envelope); err != nil {
+			t.Logf("Failed to broadcast to orderer: %v", err)
+			errs++
+		}
+	}
+
+	if errs*2 > len(orderers) {
+		return fmt.Errorf("failed to broadcast to majority of orderers")
+	}
+
+	t.Logf("Created %d namespaces successfully: %v", len(namespaceIDs), namespaceIDs)
+	return nil
 }
 
 func (th *TestHarness) Stop() error {

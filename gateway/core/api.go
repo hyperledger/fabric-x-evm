@@ -61,6 +61,13 @@ type TxQueueInterface interface {
 
 var logger = flogging.MustGetLogger("gateway.core")
 
+// WorkItem represents a transaction to be processed along with its namespace context.
+// Used in multi-namespace mode to route transactions to the correct endorser.
+type WorkItem struct {
+	Tx           *types.Transaction
+	NamespaceIdx int // Index into Gateway.endorserClients array
+}
+
 // Gateway is the component that bridges Fabric-x and the EVM. Its API is the
 // Ethereum JSON RPC. When the user submits a transaction targeting an Ethereum
 // contract, the gateway requests endorsement from a set of EVM endorsers. It then
@@ -77,6 +84,11 @@ type Gateway struct {
 	wg              sync.WaitGroup
 	stopOnce        sync.Once
 	endorsementChan chan sdk.Endorsement // Channel to send endorsements to BatchSubmitter
+
+	// Multi-namespace support
+	Queues          []*TxQueueV2         // N queues, one per namespace (nil in single-namespace mode)
+	EndorserClients []*EndorsementClient // N endorsers, one per namespace (nil in single-namespace mode)
+	WorkChan        chan *WorkItem       // Global work channel (nil in single-namespace mode)
 }
 
 type Store interface {
@@ -130,21 +142,26 @@ func (g *Gateway) Start(ctx context.Context) {
 	}
 }
 
-// worker processes transactions from the queue
+// worker processes transactions from the global work channel
 func (g *Gateway) worker(ctx context.Context) {
 	defer g.wg.Done()
 
 	for {
-		tx, ok := g.TxQueue.Dequeue()
-		if !ok {
-			// Queue is closed and empty
-			return
-		}
+		select {
+		case work := <-g.WorkChan:
+			// Process with the correct endorser for this namespace
+			end, err := g.EndorserClients[work.NamespaceIdx].ExecuteTransaction(ctx, work.Tx)
+			if err != nil {
+				logger.Errorf("tx %s (ns=%d) failed: %v", work.Tx.Hash().Hex(), work.NamespaceIdx, err)
+				continue
+			}
+			if err := g.SubmitFabricTx(ctx, end); err != nil {
+				logger.Errorf("submit failed: %v", err)
+				continue
+			}
 
-		// Process the transaction (old SendTransaction logic)
-		if err := g.processTx(ctx, tx); err != nil {
-			logger.Errorf("tx %s failed: %v", tx.Hash().Hex(), err)
-			continue
+		case <-ctx.Done():
+			return
 		}
 	}
 }
@@ -155,7 +172,7 @@ func (g *Gateway) processTx(ctx context.Context, tx *types.Transaction) error {
 	if err != nil {
 		return err
 	}
-	if err := g.SubmitFabricTx(ctx, end); err != nil {
+	if err := g.SubmitFabricTx(ctx, end); err != nil { // otoh, the submitter is just one single for all namespaces
 		return err
 	}
 
@@ -181,7 +198,7 @@ func (g *Gateway) CallContract(ctx context.Context, call ethereum.CallMsg, block
 
 // ExecuteEthTx requests endorsements for the submitted ethereum-style transaction.
 func (g *Gateway) ExecuteEthTx(ctx context.Context, tx *types.Transaction) (sdk.Endorsement, error) {
-	return g.endorsers.ExecuteTransaction(ctx, tx)
+	return g.endorsers.ExecuteTransaction(ctx, tx) // I think we can have multiple endorsers instance, one per namespace - they can share keys; they will obviously have to each have their own KVS state
 }
 
 // SubmitFabricTx submits a Fabric envelope via the BatchSubmitter.

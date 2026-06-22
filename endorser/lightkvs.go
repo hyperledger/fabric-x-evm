@@ -383,7 +383,7 @@ func (kvs *LightKVS) Handle(ctx context.Context, b blocks.Block) error {
 // HandleTx implements the core.TxHandler interface.
 // It processes a batch of transaction notifications by extracting writes and applying them.
 // This is called by the notification dispatcher when transactions are committed.
-func (kvs *LightKVS) HandleTx(ctx context.Context, notifs []core.TxNotification) error {
+func (kvs *LightKVS) HandleTx(ctx context.Context, notifs []core.TxNotification) error { // each kvs needs to be notified of transactions in its namespace
 	// Collect all writes from all notifications in the batch
 	var allUpdates []KeyValueVersion
 

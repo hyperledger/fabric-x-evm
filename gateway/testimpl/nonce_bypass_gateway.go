@@ -28,10 +28,12 @@ func NewNonceBypassGateway(gw *core.Gateway) *NonceBypassGateway {
 	return &NonceBypassGateway{Gateway: gw}
 }
 
-// SendTransaction bypasses nonce validation but still uses the transaction queue
-// to preserve MVCC retry logic and worker pool control.
+// SendTransaction bypasses nonce validation and enqueues the transaction to all namespace queues.
+// This enables multi-namespace testing where the same transaction is submitted to N namespaces.
 func (g *NonceBypassGateway) SendTransaction(ctx context.Context, tx *types.Transaction) error {
-	// Skip ValidateTx (which includes nonce validation) and directly enqueue
-	g.Gateway.TxQueue.Enqueue(tx)
+	// Enqueue to all namespace queues
+	for _, queue := range g.Gateway.Queues {
+		queue.Enqueue(tx)
+	}
 	return nil
 }

@@ -130,6 +130,84 @@ func extractEthTxFromMetadata(metadata [][]byte) ([]byte, error) {
 	return input.Args[1], nil
 }
 
+// NamespaceMultiplexer implements notification.AllTxHandler and routes notifications
+// to the appropriate handlers based on namespace.
+type NamespaceMultiplexer struct {
+	handlers map[string][]TxHandler // namespace -> handlers
+}
+
+// NewNamespaceMultiplexer creates a new multiplexer for routing notifications by namespace.
+func NewNamespaceMultiplexer() *NamespaceMultiplexer {
+	return &NamespaceMultiplexer{
+		handlers: make(map[string][]TxHandler),
+	}
+}
+
+// RegisterHandlers registers handlers for a specific namespace.
+func (m *NamespaceMultiplexer) RegisterHandlers(namespace string, handlers ...TxHandler) {
+	m.handlers[namespace] = append(m.handlers[namespace], handlers...)
+}
+
+// HandleBatch implements notification.AllTxHandler by routing notifications to namespace-specific handlers.
+func (m *NamespaceMultiplexer) HandleBatch(ctx context.Context, batch notification.AllTxBatch) error {
+	notifLogger.Debugf("[MULTIPLEXER] block=%d total_events=%d", batch.BlockNumber, len(batch.Events))
+
+	// Group notifications by namespace
+	byNamespace := make(map[string][]TxNotification)
+
+	for _, event := range batch.Events {
+		// Extract Ethereum transaction from metadata
+		ethTxBytes, err := extractEthTxFromMetadata(event.Metadata)
+		if err != nil {
+			notifLogger.Debugf("Skipping tx %s: %v", event.TxID, err)
+			continue
+		}
+
+		var ethTx types.Transaction
+		if err := ethTx.UnmarshalBinary(ethTxBytes); err != nil {
+			return fmt.Errorf("unmarshal eth tx for %s: %w", event.TxID, err)
+		}
+
+		// Extract namespace from first namespace in event
+		if len(event.Namespaces) == 0 {
+			notifLogger.Debugf("Skipping tx %s: no namespaces", event.TxID)
+			continue
+		}
+		ns := event.Namespaces[0].NsId
+
+		nsrws, events := namespacesToNsRWS(event.Namespaces)
+
+		notif := TxNotification{
+			BlockNum:   event.BlockNum,
+			TxNum:      uint64(event.TxNum),
+			FabricTxID: event.TxID,
+			Status:     event.Status,
+			EthTxBytes: ethTxBytes,
+			EthTxHash:  ethTx.Hash(),
+			NsRWS:      nsrws,
+			Events:     events,
+		}
+
+		byNamespace[ns] = append(byNamespace[ns], notif)
+	}
+
+	// Dispatch to handlers per namespace
+	for ns, notifs := range byNamespace {
+		if handlers, ok := m.handlers[ns]; ok {
+			notifLogger.Debugf("[MULTIPLEXER] Dispatching %d notifs to namespace %s", len(notifs), ns)
+			for _, h := range handlers {
+				if err := h.HandleTx(ctx, notifs); err != nil {
+					return fmt.Errorf("handler failed for ns %s: %w", ns, err)
+				}
+			}
+		} else {
+			notifLogger.Debugf("[MULTIPLEXER] No handlers registered for namespace %s", ns)
+		}
+	}
+
+	return nil
+}
+
 // namespacesToNsRWS converts applicationpb.TxNamespace slices (as delivered by
 // AllTxStreamer) into the blocks.NsReadWriteSet format used internally.
 // It also extracts the special _event_ key as raw event bytes.

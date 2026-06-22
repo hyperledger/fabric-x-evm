@@ -39,19 +39,19 @@ type KVSSnapshotter interface {
 // It allows setting nonces, code, balances, and storage for addresses,
 // then commits all changes in a single transaction.
 type StatePrimer struct {
-	gw                *core.Gateway
-	submitter         core.Submitter
-	kvs               KVSSnapshotter
-	reader            endorser.ReadStore
-	namespace         string
-	signer            sdk.Signer
-	builders          []endorsement.Builder
-	channel           string
-	nsVersion         string
-	monotonicVersions bool
+	Gw                *core.Gateway
+	Submitter         core.Submitter
+	Kvs               KVSSnapshotter
+	Reader            endorser.ReadStore
+	Namespace         string
+	Signer            sdk.Signer
+	Builders          []endorsement.Builder
+	Channel           string
+	NsVersion         string
+	MonotonicVersions bool
 
 	// DualStateDB that tracks both Fabric and Ethereum state
-	stateDB endorser.ExtendedStateDB
+	StateDB endorser.ExtendedStateDB
 
 	priv *ecdsa.PrivateKey
 }
@@ -84,36 +84,36 @@ func NewStatePrimer(
 	}
 
 	return &StatePrimer{
-		gw:                gw,
-		submitter:         submitter,
-		reader:            store,
-		kvs:               db,
-		namespace:         namespace,
-		signer:            signer,
-		builders:          builders,
-		channel:           channel,
-		nsVersion:         nsVersion,
-		monotonicVersions: monotonicVersions,
-		stateDB:           stateDB,
+		Gw:                gw,
+		Submitter:         submitter,
+		Reader:            store,
+		Kvs:               db,
+		Namespace:         namespace,
+		Signer:            signer,
+		Builders:          builders,
+		Channel:           channel,
+		NsVersion:         nsVersion,
+		MonotonicVersions: monotonicVersions,
+		StateDB:           stateDB,
 		priv:              priv,
 	}, nil
 }
 
 // SetNonce sets the nonce for an address immediately in the simulation store.
 func (sp *StatePrimer) CreateAccount(addr common.Address) *StatePrimer {
-	sp.stateDB.CreateAccount(addr)
+	sp.StateDB.CreateAccount(addr)
 	return sp
 }
 
 // SetNonce sets the nonce for an address immediately in the simulation store.
 func (sp *StatePrimer) SetNonce(addr common.Address, nonce uint64) *StatePrimer {
-	sp.stateDB.SetNonce(addr, nonce, tracing.NonceChangeEoACall)
+	sp.StateDB.SetNonce(addr, nonce, tracing.NonceChangeEoACall)
 	return sp
 }
 
 // SetCode sets the code for an address immediately in the simulation store.
 func (sp *StatePrimer) SetCode(addr common.Address, code []byte) *StatePrimer {
-	sp.stateDB.SetCode(addr, code, tracing.CodeChangeUnspecified)
+	sp.StateDB.SetCode(addr, code, tracing.CodeChangeUnspecified)
 
 	return sp
 }
@@ -123,7 +123,7 @@ func (sp *StatePrimer) SetBalance(addr common.Address, balance *big.Int) *StateP
 	if balance != nil && balance.Sign() > 0 {
 		// Use AddBalance to set the balance (SnapshotDB doesn't have SetBalance)
 		// This works because accounts start with zero balance
-		sp.stateDB.AddBalance(addr, uint256.MustFromBig(balance), tracing.BalanceChangeUnspecified)
+		sp.StateDB.AddBalance(addr, uint256.MustFromBig(balance), tracing.BalanceChangeUnspecified)
 	}
 	return sp
 }
@@ -131,7 +131,7 @@ func (sp *StatePrimer) SetBalance(addr common.Address, balance *big.Int) *StateP
 // SetStorage sets storage slots for an address immediately in the simulation store.
 func (sp *StatePrimer) SetStorage(addr common.Address, storage map[common.Hash]common.Hash) *StatePrimer {
 	for key, value := range storage {
-		sp.stateDB.SetState(addr, key, value)
+		sp.StateDB.SetState(addr, key, value)
 	}
 	return sp
 }
@@ -223,7 +223,7 @@ func (sp *StatePrimer) LoadFromJSON(jsonFilePath string) (*StatePrimer, error) {
 // Commit applies all state changes to the ledger by creating a proposal,
 // endorsing it, and submitting it through the normal Fabric commit flow.
 func (sp *StatePrimer) Commit(ctx context.Context, wait bool) error {
-	defer sp.reader.Close()
+	defer sp.Reader.Close()
 
 	// create a fake ethereum tx so we can use it to track priming
 	tx, ethTxBytes, err := sp.fakeEthTx()
@@ -233,10 +233,10 @@ func (sp *StatePrimer) Commit(ctx context.Context, wait bool) error {
 
 	// Create a proposal for the priming transaction
 	prop, err := network.NewSignedProposal(
-		sp.signer,
-		sp.channel,
-		sp.namespace,
-		sp.nsVersion,
+		sp.Signer,
+		sp.Channel,
+		sp.Namespace,
+		sp.NsVersion,
 		[][]byte{{byte(lc.ProposalTypeEVMTx)}, ethTxBytes},
 	)
 	if err != nil {
@@ -250,8 +250,8 @@ func (sp *StatePrimer) Commit(ctx context.Context, wait bool) error {
 
 	// Collect endorsements from all builders
 	var presps []*pb.ProposalResponse
-	for _, builder := range sp.builders {
-		presp, err := builder.Endorse(inv, endorsement.Success(sp.stateDB.Result(), nil, nil))
+	for _, builder := range sp.Builders {
+		presp, err := builder.Endorse(inv, endorsement.Success(sp.StateDB.Result(), nil, nil))
 		if err != nil {
 			return err
 		}
@@ -267,30 +267,30 @@ func (sp *StatePrimer) Commit(ctx context.Context, wait bool) error {
 // Writes returns the ReadWriteSet of all state changes recorded since the last Reset.
 // Safe to call after Commit — the StateDB is not cleared by Commit.
 func (sp *StatePrimer) Writes() blocks.ReadWriteSet {
-	return sp.stateDB.Result()
+	return sp.StateDB.Result()
 }
 
 // Reset creates a new DualStateDB, discarding all uncommitted changes.
 func (sp *StatePrimer) Reset() (*StatePrimer, error) {
-	sp.reader.Close() // just in case
-	reader, err := sp.kvs.NewSnapshot(0)
+	sp.Reader.Close() // just in case
+	reader, err := sp.Kvs.NewSnapshot(0)
 	if err != nil {
 		return nil, err
 	}
-	sp.reader = reader
-	stateDB, err := endorser.NewStateDBWithDualState(context.TODO(), sp.reader, sp.namespace, 0, sp.monotonicVersions, nil)
+	sp.Reader = reader
+	stateDB, err := endorser.NewStateDBWithDualState(context.TODO(), sp.Reader, sp.Namespace, 0, sp.MonotonicVersions, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	sp.stateDB = stateDB
+	sp.StateDB = stateDB
 	return sp, nil
 }
 
 // GetEthStateDB extracts the ethStateDB from the underlying DualStateDB.
 // This allows the primed state to be reused in subsequent operations.
 func (sp *StatePrimer) GetEthStateDB() *ethstate.StateDB {
-	if dualDB, ok := sp.stateDB.(*endorser.DualStateDB); ok {
+	if dualDB, ok := sp.StateDB.(*endorser.DualStateDB); ok {
 		return dualDB.EthStateDB()
 	}
 	return nil
@@ -306,7 +306,7 @@ func (sp *StatePrimer) fakeEthTx() (*types.Transaction, []byte, error) {
 		Data:  b,
 	})
 
-	chainID, err := sp.gw.ChainID(context.TODO())
+	chainID, err := sp.Gw.ChainID(context.TODO())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -328,18 +328,18 @@ func (sp *StatePrimer) fakeEthTx() (*types.Transaction, []byte, error) {
 func (sp *StatePrimer) commitAndWait(end sdk.Endorsement, tx *types.Transaction, wait bool) error {
 	if wait {
 		// submit through the gateway (asynchronous)
-		if err := sp.gw.SubmitFabricTx(context.Background(), end); err != nil {
+		if err := sp.Gw.SubmitFabricTx(context.Background(), end); err != nil {
 			return err
 		}
 	} else {
 		// Submit directly via the submitter (synchronous) instead of via gateway (async BatchSubmitter)
 		// This ensures priming completes before the test continues
-		if err := sp.submitter.Submit(context.Background(), end); err != nil {
+		if err := sp.Submitter.Submit(context.Background(), end); err != nil {
 			return err
 		}
 	}
 
-	ec, err := NewNativeEthClient(sp.gw)
+	ec, err := NewNativeEthClient(sp.Gw)
 	if err != nil {
 		return err
 	}
