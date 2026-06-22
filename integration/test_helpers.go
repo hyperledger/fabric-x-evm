@@ -189,7 +189,10 @@ func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg confi
 
 	// Create BatchSubmitter infrastructure
 	endorsementChan := make(chan sdk.Endorsement, 1000)
-	batchSubmitter := core.NewBatchSubmitter(submitters, endorsementChan, cfg.Gateway.SubmitterCount)
+
+	// Enable rate limiting only for "synthetic" namespace
+	enableRateLimiting := cfg.Network.Namespace == "synthetic"
+	batchSubmitter := core.NewBatchSubmitter(submitters, endorsementChan, cfg.Gateway.SubmitterCount, enableRateLimiting)
 
 	batchSubmitter.Start(t.Context())
 

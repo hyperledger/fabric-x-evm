@@ -656,7 +656,7 @@ func TestReplayJSONDataset(t *testing.T) {
 	ordererSubmitterCount := *orderers   // Number of goroutines submitting transactions TO the orderer (BatchSubmitter workers)
 	numOutstandingTx := *outstanding     // Maximum number of outstanding transactions
 
-	_, _, _ = runReplayTest(t, processingWorkerCount, submittingWorkerCount, ordererSubmitterCount, numOutstandingTx, replayConfig{windowSize: 1000000}, *gatewayConfig)
+	_, _, _ = runReplayTest(t, processingWorkerCount, submittingWorkerCount, ordererSubmitterCount, numOutstandingTx, replayConfig{wrapAround: true, wrapCount: 100000}, *gatewayConfig)
 }
 
 type performanceResult struct {
