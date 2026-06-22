@@ -184,7 +184,12 @@ func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg confi
 
 	// Create gateway before synchronizer so we can register it as a handler
 	// Gateway owns the BatchSubmitter and will handle its lifecycle
-	gw, err := app.BuildGateway(t.Context(), ends, gwSigner, cfg.Network, chain, submitters, cfg.Gateway.SubmitterCount, cfg.Gateway.WorkerCount, txQueue)
+	// Enable rate limiting only for "synthetic" namespace (10 000 tx/s)
+	txPerSec := 0
+	if cfg.Network.Namespace == "synthetic" {
+		txPerSec = 10000
+	}
+	gw, err := app.BuildGateway(t.Context(), ends, gwSigner, cfg.Network, chain, submitters, cfg.Gateway.SubmitterCount, cfg.Gateway.WorkerCount, txQueue, cfg.Gateway.EndorsementChanSize, txPerSec)
 	if err != nil {
 		return nil, nil, err
 	}

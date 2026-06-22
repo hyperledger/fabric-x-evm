@@ -132,12 +132,12 @@ Consensus:
 
 Batching:
   BatchTimeouts:
-    BatchCreationTimeout: 20ms
+    BatchCreationTimeout: 10ms
     FirstStrikeThreshold: 10s
     SecondStrikeThreshold: 10s
     AutoRemoveTimeout: 10s
   BatchSize:
-    MaxMessageCount: 1000
+    MaxMessageCount: 10000
     AbsoluteMaxBytes: 10485760
     PreferredMaxBytes: 2097152
   RequestMaxBytes: 1048576
