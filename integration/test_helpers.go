@@ -29,6 +29,7 @@ import (
 	"github.com/ethereum/go-ethereum/rpc"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
+	fxsigner "github.com/hyperledger/fabric-x-common/cmd/common/signer"
 	"github.com/hyperledger/fabric-x-common/protoutil"
 	"github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/endorser"
@@ -581,17 +582,27 @@ func NewFabricXTestHarnessWithNotifications(t *testing.T, logger sdk.Logger, evm
 	return th, nil
 }
 
+// fabricXSignerWrapper wraps a fabric-x-common signer to override Serialize behavior
+type fabricXSignerWrapper struct {
+	*fxsigner.Signer
+}
+
+// Serialize overrides the default Serialize to call SerializeWithIDOfCert instead
+func (w *fabricXSignerWrapper) Serialize() ([]byte, error) {
+	return w.Signer.SerializeWithIDOfCert()
+}
+
 // NewEndorser creates an endorser with its dependencies.
 // Exported for use by custom endorser factories.
 func NewEndorser(t *testing.T, cfg econf.Endorser, channel, namespace string, evmConfig endorser.EVMConfig, protocol string) (endorser.KVS, endorsement.Builder, *endorser.Endorser) {
 	t.Helper()
 
-	var signer sdk.Signer
+	var baseSigner sdk.Signer
 	if cfg.Identity.MSPDir == "" {
-		signer = &localSigner{}
+		baseSigner = &localSigner{}
 	} else {
 		var err error
-		signer, err = identity.SignerFromMSP(cfg.Identity.MSPDir, cfg.Identity.MspID)
+		baseSigner, err = identity.SignerFromMSP(cfg.Identity.MSPDir, cfg.Identity.MspID)
 		if err != nil {
 			t.Fatalf("SignerFromMSP: %v", err)
 		}
@@ -615,9 +626,42 @@ func NewEndorser(t *testing.T, cfg econf.Endorser, channel, namespace string, ev
 	var monotonicVersions bool
 	switch protocol {
 	case "fabric", "":
-		builder = efab.NewEndorsementBuilder(signer)
+		builder = efab.NewEndorsementBuilder(baseSigner)
 	case "fabric-x":
-		builder = efabx.NewEndorsementBuilder(signer)
+		// For fabric-x, create a fabric-x-common signer from the MSP directory
+		if cfg.Identity.MSPDir == "" {
+			t.Fatalf("fabric-x protocol requires MSPDir to be set")
+		}
+
+		// Find key file (same logic as identity.SignerFromMSP)
+		keyFiles, err := filepath.Glob(filepath.Join(cfg.Identity.MSPDir, "keystore", "*_sk"))
+		if err != nil || len(keyFiles) == 0 {
+			keyFiles, err = filepath.Glob(filepath.Join(cfg.Identity.MSPDir, "keystore", "*.pem"))
+		}
+		if err != nil || len(keyFiles) == 0 {
+			t.Fatalf("no private key found in %s/keystore", cfg.Identity.MSPDir)
+		}
+
+		// Find cert file (same logic as identity.SignerFromMSP)
+		certFiles, err := filepath.Glob(filepath.Join(cfg.Identity.MSPDir, "signcerts", "*.pem"))
+		if err != nil || len(certFiles) == 0 {
+			t.Fatalf("no signcert found in %s/signcerts", cfg.Identity.MSPDir)
+		}
+
+		fxSignerConfig := fxsigner.Config{
+			MSPID:        cfg.Identity.MspID,
+			IdentityPath: certFiles[0],
+			KeyPath:      keyFiles[0],
+			HashFunc:     "SHA256",
+		}
+
+		fxSigner, err := fxsigner.NewSigner(fxSignerConfig)
+		if err != nil {
+			t.Fatalf("failed to create fabric-x signer: %v", err)
+		}
+
+		wrappedSigner := &fabricXSignerWrapper{Signer: fxSigner}
+		builder = efabx.NewEndorsementBuilder(wrappedSigner)
 		monotonicVersions = true
 	default:
 		t.Fatalf("unsupported protocol: %q", protocol)
