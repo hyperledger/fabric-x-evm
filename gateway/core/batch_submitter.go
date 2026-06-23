@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -41,20 +42,35 @@ var SetBatchSubmitterQueueSizeMetric func(size int)
 // Rate limiting is optionally applied across all workers to ensure aggregate submission rate
 // does not exceed the configured limit.
 type BatchSubmitter struct {
-	submitters  []Submitter // One submitter per worker for parallel submission
-	inputChan   chan sdk.Endorsement
-	stopChan    chan struct{}
-	doneChan    chan struct{}
-	numWorkers  int
-	rateLimiter *rate.Limiter // Shared rate limiter across all workers (nil if disabled)
+	submitters     []Submitter // One submitter per worker for parallel submission
+	inputChan      chan sdk.Endorsement
+	stopChan       chan struct{}
+	doneChan       chan struct{}
+	numWorkers     int
+	rateLimiter    *rate.Limiter  // Shared rate limiter across all workers (nil if disabled)
+	silenceConfig  *SilenceConfig // Optional periodic silence windows (nil if disabled)
+	lastSilenceEnd atomic.Value   // time.Time - tracks when last silence window ended
+}
+
+// SilenceConfig defines periodic silence windows to create gaps for other processes.
+// Example: interval=1s, duration=10ms means pause for 10ms every second.
+type SilenceConfig struct {
+	Interval time.Duration // How often to pause (e.g., 1 second)
+	Duration time.Duration // How long to pause (e.g., 10 milliseconds)
 }
 
 const DefaultNumWorkers = 16
 
 // MaxSubmissionsPerSecond is the maximum aggregate submission rate across all workers.
-// Set to 11,000 transactions per second to ensure we never exceed this limit.
+// Set to 10,000 transactions per second to ensure we never exceed this limit.
 // Only enforced when rate limiting is enabled.
 const MaxSubmissionsPerSecond = 10000
+
+// SilenceInterval defines how often to pause submissions (e.g., every 1 second)
+const SilenceInterval = 1 * time.Second
+
+// SilenceDuration defines how long to pause (e.g., 10 milliseconds)
+const SilenceDuration = 10 * time.Millisecond
 
 // NewBatchSubmitter creates a new BatchSubmitter.
 // If cache is non-nil, EthTxBytes are stored per-transaction before submission.
@@ -78,21 +94,48 @@ func NewBatchSubmitter(
 	}
 
 	var rateLimiter *rate.Limiter
+	var silenceConfig *SilenceConfig
+
 	if enableRateLimiting {
-		// Create a rate limiter with MaxSubmissionsPerSecond limit and a burst size of 1.
-		// This limiter is shared across all workers to enforce aggregate rate limit.
-		rateLimiter = rate.NewLimiter(rate.Limit(MaxSubmissionsPerSecond), 1)
-		batchLogger.Infof("Rate limiting enabled: max %d submissions/second across all workers", MaxSubmissionsPerSecond)
+		// Enable silence windows when rate limiting is active
+		silenceConfig = &SilenceConfig{
+			Interval: SilenceInterval,
+			Duration: SilenceDuration,
+		}
+
+		// Calculate burst size to allow catching up after silence windows
+		// During a 10ms silence at 10,000 tx/s, we "miss" 100 transactions
+		// Allow burst to catch up: 100 transactions
+		missedTxDuringSilence := int(float64(MaxSubmissionsPerSecond) * SilenceDuration.Seconds())
+		burstSize := missedTxDuringSilence
+		if burstSize < 1 {
+			burstSize = 1
+		}
+
+		// Create a rate limiter with the same rate but larger burst to allow catch-up
+		rateLimiter = rate.NewLimiter(rate.Limit(MaxSubmissionsPerSecond), burstSize)
+		batchLogger.Infof("Rate limiting enabled with periodic silence windows:")
+		batchLogger.Infof("  Target rate: %d tx/s", MaxSubmissionsPerSecond)
+		batchLogger.Infof("  Silence: %v every %v", SilenceDuration, SilenceInterval)
+		batchLogger.Infof("  Burst size: %d (to catch up after silence)", burstSize)
 	}
 
-	return &BatchSubmitter{
-		submitters:  submitters,
-		inputChan:   inputChan,
-		stopChan:    make(chan struct{}),
-		doneChan:    make(chan struct{}),
-		numWorkers:  numWorkers,
-		rateLimiter: rateLimiter,
+	bs := &BatchSubmitter{
+		submitters:    submitters,
+		inputChan:     inputChan,
+		stopChan:      make(chan struct{}),
+		doneChan:      make(chan struct{}),
+		numWorkers:    numWorkers,
+		rateLimiter:   rateLimiter,
+		silenceConfig: silenceConfig,
 	}
+
+	// Initialize lastSilenceEnd to now if silence is configured
+	if silenceConfig != nil {
+		bs.lastSilenceEnd.Store(time.Now())
+	}
+
+	return bs
 }
 
 // Start begins the submission loop with multiple worker goroutines.
@@ -163,8 +206,15 @@ func (bs *BatchSubmitter) worker(ctx context.Context, workerID int, wg *sync.Wai
 }
 
 func (bs *BatchSubmitter) submitOne(ctx context.Context, workerID int, end sdk.Endorsement) error {
+	// Check if we need to enforce a silence window (only when rate limiting is enabled)
+	// This creates gaps for other processes to submit to the ordering service
+	if bs.silenceConfig != nil {
+		bs.enforceSilenceWindow(ctx)
+	}
+
 	// Wait for rate limiter to allow this submission (if enabled)
 	// This enforces the aggregate rate limit across all workers
+	// The burst size allows catching up after silence windows
 	if bs.rateLimiter != nil {
 		if err := bs.rateLimiter.Wait(ctx); err != nil {
 			return fmt.Errorf("rate limiter wait failed: %w", err)
@@ -176,4 +226,44 @@ func (bs *BatchSubmitter) submitOne(ctx context.Context, workerID int, end sdk.E
 	err := bs.submitters[workerID].Submit(ctx, end)
 	batchLogger.Debugf("[SUBMIT] worker=%d txid=%s submit_took=%v", workerID, txid, time.Since(t0))
 	return err
+}
+
+// enforceSilenceWindow checks if it's time for a silence window and pauses if needed.
+// Only one worker will trigger the silence window; others will wait if they arrive during it.
+// This creates predictable gaps where other processes can submit to the ordering service.
+// The rate limiter's burst capacity allows catching up after the pause.
+func (bs *BatchSubmitter) enforceSilenceWindow(ctx context.Context) {
+	now := time.Now()
+	lastEnd := bs.lastSilenceEnd.Load().(time.Time)
+
+	// Check if it's time for the next silence window
+	timeSinceLastSilence := now.Sub(lastEnd)
+	if timeSinceLastSilence >= SilenceInterval {
+		// Try to claim this silence window using atomic compare-and-swap
+		// This ensures only one worker triggers the silence
+		expectedEnd := now.Add(SilenceDuration)
+		if bs.lastSilenceEnd.CompareAndSwap(lastEnd, expectedEnd) {
+			// We won the race - enforce the silence window
+			batchLogger.Debugf("Silence window starting: duration=%v", SilenceDuration)
+			select {
+			case <-time.After(SilenceDuration):
+				batchLogger.Debugf("Silence window ended")
+			case <-ctx.Done():
+				return
+			}
+		} else {
+			// Another worker is handling the silence window
+			// Wait if we're still within the silence period
+			currentEnd := bs.lastSilenceEnd.Load().(time.Time)
+			if now.Before(currentEnd) {
+				waitDuration := currentEnd.Sub(now)
+				batchLogger.Debugf("Waiting for ongoing silence window: remaining=%v", waitDuration)
+				select {
+				case <-time.After(waitDuration):
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}
 }
