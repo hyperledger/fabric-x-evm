@@ -421,3 +421,15 @@ func TestCall_NonRevertBackendErrorIsInternal(t *testing.T) {
 		t.Errorf("code = %d, want -32603 (Internal)", rpcErr.ErrorCode())
 	}
 }
+
+func TestDomainLogToTypesLog_SetsBlockTimestamp(t *testing.T) {
+	got := domainLogToTypesLog(domain.Log{
+		Timestamp: 1234,
+		BlockHash: make([]byte, 32),
+		TxHash:    make([]byte, 32),
+		Address:   make([]byte, 20),
+	})
+	if got.BlockTimestamp != 1234 {
+		t.Errorf("BlockTimestamp = %d, want 1234", got.BlockTimestamp)
+	}
+}

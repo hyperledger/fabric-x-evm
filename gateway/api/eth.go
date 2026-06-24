@@ -478,14 +478,15 @@ func domainLogToTypesLog(l domain.Log) *types.Log {
 	}
 
 	return &types.Log{
-		Address:     common.BytesToAddress(l.Address),
-		Topics:      topics,
-		Data:        l.Data,
-		BlockNumber: l.BlockNumber,
-		BlockHash:   common.BytesToHash(l.BlockHash),
-		TxHash:      common.BytesToHash(l.TxHash),
-		TxIndex:     uint(l.TxIndex),
-		Index:       uint(l.LogIndex),
+		Address:        common.BytesToAddress(l.Address),
+		Topics:         topics,
+		Data:           l.Data,
+		BlockNumber:    l.BlockNumber,
+		BlockHash:      common.BytesToHash(l.BlockHash),
+		BlockTimestamp: uint64(l.Timestamp),
+		TxHash:         common.BytesToHash(l.TxHash),
+		TxIndex:        uint(l.TxIndex),
+		Index:          uint(l.LogIndex),
 	}
 }
 
