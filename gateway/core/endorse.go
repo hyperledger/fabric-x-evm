@@ -122,8 +122,11 @@ func (e *EndorsementClient) CallContract(ctx context.Context, args ethereum.Call
 	if err != nil {
 		return nil, fmt.Errorf("process call: %w", err)
 	}
-	if res.Response.Status == 201 {
+	if res.Response.Status == common.StatusEVMRevert {
 		return nil, &domain.RevertError{Reason: res.Response.Message, Data: res.Response.Payload}
+	}
+	if res.Response.Status == common.StatusEVMExecFailure {
+		return nil, &domain.ExecutionError{Message: res.Response.Message}
 	}
 	if res.Response.Status < 200 || res.Response.Status >= 400 {
 		return nil, fmt.Errorf("query response was not successful, error code %d, msg %s", res.Response.Status, res.Response.Message)

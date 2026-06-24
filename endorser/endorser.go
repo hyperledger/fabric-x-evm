@@ -133,9 +133,11 @@ func response(res []byte, err error) *peer.ProposalResponse {
 	if err != nil {
 		// 201 marks an EVM revert: success-range so protoutil cuts a tx, but
 		// distinguishable from 200 so the gateway and committer can tell.
-		status := int32(500)
+		status := common.StatusError
 		if errors.Is(err, vm.ErrExecutionReverted) {
-			status = 201
+			status = common.StatusEVMRevert
+		} else if isEVMExecutionFailure(err) {
+			status = common.StatusEVMExecFailure
 		}
 		return &peer.ProposalResponse{
 			Version: 1,
@@ -150,11 +152,25 @@ func response(res []byte, err error) *peer.ProposalResponse {
 	return &peer.ProposalResponse{
 		Version: 1,
 		Response: &peer.Response{
-			Status:  200,
+			Status:  common.StatusOK,
 			Message: "OK",
 			Payload: res,
 		},
 	}
+}
+
+func isEVMExecutionFailure(err error) bool {
+	if err == nil || errors.Is(err, vm.ErrExecutionReverted) {
+		return false
+	}
+	return errors.Is(err, vm.ErrOutOfGas) ||
+		errors.Is(err, vm.ErrCodeStoreOutOfGas) ||
+		errors.Is(err, vm.ErrMaxCodeSizeExceeded) ||
+		errors.Is(err, vm.ErrInvalidJump) ||
+		errors.Is(err, vm.ErrWriteProtection) ||
+		errors.Is(err, vm.ErrReturnDataOutOfBounds) ||
+		errors.Is(err, vm.ErrGasUintOverflow) ||
+		errors.Is(err, vm.ErrInvalidCode)
 }
 
 // isPreExecutionError checks if an error is a pre-execution validation error

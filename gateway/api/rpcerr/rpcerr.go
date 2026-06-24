@@ -87,3 +87,8 @@ func ExecutionReverted(reason string, data string) error {
 		Data:    data,
 	}
 }
+
+// ExecutionError returns -32000 for a non-revert EVM execution failure (e.g. out of gas), without data.
+func ExecutionError(msg string) error {
+	return &Error{Code: CodeExecutionReverted, Message: msg}
+}

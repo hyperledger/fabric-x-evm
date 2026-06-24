@@ -44,7 +44,7 @@ func TestCallContract_Status201ReturnsRevertError(t *testing.T) {
 	payload := []byte{0x08, 0xc3, 0x79, 0xa0, 0xde, 0xad, 0xbe, 0xef}
 	c := newClient(&stubEndorser{callResp: &peer.ProposalResponse{
 		Response: &peer.Response{
-			Status:  201,
+			Status:  common.StatusEVMRevert,
 			Message: "execution reverted: out of stock",
 			Payload: payload,
 		},
@@ -69,7 +69,7 @@ func TestCallContract_Status201ReturnsRevertError(t *testing.T) {
 
 func TestCallContract_Status500IsGenericError(t *testing.T) {
 	c := newClient(&stubEndorser{callResp: &peer.ProposalResponse{
-		Response: &peer.Response{Status: 500, Message: "endorser dead"},
+		Response: &peer.Response{Status: common.StatusError, Message: "endorser dead"},
 	}})
 
 	_, err := c.CallContract(context.Background(), ethereum.CallMsg{}, nil)
@@ -81,12 +81,32 @@ func TestCallContract_Status500IsGenericError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
+	var exec *domain.ExecutionError
+	if errors.As(err, &exec) {
+		t.Errorf("backend fault must not be *ExecutionError, got %v", exec)
+	}
+}
+
+func TestCallContract_Status400ReturnsExecutionError(t *testing.T) {
+	c := newClient(&stubEndorser{callResp: &peer.ProposalResponse{
+		Response: &peer.Response{Status: common.StatusEVMExecFailure, Message: "out of gas"},
+	}})
+
+	_, err := c.CallContract(context.Background(), ethereum.CallMsg{}, nil)
+
+	var exec *domain.ExecutionError
+	if !errors.As(err, &exec) {
+		t.Fatalf("expected *ExecutionError, got %T (%v)", err, err)
+	}
+	if exec.Message != "out of gas" {
+		t.Errorf("Message = %q, want %q", exec.Message, "out of gas")
+	}
 }
 
 func TestCallContract_Status200ReturnsPayload(t *testing.T) {
 	want := []byte{0xde, 0xad}
 	c := newClient(&stubEndorser{callResp: &peer.ProposalResponse{
-		Response: &peer.Response{Status: 200, Payload: want},
+		Response: &peer.Response{Status: common.StatusOK, Payload: want},
 	}})
 
 	got, err := c.CallContract(context.Background(), ethereum.CallMsg{}, nil)
