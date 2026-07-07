@@ -68,6 +68,7 @@ type Log struct {
 	Address     []byte
 	Topics      [][]byte
 	Data        []byte
+	Timestamp   int64
 }
 
 // LogFilter contains options for filtering logs.
