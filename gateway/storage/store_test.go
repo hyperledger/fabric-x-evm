@@ -116,6 +116,31 @@ func TestGetLogs_BlockRange(t *testing.T) {
 	}
 }
 
+func TestGetLogs_PopulatesBlockTimestamp(t *testing.T) {
+	store := setupTestDB(t)
+
+	blockHash := make([]byte, 32)
+	blockHash[0] = 1
+	insertTestBlock(t, store, 1, blockHash) // inserts with Timestamp 1000
+
+	txHash := make([]byte, 32)
+	txHash[0] = 1
+	addr := make([]byte, 20)
+	addr[0] = 1
+	insertTestLog(t, store, 1, txHash, addr, 0, nil)
+
+	logs, err := store.GetLogs(t.Context(), domain.LogFilter{})
+	if err != nil {
+		t.Fatalf("GetLogs error: %v", err)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("got %d logs, want 1", len(logs))
+	}
+	if logs[0].Timestamp != 1000 {
+		t.Errorf("Timestamp = %d, want 1000", logs[0].Timestamp)
+	}
+}
+
 func TestGetLogs_BlockHash(t *testing.T) {
 	store := setupTestDB(t)
 
