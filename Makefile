@@ -111,18 +111,26 @@ start-x:
 	@$(COMPOSE) -f compose.fabric-x.yml up -d
 	@echo "Waiting for test committer to be ready..."
 	@while ! nc -z localhost 7001 2>/dev/null; do sleep 1; done
-	@$(DOCKER) run --rm --network $(NETWORK) \
-		--user "$(UID):$(GID)" \
-		--env "FX_NS=$(NS)" \
-		--env "FX_POLICY=$(POLICY)" \
-		-v "$(PWD)/testdata/fxconfig.yaml:/config/fxconfig.yaml:ro,Z" \
-		-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/peers/fxconfig.org1.example.com/tls:/tls:ro,Z" \
-		-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/users/channel_admin@org1.example.com/msp:/msp:ro,Z" \
-		-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/msp/tlscacerts/tlsca.org1.example.com-cert.pem:/org-tls-ca.pem:ro,Z" \
-		-v "$(PWD)/testdata/crypto/ordererOrganizations/orderer-org-1/msp/tlscacerts/tlsca.orderer-org-1-cert.pem:/orderer-tls-ca.pem:ro,Z" \
-		$(TOOLS_IMAGE) \
-		sh -c 'fxconfig namespace list --config=/config/fxconfig.yaml 2>/dev/null | grep -q ") $$FX_NS:" || \
-		fxconfig namespace create "$$FX_NS" --policy="$$FX_POLICY" --endorse --submit --wait --config=/config/fxconfig.yaml'
+	@echo "Creating namespace (retrying until the committer is ready)..."
+	@ok=0; for attempt in 1 2 3 4 5; do \
+		if $(DOCKER) run --rm --network $(NETWORK) \
+			--user "$(UID):$(GID)" \
+			--env "FX_NS=$(NS)" \
+			--env "FX_POLICY=$(POLICY)" \
+			-v "$(PWD)/testdata/fxconfig.yaml:/config/fxconfig.yaml:ro,Z" \
+			-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/peers/fxconfig.org1.example.com/tls:/tls:ro,Z" \
+			-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/users/channel_admin@org1.example.com/msp:/msp:ro,Z" \
+			-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/msp/tlscacerts/tlsca.org1.example.com-cert.pem:/org-tls-ca.pem:ro,Z" \
+			-v "$(PWD)/testdata/crypto/ordererOrganizations/orderer-org-1/msp/tlscacerts/tlsca.orderer-org-1-cert.pem:/orderer-tls-ca.pem:ro,Z" \
+			$(TOOLS_IMAGE) \
+			sh -c 'fxconfig namespace list --config=/config/fxconfig.yaml 2>/dev/null | grep -q ") $$FX_NS:" || \
+			fxconfig namespace create "$$FX_NS" --policy="$$FX_POLICY" --endorse --submit --wait --config=/config/fxconfig.yaml'; then \
+			ok=1; break; \
+		fi; \
+		echo "namespace setup attempt $$attempt failed; retrying in 3s..."; \
+		sleep 3; \
+	done; \
+	[ "$$ok" = 1 ] || { echo "Error: namespace setup failed after 5 attempts"; exit 1; }
 
 .PHONY: test-x
 test-x:
