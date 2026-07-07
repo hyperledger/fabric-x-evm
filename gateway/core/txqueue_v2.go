@@ -287,6 +287,21 @@ func (q *TxQueueV2) Dequeue() (*types.Transaction, bool) {
 	}
 }
 
+// Complete removes a transaction from tracking and promotes any transactions
+// that were blocked by it. Safe to call for a hash that is not currently
+// tracked.
+func (q *TxQueueV2) Complete(hash common.Hash) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	promoted := q.completeUnlocked(hash)
+	if promoted == 1 {
+		q.cond.Signal()
+	} else if promoted > 1 {
+		q.cond.Broadcast()
+	}
+}
+
 // completeUnlocked is the internal implementation of Complete that assumes the lock is held.
 // Returns the number of transactions promoted to the ready list.
 func (q *TxQueueV2) completeUnlocked(hash common.Hash) int {

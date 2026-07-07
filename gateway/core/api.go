@@ -49,6 +49,10 @@ type TxQueueInterface interface {
 	// IsPending checks if a transaction is currently in the queue or being processed
 	IsPending(txHash common.Hash) *types.Transaction
 
+	// Complete removes a transaction from tracking. Safe to call for a hash
+	// that is not currently tracked.
+	Complete(txHash common.Hash)
+
 	// Close signals shutdown of the queue
 	Close()
 
@@ -144,8 +148,7 @@ func (g *Gateway) worker(ctx context.Context) {
 		// Process the transaction (old SendTransaction logic)
 		if err := g.processTx(ctx, tx); err != nil {
 			logger.Errorf("tx %s failed: %v", tx.Hash().Hex(), err)
-			// TODO: tx stays in inProgressMap on failure and IsPending will
-			// report it pending forever. Decide drop vs retry with backoff.
+			g.TxQueue.Complete(tx.Hash())
 			continue
 		}
 	}
