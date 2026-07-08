@@ -18,7 +18,6 @@
 - [Alignment with fabric-x-committer](#alignment-with-fabric-x-committer)
 - [Code Reuse](#code-reuse)
 - [Proto Sketch](#proto-sketch)
-- [Decisions and Alternatives](#decisions-and-alternatives)
 
 ## Scope
 
@@ -219,5 +218,3 @@ message StateQueryRequest {
   optional uint64 block_number = 4; // absent = latest
 }
 ```
-
-

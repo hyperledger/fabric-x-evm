@@ -14,7 +14,6 @@
 - [Rollout and Migration](#rollout-and-migration)
 - [Dependencies and Open Items](#dependencies-and-open-items)
 - [Risks and Rollback](#risks-and-rollback)
-- [Decisions and Alternatives](#decisions-and-alternatives)
 
 ## Scope
 
@@ -95,4 +94,3 @@ lands, not all up front:
   in-process baseline are the guard.
 - No schema is exposed to external clients, so there is no public-API
   compatibility surface to manage.
-

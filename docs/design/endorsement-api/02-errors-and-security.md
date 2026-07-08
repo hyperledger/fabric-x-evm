@@ -15,7 +15,6 @@
 - [Transport Security: mTLS](#transport-security-mtls)
 - [Authentication and Authorization](#authentication-and-authorization)
 - [Resilience](#resilience)
-- [Decisions and Alternatives](#decisions-and-alternatives)
 
 ## Scope
 
@@ -125,4 +124,3 @@ layer above is unchanged.
 - **Backpressure:** bound in-flight requests / max concurrent streams so a
   surge does not exhaust the endorser; surface overload as `RESOURCE_EXHAUSTED`
   so the caller can back off.
-

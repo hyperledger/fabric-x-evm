@@ -18,7 +18,6 @@
 - [Time Plan](#time-plan)
 - [Risks](#risks)
 - [Glossary](#glossary)
-- [Decisions and Alternatives](#decisions-and-alternatives)
 
 ## Motivation
 
@@ -122,8 +121,8 @@ flowchart LR
 | 3 | `03-client-config-testing.md` | Endorsement client, configuration, testing |
 | 4 | `04-implementation-plan.md` | Small-PR rollout sequence |
 
-Each part ends with a **Decisions and Alternatives** section recording the
-choices made and the options considered, so reviewers can follow the reasoning.
+Design choices and their reasoning are stated inline where each choice is made;
+part 3 additionally closes with a **Decisions and Alternatives** section.
 
 ## Open Questions
 
@@ -177,5 +176,3 @@ sequential PRs; implementation follows once the design is agreed.
   message, and payload.
 - **Revert** - an EVM execution that reverts; endorsed and submitted so the
   receipt records `status=0`, marked with response status `201`.
-
-
