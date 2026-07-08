@@ -16,7 +16,6 @@
 - [Document Series](#document-series)
 - [Open Questions](#open-questions)
 - [Time Plan](#time-plan)
-- [Collaboration and Cadence](#collaboration-and-cadence)
 - [Risks](#risks)
 - [Glossary](#glossary)
 - [Decisions and Alternatives](#decisions-and-alternatives)
@@ -153,14 +152,6 @@ sequential PRs; implementation follows once the design is agreed.
 | D4 | Client, config, testing (part 3) | ~few days |
 | D5 | Implementation plan (part 4) | ~few days |
 | I1+ | Implementation in small PRs | per plan in part 4 |
-
-## Collaboration and Cadence
-
-- Design is shared as a series of PRs; async review on each is the default.
-- A short sync is proposed at two points: after part 1 (proto/API) and before
-  starting implementation, to lock the interface. More if useful.
-- Escalation points where maintainer input is needed are flagged inline in each
-  part (e.g. the fabric-x-common code-move question).
 
 ## Risks
 
