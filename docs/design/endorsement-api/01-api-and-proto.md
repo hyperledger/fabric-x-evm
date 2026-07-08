@@ -1,9 +1,10 @@
 # Endorsement API Design — Proto and API
 
-> Part 1 of the endorsement API design. It defines the gRPC service, the proto
-> messages, what we serialize, and the RPC/streaming shape. Error handling and
-> security are covered in part 2; the client, configuration, and testing in
-> part 3. See [00-overview.md](00-overview.md) for framing and scope.
+> First part of the endorsement API design (#22). It defines the gRPC service,
+> the proto messages, what we serialize, and the RPC/streaming shape. See
+> [00-overview.md](00-overview.md) for framing and scope. Follow-up parts
+> (errors and security; client, configuration, and testing; implementation
+> plan) will be added once this API part is agreed.
 
 ## Table of Contents
 
