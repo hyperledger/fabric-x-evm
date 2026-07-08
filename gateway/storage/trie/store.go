@@ -32,7 +32,7 @@ import (
 type Store struct {
 	mu         sync.Mutex
 	diskdb     ethdb.Database // underlying disk store; closed on Close()
-	db         *state.CachingDB
+	db         state.Database
 	root       common.Hash // current committed state root
 	persistent bool
 }

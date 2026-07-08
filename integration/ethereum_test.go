@@ -53,13 +53,23 @@ var want_legacy = flag.Bool("legacy", false, "Run the legacy tests that are othe
 
 // loadSlow loads the test cases that are typically skipped because they are slow
 func loadSlow(path string) (map[string]struct{}, error) {
-	slow := make(map[string]struct{})
+	return loadList(path)
+}
+
+// loadSkip loads the test cases that are unsupported and should never run.
+func loadSkip(path string) (map[string]struct{}, error) {
+	return loadList(path)
+}
+
+// loadList reads a newline-delimited list of paths into a set, ignoring blank
+// lines and lines starting with '#'. A missing file is treated as an empty list.
+func loadList(path string) (map[string]struct{}, error) {
+	set := make(map[string]struct{})
 
 	file, err := os.Open(path)
 	if err != nil {
-		// If file doesn't exist, return empty map
 		if os.IsNotExist(err) {
-			return slow, nil
+			return set, nil
 		}
 		return nil, err
 	}
@@ -69,7 +79,7 @@ func loadSlow(path string) (map[string]struct{}, error) {
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line != "" && !strings.HasPrefix(line, "#") {
-			slow[line] = struct{}{}
+			set[line] = struct{}{}
 		}
 	}
 
@@ -77,7 +87,7 @@ func loadSlow(path string) (map[string]struct{}, error) {
 		return nil, err
 	}
 
-	return slow, nil
+	return set, nil
 }
 
 // findJSONFiles recursively finds all .json files in the given directory
@@ -117,6 +127,19 @@ func filterSlowTests(files []string, slow map[string]struct{}, want_very_slow bo
 	return filtered
 }
 
+// filterSkippedTests removes always-skip files from the list.
+func filterSkippedTests(files []string, skip map[string]struct{}) []string {
+	var filtered []string
+
+	for _, file := range files {
+		if _, isSkip := skip[file]; !isSkip {
+			filtered = append(filtered, file)
+		}
+	}
+
+	return filtered
+}
+
 // TestEthereumTests runs official ethereum/tests from the git submodule
 //
 // The ethereum/tests repository is included as a git submodule at testdata/ethereum-tests/
@@ -125,6 +148,13 @@ func filterSlowTests(files []string, slow map[string]struct{}, want_very_slow bo
 // This follows the same approach as Besu, Geth, and other Ethereum clients.
 func TestEthereumTests(t *testing.T) {
 	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr)) // disable grpc logging
+
+	// Load skip (tests we never run, in any mode)
+	skip, err := loadSkip(filepath.Join("..", "testdata", "eth_tests.skip"))
+	if err != nil {
+		t.Fatalf("Failed to load skip list: %v", err)
+	}
+	t.Logf("Loaded skip list with %d entries", len(skip))
 
 	// Load slow
 	slow, err := loadSlow(filepath.Join("..", "testdata", "eth_tests.slow"))
@@ -155,6 +185,9 @@ func TestEthereumTests(t *testing.T) {
 		}
 		t.Logf("Found %d total test files", len(allFiles))
 	}
+
+	// Always remove unsupported tests first.
+	allFiles = filterSkippedTests(allFiles, skip)
 
 	// Filter out slow files unless we explicitly want them
 	testFiles := filterSlowTests(allFiles, slow, *want_very_slow)

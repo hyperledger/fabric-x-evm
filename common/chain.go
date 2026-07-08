@@ -39,9 +39,9 @@ func BuildChainConfig(chainID int64) *params.ChainConfig {
 		CancunTime:              new(uint64(0)),
 		PragueTime:              new(uint64(0)),
 		OsakaTime:               new(uint64(0)),
-		VerkleTime:              nil,
-		BlobScheduleConfig:      params.DefaultBlobSchedule,
-		Ethash:                  new(params.EthashConfig),
-		Clique:                  nil,
+		// Post-Osaka fork features intentionally not enabled.
+		BlobScheduleConfig: params.DefaultBlobSchedule,
+		Ethash:             new(params.EthashConfig),
+		Clique:             nil,
 	}
 }

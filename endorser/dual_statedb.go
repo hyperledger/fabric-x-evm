@@ -12,9 +12,9 @@ import (
 	"github.com/ethereum/go-ethereum/core/stateless"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/types/bal"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/trie/utils"
 	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/holiman/uint256"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
@@ -25,6 +25,9 @@ import (
 // the endorser implementation (Result, Logs).
 type ExtendedStateDB interface {
 	vm.StateDB
+	// GetStorageRoot is not part of vm.StateDB but our logger and dual-StateDB
+	// wrappers still need to expose it.
+	GetStorageRoot(addr common.Address) common.Hash
 	Result() blocks.ReadWriteSet
 	Logs() []Log
 }
@@ -251,13 +254,11 @@ func (d *DualStateDB) SetTransientState(addr common.Address, key, value common.H
 }
 
 // SelfDestruct performs self-destruct in both state implementations.
-// Returns the balance from the eth StateDB.
-func (d *DualStateDB) SelfDestruct(addr common.Address) uint256.Int {
+func (d *DualStateDB) SelfDestruct(addr common.Address) {
 	d.logger.Debugf("SelfDestruct: addr=%s", addr.Hex())
-	balance := d.ethStateDB.SelfDestruct(addr)
+	d.ethStateDB.SelfDestruct(addr)
 	d.snapshotDB.SelfDestruct(addr)
-	d.logger.Debugf("SelfDestruct: output balance=%s", balance.String())
-	return balance
+	d.logger.Debugf("SelfDestruct: completed")
 }
 
 // HasSelfDestructed checks if an account has self-destructed in the SnapshotDB.
@@ -266,16 +267,6 @@ func (d *DualStateDB) HasSelfDestructed(addr common.Address) bool {
 	result := d.snapshotDB.HasSelfDestructed(addr)
 	d.logger.Debugf("HasSelfDestructed: output result=%t", result)
 	return result
-}
-
-// SelfDestruct6780 performs EIP-6780 self-destruct in both state implementations.
-// Returns the balance and destruction status from the eth StateDB.
-func (d *DualStateDB) SelfDestruct6780(addr common.Address) (uint256.Int, bool) {
-	d.logger.Debugf("SelfDestruct6780: addr=%s", addr.Hex())
-	balance, destructed := d.ethStateDB.SelfDestruct6780(addr)
-	d.snapshotDB.SelfDestruct6780(addr)
-	d.logger.Debugf("SelfDestruct6780: output balance=%s, destructed=%t", balance.String(), destructed)
-	return balance, destructed
 }
 
 // Exist checks if an account exists in either the ethStateDB
@@ -331,12 +322,26 @@ func (d *DualStateDB) AddSlotToAccessList(addr common.Address, slot common.Hash)
 	d.logger.Debugf("AddSlotToAccessList: completed")
 }
 
-// PointCache returns the point cache from the SnapshotDB.
-func (d *DualStateDB) PointCache() *utils.PointCache {
-	d.logger.Debugf("PointCache")
-	result := d.snapshotDB.PointCache()
-	d.logger.Debugf("PointCache: output result=%p", result)
+// Touch accesses the state without returning anything (EIP-7928 access list tracking).
+func (d *DualStateDB) Touch(addr common.Address) {
+	d.logger.Debugf("Touch: addr=%s", addr.Hex())
+	d.ethStateDB.Touch(addr)
+	d.snapshotDB.Touch(addr)
+}
+
+// IsNewContract reports whether the contract at the given address was deployed
+// during the current transaction.
+func (d *DualStateDB) IsNewContract(addr common.Address) bool {
+	d.logger.Debugf("IsNewContract: addr=%s", addr.Hex())
+	result := d.snapshotDB.IsNewContract(addr)
+	d.logger.Debugf("IsNewContract: returning %t", result)
 	return result
+}
+
+// LogsForBurnAccounts returns logs emitted by burn accounts during the current transaction.
+func (d *DualStateDB) LogsForBurnAccounts() []*types.Log {
+	d.logger.Debugf("LogsForBurnAccounts")
+	return d.snapshotDB.LogsForBurnAccounts()
 }
 
 // Prepare prepares both state implementations for transaction execution.
@@ -413,11 +418,13 @@ func (d *DualStateDB) AccessEvents() *ethstate.AccessEvents {
 }
 
 // Finalise finalizes both state implementations.
-func (d *DualStateDB) Finalise(deleteEmptyObjects bool) {
+// Returns the StateAccessList from the SnapshotDB (the canonical source).
+func (d *DualStateDB) Finalise(deleteEmptyObjects bool) *bal.StateAccessList {
 	d.logger.Debugf("Finalise: deleteEmptyObjects=%t", deleteEmptyObjects)
 	d.ethStateDB.Finalise(deleteEmptyObjects)
-	d.snapshotDB.Finalise(deleteEmptyObjects)
+	result := d.snapshotDB.Finalise(deleteEmptyObjects)
 	d.logger.Debugf("Finalise: completed")
+	return result
 }
 
 // Result returns the read-write set from the SnapshotDB.

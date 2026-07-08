@@ -21,6 +21,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/holiman/uint256"
 	fxcommon "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
@@ -336,15 +337,15 @@ func CallMsgToMessage(msg ethereum.CallMsg, baseFee *big.Int, skipNonceCheck, sk
 	return &core.Message{
 		From:                  msg.From,
 		To:                    msg.To,
-		Value:                 value,
+		Value:                 uint256.MustFromBig(value),
 		Nonce:                 0, // CallMsg doesn't have a nonce
 		GasLimit:              msg.Gas,
-		GasPrice:              gasPrice,
-		GasFeeCap:             gasFeeCap,
-		GasTipCap:             gasTipCap,
+		GasPrice:              uint256.MustFromBig(gasPrice),
+		GasFeeCap:             uint256.MustFromBig(gasFeeCap),
+		GasTipCap:             uint256.MustFromBig(gasTipCap),
 		Data:                  msg.Data,
 		AccessList:            msg.AccessList,
-		BlobGasFeeCap:         blobGasFeeCap,
+		BlobGasFeeCap:         uint256.MustFromBig(blobGasFeeCap),
 		BlobHashes:            msg.BlobHashes,
 		SetCodeAuthorizations: msg.AuthorizationList,
 		SkipNonceChecks:       skipNonceCheck,
@@ -409,9 +410,9 @@ func (h *Executor) Execute(msg *core.Message) ([]byte, error) {
 	}
 
 	// Free gas: zero all prices so buyGas never requires ETH balance from the sender.
-	msg.GasPrice = new(big.Int)
-	msg.GasFeeCap = new(big.Int)
-	msg.GasTipCap = new(big.Int)
+	msg.GasPrice = new(uint256.Int)
+	msg.GasFeeCap = new(uint256.Int)
+	msg.GasTipCap = new(uint256.Int)
 
 	// Cap gas limit for DoS protection.
 	if h.maxTxGas > 0 && msg.GasLimit > h.maxTxGas {
@@ -432,7 +433,7 @@ func (h *Executor) ApplyMessage(msg *core.Message) ([]byte, error) {
 	// The block gas pool must reflect the enclosing block gas limit, not the tx gas
 	// limit. Otherwise a tx with gas limit above the block gas limit incorrectly
 	// passes preCheck and executes.
-	gp := new(core.GasPool).AddGas(h.BlockCtx.GasLimit)
+	gp := core.NewGasPool(h.BlockCtx.GasLimit)
 
 	// Use ApplyMessage to execute the transaction
 	result, err := core.ApplyMessage(evm, msg, gp)

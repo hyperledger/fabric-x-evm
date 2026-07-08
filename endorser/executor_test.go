@@ -7,11 +7,11 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package endorser
 
 import (
-	"math/big"
 	"testing"
 
 	ethcommon "github.com/ethereum/go-ethereum/common"
 	gethcore "github.com/ethereum/go-ethereum/core"
+	"github.com/holiman/uint256"
 	"github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-sdk/state"
 	_ "modernc.org/sqlite"
@@ -69,7 +69,7 @@ func TestExecute_MaxTxGas(t *testing.T) {
 		return &gethcore.Message{
 			To:       &to,
 			GasLimit: 100_000,
-			Value:    new(big.Int),
+			Value:    new(uint256.Int),
 		}
 	}
 

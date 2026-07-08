@@ -397,8 +397,7 @@ func (t *StateTest) RunNoVerify(subtest StateSubtest, vmconfig vm.Config, snapsh
 		tracer.OnTxStart(evm.GetVMContext(), nil, msg.From)
 	}
 	snapshot := st.StateDB.Snapshot()
-	gaspool := new(core.GasPool)
-	gaspool.AddGas(block.GasLimit())
+	gaspool := core.NewGasPool(block.GasLimit())
 	vmRet, err := core.ApplyMessage(evm, msg, gaspool)
 	if err != nil {
 		st.StateDB.RevertToSnapshot(snapshot)
@@ -539,15 +538,15 @@ func (tx *stTransaction) toMessage(ps stPostState, baseFee *big.Int) (*core.Mess
 		From:                  from,
 		To:                    to,
 		Nonce:                 tx.Nonce,
-		Value:                 value,
+		Value:                 uint256.MustFromBig(value),
 		GasLimit:              gasLimit,
-		GasPrice:              gasPrice,
-		GasFeeCap:             tx.MaxFeePerGas,
-		GasTipCap:             tx.MaxPriorityFeePerGas,
+		GasPrice:              uint256.MustFromBig(gasPrice),
+		GasFeeCap:             uint256.MustFromBig(tx.MaxFeePerGas),
+		GasTipCap:             uint256.MustFromBig(tx.MaxPriorityFeePerGas),
 		Data:                  data,
 		AccessList:            accessList,
 		BlobHashes:            tx.BlobVersionedHashes,
-		BlobGasFeeCap:         tx.BlobGasFeeCap,
+		BlobGasFeeCap:         uint256.MustFromBig(tx.BlobGasFeeCap),
 		SetCodeAuthorizations: authList,
 	}
 	return msg, nil
@@ -590,7 +589,9 @@ func makePreState(db ethdb.Database, accounts types.GenesisAlloc, snapshotter bo
 		}
 		snaps, _ = snapshot.New(snapconfig, db, trieDB, root)
 	}
-	sdb = state.NewDatabase(trieDB, snaps)
+	// Pass nil for the default code db; snaps unused in the current signature.
+	_ = snaps
+	sdb = state.NewDatabase(trieDB, nil)
 	statedb, _ = state.New(root, sdb)
 
 	// Wrap with logger for debugging
@@ -668,7 +669,9 @@ func makePreStateWithDualState(db ethdb.Database, accounts types.GenesisAlloc, s
 		}
 		snaps, _ = snapshot.New(snapconfig, db, trieDB, root)
 	}
-	sdb = state.NewDatabase(trieDB, snaps)
+	// Pass nil for the default code db; snaps unused in the current signature.
+	_ = snaps
+	sdb = state.NewDatabase(trieDB, nil)
 	ethStateDB, _ = state.New(root, sdb)
 
 	// Create new StateDB for the reopened state - now reading from block 1

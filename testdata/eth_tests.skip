@@ -1,0 +1,12 @@
+../testdata/ethereum-tests/GeneralStateTests/stCreate2/RevertInCreateInInitCreate2Paris.json
+../testdata/ethereum-tests/GeneralStateTests/stCreate2/create2collisionStorageParis.json
+../testdata/ethereum-tests/GeneralStateTests/stExtCodeHash/dynamicAccountOverwriteEmpty_Paris.json
+../testdata/ethereum-tests/GeneralStateTests/stRevertTest/RevertInCreateInInit_Paris.json
+../testdata/ethereum-tests/GeneralStateTests/stSStoreTest/InitCollisionParis.json
+../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stCreate2/RevertInCreateInInitCreate2.json
+../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stCreate2/create2collisionStorage.json
+../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stExtCodeHash/dynamicAccountOverwriteEmpty.json
+../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stExtCodeHash/extCodeHashSubcallSuicide.json
+../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stRefundTest/refund_CallToSuicideTwice.json
+../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stRevertTest/RevertInCreateInInit.json
+../testdata/ethereum-tests/LegacyTests/Constantinople/GeneralStateTests/stSStoreTest/InitCollision.json

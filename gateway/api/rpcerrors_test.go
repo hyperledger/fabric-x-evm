@@ -13,6 +13,7 @@ import (
 
 	ethcore "github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/txpool"
+	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/hyperledger/fabric-x-evm/gateway/api/rpcerr"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
@@ -49,7 +50,7 @@ func TestClassifyValidationError_TxRejectionsMapToTxRejected(t *testing.T) {
 		{"intrinsic gas", ethcore.ErrIntrinsicGas},
 		{"insufficient funds", ethcore.ErrInsufficientFunds},
 		{"unsupported tx type", ethcore.ErrTxTypeNotSupported},
-		{"init code too large", ethcore.ErrMaxInitCodeSizeExceeded},
+		{"init code too large", vm.ErrMaxInitCodeSizeExceeded},
 		{"invalid sender", fmt.Errorf("%w: bad sig", txpool.ErrInvalidSender)},
 	}
 	for _, c := range cases {
