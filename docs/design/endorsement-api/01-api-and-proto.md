@@ -10,11 +10,12 @@
 
 - [Scope](#scope)
 - [Requirements](#requirements)
-- [What Crosses the Boundary Today](#what-crosses-the-boundary-today)
+- [The Functions Behind the API](#the-functions-behind-the-api)
 - [Service Definition](#service-definition)
 - [Messages](#messages)
+- [What Execute's Endorsement Covers](#what-executes-endorsement-covers)
+- [Errors](#errors)
 - [Serialization Choices](#serialization-choices)
-- [RPC Shape: Separate vs Single](#rpc-shape-separate-vs-single)
 - [Unary vs Streaming](#unary-vs-streaming)
 - [Alignment with fabric-x-committer](#alignment-with-fabric-x-committer)
 - [Code Reuse](#code-reuse)
@@ -25,135 +26,143 @@
 Design the gRPC contract between the gateway (client) and the endorser
 (server). This part covers the service methods, the request/response messages,
 and the serialization and streaming decisions. It does **not** cover error
-semantics (part 2), mTLS/config (parts 2–3), or the rollout (part 4).
+semantics in depth, mTLS/config, or the rollout - those follow in later parts.
+
+The API is a **clean, fabric-x-evm-specific contract**. It is not bound to the
+generic Fabric endorsement shapes: requests do not carry a `peer.Proposal`,
+and responses are not `peer.ProposalResponse`. The Fabric transaction envelope
+is assembled by the gateway; the wire API only moves what the endorser
+actually needs and produces.
 
 ## Requirements
 
-- Support the three operations the gateway performs today: **transaction
-  endorsement**, **read-only calls**, and **state queries**.
-- Preserve exact semantics: same request payloads, same
-  `peer.ProposalResponse` result, same status codes.
-- Proto schema that is easy to read, future-proof, and aligned with
-  fabric-x-common / Fabric proto naming.
-- Reuse existing Fabric/Ethereum encodings rather than re-inventing them.
+- Expose every operation the gateway needs today: transaction execution,
+  read-only calls, and the four state reads (balance, storage, code, nonce).
+- Typed, self-documenting schema - one RPC per function, no dispatch enums.
+- Only `Execute` produces an endorsement; the read-only RPCs return plain
+  results with no signing or proposal machinery.
+- Easy to read, future-proof, aligned with fabric-x-common naming.
 
-## What Crosses the Boundary Today
+## The Functions Behind the API
 
-The current in-process contract is the `Endorser` interface in
-[`gateway/core/endorse.go`](../../../gateway/core/endorse.go):
+The engine interface the endorser already implements
+([`endorser/endorser.go`](../../../endorser/endorser.go),
+`EVMEngineInterface`) is the natural shape of the API:
 
-| Method | Inputs | Output |
-|--------|--------|--------|
-| `ProcessEVMTransaction` | `endorsement.Invocation`, `*types.Transaction` | `*peer.ProposalResponse` |
-| `ProcessCall` | `*ethereum.CallMsg`, `blockNumber *big.Int` | `*peer.ProposalResponse` |
-| `ProcessStateQuery` | `common.StateQuery` | `*peer.ProposalResponse` |
+```go
+Execute(ctx, tx *types.Transaction) (endorsement.ExecutionResult, error)
+Call(msg ethereum.CallMsg, blockNumber *big.Int) ([]byte, error)
+BalanceAt(ctx, account common.Address, blockNumber *big.Int) (*big.Int, error)
+StorageAt(ctx, account common.Address, key common.Hash, blockNumber *big.Int) ([]byte, error)
+CodeAt(ctx, account common.Address, blockNumber *big.Int) ([]byte, error)
+NonceAt(ctx, account common.Address, blockNumber *big.Int) (uint64, error)
+```
 
-Key observations that drive the proto design:
+Note: in the current code all six methods **do** return an error alongside the
+result; failures travel as gRPC status errors (see [Errors](#errors)).
 
-- The **response is already a Fabric protobuf** (`peer.ProposalResponse`), so it
-  serializes over gRPC unchanged - no new response message needed.
-- For transactions, the gateway builds the Fabric **`Invocation`** (TxID,
-  nonce, creator, proposal, proposal hash) via `protoutil` and passes it
-  alongside the marshaled Ethereum transaction. The `Invocation` wraps a
-  `*peer.Proposal`, which is itself protobuf.
-- `CallMsg` and `StateQuery` are plain Go structs that need explicit proto
-  messages.
+`ExecutionResult` (fabric-x-sdk) carries the read-write set, an optional
+event, and a status/message/payload triple - this is what `Execute` must get
+back to the gateway, signed.
 
 ## Service Definition
 
-A single service, `EvmEndorsement`, with one RPC per operation:
+One RPC per function, mirroring the engine interface for type safety:
 
-- `ProcessTransaction(TransactionRequest) → peer.ProposalResponse`
-- `ProcessCall(CallRequest) → peer.ProposalResponse`
-- `ProcessStateQuery(StateQueryRequest) → peer.ProposalResponse`
+- `Execute(ExecuteRequest) → ExecuteResponse` - executes an Ethereum
+  transaction and returns the **signed** execution result.
+- `Call(CallRequest) → CallResponse` - read-only `eth_call`.
+- `BalanceAt(BalanceRequest) → BalanceResponse`
+- `StorageAt(StorageRequest) → StorageResponse`
+- `CodeAt(CodeRequest) → CodeResponse`
+- `NonceAt(NonceRequest) → NonceResponse`
 
-The service is **specialized for fabric-x-evm**, not the generic Fabric
-`ProcessProposal` endorsement API, per the design goal.
+Splitting the reads into their own RPCs (instead of a `StateQueryRequest`
+with a type enum) keeps every request and response fully typed: a caller
+cannot send a storage key on a balance query, and each response says exactly
+what it is.
 
 ## Messages
 
-**Response (all three):** reuse `peer.ProposalResponse` directly.
+**`ExecuteRequest`** - the marshaled Ethereum transaction
+(`types.Transaction.MarshalBinary`). The signed raw transaction is all the
+endorser needs: it re-derives the sender from the signature and executes
+against its own state.
 
-**`TransactionRequest`** - carries what the endorser needs to validate,
-execute, and endorse:
+**`ExecuteResponse`** - the fields of `endorsement.ExecutionResult` (read-write
+set, event, status/message/payload) plus the endorser's identity and signature
+over the result. See
+[What Execute's Endorsement Covers](#what-executes-endorsement-covers).
 
-- the Fabric proposal (the serialized `peer.Proposal` from the `Invocation`),
-- the marshaled Ethereum transaction (`types.Transaction.MarshalBinary`).
+**`CallRequest`/`CallResponse`** - the `ethereum.CallMsg` fields (from, to,
+gas, gas price, value, data) plus a block selector; the response is the return
+data.
 
-> Open item: the exact `Invocation` fields the builder needs on the server side
-> (beyond the proposal itself) must be confirmed against
-> `endorsement.Builder.Endorse`. If the builder can reconstruct everything from
-> the proposal, the request stays minimal; otherwise we add the missing fields
-> explicitly. Resolved before the proto lands.
+**State reads** - each request is just the account (plus the storage key for
+`StorageAt`) and a block selector; each response is the single typed value
+(balance bytes, storage word, code bytes, nonce).
 
-**`CallRequest`** - an `eth_call` message plus block selector:
+## What Execute's Endorsement Covers
 
-- from, to, gas, gas price, value, data (mirrors `ethereum.CallMsg`),
-- block number (nullable → latest).
+`Execute` is the only RPC whose result feeds a Fabric transaction, so it is the
+only one that needs an endorsement signature. What exactly is signed - and how
+the gateway maps it into the envelope the orderer/committer expect - is the key
+open design point:
 
-**`StateQueryRequest`** - mirrors `common.StateQuery`:
+- **Option A - gateway-built proposal, endorser signs against its hash.** The
+  gateway keeps building the Fabric proposal (as today) and sends the proposal
+  hash with `ExecuteRequest`; the endorser signs (result, proposal hash). Wire
+  stays clean; envelope assembly stays where it is today.
+- **Option B - endorser signs (tx, result) directly.** No proposal artifacts on
+  the wire at all; the gateway (or a shared helper) maps the signed result into
+  the envelope format the committer validates. Most radical; depends on what
+  the committer's validation actually requires of the signature.
 
-- query type (balance / code / storage / nonce),
-- account address, storage key (for storage queries), block number.
+> Open for discussion: which option satisfies the committer's endorsement
+> validation with the least machinery. To be settled with the maintainers
+> before the proto is finalized.
+
+## Errors
+
+With `peer.ProposalResponse` gone, results no longer carry Fabric status codes
+(200/201/500). Instead:
+
+- **Success** - typed response message.
+- **EVM revert / execution failure on `Execute`** - part of the execution
+  result itself (status/message/payload fields), since a reverted transaction
+  is still endorsed and committed with `status=0`.
+- **Revert on `Call`** - gRPC error status with structured revert details
+  (reason + data), so the gateway can map to JSON-RPC `-32000`.
+- **Everything else** (invalid argument, unavailable, timeout, internal) -
+  standard gRPC status codes.
+
+The full error taxonomy and mapping table follows in the errors-and-security
+part once this API shape is agreed.
 
 ## Serialization Choices
 
-- **Ethereum transaction:** send as opaque bytes (`MarshalBinary`). The
-  endorser already re-derives the sender and re-executes from these bytes, so
-  re-encoding into proto fields would be redundant and risk fidelity loss.
-- **Fabric proposal:** send the serialized `peer.Proposal`/`SignedProposal`
-  bytes. This keeps the proposal hash and any signatures byte-exact, which
-  matters for endorsement validity.
-- **Call / state query:** structured proto fields (not opaque bytes), because
-  these are small, typed, and benefit from a readable schema.
+- **Ethereum transaction:** opaque bytes (`MarshalBinary`) - re-encoding into
+  proto fields would be redundant and risk fidelity loss.
 - **Addresses / hashes / big integers:** fixed-width `bytes` (20-byte address,
-  32-byte hash, big-endian integer bytes), matching how the code already moves
-  them.
-
-## RPC Shape: Separate vs Single
-
-**Chosen: three separate RPCs**, one per operation.
-
-- *Pro:* strongly typed, self-documenting, each request carries only relevant
-  fields; maps 1:1 to the existing interface and to distinct server handlers.
-- *Con:* three methods instead of one.
-
-*Alternative - single `ProcessProposal`-style RPC* with a `oneof` payload or a
-type tag (closer to Fabric's generic endorser and to the committer's
-`ProcessProposal`). Rejected for v1: it pushes type-dispatch into the message
-body and weakens the schema's readability, which conflicts with the
-"easy to understand" goal. Revisit only if a single stream endpoint is needed
-for throughput (see next section).
+  32-byte word, big-endian integer bytes), matching how the code moves them.
+- **Block selector:** `optional uint64`; absent means latest.
+- **Read-write set:** the SDK's existing serialization of
+  `blocks.ReadWriteSet`, kept byte-exact for signing.
 
 ## Unary vs Streaming
 
-**Chosen: unary RPCs for v1**, with the proto laid out so a streaming variant
-can be added without breaking changes.
-
-- Unary is simplest, matches the current one-shot call semantics, and is easy
-  to reason about for correctness.
-- The orderer keeps a connection open for throughput; the same could help the
-  gateway's mempool worker (#50) when submitting many transactions. If
-  profiling shows per-call overhead matters, add a
-  `ProcessTransactionStream(stream TransactionRequest) → stream ProposalResponse`
-  alongside the unary method.
-
-> Decision deferred to data: start unary, measure, add streaming only if the
-> mempool throughput work needs it. Flagged for maintainer input.
+**Unary RPCs for v1**, laid out so a streaming variant can be added without
+breaking changes. Unary matches the current one-shot call semantics and is
+easy to reason about. If the mempool throughput work (#50) shows per-call
+overhead matters, an `ExecuteStream` can be added alongside the unary method,
+the way the orderer keeps a connection open.
 
 ## Alignment with fabric-x-committer
 
-The lightweight reference is `fabric-x-samples/custom-endorser`. We align on:
-
-- reusing Fabric proto types (`peer.Proposal`, `peer.ProposalResponse`) rather
-  than defining parallel messages,
-- server scaffolding and connection handling patterns from the committer's
-  endorser,
-- naming that matches fabric-x-common protos where an equivalent concept
-  exists.
-
-Where fabric-x-evm needs EVM-specific fields (call args, state-query types),
-we add our own messages rather than bending a generic message to fit.
+The lightweight reference is `fabric-x-samples/custom-endorser`. We align on
+server scaffolding and connection-handling patterns, and on fabric-x-common
+naming where an equivalent concept exists. EVM-specific messages (call args,
+state reads) are our own rather than bent generic messages.
 
 ## Code Reuse
 
@@ -168,35 +177,44 @@ Three options for the server-side gRPC and endorsement plumbing:
    the slowest path.
 
 > Recommendation pending maintainer input: prefer (3) for anything genuinely
-> shared, fall back to (1) for small EVM-specific glue. This is a @senthil
-> question and is explicitly flagged for the design discussion.
+> shared, fall back to (1) for small EVM-specific glue.
 
 ## Proto Sketch
 
-Illustrative, not final - field numbers and exact `Invocation` fields settle
-when the open items above are resolved.
+Illustrative, not final - the `ExecuteResponse` endorsement fields settle with
+the open question above.
 
 ```proto
 syntax = "proto3";
 
 package fabricxevm.endorsement.v1;
 
-import "peer/proposal_response.proto"; // peer.ProposalResponse
-
 service EvmEndorsement {
-  rpc ProcessTransaction(TransactionRequest) returns (protos.ProposalResponse);
-  rpc ProcessCall(CallRequest)               returns (protos.ProposalResponse);
-  rpc ProcessStateQuery(StateQueryRequest)   returns (protos.ProposalResponse);
+  rpc Execute(ExecuteRequest)     returns (ExecuteResponse);
+  rpc Call(CallRequest)           returns (CallResponse);
+  rpc BalanceAt(BalanceRequest)   returns (BalanceResponse);
+  rpc StorageAt(StorageRequest)   returns (StorageResponse);
+  rpc CodeAt(CodeRequest)         returns (CodeResponse);
+  rpc NonceAt(NonceRequest)       returns (NonceResponse);
 }
 
-message TransactionRequest {
-  bytes proposal     = 1; // serialized peer.Proposal from the Invocation
-  bytes ethereum_tx  = 2; // types.Transaction MarshalBinary
+message ExecuteRequest {
+  bytes ethereum_tx = 1; // types.Transaction MarshalBinary
+}
+
+message ExecuteResponse {
+  bytes  read_write_set = 1; // serialized blocks.ReadWriteSet
+  bytes  event          = 2;
+  int32  status         = 3;
+  string message        = 4;
+  bytes  payload        = 5;
+  bytes  endorser_id    = 6; // serialized identity of the signer
+  bytes  signature      = 7; // over the result (exact coverage: open item)
 }
 
 message CallRequest {
   bytes  from      = 1; // 20-byte address (optional)
-  bytes  to        = 2; // 20-byte address (nil for contract creation)
+  bytes  to        = 2; // 20-byte address (empty for contract creation)
   uint64 gas       = 3;
   bytes  gas_price = 4; // big-endian integer bytes
   bytes  value     = 5; // big-endian integer bytes
@@ -204,18 +222,44 @@ message CallRequest {
   optional uint64 block_number = 7; // absent = latest
 }
 
-enum StateQueryType {
-  STATE_QUERY_TYPE_UNSPECIFIED = 0;
-  BALANCE                      = 1;
-  CODE                         = 2;
-  STORAGE                      = 3;
-  NONCE                        = 4;
+message CallResponse {
+  bytes return_data = 1;
 }
 
-message StateQueryRequest {
-  StateQueryType type    = 1;
-  bytes account          = 2; // 20-byte address
-  bytes key              = 3; // 32-byte storage key (STORAGE only)
-  optional uint64 block_number = 4; // absent = latest
+message BalanceRequest {
+  bytes account = 1; // 20-byte address
+  optional uint64 block_number = 2;
+}
+
+message BalanceResponse {
+  bytes balance = 1; // big-endian integer bytes
+}
+
+message StorageRequest {
+  bytes account = 1; // 20-byte address
+  bytes key     = 2; // 32-byte storage key
+  optional uint64 block_number = 3;
+}
+
+message StorageResponse {
+  bytes value = 1; // 32-byte storage word
+}
+
+message CodeRequest {
+  bytes account = 1; // 20-byte address
+  optional uint64 block_number = 2;
+}
+
+message CodeResponse {
+  bytes code = 1;
+}
+
+message NonceRequest {
+  bytes account = 1; // 20-byte address
+  optional uint64 block_number = 2;
+}
+
+message NonceResponse {
+  uint64 nonce = 1;
 }
 ```

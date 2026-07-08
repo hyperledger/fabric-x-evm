@@ -31,8 +31,9 @@ and endorser as separate processes or on separate hosts.
 The goal is a **custom gRPC API, specialized for fabric-x-evm**, exposed by
 each gateway's endorser component. It replaces the in-process calls with a
 network boundary while preserving the exact semantics the gateway relies on
-today. It is intentionally *not* a generic endorsement API - it is tailored to
-the three operations fabric-x-evm actually needs.
+today. It is intentionally *not* a generic endorsement API - it is a clean,
+typed contract tailored to the functions fabric-x-evm actually needs, without
+the generic Fabric proposal format on the wire.
 
 The `Endorser` interface already anticipates this: its doc comment names
 "local, gRPC client, mock" as intended implementations, so the gRPC client is a
@@ -96,20 +97,18 @@ flowchart LR
 flowchart LR
     G["<b>Gateway</b><br/>gRPC client"]
     E["<b>Endorser</b><br/>gRPC server · EVM engine"]
-    G -->|"ProcessEVMTransaction<br/>ProcessCall · ProcessStateQuery<br/><i>gRPC + mTLS</i>"| E
-    E -->|"peer.ProposalResponse"| G
+    G -->|"Execute · Call · BalanceAt<br/>StorageAt · CodeAt · NonceAt<br/><i>gRPC + mTLS</i>"| E
+    E -->|"typed responses<br/>(Execute's result is signed)"| G
 ```
 
-- A new gRPC service on the endorser wraps the existing `Endorser`
-  implementation; the gateway gets a gRPC-backed `Endorser` that satisfies the
-  same interface.
-- The boundary carries the same payloads that cross the in-process call today:
-  a marshaled Ethereum transaction, the Fabric `Invocation`/proposal, call
-  messages, and state-query descriptors - with `peer.ProposalResponse` coming
-  back.
-- Because the response type is already a Fabric proto and the request payloads
-  are mostly Fabric/Ethereum-native bytes, the schema can largely **reuse
-  existing types** rather than invent new ones.
+- One RPC per engine function, fully typed - no dispatch enums and no generic
+  proposal wrapper on the wire.
+- `Execute` is the only RPC that produces an endorsement: its response carries
+  the execution result (read-write set, event, status) plus the endorser's
+  signature. The read-only RPCs return plain typed values.
+- The gateway keeps assembling the Fabric transaction envelope; the wire moves
+  only what the endorser needs (the marshaled Ethereum transaction, call args,
+  state-read parameters) and what it produces.
 
 ## Document Series
 
@@ -128,11 +127,11 @@ part 3 additionally closes with a **Decisions and Alternatives** section.
 
 These are resolved in later parts, but listed here so reviewers see them early:
 
-- **RPC shape:** one reusable RPC vs. separate RPCs per operation.
+- **Execute's endorsement:** with no proposal on the wire, what exactly does
+  the endorser sign, and how does the gateway map the signed result into the
+  envelope the committer validates?
 - **Streaming:** do we keep a connection open (like the orderer) for
   throughput, or use unary calls?
-- **Serialization:** which payloads reuse Fabric/Ethereum-native encodings vs.
-  get new proto messages.
 - **Code reuse:** duplicate the needed pieces from fabric-x-committer, depend
   on it directly, or move shared code into fabric-x-common (needs @senthil).
 - **Security beyond mTLS:** authorization, and resilience (timeouts,
@@ -157,8 +156,8 @@ sequential PRs; implementation follows once the design is agreed.
 - **Interface drift:** the boundary must exactly preserve current semantics
   (status codes, revert handling); a mismatch would surface as subtle receipt
   or error regressions.
-- **Serialization fidelity:** Fabric proposal/response bytes must round-trip
-  unchanged so signatures and proposal hashes stay valid.
+- **Serialization fidelity:** signed payloads (the Ethereum transaction and the
+  execution result) must round-trip byte-exact so signatures stay valid.
 - **Code-reuse decision:** duplicating fabric-x-committer code risks drift;
   depending on it risks coupling. The choice affects long-term maintenance.
 - **Security surface:** exposing endorsement over the network adds an
@@ -170,9 +169,9 @@ sequential PRs; implementation follows once the design is agreed.
   endorsement, ordering, and commit.
 - **Endorser** - component that executes EVM transactions/calls against its
   state and produces signed proposal responses.
-- **Invocation** - Fabric proposal machinery (TxID, nonce, creator, proposal,
-  proposal hash) built for a transaction endorsement.
-- **ProposalResponse** - the signed Fabric response carrying a status code,
-  message, and payload.
-- **Revert** - an EVM execution that reverts; endorsed and submitted so the
-  receipt records `status=0`, marked with response status `201`.
+- **ExecutionResult** - the outcome of executing a transaction: read-write
+  set, optional event, and a status/message/payload triple.
+- **Endorsement** - the endorser's signature over an execution result, which
+  the gateway maps into the Fabric transaction envelope.
+- **Revert** - an EVM execution that reverts; still endorsed and submitted so
+  the receipt records `status=0`, carried inside the execution result.
