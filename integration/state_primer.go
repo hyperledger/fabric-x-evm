@@ -40,6 +40,7 @@ type KVSSnapshotter interface {
 // then commits all changes in a single transaction.
 type StatePrimer struct {
 	gw                *core.Gateway
+	submitter         core.Submitter
 	kvs               KVSSnapshotter
 	reader            endorser.ReadStore
 	namespace         string
@@ -58,6 +59,7 @@ type StatePrimer struct {
 // NewStatePrimer creates a new state primer builder.
 func NewStatePrimer(
 	gw *core.Gateway,
+	submitter core.Submitter,
 	db KVSSnapshotter,
 	namespace string,
 	signer sdk.Signer,
@@ -83,6 +85,7 @@ func NewStatePrimer(
 
 	return &StatePrimer{
 		gw:                gw,
+		submitter:         submitter,
 		reader:            store,
 		kvs:               db,
 		namespace:         namespace,
@@ -323,8 +326,17 @@ func (sp *StatePrimer) fakeEthTx() (*types.Transaction, []byte, error) {
 }
 
 func (sp *StatePrimer) commitAndWait(end sdk.Endorsement, tx *types.Transaction, wait bool) error {
-	if err := sp.gw.SubmitFabricTx(context.Background(), end); err != nil {
-		return err
+	if wait {
+		// submit through the gateway (asynchronous)
+		if err := sp.gw.SubmitFabricTx(context.Background(), end); err != nil {
+			return err
+		}
+	} else {
+		// Submit directly via the submitter (synchronous) instead of via gateway (async BatchSubmitter)
+		// This ensures priming completes before the test continues
+		if err := sp.submitter.Submit(context.Background(), end); err != nil {
+			return err
+		}
 	}
 
 	ec, err := NewNativeEthClient(sp.gw)

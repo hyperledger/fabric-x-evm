@@ -20,7 +20,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-evm/common"
-	"github.com/hyperledger/fabric-x-evm/utils"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
 
@@ -44,7 +43,7 @@ type Endorser struct {
 // EVMEngineInterface defines the interface for EVM execution engines.
 // This allows both *EVMEngine and *testimpl.EVMEngineWrapper to be used.
 type EVMEngineInterface interface {
-	Execute(blockInfo *utils.BlockInfo, tx *types.Transaction) (endorsement.ExecutionResult, error)
+	Execute(ctx context.Context, tx *types.Transaction) (endorsement.ExecutionResult, error)
 	Call(msg ethereum.CallMsg, blockNumber *big.Int) ([]byte, error)
 	BalanceAt(ctx context.Context, account ethcommon.Address, blockNumber *big.Int) (*big.Int, error)
 	StorageAt(ctx context.Context, account ethcommon.Address, key ethcommon.Hash, blockNumber *big.Int) ([]byte, error)
@@ -69,14 +68,14 @@ func New(engine *EVMEngine, builder endorsement.Builder, chainID int64) (*Endors
 // ProcessEVMTransaction processes an Ethereum transaction and returns a signed proposal response.
 // Reverts are endorsed and submitted (so the receipt records status=0); pre-execution
 // failures (nonce, gas, signer, EIP-3860, etc.) are rejected before any envelope is cut.
-func (f *Endorser) ProcessEVMTransaction(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction, blockInfo *utils.BlockInfo) (*peer.ProposalResponse, error) {
+func (f *Endorser) ProcessEVMTransaction(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction) (*peer.ProposalResponse, error) {
 	// Validate the ethereum transaction signature
 	if _, err := types.Sender(f.ethSigner, ethTx); err != nil {
 		return nil, fmt.Errorf("invalid ethereum signature: %w", err)
 	}
 
 	// Execute the transaction
-	res, err := f.Engine.Execute(blockInfo, ethTx)
+	res, err := f.Engine.Execute(ctx, ethTx)
 	if err != nil {
 		// Distinguish between pre-execution validation errors and execution errors.
 		// Pre-execution errors (from ApplyMessage) indicate the transaction is invalid
@@ -95,14 +94,8 @@ func (f *Endorser) ProcessEVMTransaction(ctx context.Context, inv endorsement.In
 }
 
 // ProcessCall processes an Ethereum call (query) and returns a proposal response
-func (f *Endorser) ProcessCall(ctx context.Context, callMsg *ethereum.CallMsg, blockInfo *utils.BlockInfo) (*peer.ProposalResponse, error) {
-	// Execute the call
-	var blockNumber *big.Int
-	if blockInfo != nil {
-		blockNumber = blockInfo.BlockNumber
-	}
+func (f *Endorser) ProcessCall(ctx context.Context, callMsg *ethereum.CallMsg, blockNumber *big.Int) (*peer.ProposalResponse, error) {
 	res, err := f.Engine.Call(*callMsg, blockNumber)
-
 	return response(res, err), nil
 }
 

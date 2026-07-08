@@ -16,6 +16,7 @@ import (
 	"crypto/ecdsa"
 	"fmt"
 	"math/big"
+	"runtime"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -132,10 +133,54 @@ func (api *TestEthAPI) SendTransaction(ctx context.Context, args TransactionArgs
 		return common.Hash{}, fmt.Errorf("failed to marshal transaction: %w", err)
 	}
 
-	_, err = api.EthAPI.SendRawTransaction(ctx, hexutil.Bytes(txBytes))
+	// Call our overridden SendRawTransaction which makes it synchronous
+	txHash, err := api.SendRawTransaction(ctx, hexutil.Bytes(txBytes))
 	if err != nil {
 		return common.Hash{}, err
 	}
 
-	return signedTx.Hash(), nil
+	return txHash, nil
+}
+
+// SendRawTransaction overrides the base implementation to make it synchronous for Hardhat compatibility.
+// It sends the transaction and polls until it's committed to a block, mimicking Hardhat's auto-mining behavior.
+func (api *TestEthAPI) SendRawTransaction(ctx context.Context, input hexutil.Bytes) (common.Hash, error) {
+	// Call the underlying SendRawTransaction
+	txHash, err := api.EthAPI.SendRawTransaction(ctx, input)
+	if err != nil {
+		return common.Hash{}, err
+	}
+
+	// Poll until the transaction is committed (has a block number > 0)
+	// This mimics Hardhat's auto-mining behavior where transactions are mined immediately
+	for {
+		select {
+		case <-ctx.Done():
+			return common.Hash{}, ctx.Err()
+		default:
+			// Check if transaction is committed
+			tx, err := api.backend.TransactionByHash(ctx, txHash)
+			if err != nil {
+				// Transaction not found yet, continue polling
+				hardhatLogger.Debugf("got error %w while polling TransactionByHash for hash %s", err, txHash)
+				continue
+			}
+
+			// this should never happen: `api.EthAPI.SendRawTransaction` synchronously enqueues the transaction
+			// and so `api.backend.TransactionByHash` must for sure find it in the pending queue or inprogress map
+			if tx == nil {
+				panic("programming error - synchronously enqueued transaction was not found")
+			}
+
+			// Check if transaction has been included in a block
+			// BlockNumber is 0 for pending transactions, > 0 for committed
+			if tx.BlockNumber > 0 {
+				// Transaction is committed
+				return txHash, nil
+			}
+
+			// Transaction is still pending, continue polling
+			runtime.Gosched()
+		}
+	}
 }

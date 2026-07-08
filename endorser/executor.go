@@ -22,20 +22,15 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/params"
 	fxcommon "github.com/hyperledger/fabric-x-evm/common"
-	"github.com/hyperledger/fabric-x-evm/utils"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
 
 // EVMConfig holds the configuration for EVM execution.
-// It allows callers to specify the BlockContext, ChainConfig, and VMConfig
-// that will be used when creating the EVM instance.
 type EVMConfig struct {
-	BlockContext *vm.BlockContext
-	ChainConfig  *params.ChainConfig
-	VMConfig     *vm.Config
-	// FreeGas disables gas-fee balance enforcement.
-	FreeGas bool
+	ChainConfig *params.ChainConfig
+	// MaxTxGas caps msg.GasLimit before execution. 0 means unlimited.
+	MaxTxGas uint64
 	// DebugLogs wraps the per-tx StateDB in StateDBLogger when true.
 	DebugLogs bool
 }
@@ -81,8 +76,8 @@ func NewEVMEngine(namespace string, kvs KVSSnapshotter, evmConfig EVMConfig, mon
 // State is always read from the latest block: endorsement must simulate against current state
 // so that the resulting read-write set passes MVCC validation at commit time.
 // Reverts produce a valid endorsement (Status 201 + revert event) instead of an error.
-func (e *EVMEngine) Execute(blockInfo *utils.BlockInfo, tx *types.Transaction) (endorsement.ExecutionResult, error) {
-	ex, err := e.newExecutor(blockInfo)
+func (e *EVMEngine) Execute(ctx context.Context, tx *types.Transaction) (endorsement.ExecutionResult, error) {
+	ex, err := e.newExecutor(nil)
 	if err != nil {
 		return endorsement.ExecutionResult{}, err
 	}
@@ -121,7 +116,7 @@ func (e *EVMEngine) Execute(blockInfo *utils.BlockInfo, tx *types.Transaction) (
 // (0 / nil = latest). The EVM block context is not reconstructed for historical blocks —
 // with all forks enabled from block 0 this is harmless.
 func (e *EVMEngine) Call(msg ethereum.CallMsg, blockNumber *big.Int) ([]byte, error) {
-	ex, err := e.newExecutor(&utils.BlockInfo{BlockNumber: blockNumber})
+	ex, err := e.newExecutor(blockNumber)
 	if err != nil {
 		return nil, err
 	}
@@ -167,11 +162,11 @@ func (e *EVMEngine) NonceAt(_ context.Context, account common.Address, blockNumb
 }
 
 // newExecutor creates a fresh executor with an isolated StateDB.
-// stateBlockNum selects the Fabric block height for the state snapshot (0 = latest).
-func (e *EVMEngine) newExecutor(blockInfo *utils.BlockInfo) (*Executor, error) {
+// blockNumber selects the Fabric block height for the state snapshot (nil = latest).
+func (e *EVMEngine) newExecutor(blockNumber *big.Int) (*Executor, error) {
 	var stateBlockNum uint64
-	if blockInfo != nil && blockInfo.BlockNumber != nil {
-		stateBlockNum = blockInfo.BlockNumber.Uint64()
+	if blockNumber != nil {
+		stateBlockNum = blockNumber.Uint64()
 	}
 
 	// Begin a new reader to get snapshot isolation
@@ -190,7 +185,7 @@ func (e *EVMEngine) newExecutor(blockInfo *utils.BlockInfo) (*Executor, error) {
 	if e.evmConfig.DebugLogs {
 		state = NewStateDBLogger(stateDB)
 	}
-	return NewExecutor(state, reader, blockInfo, e.evmConfig)
+	return NewExecutor(state, reader, blockNumber, e.evmConfig)
 }
 
 // newSnapshotAt returns an ExtendedStateDB over the state at the given Fabric block height (0 = latest).
@@ -222,67 +217,42 @@ type Executor struct {
 	reader   ReadStore // reader that must be closed when done
 	ChainCfg *params.ChainConfig
 	BlockCtx vm.BlockContext
-	vmConfig vm.Config
-	freeGas  bool
+	maxTxGas uint64
 }
 
 // NewExecutor creates an Executor with the provided StateDB and reader.
-// If blockInfo is not provided, the store's current version is used as the block number.
-// evmConfig.ChainConfig must be set.
+// blockNumber sets the EVM block context (nil = 0). evmConfig.ChainConfig must be set.
 // The caller is responsible for closing the reader when done with the Executor.
 // The stateDB parameter accepts ExtendedStateDB interface to allow DualStateDB for testing.
-func NewExecutor(stateDB ExtendedStateDB, reader ReadStore, blockInfo *utils.BlockInfo, evmConfig EVMConfig) (*Executor, error) {
+func NewExecutor(stateDB ExtendedStateDB, reader ReadStore, blockNumber *big.Int, evmConfig EVMConfig) (*Executor, error) {
 	if evmConfig.ChainConfig == nil {
 		return nil, fmt.Errorf("evmConfig.ChainConfig must be set")
 	}
 
-	// Fill in missing blockInfo fields with defaults
-	if blockInfo == nil {
-		blockInfo = &utils.BlockInfo{}
+	if blockNumber == nil {
+		blockNumber = new(big.Int)
 	}
-	if blockInfo.BlockNumber == nil {
-		blockInfo.BlockNumber = new(big.Int)
-	}
-	if blockInfo.BlockTime == 0 {
-		blockInfo.BlockTime = 1_000_000
-	}
-	if blockInfo.GasLimit == 0 {
-		blockInfo.GasLimit = 10_000_000
-	}
+	const defaultBlockTime = uint64(1_000_000)
+	const defaultGasLimit = uint64(300_000_000)
 
-	// Default block context
 	blockCtx := vm.BlockContext{
 		CanTransfer: core.CanTransfer,
 		Transfer:    core.Transfer,
 		GetHash:     func(uint64) common.Hash { return common.Hash{} },
 		Coinbase:    common.HexToAddress("0x0"),
-		BlockNumber: blockInfo.BlockNumber,
-		Time:        blockInfo.BlockTime,
+		BlockNumber: blockNumber,
+		Time:        defaultBlockTime,
 		Difficulty:  big.NewInt(0),  // disabled post-merge
 		Random:      &common.Hash{}, // Warning: PREVRANDAO stub must not be relied on by smart contracts.
-		GasLimit:    blockInfo.GasLimit,
+		GasLimit:    defaultGasLimit,
 		BaseFee:     big.NewInt(0),
 	}
 
 	// Cancun requires a non-nil BlobBaseFee; state_transition.go dereferences it directly
-	// for blob transactions. Calculate from ExcessBlobGas (0 → 1 wei minimum).
-	if evmConfig.ChainConfig.IsCancun(blockInfo.BlockNumber, blockInfo.BlockTime) {
+	// for blob transactions.
+	if evmConfig.ChainConfig.IsCancun(blockNumber, defaultBlockTime) {
 		excess := uint64(0)
-		if blockInfo.ExcessBlobGas != nil {
-			excess = *blockInfo.ExcessBlobGas
-		}
 		blockCtx.BlobBaseFee = eip4844.CalcBlobFee(evmConfig.ChainConfig, &types.Header{ExcessBlobGas: &excess})
-	}
-
-	// Default VM config
-	vmConfig := vm.Config{}
-
-	// Override with custom config if provided
-	if evmConfig.BlockContext != nil {
-		blockCtx = *evmConfig.BlockContext
-	}
-	if evmConfig.VMConfig != nil {
-		vmConfig = *evmConfig.VMConfig
 	}
 
 	return &Executor{
@@ -290,8 +260,7 @@ func NewExecutor(stateDB ExtendedStateDB, reader ReadStore, blockInfo *utils.Blo
 		reader:   reader,
 		ChainCfg: evmConfig.ChainConfig,
 		BlockCtx: blockCtx,
-		vmConfig: vmConfig,
-		freeGas:  evmConfig.FreeGas,
+		maxTxGas: evmConfig.MaxTxGas,
 	}, nil
 }
 
@@ -393,8 +362,10 @@ func (h *Executor) Call(msg ethereum.CallMsg) ([]byte, error) {
 	return ret, formatRevert(ret, err)
 }
 
-// Send executes a state-changing transaction, increments the sender nonce and returns the result.
-func (h *Executor) Send(tx *types.Transaction) ([]byte, error) {
+// PrepareMessage validates the sender nonce and converts tx to a core.Message.
+// Exported for use by testimpl wrappers that need to build a message without
+// applying the production free-gas defaults.
+func (h *Executor) PrepareMessage(tx *types.Transaction) (*core.Message, error) {
 	signer := types.MakeSigner(h.ChainCfg, h.BlockCtx.BlockNumber, h.BlockCtx.Time)
 
 	from, err := types.Sender(signer, tx)
@@ -402,8 +373,8 @@ func (h *Executor) Send(tx *types.Transaction) ([]byte, error) {
 		return nil, err
 	}
 
-	// Validate that the transaction nonce matches the ledger state nonce
-	// This adds an explicit read dependency on the ledger key of the nonce
+	// Validate that the transaction nonce matches the ledger state nonce.
+	// This adds an explicit read dependency on the ledger key for the nonce.
 	ledgerNonce := h.state.GetNonce(from)
 	if tx.Nonce() < ledgerNonce {
 		return nil, core.ErrNonceTooLow
@@ -411,7 +382,12 @@ func (h *Executor) Send(tx *types.Transaction) ([]byte, error) {
 		return nil, core.ErrNonceTooHigh
 	}
 
-	msg, err := core.TransactionToMessage(tx, signer, h.BlockCtx.BaseFee)
+	return core.TransactionToMessage(tx, signer, h.BlockCtx.BaseFee)
+}
+
+// Send validates nonce, converts tx to a message, applies production defaults, and executes.
+func (h *Executor) Send(tx *types.Transaction) ([]byte, error) {
+	msg, err := h.PrepareMessage(tx)
 	if err != nil {
 		return nil, err
 	}
@@ -424,28 +400,33 @@ func (h *Executor) Send(tx *types.Transaction) ([]byte, error) {
 	return ret, nil
 }
 
-// Execute dispatches a call or deployment to the EVM using ApplyMessage.
-// A nil value defaults to 0; zero gas defaults to 5_000_000.
+// Execute applies production defaults then runs the EVM via ApplyMessage.
+// Gas prices are always zeroed (free gas) so buyGas never requires ETH balance.
+// If MaxTxGas is set, msg.GasLimit is capped before execution.
 func (h *Executor) Execute(msg *core.Message) ([]byte, error) {
-	// Default gas limit to 5_000_000 if not set
 	if msg.GasLimit == 0 {
 		msg.GasLimit = 5_000_000
 	}
 
-	// When FreeGas is enabled, zero out gas prices so buyGas never requires
-	// ETH balance from the sender. At the moment this is the default; we only
-	// charge gas in ethereum compatibility tests.
-	if h.freeGas {
-		msg.GasPrice = new(big.Int)
-		msg.GasFeeCap = new(big.Int)
-		msg.GasTipCap = new(big.Int)
+	// Free gas: zero all prices so buyGas never requires ETH balance from the sender.
+	msg.GasPrice = new(big.Int)
+	msg.GasFeeCap = new(big.Int)
+	msg.GasTipCap = new(big.Int)
+
+	// Cap gas limit for DoS protection.
+	if h.maxTxGas > 0 && msg.GasLimit > h.maxTxGas {
+		msg.GasLimit = h.maxTxGas
 	}
 
-	// Create EVM instance with configured VMConfig
-	evm := vm.NewEVM(h.BlockCtx, h.state, h.ChainCfg, h.vmConfig)
+	return h.ApplyMessage(msg)
+}
 
-	// Take a snapshot before executing the transaction
-	// This mimicks geth's approach and permits tests to pass
+// ApplyMessage runs msg on the EVM exactly as provided, without production defaults.
+// Use this in test infrastructure (testimpl) when real gas pricing is needed.
+func (h *Executor) ApplyMessage(msg *core.Message) ([]byte, error) {
+	evm := vm.NewEVM(h.BlockCtx, h.state, h.ChainCfg, vm.Config{})
+
+	// Snapshot before execution mirrors geth's approach and allows reverting on error.
 	snapshot := h.state.Snapshot()
 
 	// The block gas pool must reflect the enclosing block gas limit, not the tx gas

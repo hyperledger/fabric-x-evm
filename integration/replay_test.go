@@ -20,7 +20,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/hyperledger/fabric-x-evm/integration/contracts"
-	"github.com/hyperledger/fabric-x-evm/utils"
 	_ "modernc.org/sqlite"
 )
 
@@ -207,11 +206,7 @@ func testTetherTokenReplay(t *testing.T, th *TestHarness) {
 	}
 
 	t.Logf("Replaying deployment tx (block %s, time %d)", blockNum.String(), ct.DeploymentBlockTime)
-	processCommon(t, node1, true, decodeRawTransactionT(t, deployRaw), &utils.BlockInfo{
-		BlockNumber: blockNum,
-		BlockTime:   ct.DeploymentBlockTime,
-		GasLimit:    5_000_000,
-	})
+	processCommon(t, node1, true, decodeRawTransactionT(t, deployRaw))
 
 	contractAddr := crypto.CreateAddress(from, tx.Nonce())
 	client, err := NewEthClient(contracts.TetherTokenMetaData, th.ethChainConfig)
@@ -334,11 +329,7 @@ func testTetherTokenReplay(t *testing.T, th *TestHarness) {
 		}
 
 		// Replay tx and capture the endorsement result
-		env := processCommon(t, node1, true, decodeRawTransactionT(t, rawTx), &utils.BlockInfo{
-			BlockNumber: txBlockNum,
-			BlockTime:   txRec.BlockTime,
-			GasLimit:    5_000_000,
-		})
+		env := processCommon(t, node1, true, decodeRawTransactionT(t, rawTx))
 
 		// Verify storage slot predictions for transfer operations
 		if info.Op == "transfer" || info.Op == "transferFrom" {

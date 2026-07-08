@@ -18,6 +18,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/hyperledger/fabric-x-evm/gateway/api"
+	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 )
 
 func TestTestEthAPI_Accounts(t *testing.T) {
@@ -152,7 +153,8 @@ func TestTestEthAPI_SendTransaction_Validation(t *testing.T) {
 // mockBackend is a minimal Backend implementation for testing
 type mockBackend struct {
 	api.Backend
-	sendTxFunc func(*types.Transaction) error
+	sendTxFunc   func(*types.Transaction) error
+	txByHashFunc func(common.Hash) (*domain.Transaction, error)
 }
 
 func (m *mockBackend) SendTransaction(_ context.Context, tx *types.Transaction) error {
@@ -168,4 +170,14 @@ func (m *mockBackend) ChainID(_ context.Context) (*big.Int, error) {
 
 func (m *mockBackend) NonceAt(_ context.Context, account common.Address, blockNumber *big.Int) (uint64, error) {
 	return 0, nil // Return nonce 0 for testing
+}
+
+func (m *mockBackend) TransactionByHash(_ context.Context, hash common.Hash) (*domain.Transaction, error) {
+	if m.txByHashFunc != nil {
+		return m.txByHashFunc(hash)
+	}
+	// Default: return a committed transaction (BlockNumber > 0) to satisfy the polling loop
+	return &domain.Transaction{
+		BlockNumber: 1,
+	}, nil
 }

@@ -24,7 +24,6 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/hyperledger/fabric-x-evm/integration"
 	"github.com/hyperledger/fabric-x-evm/integration/contracts"
-	"github.com/hyperledger/fabric-x-evm/utils"
 )
 
 // USDC proxy address
@@ -193,7 +192,7 @@ func generateDatasetMode(inputFile, outputFile string) error {
 	log.Printf("Parsing dataset from %s...", inputFile)
 
 	// Parse the dataset
-	transfers, err := utils.ParseTSVGZ(inputFile)
+	transfers, err := ParseTSVGZ(inputFile)
 	if err != nil {
 		return fmt.Errorf("failed to parse TSV file: %w", err)
 	}
@@ -236,7 +235,7 @@ func generateDatasetMode(inputFile, outputFile string) error {
 
 		// Create the transaction using the nonce tracker
 		// The nonce tracker will automatically increment the nonce for each sender
-		tx, err := ethSender.TxForCall(ctx, nonceTracker, &usdcAddress, "transfer", nil, mappedRecipient, transferValue)
+		tx, err := ethSender.TxForCall(ctx, nonceTracker, &usdcAddress, "transfer", mappedRecipient, transferValue)
 		if err != nil {
 			log.Printf("Transfer %d: Failed to create transaction: %v", i, err)
 			failCount++

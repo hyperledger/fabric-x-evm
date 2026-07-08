@@ -215,12 +215,6 @@ func (n *nonceReader) NonceAt(ctx context.Context, account common.Address, block
 
 // runEthereumTestConfig executes a specific test configuration
 func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubtest, snapshotter bool, scheme string) {
-	// Build block info from test environment
-	blockInfo, err := buildBlockInfo(&stateTest.json.Env)
-	if err != nil {
-		t.Fatalf("Failed to build block info: %v", err)
-	}
-
 	// Get the post-state to extract the correct indices and expected results
 	post := stateTest.json.Post[subtest.Fork][subtest.Index]
 	dataIndex := post.Indexes.Data
@@ -230,8 +224,7 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 	// Call prepareTestEnvironment to get context, config, block, and msg.
 	// The returned StateTestState holds a TrieDB and optional Snapshots that must
 	// be closed to stop the background snapshot-generator goroutine.
-	vmConfig := vm.Config{} // Empty VM config for now
-	st, config, block, _, context, prepareErr := stateTest.prepareTestEnvironment(subtest.Fork, subtest.Index, vmConfig, snapshotter, scheme)
+	st, config, block, _, context, prepareErr := stateTest.prepareTestEnvironment(subtest.Fork, subtest.Index, vm.Config{}, snapshotter, scheme)
 
 	// Check if the error from prepareTestEnvironment is expected (e.g., blob count exceeded)
 	// This matches the behavior of TestSingleAdd11 which uses checkError
@@ -263,14 +256,12 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 
 	// Create EVMConfig to pass to test harness
 	evmConfig := endorser.EVMConfig{
-		BlockContext: &context,
-		ChainConfig:  config,
-		VMConfig:     &vmConfig,
-		DebugLogs:    true,
+		ChainConfig: config,
+		DebugLogs:   true,
 	}
 
-	// Create test harness with local backend and state priming, passing evmConfig
-	th, err := newEthereumTestHarness(t, evmConfig, stateTest.json.Pre)
+	// Create test harness with local backend and state priming, passing evmConfig and block context
+	th, err := newEthereumTestHarness(t, evmConfig, stateTest.json.Pre, &context)
 	if err != nil {
 		t.Fatalf("Failed to create test harness: %v", err)
 	}
@@ -280,7 +271,7 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 	preExecErr := core.ValidateTx(t.Context(), tx, config, signerForTx(tx), &nonceReader{th.endorsers[0].(*testimpl.EndorserWrapper).GetEthStateDB()})
 
 	// Execute transaction through gateway
-	env, execErr := th.Gateways[0].ExecuteEthTx(t.Context(), tx, blockInfo)
+	env, execErr := th.Gateways[0].ExecuteEthTx(t.Context(), tx)
 
 	// Get expected root from post-state
 	expectedRoot := common.Hash(post.Root)
@@ -291,9 +282,9 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 		ethStateDB := th.endorsers[0].(*testimpl.EndorserWrapper).GetEthStateDB()
 		if ethStateDB != nil {
 			// Commit the ethereum state
-			root, err := ethStateDB.Commit(blockInfo.BlockNumber.Uint64(),
-				config.IsEIP158(blockInfo.BlockNumber),
-				config.IsCancun(blockInfo.BlockNumber, blockInfo.BlockTime))
+			root, err := ethStateDB.Commit(block.Number().Uint64(),
+				config.IsEIP158(block.Number()),
+				config.IsCancun(block.Number(), block.Time()))
 			if err != nil {
 				t.Fatalf("Failed to commit ethereum state: %v", err)
 			}
@@ -335,7 +326,7 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 		if err != nil {
 			t.Fatalf("extract tx RWS from endorsement: %v", err)
 		}
-		verifyTrieRoot(t, th.Primer.Writes(), txRWS, blockInfo.BlockNumber.Uint64(), expectedRoot)
+		verifyTrieRoot(t, th.Primer.Writes(), txRWS, block.Number().Uint64(), expectedRoot)
 	}
 }
 
@@ -420,27 +411,26 @@ type ethereumTestHarness struct {
 }
 
 // wrappedEndorserFactory creates endorsers wrapped with testimpl wrappers for ethStateDB tracking.
-func wrappedEndorserFactory(t *testing.T, ecfg econf.Endorser, channel, namespace string, evmConfig endorser.EVMConfig, protocol string) (endorser.KVS, endorsement.Builder, core.Endorser) {
-	// Create the base endorser components
-	db, builder, end := NewEndorser(t, ecfg, channel, namespace, evmConfig, protocol)
+// blockCtx injects the test-specific EVM block context (fork rules, coinbase, difficulty, etc.).
+func wrappedEndorserFactory(blockCtx *vm.BlockContext) EndorserFactory {
+	return func(t *testing.T, ecfg econf.Endorser, channel, namespace string, evmConfig endorser.EVMConfig, protocol string) (endorser.KVS, endorsement.Builder, core.Endorser) {
+		db, builder, end := NewEndorser(t, ecfg, channel, namespace, evmConfig, protocol)
 
-	// Create engine wrapper with the same configuration
-	engine := endorser.NewEVMEngine(namespace, db, evmConfig, protocol == "fabric-x")
-	engineWrapper := testimpl.NewEVMEngineWrapper(namespace, db, evmConfig, protocol == "fabric-x", engine)
+		engine := endorser.NewEVMEngine(namespace, db, evmConfig, protocol == "fabric-x")
+		engineWrapper := testimpl.NewEVMEngineWrapper(namespace, db, evmConfig, protocol == "fabric-x", engine)
+		engineWrapper.SetBlockContext(blockCtx)
 
-	// Wrap the endorser
-	wrapper := testimpl.NewEndorserWrapper(end, engineWrapper)
-
-	return db, builder, wrapper
+		wrapper := testimpl.NewEndorserWrapper(end, engineWrapper)
+		return db, builder, wrapper
+	}
 }
 
 // newEthereumTestHarness creates a test harness with pre-state primed from ethereum test format.
-// This version creates endorser wrappers to support ethStateDB tracking for state root verification.
-func newEthereumTestHarness(t *testing.T, evmConfig endorser.EVMConfig, pre types.GenesisAlloc) (*ethereumTestHarness, error) {
+// blockCtx provides the test-specific EVM block context injected into the engine wrapper.
+func newEthereumTestHarness(t *testing.T, evmConfig endorser.EVMConfig, pre types.GenesisAlloc, blockCtx *vm.BlockContext) (*ethereumTestHarness, error) {
 	t.Helper()
 
-	// Create test harness with wrapped endorsers using custom factory
-	th, err := NewLocalTestHarnessWithFactory(t, TestLogger{T: t}, evmConfig, "", "bypass", nil, wrappedEndorserFactory)
+	th, err := NewLocalTestHarnessWithFactory(t, TestLogger{T: t}, evmConfig, "", "bypass", nil, wrappedEndorserFactory(blockCtx))
 	if err != nil {
 		return nil, err
 	}

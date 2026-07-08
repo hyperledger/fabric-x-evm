@@ -108,6 +108,14 @@ Now you can run the performance tests:
 go test -tags=perf -v ./integration/perf/...
 ```
 
+> [!TIP]
+> To run against a real 4-party Fabric-X network instead of the local in-process harness:
+> ```bash
+> make start-full
+> go test -tags=perf -v -count=1 ./integration/perf/... -gateway-config fabx-full.yaml
+> make stop-full
+> ```
+
 Or use the helper target:
 
 ```bash

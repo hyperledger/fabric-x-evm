@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-x-evm/gateway/app"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
 	"github.com/spf13/cobra"
@@ -65,8 +66,15 @@ func runStart(ctx context.Context, configPath string) error {
 	if err != nil {
 		return err
 	}
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("invalid config %q: %w", configPath, err)
+	}
+	flogging.Init(flogging.Config{
+		Format:  cfg.Logging.Format,
+		LogSpec: cfg.Logging.Spec,
+	})
 
-	application, err := app.New(cfg)
+	application, err := app.New(ctx, cfg)
 	if err != nil {
 		return err
 	}
@@ -111,6 +119,9 @@ func runTestNode(ctx context.Context, configPath, testAccountsPath string) error
 	if err != nil {
 		return err
 	}
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("invalid config %q: %w", configPath, err)
+	}
 
 	cfg.Gateway.EnableTestRPC = true
 
@@ -127,7 +138,7 @@ func runTestNode(ctx context.Context, configPath, testAccountsPath string) error
 	fmt.Println("WARNING: NEVER use in production")
 	fmt.Println("========================================")
 
-	application, err := app.New(cfg)
+	application, err := app.New(ctx, cfg)
 	if err != nil {
 		return err
 	}

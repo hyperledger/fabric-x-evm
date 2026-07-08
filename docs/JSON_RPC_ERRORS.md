@@ -41,6 +41,17 @@ The single source of truth in code is [`gateway/api/rpcerr`](../gateway/api/rpce
 | EVM revert (`*domain.RevertError`) | `-32000` (with revert payload as `data`) |
 | Endorser / backend failure | `-32603` |
 
+### `eth_estimateGas`
+
+`eth_estimateGas` proxies an internal `eth_call` before returning its constant, so it inherits
+the `eth_call` mapping:
+
+| Cause | Code |
+|------|-----:|
+| Bad hex in call args | `-32602` |
+| EVM revert (`*domain.RevertError`) | `-32000` (with revert payload as `data`) |
+| Endorser / backend failure | `-32603` |
+
 ### Read-side methods (`eth_getBalance`, `eth_getCode`, `eth_getStorageAt`, `eth_getTransactionCount`, etc.)
 
 Backend errors flow through unchanged today and surface as `-32603`. A future PR
@@ -72,7 +83,7 @@ what custom-error decoders (`error Foo(uint amount)`) need.
 ### Nonce too low on `eth_sendRawTransaction`
 
 ```json
-{"code": -32003, "message": "nonce too low: address 0x... current nonce 5, tx nonce 1"}
+{"code": -32003, "message": "nonce too low: next nonce 5, tx nonce 1"}
 ```
 
 Wallets that branch on `UNPREDICTABLE_GAS_LIMIT` / `NONCE_EXPIRED` (ethers.js v5)

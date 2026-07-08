@@ -14,6 +14,8 @@ import (
 	"maps"
 	"sync/atomic"
 
+	"github.com/hyperledger/fabric-x-common/api/committerpb"
+	"github.com/hyperledger/fabric-x-evm/gateway/core"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 )
 
@@ -334,54 +336,66 @@ func (kvs *LightKVS) Update(updates []KeyValueVersion) error {
 	return nil
 }
 
+// collectWrites is a private helper that extracts writes from namespace read-write sets
+// and appends them to the provided updates slice. This is the common logic used by both Handle and HandleTx.
+func collectWrites(updates *[]KeyValueVersion, nsrwsList []blocks.NsReadWriteSet, blockNum, txNum uint64, txID string, valid bool) {
+	if !valid {
+		// Skip invalid transactions
+		return
+	}
+
+	for _, nsrws := range nsrwsList {
+		for _, w := range nsrws.RWS.Writes {
+			// Create a key that includes the namespace
+			key := nsrws.Namespace + ":" + w.Key
+
+			*updates = append(*updates, KeyValueVersion{
+				Key:      key,
+				Value:    w.Value,
+				BlockNum: blockNum,
+				TxNum:    txNum,
+				TxID:     txID,
+				IsDelete: w.IsDelete,
+			})
+		}
+	}
+}
+
 // Handle implements the blocks.BlockHandler interface.
 // It processes a block by extracting all valid transaction writes and applying them atomically.
 // This is called by the synchronizer when a new block is committed to the ledger.
 func (kvs *LightKVS) Handle(ctx context.Context, b blocks.Block) error {
-	// Collect all writes from all valid transactions in the block
-	var updates []KeyValueVersion
+	// Collect all writes from all transactions in the block
+	var allUpdates []KeyValueVersion
 
 	for _, tx := range b.Transactions {
-		if !tx.Valid {
-			continue
-		}
-
-		// Process all namespace read-write sets
-		for _, nsrws := range tx.NsRWS {
-			// Process all writes in this namespace
-			for _, w := range nsrws.RWS.Writes {
-				// Create a key that includes the namespace
-				key := nsrws.Namespace + ":" + w.Key
-
-				updates = append(updates, KeyValueVersion{
-					Key:      key,
-					Value:    w.Value,
-					BlockNum: b.Number,
-					TxNum:    uint64(tx.Number),
-					TxID:     tx.ID,
-					IsDelete: w.IsDelete,
-				})
-			}
-		}
+		collectWrites(&allUpdates, tx.NsRWS, b.Number, uint64(tx.Number), tx.ID, tx.Valid)
 	}
 
-	// Debug: JSON dump all updates with truncated values
-	if len(updates) > 0 {
-		logUpdates := make([]logUpdate, len(updates))
-		for i, u := range updates {
-			logUpdates[i] = u.toLogUpdate()
-		}
-
-		if false {
-			if jsonData, err := json.MarshalIndent(logUpdates, "", "  "); err == nil {
-				fmt.Printf("[LightKVS Handle] Block %d, %d updates:\n%s\n", b.Number, len(updates), string(jsonData))
-			}
-		}
+	// Apply all updates atomically in a single Update call
+	if len(allUpdates) > 0 {
+		return kvs.Update(allUpdates)
 	}
 
-	// Apply all updates atomically
-	if len(updates) > 0 {
-		return kvs.Update(updates)
+	return nil
+}
+
+// HandleTx implements the core.TxHandler interface.
+// It processes a batch of transaction notifications by extracting writes and applying them.
+// This is called by the notification dispatcher when transactions are committed.
+func (kvs *LightKVS) HandleTx(ctx context.Context, notifs []core.TxNotification) error {
+	// Collect all writes from all notifications in the batch
+	var allUpdates []KeyValueVersion
+
+	for _, notif := range notifs {
+		// Status check: committerpb.Status_COMMITTED means success
+		valid := notif.Status == committerpb.Status_COMMITTED
+		collectWrites(&allUpdates, notif.NsRWS, notif.BlockNum, notif.TxNum, notif.FabricTxID, valid)
+	}
+
+	// Apply all updates atomically in a single Update call
+	if len(allUpdates) > 0 {
+		return kvs.Update(allUpdates)
 	}
 
 	return nil

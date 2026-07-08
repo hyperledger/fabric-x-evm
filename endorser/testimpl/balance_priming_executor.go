@@ -10,11 +10,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/hyperledger/fabric-x-evm/endorser"
-	"github.com/hyperledger/fabric-x-evm/utils"
+	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
 
@@ -31,7 +33,7 @@ type BalancePrimingConfig struct {
 // SenderAware is an interface for StateDB wrappers that need to know the transaction sender.
 // This allows wrappers to perform sender-specific optimizations (e.g., balance priming).
 type SenderAware interface {
-	SetSender(addr common.Address)
+	SetSender()
 }
 
 // NonceAware is an interface for StateDB wrappers that need to know the
@@ -52,11 +54,10 @@ type BalancePrimingExecutor struct {
 func NewBalancePrimingExecutor(
 	namespace string,
 	kvs endorser.KVSSnapshotter,
-	blockInfo *utils.BlockInfo,
-	stateBlockNum uint64,
 	evmConfig endorser.EVMConfig,
 	monotonicVersions bool,
 	balancePriming *BalancePrimingConfig,
+	blockContext *vm.BlockContext,
 ) (*BalancePrimingExecutor, error) {
 	// Begin a new reader to get snapshot isolation
 	reader, err := kvs.NewSnapshot(0)
@@ -64,8 +65,7 @@ func NewBalancePrimingExecutor(
 		return nil, err
 	}
 
-	// Create StateDB with the reader
-	stateDB, err := endorser.NewStateDB(context.TODO(), reader, namespace, stateBlockNum, monotonicVersions)
+	stateDB, err := endorser.NewStateDB(context.TODO(), reader, namespace, 0, monotonicVersions)
 	if err != nil {
 		reader.Close()
 		return nil, err
@@ -81,11 +81,14 @@ func NewBalancePrimingExecutor(
 		)
 	}
 
-	// Create the base executor using the public API
-	executor, err := endorser.NewExecutor(finalStateDB, reader, blockInfo, evmConfig)
+	executor, err := endorser.NewExecutor(finalStateDB, reader, nil, evmConfig)
 	if err != nil {
 		reader.Close()
 		return nil, err
+	}
+
+	if blockContext != nil {
+		executor.BlockCtx = *blockContext
 	}
 
 	return &BalancePrimingExecutor{
@@ -98,11 +101,6 @@ func NewBalancePrimingExecutor(
 func (e *BalancePrimingExecutor) Execute(tx *types.Transaction) (endorsement.ExecutionResult, error) {
 	// Extract the sender to notify SenderAware wrappers
 	// This replicates the logic from the original Executor.Send
-	signer := types.MakeSigner(e.ChainCfg, e.BlockCtx.BlockNumber, e.BlockCtx.Time)
-	from, err := types.Sender(signer, tx)
-	if err != nil {
-		return endorsement.ExecutionResult{}, err
-	}
 
 	// Notify NonceAware wrappers of the expected nonce for this transaction
 	if na, ok := e.state.(NonceAware); ok {
@@ -111,7 +109,7 @@ func (e *BalancePrimingExecutor) Execute(tx *types.Transaction) (endorsement.Exe
 
 	// Notify SenderAware wrappers of the transaction sender
 	if sa, ok := e.state.(SenderAware); ok {
-		sa.SetSender(from)
+		sa.SetSender()
 	}
 
 	// Execute the transaction using the base Executor
@@ -129,5 +127,16 @@ func (e *BalancePrimingExecutor) Execute(tx *types.Transaction) (endorsement.Exe
 		}
 	}
 
-	return endorsement.Success(e.state.Result(), logs, ret), nil
+	r := e.state.Result()
+
+	// Remove all read dependencies whose key contains the suffix ":code"
+	filteredReads := make([]blocks.KVRead, 0, len(r.Reads))
+	for _, read := range r.Reads {
+		if !strings.HasSuffix(read.Key, ":code") && !strings.HasSuffix(read.Key, ":bal") {
+			filteredReads = append(filteredReads, read)
+		}
+	}
+	r.Reads = filteredReads
+
+	return endorsement.Success(r, logs, ret), nil
 }

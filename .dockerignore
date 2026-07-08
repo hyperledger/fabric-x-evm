@@ -20,9 +20,7 @@ testdata/
 docs/
 
 # Compose / local dev
-compose.yml
 Makefile
-blockscout.env
 scripts/
 solidity/
 fablo-target/

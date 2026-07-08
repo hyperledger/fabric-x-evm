@@ -72,7 +72,7 @@ func NewChain(dbConnStr, triePath string, withTrie bool) (*Chain, error) {
 // Handle implements blocks.BlockHandler. It commits the block's write sets to the trie,
 // then persists the block and its transactions to the database.
 func (c *Chain) Handle(ctx context.Context, b blocks.Block) error {
-	ebl := c.convertToDomain(b)
+	ebl := ConvertToDomain(b)
 
 	ebl.ParentHash = c.prevHash.Bytes()
 	if c.ts != nil {
@@ -101,9 +101,10 @@ func (c *Chain) Close() error {
 	return c.db.Close()
 }
 
-// convertToDomain maps a Fabric SDK block to the gateway domain model,
+// ConvertToDomain maps a Fabric SDK block to the gateway domain model,
 // extracting and decoding the embedded Ethereum transactions.
-func (c *Chain) convertToDomain(b blocks.Block) domain.Block {
+// This is a standalone function so it can be reused by other components like Gateway.
+func ConvertToDomain(b blocks.Block) domain.Block {
 	ebl := domain.Block{
 		BlockNumber:  b.Number,
 		BlockHash:    b.Hash,

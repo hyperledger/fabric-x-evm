@@ -7,7 +7,7 @@ export UID
 export GID
 
 # Container runtime — override for rootless Podman:
-#   make start DOCKER=podman COMPOSE="podman compose"
+#   make start-x DOCKER=podman COMPOSE="podman compose"
 # Note: build-image requires docker buildx (or podman buildx).
 DOCKER  ?= docker
 COMPOSE ?= docker compose
@@ -27,7 +27,7 @@ build-release:
 .PHONY: build-image
 build-image: build-release
 	$(DOCKER) buildx build \
-		--file Dockerfile.release \
+		--file Dockerfile \
 		--load \
 		--build-arg VERSION=dev \
 		--build-arg CREATED=$(shell date -u +%Y-%m-%dT%H:%M:%SZ) \
@@ -54,11 +54,52 @@ pre-pull-images:
 integration-tests: pre-pull-images
 	@VERBOSE=$(VERBOSE) FABRIC_VERSION=$(FABRIC_VERSION) ./scripts/run_integration_test.sh
 
+# Container images for fabric-x
+TOOLS_IMAGE          ?= ghcr.io/hyperledger/fabric-x-tools:1.0.0
+ORDERER_IMAGE        ?= ghcr.io/hyperledger/fabric-x-orderer:1.0.0
+TEST_COMMITTER_IMAGE ?= docker.io/hyperledger/fabric-x-committer-test-node:1.0.3
+
+# Namespace init defaults
+NS      ?= basic
+NS1     ?= real
+NS2     ?= synthetic
+POLICY  ?= AND('Org1MSP.member')
+NETWORK ?= fabric-x
+
 .PHONY: init-x
 init-x:
 	@rm -rf testdata/crypto
-	@go tool cryptogen generate --config testdata/crypto-config.yaml --output testdata/crypto
-	@cd testdata && go tool configtxgen --channelID mychannel --profile OrgsChannel --outputBlock crypto/sc-genesis-block.proto.bin
+	@$(DOCKER) run --rm \
+		--user "$(UID):$(GID)" \
+		-v "$(PWD)/testdata:/config" \
+		$(TOOLS_IMAGE) \
+		cryptogen generate --config=/config/crypto-config.yaml --output=/config/crypto
+	@# Routers and assemblers accept client certs from any peer org — concatenate all peer TLS CAs.
+	@cat testdata/crypto/peerOrganizations/org1.example.com/msp/tlscacerts/tlsca.org1.example.com-cert.pem \
+		testdata/crypto/peerOrganizations/org2.example.com/msp/tlscacerts/tlsca.org2.example.com-cert.pem \
+		> testdata/crypto/client-tls-ca.pem
+	@$(DOCKER) run --rm \
+		--user "$(UID):$(GID)" \
+		-v "$(PWD)/testdata:/config" \
+		-v "$(PWD)/testdata/crypto:/crypto" \
+		--entrypoint /usr/local/bin/armageddon \
+		$(ORDERER_IMAGE) \
+		createSharedConfigProto \
+		--sharedConfigYaml=/config/shared_config.yaml \
+		--output=/config/crypto/
+	@$(DOCKER) run --rm \
+		--user "$(UID):$(GID)" \
+		-v "$(PWD)/testdata:/config" \
+		$(TOOLS_IMAGE) \
+		configtxgen --channelID mychannel --profile OrgsChannel \
+		--outputBlock /config/crypto/config-block.pb.bin \
+		--configPath /config
+	@# Make crypto files readable by Prometheus (runs as nobody/uid 65534)
+	@find testdata/crypto -type d -exec chmod a+rx {} +
+	@find testdata/crypto -type f -exec chmod a+r {} +
+	@# Make config files readable by Grafana (runs as uid 472)
+	@find testdata/config -type d -exec chmod a+rx {} +
+	@find testdata/config -type f -exec chmod a+r {} +
 
 .PHONY: clean-x
 clean-x:
@@ -68,8 +109,28 @@ clean-x:
 start-x:
 	@if nc -z localhost 7050 2>/dev/null; then echo "Error: port 7050 is already in use — stop any running Fabric orderer before starting."; exit 1; fi
 	@$(COMPOSE) -f compose.fabric-x.yml up -d
+	@echo "Waiting for test committer to be ready..."
 	@while ! nc -z localhost 7001 2>/dev/null; do sleep 1; done
-	@go tool fxconfig namespace create basic --policy="OR('Org1MSP.member')" --endorse --submit --wait --config=testdata/fxconfig.yaml
+	@echo "Creating namespace (retrying until the committer is ready)..."
+	@ok=0; for attempt in 1 2 3 4 5; do \
+		if $(DOCKER) run --rm --network $(NETWORK) \
+			--user "$(UID):$(GID)" \
+			--env "FX_NS=$(NS)" \
+			--env "FX_POLICY=$(POLICY)" \
+			-v "$(PWD)/testdata/fxconfig.yaml:/config/fxconfig.yaml:ro,Z" \
+			-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/peers/fxconfig.org1.example.com/tls:/tls:ro,Z" \
+			-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/users/channel_admin@org1.example.com/msp:/msp:ro,Z" \
+			-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/msp/tlscacerts/tlsca.org1.example.com-cert.pem:/org-tls-ca.pem:ro,Z" \
+			-v "$(PWD)/testdata/crypto/ordererOrganizations/orderer-org-1/msp/tlscacerts/tlsca.orderer-org-1-cert.pem:/orderer-tls-ca.pem:ro,Z" \
+			$(TOOLS_IMAGE) \
+			sh -c 'fxconfig namespace list --config=/config/fxconfig.yaml 2>/dev/null | grep -q ") $$FX_NS:" || \
+			fxconfig namespace create "$$FX_NS" --policy="$$FX_POLICY" --endorse --submit --wait --config=/config/fxconfig.yaml'; then \
+			ok=1; break; \
+		fi; \
+		echo "namespace setup attempt $$attempt failed; retrying in 3s..."; \
+		sleep 3; \
+	done; \
+	[ "$$ok" = 1 ] || { echo "Error: namespace setup failed after 5 attempts"; exit 1; }
 
 .PHONY: test-x
 test-x:
@@ -96,6 +157,55 @@ test-fablo:
 clean-fablo:
 	cd testdata/fablo && ./fablo prune || true
 	rm -rf testdata/fablo/snapshot.fablo.tar.gz
+
+.PHONY: start-full
+start-full:
+	@if nc -z localhost 7050 2>/dev/null; then echo "Error: port 7050 is already in use — stop any running Fabric orderer before starting."; exit 1; fi
+	@mkdir -p \
+		data/orderers/party1-router data/orderers/party1-batcher \
+		data/orderers/party1-consenter data/orderers/party1-assembler \
+		data/orderers/party2-router data/orderers/party2-batcher \
+		data/orderers/party2-consenter data/orderers/party2-assembler \
+		data/orderers/party3-router data/orderers/party3-batcher \
+		data/orderers/party3-consenter data/orderers/party3-assembler \
+		data/orderers/party4-router data/orderers/party4-batcher \
+		data/orderers/party4-consenter data/orderers/party4-assembler \
+		data/committer-org1/db data/committer-org1/sidecar-ledger
+	@$(COMPOSE) -f compose.fabric-x.full.yaml up -d
+	@echo "Waiting for committer to be ready..."
+	@while ! nc -z localhost 7001 2>/dev/null; do sleep 1; done
+	@echo "Waiting for committer sidecar to be ready..."
+	@while ! nc -z localhost 4001 2>/dev/null; do sleep 1; done
+	@$(DOCKER) run --rm --network $(NETWORK) \
+		--user "$(UID):$(GID)" \
+		--env "FX_NS=$(NS1)" \
+		--env "FX_POLICY=$(POLICY)" \
+		-v "$(PWD)/testdata/fxconfig.yaml:/config/fxconfig.yaml:ro,Z" \
+		-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/peers/fxconfig.org1.example.com/tls:/tls:ro,Z" \
+		-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/users/channel_admin@org1.example.com/msp:/msp:ro,Z" \
+		-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/msp/tlscacerts/tlsca.org1.example.com-cert.pem:/org-tls-ca.pem:ro,Z" \
+		-v "$(PWD)/testdata/crypto/ordererOrganizations/orderer-org-1/msp/tlscacerts/tlsca.orderer-org-1-cert.pem:/orderer-tls-ca.pem:ro,Z" \
+		$(TOOLS_IMAGE) \
+		sh -c 'fxconfig namespace list --config=/config/fxconfig.yaml 2>/dev/null | grep -q ") $$FX_NS:" || \
+		fxconfig namespace create "$$FX_NS" --policy="$$FX_POLICY" --endorse --submit --wait --config=/config/fxconfig.yaml'
+	@$(DOCKER) run --rm --network $(NETWORK) \
+		--user "$(UID):$(GID)" \
+		--env "FX_NS=$(NS2)" \
+		--env "FX_POLICY=$(POLICY)" \
+		-v "$(PWD)/testdata/fxconfig.yaml:/config/fxconfig.yaml:ro,Z" \
+		-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/peers/fxconfig.org1.example.com/tls:/tls:ro,Z" \
+		-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/users/channel_admin@org1.example.com/msp:/msp:ro,Z" \
+		-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/msp/tlscacerts/tlsca.org1.example.com-cert.pem:/org-tls-ca.pem:ro,Z" \
+		-v "$(PWD)/testdata/crypto/ordererOrganizations/orderer-org-1/msp/tlscacerts/tlsca.orderer-org-1-cert.pem:/orderer-tls-ca.pem:ro,Z" \
+		$(TOOLS_IMAGE) \
+		sh -c 'fxconfig namespace list --config=/config/fxconfig.yaml 2>/dev/null | grep -q ") $$FX_NS:" || \
+		fxconfig namespace create "$$FX_NS" --policy="$$FX_POLICY" --endorse --submit --wait --config=/config/fxconfig.yaml'
+
+.PHONY: stop-full
+stop-full:
+	@$(COMPOSE) -f compose.fabric-x.full.yaml down
+	@rm -rf data/
+
 .PHONY: test-local
 test-local:
 	@go test -timeout 30s -v -run ^TestLocal$$ ./integration
@@ -121,74 +231,9 @@ eth-tests-slow:
 eth-tests-slow-legacy:
 	@go test -test.fullpath=true -timeout 10000s -run ^TestEthereumTests$$ github.com/hyperledger/fabric-x-evm/integration -very_slow -legacy
 
-.PHONY: start-node
-start-node:
-	@if nc -z localhost 7050 2>/dev/null; then echo "Error: port 7050 is already in use — stop any running Fabric orderer before starting."; exit 1; fi
-	@$(COMPOSE) -f compose.fabric-x.yml up -d
-	@echo "Waiting for committer to be ready..."
-	@while ! nc -z localhost 7001 2>/dev/null; do sleep 1; done
-	@$(DOCKER) run --rm --network fabric-x-evm_default \
-		--user "$(UID):$(GID)" \
-		-v "$(PWD)/testdata/fxconfig-docker.yaml:/testdata/fxconfig-docker.yaml:ro,Z" \
-		-v "$(PWD)/testdata/crypto:/testdata/crypto:ro,Z" \
-		docker.io/hyperledger/fabric-x-tools:latest \
-		fxconfig namespace create basic --policy="OR('Org1MSP.member')" \
-		--endorse --submit --wait --config=/testdata/fxconfig-docker.yaml
-	@$(COMPOSE) up -d --build gateway
-
-.PHONY: start
-start: start-node blockscout.env
-	@$(COMPOSE) --env-file blockscout.env up -d --build
-	@echo "Visit the block explorer at http://localhost:8000/ (might take a minute to load)"
-
-.PHONY: stop
-stop:
-	@$(COMPOSE) down -v
-	@$(COMPOSE) -f compose.fabric-x.yml down
-
-blockscout.env:
-	@echo "Generating $@..."
-	@printf 'POSTGRES_PASSWORD=%s\nSECRET_KEY_BASE=%s\n' \
-		"$$(openssl rand -hex 32)" \
-		"$$(openssl rand -hex 64)" > blockscout.env
-
-## Targets to interact with the local dev network
-
-DEMO_RPC_URL   := http://localhost:8545
-DEMO_CHAIN_ID  := 4011
-DEMO_ADMIN_KEY := 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
-DEMO_EXPLORER  := http://localhost:8000
-NAME           ?= My Token
-SYMBOL         ?= TKN
-SUPPLY         ?= 1000000
-AMOUNT         ?= 100
-
-.PHONY: demo-deploy
-demo-deploy:
-	@CONTRACT=$$(cast send --rpc-url $(DEMO_RPC_URL) --chain-id $(DEMO_CHAIN_ID) \
-	  --private-key $(DEMO_ADMIN_KEY) \
-	  --create "$$(cat testdata/Token.bin)$$(cast abi-encode 'constructor(string,string,uint256)' '$(NAME)' '$(SYMBOL)' '$(SUPPLY)000000000000000000' | sed 's/^0x//')" \
-	  | awk '/contractAddress/ {print $$2}') && \
-	  echo $$CONTRACT > .demo-contract && \
-	  printf '\nDeployed %s (%s): %s/address/%s\n\n' "$(NAME)" "$(SYMBOL)" "$(DEMO_EXPLORER)" "$$CONTRACT"
-
-CONTRACT ?= $(shell cat .demo-contract 2>/dev/null)
-
-.PHONY: demo-transfer
-demo-transfer:
-	@test -n "$(TO)" || (echo "Usage: make demo-transfer TO=0x... [AMOUNT=100] [CONTRACT=0x...]"; exit 1)
-	@test -n "$(CONTRACT)" || (echo "No contract address. Run 'make demo-deploy' first or pass CONTRACT=0x..."; exit 1)
-	@TX=$$(cast send --rpc-url $(DEMO_RPC_URL) --chain-id $(DEMO_CHAIN_ID) \
-	    --private-key $(DEMO_ADMIN_KEY) \
-	    $(CONTRACT) "transfer(address,uint256)" \
-	    $(TO) "$(AMOUNT)000000000000000000" \
-	    | awk '/^transactionHash/ {print $$2}') && \
-	  printf '\nTransferred %s tokens to %s: %s/tx/%s\n\n' "$(AMOUNT)" "$(TO)" "$(DEMO_EXPLORER)" "$$TX"
-
 .PHONY: hardhat-tests
 hardhat-tests:
 	@./scripts/run_hardhat_test.sh
-
 
 .PHONY: perf-tests
 perf-tests: pre-pull-images

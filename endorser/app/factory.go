@@ -31,7 +31,6 @@ func NewEndorser(
 	cfg config.Endorser,
 	network common.Network,
 	logger sdk.Logger,
-	skipAllNonceChecks bool,
 	testImpl bool,
 ) (*endorser.Endorser, *sdknet.Synchronizer, interface{}, error) {
 	// Signer is the identity to connect to the peer for synchronizing, and for signing the endorsement.
@@ -48,18 +47,20 @@ func NewEndorser(
 			return nil, nil, nil, fmt.Errorf("failed to initialize store: %w", err)
 		}
 		kvs = endorser.NewVersionedDBWrapper(writeDB)
-	default:
+	case "memory":
 		baseLightKVS := endorser.NewLightKVS(cfg.Database.HistorySize)
 		if testImpl {
 			kvs = testimpl.NewLightKVSExt(baseLightKVS)
 		} else {
 			kvs = baseLightKVS
 		}
+	default:
+		return nil, nil, nil, fmt.Errorf("invalid endorser database type %s, must be sqlite or memory", cfg.Database.Database)
 	}
 
 	evmConfig := endorser.EVMConfig{
 		ChainConfig: common.BuildChainConfig(network.ChainID),
-		FreeGas:     true,
+		MaxTxGas:    network.MaxTxGas,
 		DebugLogs:   cfg.DebugLogs,
 	}
 

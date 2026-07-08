@@ -356,19 +356,19 @@ func (s *Store) GetLogs(ctx context.Context, filter domain.LogFilter) ([]domain.
 	var query strings.Builder
 	var args []any
 
-	query.WriteString(`SELECT block_number, block_hash, tx_hash, tx_index, log_index, address, topic0, topic1, topic2, topic3, data FROM logs WHERE 1=1`)
+	query.WriteString(`SELECT l.block_number, l.block_hash, l.tx_hash, l.tx_index, l.log_index, l.address, l.topic0, l.topic1, l.topic2, l.topic3, l.data, b.timestamp FROM logs l JOIN blocks b ON l.block_number = b.block_number WHERE 1=1`)
 
 	// Block filtering: either by hash or by range (mutually exclusive)
 	if filter.BlockHash != nil {
-		query.WriteString(` AND block_number = (SELECT block_number FROM blocks WHERE block_hash = ?)`)
+		query.WriteString(` AND l.block_number = (SELECT block_number FROM blocks WHERE block_hash = ?)`)
 		args = append(args, *filter.BlockHash)
 	} else {
 		if filter.FromBlock != nil {
-			query.WriteString(` AND block_number >= ?`)
+			query.WriteString(` AND l.block_number >= ?`)
 			args = append(args, *filter.FromBlock)
 		}
 		if filter.ToBlock != nil {
-			query.WriteString(` AND block_number <= ?`)
+			query.WriteString(` AND l.block_number <= ?`)
 			args = append(args, *filter.ToBlock)
 		}
 	}
@@ -416,7 +416,7 @@ func (s *Store) GetLogs(ctx context.Context, filter domain.LogFilter) ([]domain.
 		}
 	}
 
-	query.WriteString(` ORDER BY block_number, tx_index, log_index`)
+	query.WriteString(` ORDER BY l.block_number, l.tx_index, l.log_index`)
 
 	rows, err := s.DB.QueryContext(ctx, query.String(), args...)
 	if err != nil {
@@ -427,6 +427,7 @@ func (s *Store) GetLogs(ctx context.Context, filter domain.LogFilter) ([]domain.
 	var logs []domain.Log
 	for rows.Next() {
 		var l Log
+		var timestamp int64
 		if err := rows.Scan(
 			&l.BlockNumber,
 			&l.BlockHash,
@@ -439,10 +440,13 @@ func (s *Store) GetLogs(ctx context.Context, filter domain.LogFilter) ([]domain.
 			&l.Topic2,
 			&l.Topic3,
 			&l.Data,
+			&timestamp,
 		); err != nil {
 			return nil, err
 		}
-		logs = append(logs, toDomainLog(l))
+		dl := toDomainLog(l)
+		dl.Timestamp = timestamp
+		logs = append(logs, dl)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

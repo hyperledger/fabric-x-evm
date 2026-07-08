@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"math/big"
 	"math/rand/v2"
+	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -35,7 +36,6 @@ import (
 	gwapi "github.com/hyperledger/fabric-x-evm/gateway/api"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
-	"github.com/hyperledger/fabric-x-evm/utils"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	bfab "github.com/hyperledger/fabric-x-sdk/blocks/fabric"
@@ -48,6 +48,7 @@ import (
 	"github.com/hyperledger/fabric-x-sdk/network"
 	nfab "github.com/hyperledger/fabric-x-sdk/network/fabric"
 	nfabx "github.com/hyperledger/fabric-x-sdk/network/fabricx"
+	"github.com/hyperledger/fabric-x-sdk/notification"
 	"github.com/hyperledger/fabric-x-sdk/state"
 )
 
@@ -115,7 +116,16 @@ func (th *TestHarness) PrimeStateFromJSON(ctx context.Context, jsonFilePath stri
 //
 // Sync goroutines are started in the background using ctx. The returned synchronizers
 // can be used by callers that need to wait for the initial sync to complete.
-func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmConfig endorser.EVMConfig, primeDBPath string, bypass bool, ends []core.Endorser, dbs []endorser.KVS, builders []endorsement.Builder) (*TestHarness, *network.Synchronizer, error) {
+//
+// If useNotifications is true, uses NotificationDispatcher + MemoryStore instead of
+// Synchronizer + Chain. This is intended for fabric-x performance testing.
+func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmConfig endorser.EVMConfig, primeDBPath string, bypass bool, ends []core.Endorser, dbs []endorser.KVS, builders []endorsement.Builder, txQueue core.TxQueueInterface, useNotifications bool) (*TestHarness, *network.Synchronizer, error) {
+	return buildTestHarnessWithExtraHandler(t, logger, cfg, evmConfig, primeDBPath, bypass, ends, dbs, builders, txQueue, useNotifications, nil)
+}
+
+// buildTestHarnessWithExtraHandler is like buildTestHarness but accepts an optional extra TxHandler
+// that will be inserted into the notification handler chain right before the cleanup handler.
+func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg config.Config, evmConfig endorser.EVMConfig, primeDBPath string, bypass bool, ends []core.Endorser, dbs []endorser.KVS, builders []endorsement.Builder, txQueue core.TxQueueInterface, useNotifications bool, extraHandler core.TxHandler) (*TestHarness, *network.Synchronizer, error) {
 	// Build gateway signer.
 	var gwSigner sdk.Signer
 	if cfg.Gateway.Identity.MSPDir != "" {
@@ -137,58 +147,146 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 	if err != nil {
 		return nil, nil, err
 	}
-	t.Cleanup(func() { chain.Close() })
+	if !useNotifications {
+		t.Cleanup(func() { chain.Close() })
+	}
 
-	// Build submitter.
+	// Build submitters (one per worker for parallel submission)
 	orderers := make([]network.OrdererConf, len(cfg.Gateway.Orderers))
 	for i, o := range cfg.Gateway.Orderers {
 		orderers[i] = o.ToOrdererConf()
 	}
 
-	var submitter core.Submitter
+	submitterCount := cfg.Gateway.SubmitterCount
+	if submitterCount <= 0 {
+		submitterCount = core.DefaultNumWorkers
+	}
+	submitters := make([]core.Submitter, submitterCount)
 	var sync *network.Synchronizer
 	var err1 error
-	if bypass {
-		submitter = local.NewLocalSubmitter(dbs[0], cfg.Network.Channel, cfg.Network.Namespace, nfab.NewTxPackager(gwSigner), bfab.NewBlockParser(logger), false)
-	} else {
-		handlers := make([]blocks.BlockHandler, 0, len(dbs)+1)
-		for _, db := range dbs {
-			handlers = append(handlers, db)
-		}
-		// by adding `chain` as last handler, we're sure that by the time the
-		// gateway sees the transaction as committed, all endorsers will have
-		// updated their ledger state
-		handlers = append(handlers, chain)
 
-		switch cfg.Network.Protocol {
-		case "fabric":
-			sync, err = nfab.NewSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, handlers...)
-			submitter, err1 = nfab.NewSubmitter(orderers, gwSigner, 0, logger)
-		case "fabric-x", "":
-			sync, err = nfabx.NewSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, handlers...)
-			submitter, err1 = nfabx.NewSubmitter(orderers, gwSigner, 0, logger)
-		default:
-			return nil, nil, fmt.Errorf("unsupported protocol: %q", cfg.Network.Protocol)
+	if bypass {
+		// Use local submitters for bypass mode (no network communication)
+		for i := 0; i < submitterCount; i++ {
+			submitters[i] = local.NewLocalSubmitter(dbs[0], cfg.Network.Channel, cfg.Network.Namespace, nfab.NewTxPackager(gwSigner), bfab.NewBlockParser(logger), false)
 		}
-		if err := errors.Join(err, err1); err != nil {
-			return nil, nil, err
+	} else {
+		// Create network submitters
+		for i := 0; i < submitterCount; i++ {
+			switch cfg.Network.Protocol {
+			case "fabric":
+				submitters[i], err1 = nfab.NewSubmitter(t.Context(), orderers, gwSigner, 0, logger)
+			case "fabric-x", "":
+				submitters[i], err1 = nfabx.NewSubmitter(t.Context(), orderers, gwSigner, 0, logger)
+			default:
+				return nil, nil, fmt.Errorf("unsupported protocol: %q", cfg.Network.Protocol)
+			}
+			if err1 != nil {
+				return nil, nil, fmt.Errorf("failed to create submitter %d: %w", i, err1)
+			}
 		}
 	}
 
-	gw, err := core.New(ec, submitter, chain, cfg.Network.ChainID, cfg.Gateway.WorkerCount)
+	// Create BatchSubmitter infrastructure
+	endorsementChan := make(chan sdk.Endorsement, 1000)
+	batchSubmitter := core.NewBatchSubmitter(submitters, endorsementChan, cfg.Gateway.SubmitterCount)
+
+	batchSubmitter.Start(t.Context())
+
+	// Create gateway before synchronizer so we can register it as a handler
+	// Gateway owns the BatchSubmitter and will handle its lifecycle
+	gw, err := core.New(ec, batchSubmitter, chain, cfg.Network.ChainID, cfg.Gateway.WorkerCount, txQueue, endorsementChan)
 	if err != nil {
 		return nil, nil, err
 	}
 
+	// Create synchronizer with handlers (endorsers, chain, and gateway) - only for non-bypass mode
 	if !bypass {
-		go func() error { return sync.Start(t.Context()) }()
+		handlers := make([]blocks.BlockHandler, 0, len(dbs)+2)
+		for _, db := range dbs {
+			handlers = append(handlers, db)
+		}
+		// Add chain before gateway to ensure blocks are persisted before marking transactions complete
+		handlers = append(handlers, chain)
+		if !useNotifications {
+			handlers = append(handlers, gw)
+		}
+
+		switch cfg.Network.Protocol {
+		case "fabric":
+			sync, err = nfab.NewSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, handlers...)
+		case "fabric-x", "":
+			sync, err = nfabx.NewSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, handlers...)
+		default:
+			return nil, nil, fmt.Errorf("unsupported protocol: %q", cfg.Network.Protocol)
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+
+		if useNotifications {
+			// HYBRID MODE: Use synchronizer to catch up, then switch to notifications
+			syncCtx, syncCancel := context.WithCancel(t.Context())
+			syncDone := make(chan struct{})
+			go func() {
+				defer close(syncDone)
+				if err := sync.Start(syncCtx); err != nil && syncCtx.Err() == nil {
+					logger.Errorf("synchronizer error during catchup: %v", err)
+				}
+			}()
+
+			logger.Infof("Waiting for synchronizer to catch up...")
+			waitUntilSynced(t, sync, 60*time.Second)
+			logger.Infof("Synchronizer caught up - stopping and switching to notifications")
+
+			syncCancel()
+			<-syncDone
+			chain.Close()
+			logger.Infof("Synchronizer stopped cleanly")
+
+			// Set up AllTxStreamer notification system
+			txHandlers := make([]core.TxHandler, 0, len(dbs)+2)
+			for _, db := range dbs {
+				txHandlers = append(txHandlers, db.(core.TxHandler))
+			}
+			txHandlers = append(txHandlers, gw.TxQueue.(core.TxHandler))
+			if extraHandler != nil {
+				txHandlers = append(txHandlers, extraHandler)
+			}
+
+			dispatcher := core.NewAllTxBatchDispatcher(txHandlers...)
+
+			if cfg.Network.Protocol == "fabric-x" || cfg.Network.Protocol == "" {
+				peer, err := nfabx.NewPeer(cfg.Gateway.Committer.ToPeerConf(), cfg.Network.Channel, gwSigner)
+				if err != nil {
+					return nil, nil, fmt.Errorf("create notification peer: %w", err)
+				}
+				streamer := notification.NewAllTxStreamer(peer, []notification.AllTxHandler{dispatcher}, logger)
+				go func() {
+					req := &notification.StreamAllRequest{
+						FilterNamespaces:     []string{cfg.Network.Namespace},
+						IncludeReadWriteSets: true,
+						IncludeMetadata:      true,
+					}
+					if err := streamer.Stream(t.Context(), req); err != nil && t.Context().Err() == nil {
+						logger.Errorf("AllTxStreamer error: %v", err)
+					}
+				}()
+				logger.Infof("AllTxStreamer active")
+			}
+
+			sync = nil
+		} else {
+			go func() error { return sync.Start(t.Context()) }()
+		}
 	}
 
-	// Start gateway worker pool for tests
+	// Start gateway worker pool
 	gw.Start(t.Context())
 	t.Cleanup(func() { gw.Stop() })
 
-	primer, err := NewStatePrimer(gw, dbs[0], cfg.Network.Namespace, gwSigner, builders, cfg.Network.Channel, cfg.Network.NsVersion, cfg.Network.Protocol == "fabric-x")
+	// Create state primer (use first submitter)
+	primer, err := NewStatePrimer(gw, submitters[0], dbs[0], cfg.Network.Namespace, gwSigner, builders, cfg.Network.Channel, cfg.Network.NsVersion, cfg.Network.Protocol == "fabric-x")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -273,8 +371,15 @@ func NewLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVM
 }
 
 // NewLocalTestHarnessWithFactory is like NewLocalTestHarness but allows custom endorser creation.
-// Exported for use by tests that need custom endorser factories.
+// NewLocalTestHarnessWithFactory creates a test harness with a custom endorser factory.
+// Uses the default TxQueue implementation.
 func NewLocalTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath, networkType string, configOverrides map[string]any, factory EndorserFactory) (*TestHarness, error) {
+	return NewLocalTestHarnessWithFactoryAndTxQueue(t, logger, evmConfig, primeDbPath, networkType, configOverrides, factory, nil)
+}
+
+// NewLocalTestHarnessWithFactoryAndTxQueue creates a test harness with a custom endorser factory and TxQueue.
+// If txQueue is nil, the default TxQueue will be used.
+func NewLocalTestHarnessWithFactoryAndTxQueue(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath, networkType string, configOverrides map[string]any, factory EndorserFactory, txQueue core.TxQueueInterface) (*TestHarness, error) {
 	bypass := networkType == "bypass"
 
 	orderer := &common.Endpoint{Host: "127.0.0.1", Port: 1337}
@@ -332,16 +437,16 @@ func NewLocalTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig e
 	dbs, builders, ends := buildEndorsers(t, cfg, evmConfig, factory)
 
 	if !bypass {
-		nw, err := fabrictest.Start("basic", networkType, fabrictest.Config{}, dbs[0])
+		nw, err := fabrictest.Start(t.Context(), cfg.Network.Namespace, networkType, fabrictest.Config{}, dbs[0])
 		if err != nil {
 			t.Fatalf("fabrictest.Start: %v", err)
 		}
-		t.Cleanup(nw.Stop)
+		// Don't register cleanup for nw.Stop - fabrictest.Start already registers its own cleanup internally
 		orderer.Port = nw.OrdererPort
 		peer.Port = nw.PeerPort
 	}
 
-	th, _, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, bypass, ends, dbs, builders)
+	th, _, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, bypass, ends, dbs, builders, txQueue, false)
 	if err != nil {
 		return nil, err
 	}
@@ -349,9 +454,21 @@ func NewLocalTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig e
 	return th, nil
 }
 
-// newFabricTestHarness returns a client for integration testing with access to a peer, orderer and local committer.
+// NewFabricTestHarness returns a client for integration testing with access to a peer, orderer and local committer.
 // It follows the directory structure of a Fablo test network.
-func newFabricTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any) (*TestHarness, error) {
+func NewFabricTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any) (*TestHarness, error) {
+	return NewFabricTestHarnessWithFactory(t, logger, evmConfig, primeDbPath, configOverrides, defaultEndorserFactory)
+}
+
+func NewFabricTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory) (*TestHarness, error) {
+	return NewFabricTestHarnessWithFactoryAndTxQueue(t, logger, evmConfig, primeDbPath, configOverrides, factory, nil)
+}
+
+func NewFabricTestHarnessWithFactoryAndTxQueue(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory, txQueue core.TxQueueInterface) (*TestHarness, error) {
+	// cwd, _ := os.Getwd()
+	// defer os.Chdir(cwd)
+	// _ = os.Chdir("../")
+
 	cfg, err := config.Load("fablo.yaml")
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
@@ -372,9 +489,9 @@ func newFabricTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EV
 	}
 
 	// Build all endorsers
-	dbs, builders, ends := buildEndorsers(t, cfg, evmConfig, defaultEndorserFactory)
+	dbs, builders, ends := buildEndorsers(t, cfg, evmConfig, factory)
 
-	th, sync, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false, ends, dbs, builders)
+	th, sync, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false, ends, dbs, builders, txQueue, false)
 	if err != nil {
 		return nil, err
 	}
@@ -384,10 +501,18 @@ func newFabricTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EV
 	return th, nil
 }
 
+func NewFabricXTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any) (*TestHarness, error) {
+	return NewFabricXTestHarnessWithFactory(t, logger, evmConfig, primeDbPath, configOverrides, defaultEndorserFactory)
+}
+
 // NewFabricXTestHarness returns a client for integration testing with access to a peer, orderer and local committer.
 // It follows the directory structure of a fabric samples test network.
 // Exported for use by eth-tests package.
-func NewFabricXTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any) (*TestHarness, error) {
+func NewFabricXTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory) (*TestHarness, error) {
+	return NewFabricXTestHarnessWithFactoryAndTxQueue(t, logger, evmConfig, primeDbPath, configOverrides, factory, nil)
+}
+
+func NewFabricXTestHarnessWithFactoryAndTxQueue(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory, txQueue core.TxQueueInterface) (*TestHarness, error) {
 	cfg, err := config.Load("fabx.yaml")
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
@@ -403,9 +528,49 @@ func NewFabricXTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.E
 	}
 
 	// Build all endorsers
-	dbs, builders, ends := buildEndorsers(t, cfg, evmConfig, defaultEndorserFactory)
+	dbs, builders, ends := buildEndorsers(t, cfg, evmConfig, factory)
 
-	th, _, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false, ends, dbs, builders)
+	th, _, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false, ends, dbs, builders, txQueue, false)
+	if err != nil {
+		return nil, err
+	}
+
+	return th, nil
+}
+
+// NewFabricXTestHarnessWithNotifications creates a fabric-x test harness with notification-based
+// transaction completion tracking instead of block-based synchronization.
+// Uses MemoryStore and NotificationDispatcher for better performance in replay scenarios.
+// If extraHandler is non-nil, it will be inserted into the handler chain right before the cleanup handler.
+func NewFabricXTestHarnessWithNotifications(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory, txQueue core.TxQueueInterface, extraHandler core.TxHandler, confFile string) (*TestHarness, error) {
+	if primeDbPath != "" && !filepath.IsAbs(primeDbPath) {
+		if abs, err := filepath.Abs(primeDbPath); err == nil {
+			primeDbPath = abs
+		}
+	}
+	cwd, _ := os.Getwd()
+	defer os.Chdir(cwd)
+	_ = os.Chdir("../")
+
+	cfg, err := config.Load(confFile)
+	if err != nil {
+		return nil, fmt.Errorf("load config: %w", err)
+	}
+
+	if err := applyConfigOverrides(&cfg, configOverrides); err != nil {
+		return nil, err
+	}
+
+	// Derive ChainConfig from cfg.Network.ChainID when not explicitly provided.
+	if evmConfig.ChainConfig == nil {
+		evmConfig.ChainConfig = common.BuildChainConfig(cfg.Network.ChainID)
+	}
+
+	// Build all endorsers
+	dbs, builders, ends := buildEndorsers(t, cfg, evmConfig, factory)
+
+	// Use buildTestHarness with useNotifications=true and extraHandler
+	th, _, err := buildTestHarnessWithExtraHandler(t, logger, cfg, evmConfig, primeDbPath, false, ends, dbs, builders, txQueue, true, extraHandler)
 	if err != nil {
 		return nil, err
 	}
@@ -487,10 +652,10 @@ func (th *TestHarness) Stop() error {
 	return errors.Join(errs...)
 }
 
-func processCommon(t *testing.T, gw *core.Gateway, commit bool, tx *types.Transaction, blockInfo *utils.BlockInfo) sdk.Endorsement {
+func processCommon(t *testing.T, gw *core.Gateway, commit bool, tx *types.Transaction) sdk.Endorsement {
 	t.Helper()
 
-	env, err := gw.ExecuteEthTx(t.Context(), tx, blockInfo)
+	env, err := gw.ExecuteEthTx(t.Context(), tx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -511,14 +676,14 @@ func processCommon(t *testing.T, gw *core.Gateway, commit bool, tx *types.Transa
 	return env
 }
 
-func getEndorsedTxForSmartContractCall(t *testing.T, client *EthClient, addr ethcommon.Address, gw *core.Gateway, method string, blockInfo *utils.BlockInfo, args ...any) sdk.Endorsement {
+func getEndorsedTxForSmartContractCall(t *testing.T, client *EthClient, addr ethcommon.Address, gw *core.Gateway, method string, args ...any) sdk.Endorsement {
 	t.Helper()
-	tx, err := client.TxForCall(t.Context(), gw, &addr, method, blockInfo, args...)
+	tx, err := client.TxForCall(t.Context(), gw, &addr, method, args...)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	return processCommon(t, gw, false, tx, blockInfo)
+	return processCommon(t, gw, false, tx)
 }
 
 func NewNativeEthClient(gw *core.Gateway) (*ethclient.Client, error) {
@@ -540,7 +705,7 @@ func deploySmartContract(t *testing.T, gw *core.Gateway, client *EthClient, args
 		t.Fatal(err)
 	}
 
-	tx, addr, err := client.txForDeploy(t.Context(), gw, nil, args...)
+	tx, addr, err := client.txForDeploy(t.Context(), gw, args...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -555,7 +720,7 @@ func deploySmartContract(t *testing.T, gw *core.Gateway, client *EthClient, args
 	return addr
 }
 
-func callSmartContract(t *testing.T, client *EthClient, addr ethcommon.Address, gw *core.Gateway, method string, blockInfo *utils.BlockInfo, args ...any) {
+func callSmartContract(t *testing.T, client *EthClient, addr ethcommon.Address, gw *core.Gateway, method string, args ...any) {
 	t.Helper()
 
 	ec, err := NewNativeEthClient(gw)
@@ -563,7 +728,7 @@ func callSmartContract(t *testing.T, client *EthClient, addr ethcommon.Address, 
 		t.Fatal(err)
 	}
 
-	tx, err := client.TxForCall(t.Context(), gw, &addr, method, blockInfo, args...)
+	tx, err := client.TxForCall(t.Context(), gw, &addr, method, args...)
 	if err != nil {
 		t.Fatal(err)
 	}

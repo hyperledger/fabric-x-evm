@@ -7,14 +7,15 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package testimpl
 
 import (
+	"context"
 	"fmt"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum"
 	ethstate "github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/hyperledger/fabric-x-evm/endorser"
-	"github.com/hyperledger/fabric-x-evm/utils"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
 
@@ -35,6 +36,7 @@ type EVMEngineWrapper struct {
 	mode              ExecutorMode
 	ethStateDB        *ethstate.StateDB
 	balancePriming    *BalancePrimingConfig
+	blockContext      *vm.BlockContext
 	namespace         string
 	kvs               endorser.KVSSnapshotter
 	evmConfig         endorser.EVMConfig
@@ -55,6 +57,7 @@ func NewEVMEngineWrapper(
 		mode:              DualStateDBMode,
 		ethStateDB:        nil,
 		balancePriming:    nil,
+		blockContext:      nil,
 		namespace:         namespace,
 		kvs:               kvs,
 		evmConfig:         evmConfig,
@@ -73,6 +76,13 @@ func (w *EVMEngineWrapper) GetEthStateDB() *ethstate.StateDB {
 	return w.ethStateDB
 }
 
+// SetBlockContext sets the EVM block context to use for test executions.
+// When set, the executor's BlockCtx is overridden with this value after creation,
+// replacing the defaults derived from BlockInfo.
+func (w *EVMEngineWrapper) SetBlockContext(ctx *vm.BlockContext) {
+	w.blockContext = ctx
+}
+
 // SetBalancePriming configures the wrapper for BalancePriming mode.
 func (w *EVMEngineWrapper) SetBalancePriming(config *BalancePrimingConfig) {
 	w.mode = BalancePrimingMode
@@ -81,7 +91,7 @@ func (w *EVMEngineWrapper) SetBalancePriming(config *BalancePrimingConfig) {
 
 // Execute runs a state-changing transaction and returns the EVM result.
 // The behavior depends on the configured mode.
-func (w *EVMEngineWrapper) Execute(blockInfo *utils.BlockInfo, tx *types.Transaction) (endorsement.ExecutionResult, error) {
+func (w *EVMEngineWrapper) Execute(ctx context.Context, tx *types.Transaction) (endorsement.ExecutionResult, error) {
 	// Create the appropriate executor based on mode
 	type executor interface {
 		Execute(*types.Transaction) (endorsement.ExecutionResult, error)
@@ -93,9 +103,9 @@ func (w *EVMEngineWrapper) Execute(blockInfo *utils.BlockInfo, tx *types.Transac
 
 	switch w.mode {
 	case BalancePrimingMode:
-		ex, err = w.newBalancePrimingExecutor(blockInfo, 0)
+		ex, err = w.newBalancePrimingExecutor()
 	case DualStateDBMode:
-		ex, err = w.newExecutorWrapper(blockInfo, 0)
+		ex, err = w.newExecutorWrapper()
 	default:
 		return endorsement.ExecutionResult{}, fmt.Errorf("unknown executor mode: %d", w.mode)
 	}
@@ -111,11 +121,6 @@ func (w *EVMEngineWrapper) Execute(blockInfo *utils.BlockInfo, tx *types.Transac
 // Call executes a read-only call against the state.
 // The behavior depends on the configured mode.
 func (w *EVMEngineWrapper) Call(msg ethereum.CallMsg, blockNumber *big.Int) ([]byte, error) {
-	stateBlock := uint64(0)
-	if blockNumber != nil {
-		stateBlock = blockNumber.Uint64()
-	}
-
 	// Create the appropriate executor based on mode
 	type caller interface {
 		Call(ethereum.CallMsg) ([]byte, error)
@@ -127,9 +132,9 @@ func (w *EVMEngineWrapper) Call(msg ethereum.CallMsg, blockNumber *big.Int) ([]b
 
 	switch w.mode {
 	case BalancePrimingMode:
-		ex, err = w.newBalancePrimingExecutor(nil, stateBlock)
+		ex, err = w.newBalancePrimingExecutor()
 	case DualStateDBMode:
-		ex, err = w.newExecutorWrapper(nil, stateBlock)
+		ex, err = w.newExecutorWrapper()
 	default:
 		return nil, fmt.Errorf("unknown executor mode: %d", w.mode)
 	}
@@ -143,27 +148,25 @@ func (w *EVMEngineWrapper) Call(msg ethereum.CallMsg, blockNumber *big.Int) ([]b
 }
 
 // newExecutorWrapper creates an executor wrapper with DualStateDB support.
-func (w *EVMEngineWrapper) newExecutorWrapper(blockInfo *utils.BlockInfo, stateBlockNum uint64) (*ExecutorWrapper, error) {
+func (w *EVMEngineWrapper) newExecutorWrapper() (*ExecutorWrapper, error) {
 	return NewExecutorWrapper(
 		w.namespace,
 		w.kvs,
-		blockInfo,
-		stateBlockNum,
 		w.evmConfig,
 		w.monotonicVersions,
 		w.ethStateDB,
+		w.blockContext,
 	)
 }
 
 // newBalancePrimingExecutor creates an executor with balance priming support.
-func (w *EVMEngineWrapper) newBalancePrimingExecutor(blockInfo *utils.BlockInfo, stateBlockNum uint64) (*BalancePrimingExecutor, error) {
+func (w *EVMEngineWrapper) newBalancePrimingExecutor() (*BalancePrimingExecutor, error) {
 	return NewBalancePrimingExecutor(
 		w.namespace,
 		w.kvs,
-		blockInfo,
-		stateBlockNum,
 		w.evmConfig,
 		w.monotonicVersions,
 		w.balancePriming,
+		w.blockContext,
 	)
 }

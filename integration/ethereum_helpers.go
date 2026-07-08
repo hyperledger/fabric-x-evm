@@ -19,7 +19,6 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/holiman/uint256"
-	"github.com/hyperledger/fabric-x-evm/utils"
 )
 
 // hexToBigInt converts "0x..." string to *big.Int
@@ -255,19 +254,6 @@ func buildTransaction(testTx *stTransaction, dataIndex, gasIndex, valueIndex int
 		Value:    value,
 		Data:     data,
 	}), nil
-}
-
-// buildBlockInfo creates block context from test environment
-func buildBlockInfo(env *stEnv) (*utils.BlockInfo, error) {
-	blockNum := big.NewInt(int64(env.Number))
-	blockTime := env.Timestamp
-
-	return &utils.BlockInfo{
-		BlockNumber:   blockNum,
-		BlockTime:     blockTime,
-		GasLimit:      env.GasLimit,
-		ExcessBlobGas: env.ExcessBlobGas,
-	}, nil
 }
 
 // ParseTestFile reads and parses an Ethereum test JSON file into StateTest format

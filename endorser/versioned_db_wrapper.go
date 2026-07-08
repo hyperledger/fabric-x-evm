@@ -9,6 +9,8 @@ package endorser
 import (
 	"context"
 
+	"github.com/hyperledger/fabric-x-common/api/committerpb"
+	"github.com/hyperledger/fabric-x-evm/gateway/core"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/state"
 )
@@ -30,8 +32,15 @@ func NewVersionedDBWrapper(db *state.VersionedDB) *VersionedDBWrapper {
 
 // NewSnapshot creates a new snapshot of the state at the specified block number.
 // It returns a VersionedDBSnapshot that will use this block number for all Get operations,
-// providing snapshot isolation.
+// providing snapshot isolation. If blockNumber is 0 it resolves to the latest committed block.
 func (w *VersionedDBWrapper) NewSnapshot(blockNumber uint64) (ReadStore, error) {
+	if blockNumber == 0 {
+		latest, err := w.db.BlockNumber(context.Background())
+		if err != nil {
+			return nil, err
+		}
+		blockNumber = latest
+	}
 	return &VersionedDBSnapshot{
 		db:          w.db,
 		blockNumber: blockNumber,
@@ -71,6 +80,45 @@ func (w *VersionedDBWrapper) Get(namespace, key string, lastBlock uint64) (*bloc
 // Handle implements blocks.BlockHandler by delegating to the underlying VersionedDB.
 func (w *VersionedDBWrapper) Handle(ctx context.Context, b blocks.Block) error {
 	return w.db.Handle(ctx, b)
+}
+
+// HandleTx implements the core.TxHandler interface.
+// It creates a synthetic block with the transactions and delegates to the underlying VersionedDB.
+func (w *VersionedDBWrapper) HandleTx(ctx context.Context, notifs []core.TxNotification) error {
+	if len(notifs) == 0 {
+		return nil
+	}
+
+	// Group notifications by block number
+	blockMap := make(map[uint64][]core.TxNotification)
+	for _, notif := range notifs {
+		blockMap[notif.BlockNum] = append(blockMap[notif.BlockNum], notif)
+	}
+
+	// Process each block
+	for blockNum, blockNotifs := range blockMap {
+		// Create a synthetic block with transactions from this block
+		txs := make([]blocks.Transaction, 0, len(blockNotifs))
+		for _, notif := range blockNotifs {
+			txs = append(txs, blocks.Transaction{
+				Number: int64(notif.TxNum),
+				ID:     notif.FabricTxID,
+				Valid:  notif.Status == committerpb.Status_COMMITTED, // Status = COMMITTED = valid
+				NsRWS:  notif.NsRWS,
+			})
+		}
+
+		syntheticBlock := blocks.Block{
+			Number:       blockNum,
+			Transactions: txs,
+		}
+
+		if err := w.db.Handle(ctx, syntheticBlock); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // BlockNumber returns the last processed block number.
