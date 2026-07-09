@@ -17,6 +17,7 @@ import (
 	ethcore "github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/holiman/uint256"
@@ -161,7 +162,7 @@ func TestValidateTx_InitCodeTooLarge(t *testing.T) {
 	require.NoError(t, err)
 
 	err = ValidateTx(context.Background(), tx, cfg, signer, &fakeState{nonce: 0})
-	require.ErrorIs(t, err, ethcore.ErrMaxInitCodeSizeExceeded)
+	require.ErrorIs(t, err, vm.ErrMaxInitCodeSizeExceeded)
 }
 
 func TestValidateTx_BlobTxTypeRejected(t *testing.T) {

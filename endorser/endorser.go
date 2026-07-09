@@ -182,7 +182,7 @@ func isPreExecutionError(err error) bool {
 		errors.Is(err, core.ErrNonceMax) ||
 		errors.Is(err, core.ErrGasLimitReached) ||
 		errors.Is(err, core.ErrInsufficientFundsForTransfer) ||
-		errors.Is(err, core.ErrMaxInitCodeSizeExceeded) ||
+		errors.Is(err, vm.ErrMaxInitCodeSizeExceeded) ||
 		errors.Is(err, core.ErrInsufficientFunds) ||
 		errors.Is(err, core.ErrGasUintOverflow) ||
 		errors.Is(err, core.ErrIntrinsicGas) ||

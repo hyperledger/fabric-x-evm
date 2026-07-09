@@ -12,9 +12,9 @@ import (
 	"github.com/ethereum/go-ethereum/core/stateless"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/types/bal"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/trie/utils"
 	"github.com/holiman/uint256"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 )
@@ -167,11 +167,10 @@ func (l *EthStateDBLogger) SetTransientState(addr common.Address, key, value com
 	l.logger.Debugf("SetTransientState: completed")
 }
 
-func (l *EthStateDBLogger) SelfDestruct(addr common.Address) uint256.Int {
+func (l *EthStateDBLogger) SelfDestruct(addr common.Address) {
 	l.logger.Debugf("SelfDestruct: addr=%s", addr.Hex())
-	balance := l.inner.SelfDestruct(addr)
-	l.logger.Debugf("SelfDestruct: output balance=%s", balance.String())
-	return balance
+	l.inner.SelfDestruct(addr)
+	l.logger.Debugf("SelfDestruct: completed")
 }
 
 func (l *EthStateDBLogger) HasSelfDestructed(addr common.Address) bool {
@@ -179,13 +178,6 @@ func (l *EthStateDBLogger) HasSelfDestructed(addr common.Address) bool {
 	result := l.inner.HasSelfDestructed(addr)
 	l.logger.Debugf("HasSelfDestructed: output result=%t", result)
 	return result
-}
-
-func (l *EthStateDBLogger) SelfDestruct6780(addr common.Address) (uint256.Int, bool) {
-	l.logger.Debugf("SelfDestruct6780: addr=%s", addr.Hex())
-	balance, destructed := l.inner.SelfDestruct6780(addr)
-	l.logger.Debugf("SelfDestruct6780: output balance=%s, destructed=%t", balance.String(), destructed)
-	return balance, destructed
 }
 
 func (l *EthStateDBLogger) Exist(addr common.Address) bool {
@@ -228,11 +220,21 @@ func (l *EthStateDBLogger) AddSlotToAccessList(addr common.Address, slot common.
 	l.logger.Debugf("AddSlotToAccessList: completed")
 }
 
-func (l *EthStateDBLogger) PointCache() *utils.PointCache {
-	l.logger.Debugf("PointCache")
-	result := l.inner.PointCache()
-	l.logger.Debugf("PointCache: output result=%p", result)
+func (l *EthStateDBLogger) Touch(addr common.Address) {
+	l.logger.Debugf("Touch: addr=%s", addr.Hex())
+	l.inner.Touch(addr)
+}
+
+func (l *EthStateDBLogger) IsNewContract(addr common.Address) bool {
+	l.logger.Debugf("IsNewContract: addr=%s", addr.Hex())
+	result := l.inner.IsNewContract(addr)
+	l.logger.Debugf("IsNewContract: returning %t", result)
 	return result
+}
+
+func (l *EthStateDBLogger) LogsForBurnAccounts() []*types.Log {
+	l.logger.Debugf("LogsForBurnAccounts")
+	return l.inner.LogsForBurnAccounts()
 }
 
 func (l *EthStateDBLogger) Prepare(rules params.Rules, sender, coinbase common.Address, dest *common.Address, precompiles []common.Address, txAccesses types.AccessList) {
@@ -285,10 +287,11 @@ func (l *EthStateDBLogger) AccessEvents() *ethstate.AccessEvents {
 	return result
 }
 
-func (l *EthStateDBLogger) Finalise(deleteEmptyObjects bool) {
+func (l *EthStateDBLogger) Finalise(deleteEmptyObjects bool) *bal.StateAccessList {
 	l.logger.Debugf("Finalise: deleteEmptyObjects=%t", deleteEmptyObjects)
-	l.inner.Finalise(deleteEmptyObjects)
+	result := l.inner.Finalise(deleteEmptyObjects)
 	l.logger.Debugf("Finalise: completed")
+	return result
 }
 
 // Logs returns the logs from the inner StateDB

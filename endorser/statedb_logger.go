@@ -17,8 +17,8 @@ import (
 	"github.com/ethereum/go-ethereum/core/stateless"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/types/bal"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/trie/utils"
 	"github.com/holiman/uint256"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
@@ -244,14 +244,13 @@ func (l *StateDBLogger) SetTransientState(addr common.Address, key, value common
 	l.logger.Debugf("[G%d] SetTransientState: completed", gid)
 }
 
-func (l *StateDBLogger) SelfDestruct(addr common.Address) uint256.Int {
+func (l *StateDBLogger) SelfDestruct(addr common.Address) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	gid := getGoroutineID()
 	l.logger.Debugf("[G%d] SelfDestruct: addr=%s", gid, addr.Hex())
-	balance := l.inner.SelfDestruct(addr)
-	l.logger.Debugf("[G%d] SelfDestruct: output balance=%s", gid, balance.String())
-	return balance
+	l.inner.SelfDestruct(addr)
+	l.logger.Debugf("[G%d] SelfDestruct: completed", gid)
 }
 
 func (l *StateDBLogger) HasSelfDestructed(addr common.Address) bool {
@@ -262,16 +261,6 @@ func (l *StateDBLogger) HasSelfDestructed(addr common.Address) bool {
 	result := l.inner.HasSelfDestructed(addr)
 	l.logger.Debugf("[G%d] HasSelfDestructed: output result=%t", gid, result)
 	return result
-}
-
-func (l *StateDBLogger) SelfDestruct6780(addr common.Address) (uint256.Int, bool) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	gid := getGoroutineID()
-	l.logger.Debugf("[G%d] SelfDestruct6780: addr=%s", gid, addr.Hex())
-	balance, destructed := l.inner.SelfDestruct6780(addr)
-	l.logger.Debugf("[G%d] SelfDestruct6780: output balance=%s, destructed=%t", gid, balance.String(), destructed)
-	return balance, destructed
 }
 
 func (l *StateDBLogger) Exist(addr common.Address) bool {
@@ -332,14 +321,30 @@ func (l *StateDBLogger) AddSlotToAccessList(addr common.Address, slot common.Has
 	l.logger.Debugf("[G%d] AddSlotToAccessList: completed", gid)
 }
 
-func (l *StateDBLogger) PointCache() *utils.PointCache {
+func (l *StateDBLogger) Touch(addr common.Address) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	gid := getGoroutineID()
-	l.logger.Debugf("[G%d] PointCache", gid)
-	result := l.inner.PointCache()
-	l.logger.Debugf("[G%d] PointCache: output result=%p", gid, result)
+	l.logger.Debugf("[G%d] Touch: addr=%s", gid, addr.Hex())
+	l.inner.Touch(addr)
+}
+
+func (l *StateDBLogger) IsNewContract(addr common.Address) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	gid := getGoroutineID()
+	l.logger.Debugf("[G%d] IsNewContract: addr=%s", gid, addr.Hex())
+	result := l.inner.IsNewContract(addr)
+	l.logger.Debugf("[G%d] IsNewContract: returning %t", gid, result)
 	return result
+}
+
+func (l *StateDBLogger) LogsForBurnAccounts() []*types.Log {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	gid := getGoroutineID()
+	l.logger.Debugf("[G%d] LogsForBurnAccounts", gid)
+	return l.inner.LogsForBurnAccounts()
 }
 
 func (l *StateDBLogger) Prepare(rules params.Rules, sender, coinbase common.Address, dest *common.Address, precompiles []common.Address, txAccesses types.AccessList) {
@@ -413,13 +418,14 @@ func (l *StateDBLogger) AccessEvents() *ethstate.AccessEvents {
 	return result
 }
 
-func (l *StateDBLogger) Finalise(deleteEmptyObjects bool) {
+func (l *StateDBLogger) Finalise(deleteEmptyObjects bool) *bal.StateAccessList {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	gid := getGoroutineID()
 	l.logger.Debugf("[G%d] Finalise: deleteEmptyObjects=%t", gid, deleteEmptyObjects)
-	l.inner.Finalise(deleteEmptyObjects)
+	result := l.inner.Finalise(deleteEmptyObjects)
 	l.logger.Debugf("[G%d] Finalise: completed", gid)
+	return result
 }
 
 // Result returns the read-write set from the inner StateDB

@@ -61,9 +61,10 @@ func TestOpsReplayOnFreshDB(t *testing.T) {
 	db.SetState(contract, slot, val)
 
 	// Self-destruct ops (TODO: actually destroy the contract)
-	_ = db.SelfDestruct(contract)
+	// SelfDestruct signature changed in go-ethereum v1.17.3: no return value.
+	// SelfDestruct6780 was removed entirely (EIP-6780 logic folded into SelfDestruct).
+	db.SelfDestruct(contract)
 	assertEqual(t, "SelfDestruct", db.HasSelfDestructed(contract), true, true)
-	_, _ = db.SelfDestruct6780(contract)
 
 	// replay on fresh database
 	freshState, err := state.NewWriteDB(Channel, Db2)
@@ -359,4 +360,84 @@ func TestSnapshotRevertRWS(t *testing.T) {
 			t.Errorf("missing expected writes: foundKey1=%v, foundKey2=%v", foundKey1, foundKey2)
 		}
 	})
+}
+
+// EIP-6780: contract created in the same tx is fully destroyed by SELFDESTRUCT.
+func TestSelfDestruct_NewContract_FullyDestroys(t *testing.T) {
+	originalState, err := state.NewWriteDB(Channel, Db1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := snapshotDB(t, originalState, 0)
+
+	contract := newAddress()
+	db.CreateContract(contract)
+	db.AddBalance(contract, uint256.NewInt(100), tracing.BalanceChangeUnspecified)
+
+	db.SelfDestruct(contract)
+
+	if !db.HasSelfDestructed(contract) {
+		t.Error("expected contract to be marked self-destructed (EIP-6780: created in same tx)")
+	}
+	if !db.GetBalance(contract).IsZero() {
+		t.Errorf("expected balance=0 after SelfDestruct, got %v", db.GetBalance(contract))
+	}
+}
+
+// EIP-6780: pre-existing contract has balance transferred but is NOT destroyed.
+func TestSelfDestruct_PreExistingContract_OnlyTransfersBalance(t *testing.T) {
+	originalState, err := state.NewWriteDB(Channel, Db1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := snapshotDB(t, originalState, 0)
+
+	contract := newAddress()
+	db.AddBalance(contract, uint256.NewInt(100), tracing.BalanceChangeUnspecified)
+	// Note: no CreateAccount / CreateContract → not in newContracts.
+
+	db.SelfDestruct(contract)
+
+	if db.HasSelfDestructed(contract) {
+		t.Error("pre-existing contract should NOT be marked self-destructed under EIP-6780")
+	}
+	if !db.GetBalance(contract).IsZero() {
+		t.Errorf("expected balance=0 after SelfDestruct (balance always transfers), got %v", db.GetBalance(contract))
+	}
+}
+
+func TestIsNewContract_AfterCreate(t *testing.T) {
+	originalState, err := state.NewWriteDB(Channel, Db1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := snapshotDB(t, originalState, 0)
+
+	addr := newAddress()
+	if db.IsNewContract(addr) {
+		t.Error("IsNewContract should be false before CreateContract")
+	}
+	db.CreateContract(addr)
+	if !db.IsNewContract(addr) {
+		t.Error("IsNewContract should be true after CreateContract")
+	}
+}
+
+func TestIsNewContract_RevertedBySnapshot(t *testing.T) {
+	originalState, err := state.NewWriteDB(Channel, Db1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := snapshotDB(t, originalState, 0)
+
+	addr := newAddress()
+	snap := db.Snapshot()
+	db.CreateContract(addr)
+	if !db.IsNewContract(addr) {
+		t.Fatal("precondition: IsNewContract true after CreateContract")
+	}
+	db.RevertToSnapshot(snap)
+	if db.IsNewContract(addr) {
+		t.Error("IsNewContract should be false after RevertToSnapshot")
+	}
 }

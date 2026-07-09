@@ -14,6 +14,7 @@ testdata/*
 !testdata/tether_txs.json
 !testdata/alloc_tether_replay.json
 !testdata/test_accounts.json
+!testdata/eth_tests.skip
 !testdata/shared_config.yaml
 *.un~
 *.swp

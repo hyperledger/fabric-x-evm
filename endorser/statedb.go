@@ -45,9 +45,9 @@ import (
 	"github.com/ethereum/go-ethereum/core/stateless"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/types/bal"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/trie/utils"
 	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/ethereum/go-ethereum/triedb/hashdb"
 	"github.com/holiman/uint256"
@@ -174,6 +174,11 @@ type selfDestructEntry struct {
 	addr common.Address
 }
 
+// newContractEntry records an address added to newContracts (EIP-6780 tracking).
+type newContractEntry struct {
+	addr common.Address
+}
+
 // transientStorageChange records a transient storage change for snapshot/revert support.
 type transientStorageChange struct {
 	account  common.Address
@@ -203,6 +208,7 @@ type StateDB struct {
 	// EVM-specific runtime state
 	refund           uint64
 	selfDestructed   map[common.Address]struct{}
+	newContracts     map[common.Address]struct{}                    // EIP-6780: contracts created in the current transaction
 	accessList       *accessList                                    // EIP-2929/2930 access list (not persisted, reset per transaction)
 	transientStorage map[common.Address]map[common.Hash]common.Hash // EIP-1153 transient storage (not persisted, reset per transaction)
 
@@ -222,6 +228,7 @@ func NewStateDB(ctx context.Context, store ReadStore, namespace string, blockNum
 		store:             store,
 		monotonicVersions: monotonicVersions,
 		selfDestructed:    make(map[common.Address]struct{}),
+		newContracts:      make(map[common.Address]struct{}),
 		accessList:        newAccessList(),
 		transientStorage:  make(map[common.Address]map[common.Hash]common.Hash),
 		journal:           make([]any, 0),
@@ -346,11 +353,22 @@ func (s *StateDB) putState(key string, value []byte) {
 func (s *StateDB) CreateAccount(addr common.Address) {
 	s.putState(accKey(addr, "bal"), uint256ToBytes(uint256.NewInt(0)))
 	s.putState(accKey(addr, "nonce"), uint64ToBytes(0))
+	s.markNewContract(addr)
 }
 
 // CreateContract creates a contract account with empty code.
 func (s *StateDB) CreateContract(addr common.Address) {
 	s.putState(accKey(addr, "code"), []byte{})
+	s.markNewContract(addr)
+}
+
+// markNewContract records addr in newContracts for EIP-6780; idempotent.
+func (s *StateDB) markNewContract(addr common.Address) {
+	if _, exists := s.newContracts[addr]; exists {
+		return
+	}
+	s.journal = append(s.journal, newContractEntry{addr: addr})
+	s.newContracts[addr] = struct{}{}
 }
 
 // GetBalance returns the balance of an account.
@@ -517,33 +535,16 @@ func (s *StateDB) GetStorageRoot(addr common.Address) common.Hash {
 	return common.Hash{}
 }
 
-// SelfDestruct marks an account as self-destructed.
-func (s *StateDB) SelfDestruct(addr common.Address) uint256.Int {
-	// Get the current balance before zeroing it
-	prevBalance := s.GetBalance(addr)
-
-	// Set balance to zero if it's not already zero.
-	// This matches geth's behavior and is required for proper state transitions.
-	// The balance write is journaled via putState, making it revertible when
-	// RevertToSnapshot truncates the journal.
-	if !prevBalance.IsZero() {
+// SelfDestruct implements SELFDESTRUCT with EIP-6780 semantics: only fully
+// destroys the account if it was created in the current transaction.
+func (s *StateDB) SelfDestruct(addr common.Address) {
+	if prevBalance := s.GetBalance(addr); !prevBalance.IsZero() {
 		s.putState(accKey(addr, "bal"), uint256ToBytes(uint256.NewInt(0)))
 	}
-
-	// Journal the self-destruct marker for HasSelfDestructed queries.
-	// This is needed because:
-	// 1. The EVM queries HasSelfDestructed to check if an account was self-destructed
-	// 2. The selfDestructEntry allows RevertToSnapshot to remove the address from
-	//    the selfDestructed map when reverting
-	s.journal = append(s.journal, selfDestructEntry{addr: addr})
-	s.selfDestructed[addr] = struct{}{}
-
-	return *prevBalance
-}
-
-// SelfDestruct6780 implements EIP-6780 self-destruct.
-func (s *StateDB) SelfDestruct6780(addr common.Address) (uint256.Int, bool) {
-	return *uint256.NewInt(0), false
+	if _, isNew := s.newContracts[addr]; isNew {
+		s.journal = append(s.journal, selfDestructEntry{addr: addr})
+		s.selfDestructed[addr] = struct{}{}
+	}
 }
 
 // HasSelfDestructed checks if an account has self-destructed.
@@ -649,6 +650,8 @@ func (s *StateDB) RevertToSnapshot(revid int) {
 			s.refund = e.prevRefund
 		case selfDestructEntry:
 			delete(s.selfDestructed, e.addr)
+		case newContractEntry:
+			delete(s.newContracts, e.addr)
 		case transientStorageChange:
 			// Revert transient storage to previous value
 			if s.transientStorage[e.account] == nil {
@@ -798,13 +801,25 @@ func (s *StateDB) Prepare(rules params.Rules, sender, coinbase common.Address, d
 	}
 }
 
-func (s *StateDB) PointCache() *utils.PointCache { return nil }
-
 func (s *StateDB) Witness() *stateless.Witness { return nil }
 
 func (s *StateDB) AccessEvents() *ethstate.AccessEvents { return nil }
 
-func (s *StateDB) Finalise(deleteEmptyObjects bool) {}
+func (s *StateDB) Finalise(deleteEmptyObjects bool) *bal.StateAccessList { return nil }
+
+func (s *StateDB) Touch(addr common.Address) {
+	// It doesn't affect the control flow, so we don't add a read dependency to the read/write set.
+}
+
+// IsNewContract reports whether addr was created in the current transaction.
+func (s *StateDB) IsNewContract(addr common.Address) bool {
+	_, ok := s.newContracts[addr]
+	return ok
+}
+
+// LogsForBurnAccounts returns logs emitted by burn accounts during the current transaction.
+// Not tracked separately in this implementation.
+func (s *StateDB) LogsForBurnAccounts() []*types.Log { return nil }
 
 // -------------------- Helper functions --------------------
 
