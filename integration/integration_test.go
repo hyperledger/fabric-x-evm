@@ -1009,6 +1009,7 @@ func testPendingTransactionStatus(t *testing.T, th *TestHarness) {
 	// Channel to signal when we've sent the transaction
 	txSent := make(chan bool, 1)
 	caughtPending := make(chan bool, 1)
+	pendingReceiptCheckErr := make(chan error, 1)
 
 	// Start a goroutine that will poll for the transaction immediately after we send it
 	go func() {
@@ -1027,6 +1028,22 @@ func testPendingTransactionStatus(t *testing.T, th *TestHarness) {
 			// Check if we caught it in pending state
 			if tx != nil && isPending {
 				t.Logf("✓ Successfully caught transaction %s in pending state (isPending=true)", deployTx.Hash().Hex())
+
+				// While pending, receipt must not be available yet.
+				// JSON-RPC returns null; go-ethereum maps this to ethereum.NotFound.
+				receipt, receiptErr := ec.TransactionReceipt(t.Context(), deployTx.Hash())
+				if receiptErr == nil {
+					pendingReceiptCheckErr <- fmt.Errorf("expected pending tx receipt to be unavailable, got %+v", receipt)
+					caughtPending <- false
+					return
+				}
+				if !errors.Is(receiptErr, ethereum.NotFound) {
+					pendingReceiptCheckErr <- fmt.Errorf("expected ethereum.NotFound for pending receipt lookup, got %v", receiptErr)
+					caughtPending <- false
+					return
+				}
+				pendingReceiptCheckErr <- nil
+
 				caughtPending <- true
 				return
 			}
@@ -1054,6 +1071,9 @@ func testPendingTransactionStatus(t *testing.T, th *TestHarness) {
 	if !caught {
 		t.Fatal("Failed to catch transaction in pending state - this test requires catching isPending=true")
 	}
+	if err := <-pendingReceiptCheckErr; err != nil {
+		t.Fatal(err)
+	}
 
 	// Wait for the transaction to commit
 	waitForCommitT(t, ec, deployTx)
@@ -1068,6 +1088,18 @@ func testPendingTransactionStatus(t *testing.T, th *TestHarness) {
 	}
 	if isPending {
 		t.Error("Transaction still marked as pending after commit (isPending should be false)")
+	}
+
+	// After commit, receipt should be available and successful.
+	receipt, err := ec.TransactionReceipt(t.Context(), deployTx.Hash())
+	if err != nil {
+		t.Fatalf("TransactionReceipt after commit: %v", err)
+	}
+	if receipt == nil {
+		t.Fatal("TransactionReceipt returned nil after commit")
+	}
+	if receipt.Status != types.ReceiptStatusSuccessful {
+		t.Errorf("receipt.Status = %d, want %d", receipt.Status, types.ReceiptStatusSuccessful)
 	}
 
 	t.Logf("Transaction successfully committed (isPending=false)")
