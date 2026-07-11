@@ -20,6 +20,13 @@ const (
 	ProposalTypeState
 )
 
+const (
+	StatusOK             int32 = 200
+	StatusEVMRevert      int32 = 201
+	StatusEVMExecFailure int32 = 400
+	StatusError          int32 = 500
+)
+
 // StateQuery defines what to query from the ledger state, and at which snapshot.
 type StateQuery struct {
 	Account     common.Address

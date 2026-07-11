@@ -35,3 +35,12 @@ func (e *RevertError) Error() string {
 func (e *RevertError) Is(target error) bool {
 	return target == ErrExecutionReverted
 }
+
+// ExecutionError carries a non-revert EVM execution failure (e.g. out of gas), mapped to -32000.
+type ExecutionError struct {
+	Message string
+}
+
+func (e *ExecutionError) Error() string {
+	return e.Message
+}
