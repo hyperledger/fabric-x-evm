@@ -132,3 +132,22 @@ func TestClassifyCallError_NonRevertIsInternal(t *testing.T) {
 		t.Errorf("code = %d, want %d (Internal)", rpcErr.ErrorCode(), rpcerr.CodeInternal)
 	}
 }
+
+func TestClassifyCallError_ExecutionErrorMapsToMinus32000(t *testing.T) {
+	got := classifyCallError(&domain.ExecutionError{Message: "out of gas"})
+
+	var rpcErr rpc.Error
+	if !errors.As(got, &rpcErr) {
+		t.Fatalf("output must satisfy rpc.Error, got %T", got)
+	}
+	if rpcErr.ErrorCode() != rpcerr.CodeExecutionReverted {
+		t.Errorf("code = %d, want %d (-32000)", rpcErr.ErrorCode(), rpcerr.CodeExecutionReverted)
+	}
+	if rpcErr.Error() != "out of gas" {
+		t.Errorf("message = %q, want %q", rpcErr.Error(), "out of gas")
+	}
+	var dataErr rpc.DataError
+	if errors.As(got, &dataErr) {
+		t.Errorf("execution error must not carry revert data")
+	}
+}

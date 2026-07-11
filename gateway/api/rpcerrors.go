@@ -27,10 +27,9 @@ func classifyValidationError(err error) error {
 	return rpcerr.TxRejected(err)
 }
 
-// classifyCallError maps a Backend.CallContract error to a typed JSON-RPC
-// error. EVM reverts (*domain.RevertError) surface as -32000 with the raw
-// revert payload as ErrorData (geth eth_call contract); everything else is
-// an unexpected backend failure (-32603).
+// classifyCallError maps a Backend.CallContract error to a typed JSON-RPC error:
+// reverts (*domain.RevertError, with payload) and non-revert execution failures
+// (*domain.ExecutionError) surface as -32000; everything else is -32603.
 func classifyCallError(err error) error {
 	if err == nil {
 		return nil
@@ -38,6 +37,10 @@ func classifyCallError(err error) error {
 	var revert *domain.RevertError
 	if errors.As(err, &revert) {
 		return rpcerr.ExecutionReverted(revert.Reason, hexutil.Encode(revert.Data))
+	}
+	var exec *domain.ExecutionError
+	if errors.As(err, &exec) {
+		return rpcerr.ExecutionError(exec.Message)
 	}
 	return rpcerr.Internal(err)
 }
