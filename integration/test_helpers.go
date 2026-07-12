@@ -36,6 +36,7 @@ import (
 	ecore "github.com/hyperledger/fabric-x-evm/endorser/core"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
 	"github.com/hyperledger/fabric-x-evm/endorser/storage"
+	"github.com/hyperledger/fabric-x-evm/gateway/app"
 	gwapi "github.com/hyperledger/fabric-x-evm/gateway/api"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
@@ -141,11 +142,6 @@ func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg confi
 		gwSigner = localSigner{}
 	}
 
-	ec, err := core.NewEndorsementClient(ends, gwSigner, cfg.Network.Channel, cfg.Network.Namespace, cfg.Network.NsVersion)
-	if err != nil {
-		return nil, nil, err
-	}
-
 	chain, err := core.NewChain(cfg.Gateway.Database.ConnString, cfg.Gateway.Database.TriePath, false)
 	if err != nil {
 		return nil, nil, err
@@ -164,41 +160,27 @@ func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg confi
 	if submitterCount <= 0 {
 		submitterCount = core.DefaultNumWorkers
 	}
-	submitters := make([]core.Submitter, submitterCount)
+
+	var submitters []core.Submitter
 	var sync *network.Synchronizer
-	var err1 error
 
 	if bypass {
 		// Use local submitters for bypass mode (no network communication)
+		submitters = make([]core.Submitter, submitterCount)
 		for i := 0; i < submitterCount; i++ {
 			submitters[i] = local.NewLocalSubmitter(dbs[0], cfg.Network.Channel, cfg.Network.Namespace, nfab.NewTxPackager(gwSigner), bfab.NewBlockParser(logger), false)
 		}
 	} else {
 		// Create network submitters
-		for i := 0; i < submitterCount; i++ {
-			switch cfg.Network.Protocol {
-			case "fabric":
-				submitters[i], err1 = nfab.NewSubmitter(t.Context(), orderers, gwSigner, 0, logger)
-			case "fabric-x", "":
-				submitters[i], err1 = nfabx.NewSubmitter(t.Context(), orderers, gwSigner, 0, logger)
-			default:
-				return nil, nil, fmt.Errorf("unsupported protocol: %q", cfg.Network.Protocol)
-			}
-			if err1 != nil {
-				return nil, nil, fmt.Errorf("failed to create submitter %d: %w", i, err1)
-			}
+		submitters, err = app.NewNetworkSubmitters(t.Context(), cfg.Network.Protocol, orderers, gwSigner, submitterCount, logger)
+		if err != nil {
+			return nil, nil, err
 		}
 	}
 
-	// Create BatchSubmitter infrastructure
-	endorsementChan := make(chan sdk.Endorsement, 1000)
-	batchSubmitter := core.NewBatchSubmitter(submitters, endorsementChan, cfg.Gateway.SubmitterCount)
-
-	batchSubmitter.Start(t.Context())
-
 	// Create gateway before synchronizer so we can register it as a handler
 	// Gateway owns the BatchSubmitter and will handle its lifecycle
-	gw, err := core.New(ec, batchSubmitter, chain, cfg.Network.ChainID, cfg.Gateway.WorkerCount, txQueue, endorsementChan)
+	gw, err := app.BuildGateway(t.Context(), ends, gwSigner, cfg.Network, chain, submitters, cfg.Gateway.SubmitterCount, cfg.Gateway.WorkerCount, txQueue)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -215,14 +197,7 @@ func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg confi
 			handlers = append(handlers, gw)
 		}
 
-		switch cfg.Network.Protocol {
-		case "fabric":
-			sync, err = nfab.NewSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, handlers...)
-		case "fabric-x", "":
-			sync, err = nfabx.NewSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, handlers...)
-		default:
-			return nil, nil, fmt.Errorf("unsupported protocol: %q", cfg.Network.Protocol)
-		}
+		sync, err = app.NewGatewaySynchronizer(cfg.Network.Protocol, chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, handlers...)
 		if err != nil {
 			return nil, nil, err
 		}
