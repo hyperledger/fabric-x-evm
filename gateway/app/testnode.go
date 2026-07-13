@@ -93,5 +93,12 @@ func NewTestNode(ctx context.Context, tcfg TestNodeConfig) (*App, error) {
 		},
 	}
 
-	return buildApp(ctx, cfg, signer, logger, []eapi.Service{endorser}, nil, endorserKVS, true, tcfg.TestAccountsPath, endorserKVS)
+	application, err := buildApp(ctx, cfg, signer, logger, []eapi.Service{endorser}, nil, endorserKVS, true, tcfg.TestAccountsPath, endorserKVS)
+	if err != nil {
+		return nil, err
+	}
+	if err := application.EnsureGenesisBlock(ctx); err != nil {
+		return nil, fmt.Errorf("failed to create genesis block: %w", err)
+	}
+	return application, nil
 }

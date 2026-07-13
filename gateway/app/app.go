@@ -48,6 +48,11 @@ type App struct {
 // Gateway returns the inner gateway, e.g. for use in tests.
 func (a *App) Gateway() *core.Gateway { return a.gateway }
 
+// EnsureGenesisBlock inserts an empty block 0 if the chain has no blocks yet.
+func (a *App) EnsureGenesisBlock(ctx context.Context) error {
+	return a.chain.EnsureGenesisBlock(ctx)
+}
+
 // New creates a new gateway application from the provided configuration.
 // It loads the gateway signer from the MSP directory configured in cfg. Test RPC is never enabled.
 func New(ctx context.Context, cfg config.Config) (*App, error) {
