@@ -31,8 +31,11 @@ import (
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-common/protoutil"
 	"github.com/hyperledger/fabric-x-evm/common"
-	"github.com/hyperledger/fabric-x-evm/endorser"
+	eapi "github.com/hyperledger/fabric-x-evm/endorser/api"
 	econf "github.com/hyperledger/fabric-x-evm/endorser/config"
+	ecore "github.com/hyperledger/fabric-x-evm/endorser/core"
+	"github.com/hyperledger/fabric-x-evm/endorser/execution"
+	"github.com/hyperledger/fabric-x-evm/endorser/storage"
 	gwapi "github.com/hyperledger/fabric-x-evm/gateway/api"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
@@ -119,13 +122,13 @@ func (th *TestHarness) PrimeStateFromJSON(ctx context.Context, jsonFilePath stri
 //
 // If useNotifications is true, uses NotificationDispatcher + MemoryStore instead of
 // Synchronizer + Chain. This is intended for fabric-x performance testing.
-func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmConfig endorser.EVMConfig, primeDBPath string, bypass bool, ends []core.Endorser, dbs []endorser.KVS, builders []endorsement.Builder, txQueue core.TxQueueInterface, useNotifications bool) (*TestHarness, *network.Synchronizer, error) {
+func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmConfig execution.EVMConfig, primeDBPath string, bypass bool, ends []eapi.Service, dbs []storage.KVS, builders []endorsement.Builder, txQueue core.TxQueueInterface, useNotifications bool) (*TestHarness, *network.Synchronizer, error) {
 	return buildTestHarnessWithExtraHandler(t, logger, cfg, evmConfig, primeDBPath, bypass, ends, dbs, builders, txQueue, useNotifications, nil)
 }
 
 // buildTestHarnessWithExtraHandler is like buildTestHarness but accepts an optional extra TxHandler
 // that will be inserted into the notification handler chain right before the cleanup handler.
-func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg config.Config, evmConfig endorser.EVMConfig, primeDBPath string, bypass bool, ends []core.Endorser, dbs []endorser.KVS, builders []endorsement.Builder, txQueue core.TxQueueInterface, useNotifications bool, extraHandler core.TxHandler) (*TestHarness, *network.Synchronizer, error) {
+func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg config.Config, evmConfig execution.EVMConfig, primeDBPath string, bypass bool, ends []eapi.Service, dbs []storage.KVS, builders []endorsement.Builder, txQueue core.TxQueueInterface, useNotifications bool, extraHandler common.TxHandler) (*TestHarness, *network.Synchronizer, error) {
 	// Build gateway signer.
 	var gwSigner sdk.Signer
 	if cfg.Gateway.Identity.MSPDir != "" {
@@ -245,16 +248,16 @@ func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg confi
 			logger.Infof("Synchronizer stopped cleanly")
 
 			// Set up AllTxStreamer notification system
-			txHandlers := make([]core.TxHandler, 0, len(dbs)+2)
+			txHandlers := make([]common.TxHandler, 0, len(dbs)+2)
 			for _, db := range dbs {
-				txHandlers = append(txHandlers, db.(core.TxHandler))
+				txHandlers = append(txHandlers, db.(common.TxHandler))
 			}
-			txHandlers = append(txHandlers, gw.TxQueue.(core.TxHandler))
+			txHandlers = append(txHandlers, gw.TxQueue.(common.TxHandler))
 			if extraHandler != nil {
 				txHandlers = append(txHandlers, extraHandler)
 			}
 
-			dispatcher := core.NewAllTxBatchDispatcher(txHandlers...)
+			dispatcher := common.NewAllTxBatchDispatcher(txHandlers...)
 
 			if cfg.Network.Protocol == "fabric-x" || cfg.Network.Protocol == "" {
 				peer, err := nfabx.NewPeer(cfg.Gateway.Committer.ToPeerConf(), cfg.Network.Channel, gwSigner)
@@ -344,14 +347,14 @@ func applyConfigOverrides(cfg *config.Config, overrides map[string]any) error {
 }
 
 // EndorserFactory is a function that creates an endorser along with its dependencies.
-// It returns core.Endorser interface which both *endorser.Endorser and *testimpl.EndorserWrapper implement.
-type EndorserFactory func(t *testing.T, ecfg econf.Endorser, channel, namespace string, evmConfig endorser.EVMConfig, protocol string) (endorser.KVS, endorsement.Builder, core.Endorser)
+// It returns the eapi.Service interface which both *ecore.Endorser and *testimpl.EndorserWrapper implement.
+type EndorserFactory func(t *testing.T, ecfg econf.Endorser, channel, namespace string, evmConfig execution.EVMConfig, protocol string) (storage.KVS, endorsement.Builder, eapi.Service)
 
 // buildEndorsers creates endorsers using the provided factory function.
-func buildEndorsers(t *testing.T, cfg config.Config, evmConfig endorser.EVMConfig, factory EndorserFactory) ([]endorser.KVS, []endorsement.Builder, []core.Endorser) {
-	dbs := make([]endorser.KVS, len(cfg.Endorsers))
+func buildEndorsers(t *testing.T, cfg config.Config, evmConfig execution.EVMConfig, factory EndorserFactory) ([]storage.KVS, []endorsement.Builder, []eapi.Service) {
+	dbs := make([]storage.KVS, len(cfg.Endorsers))
 	builders := make([]endorsement.Builder, len(cfg.Endorsers))
-	ends := make([]core.Endorser, len(cfg.Endorsers))
+	ends := make([]eapi.Service, len(cfg.Endorsers))
 	for i, ecfg := range cfg.Endorsers {
 		dbs[i], builders[i], ends[i] = factory(t, ecfg, cfg.Network.Channel, cfg.Network.Namespace, evmConfig, cfg.Network.Protocol)
 	}
@@ -359,27 +362,27 @@ func buildEndorsers(t *testing.T, cfg config.Config, evmConfig endorser.EVMConfi
 }
 
 // defaultEndorserFactory creates regular endorsers without wrapping.
-func defaultEndorserFactory(t *testing.T, ecfg econf.Endorser, channel, namespace string, evmConfig endorser.EVMConfig, protocol string) (endorser.KVS, endorsement.Builder, core.Endorser) {
+func defaultEndorserFactory(t *testing.T, ecfg econf.Endorser, channel, namespace string, evmConfig execution.EVMConfig, protocol string) (storage.KVS, endorsement.Builder, eapi.Service) {
 	db, builder, end := NewEndorser(t, ecfg, channel, namespace, evmConfig, protocol)
 	return db, builder, end
 }
 
 // newLocalTestHarness commits updates directly to the DB, bypassing peers and orderers.
 // Exported for use by eth-tests package.
-func NewLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath, networkType string, configOverrides map[string]any) (*TestHarness, error) {
+func NewLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig execution.EVMConfig, primeDbPath, networkType string, configOverrides map[string]any) (*TestHarness, error) {
 	return NewLocalTestHarnessWithFactory(t, logger, evmConfig, primeDbPath, networkType, configOverrides, defaultEndorserFactory)
 }
 
 // NewLocalTestHarnessWithFactory is like NewLocalTestHarness but allows custom endorser creation.
 // NewLocalTestHarnessWithFactory creates a test harness with a custom endorser factory.
 // Uses the default TxQueue implementation.
-func NewLocalTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath, networkType string, configOverrides map[string]any, factory EndorserFactory) (*TestHarness, error) {
+func NewLocalTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig execution.EVMConfig, primeDbPath, networkType string, configOverrides map[string]any, factory EndorserFactory) (*TestHarness, error) {
 	return NewLocalTestHarnessWithFactoryAndTxQueue(t, logger, evmConfig, primeDbPath, networkType, configOverrides, factory, nil)
 }
 
 // NewLocalTestHarnessWithFactoryAndTxQueue creates a test harness with a custom endorser factory and TxQueue.
 // If txQueue is nil, the default TxQueue will be used.
-func NewLocalTestHarnessWithFactoryAndTxQueue(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath, networkType string, configOverrides map[string]any, factory EndorserFactory, txQueue core.TxQueueInterface) (*TestHarness, error) {
+func NewLocalTestHarnessWithFactoryAndTxQueue(t *testing.T, logger sdk.Logger, evmConfig execution.EVMConfig, primeDbPath, networkType string, configOverrides map[string]any, factory EndorserFactory, txQueue core.TxQueueInterface) (*TestHarness, error) {
 	bypass := networkType == "bypass"
 
 	orderer := &common.Endpoint{Host: "127.0.0.1", Port: 1337}
@@ -456,15 +459,15 @@ func NewLocalTestHarnessWithFactoryAndTxQueue(t *testing.T, logger sdk.Logger, e
 
 // NewFabricTestHarness returns a client for integration testing with access to a peer, orderer and local committer.
 // It follows the directory structure of a Fablo test network.
-func NewFabricTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any) (*TestHarness, error) {
+func NewFabricTestHarness(t *testing.T, logger sdk.Logger, evmConfig execution.EVMConfig, primeDbPath string, configOverrides map[string]any) (*TestHarness, error) {
 	return NewFabricTestHarnessWithFactory(t, logger, evmConfig, primeDbPath, configOverrides, defaultEndorserFactory)
 }
 
-func NewFabricTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory) (*TestHarness, error) {
+func NewFabricTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig execution.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory) (*TestHarness, error) {
 	return NewFabricTestHarnessWithFactoryAndTxQueue(t, logger, evmConfig, primeDbPath, configOverrides, factory, nil)
 }
 
-func NewFabricTestHarnessWithFactoryAndTxQueue(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory, txQueue core.TxQueueInterface) (*TestHarness, error) {
+func NewFabricTestHarnessWithFactoryAndTxQueue(t *testing.T, logger sdk.Logger, evmConfig execution.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory, txQueue core.TxQueueInterface) (*TestHarness, error) {
 	// cwd, _ := os.Getwd()
 	// defer os.Chdir(cwd)
 	// _ = os.Chdir("../")
@@ -501,18 +504,18 @@ func NewFabricTestHarnessWithFactoryAndTxQueue(t *testing.T, logger sdk.Logger, 
 	return th, nil
 }
 
-func NewFabricXTestHarness(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any) (*TestHarness, error) {
+func NewFabricXTestHarness(t *testing.T, logger sdk.Logger, evmConfig execution.EVMConfig, primeDbPath string, configOverrides map[string]any) (*TestHarness, error) {
 	return NewFabricXTestHarnessWithFactory(t, logger, evmConfig, primeDbPath, configOverrides, defaultEndorserFactory)
 }
 
 // NewFabricXTestHarness returns a client for integration testing with access to a peer, orderer and local committer.
 // It follows the directory structure of a fabric samples test network.
 // Exported for use by eth-tests package.
-func NewFabricXTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory) (*TestHarness, error) {
+func NewFabricXTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig execution.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory) (*TestHarness, error) {
 	return NewFabricXTestHarnessWithFactoryAndTxQueue(t, logger, evmConfig, primeDbPath, configOverrides, factory, nil)
 }
 
-func NewFabricXTestHarnessWithFactoryAndTxQueue(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory, txQueue core.TxQueueInterface) (*TestHarness, error) {
+func NewFabricXTestHarnessWithFactoryAndTxQueue(t *testing.T, logger sdk.Logger, evmConfig execution.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory, txQueue core.TxQueueInterface) (*TestHarness, error) {
 	cfg, err := config.Load("fabx.yaml")
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
@@ -542,7 +545,7 @@ func NewFabricXTestHarnessWithFactoryAndTxQueue(t *testing.T, logger sdk.Logger,
 // transaction completion tracking instead of block-based synchronization.
 // Uses MemoryStore and NotificationDispatcher for better performance in replay scenarios.
 // If extraHandler is non-nil, it will be inserted into the handler chain right before the cleanup handler.
-func NewFabricXTestHarnessWithNotifications(t *testing.T, logger sdk.Logger, evmConfig endorser.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory, txQueue core.TxQueueInterface, extraHandler core.TxHandler, confFile string) (*TestHarness, error) {
+func NewFabricXTestHarnessWithNotifications(t *testing.T, logger sdk.Logger, evmConfig execution.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory, txQueue core.TxQueueInterface, extraHandler common.TxHandler, confFile string) (*TestHarness, error) {
 	if primeDbPath != "" && !filepath.IsAbs(primeDbPath) {
 		if abs, err := filepath.Abs(primeDbPath); err == nil {
 			primeDbPath = abs
@@ -580,7 +583,7 @@ func NewFabricXTestHarnessWithNotifications(t *testing.T, logger sdk.Logger, evm
 
 // NewEndorser creates an endorser with its dependencies.
 // Exported for use by custom endorser factories.
-func NewEndorser(t *testing.T, cfg econf.Endorser, channel, namespace string, evmConfig endorser.EVMConfig, protocol string) (endorser.KVS, endorsement.Builder, *endorser.Endorser) {
+func NewEndorser(t *testing.T, cfg econf.Endorser, channel, namespace string, evmConfig execution.EVMConfig, protocol string) (storage.KVS, endorsement.Builder, *ecore.Endorser) {
 	t.Helper()
 
 	var signer sdk.Signer
@@ -594,16 +597,16 @@ func NewEndorser(t *testing.T, cfg econf.Endorser, channel, namespace string, ev
 		}
 	}
 
-	var db endorser.KVS
+	var db storage.KVS
 	switch cfg.Database.Database {
 	case "sqlite":
 		writeDB, err := state.NewWriteDB(channel, cfg.Database.ConnString)
 		if err != nil {
 			t.Fatalf("NewWriteDB: %v", err)
 		}
-		db = endorser.NewVersionedDBWrapper(writeDB)
+		db = storage.NewVersionedDBWrapper(writeDB)
 	default:
-		db = endorser.NewLightKVS(1)
+		db = storage.NewLightKVS(1)
 	}
 	t.Cleanup(func() { db.Close() })
 
@@ -620,10 +623,9 @@ func NewEndorser(t *testing.T, cfg econf.Endorser, channel, namespace string, ev
 		t.Fatalf("unsupported protocol: %q", protocol)
 	}
 
-	end, err := endorser.New(
-		endorser.NewEVMEngine(namespace, db, evmConfig, monotonicVersions),
+	end, err := ecore.New(
+		execution.NewEVMEngine(namespace, db, evmConfig, monotonicVersions),
 		builder,
-		evmConfig.ChainConfig.ChainID.Int64(),
 	)
 	if err != nil {
 		t.Fatalf("endorser.New: %v", err)
@@ -635,9 +637,9 @@ func NewEndorser(t *testing.T, cfg econf.Endorser, channel, namespace string, ev
 // TestHarness provides access to gateways and endorsers for testing.
 // Exported for use by eth-tests package.
 type TestHarness struct {
-	DBs            []endorser.KVS
+	DBs            []storage.KVS
 	Gateways       []*core.Gateway
-	endorsers      []core.Endorser
+	endorsers      []eapi.Service
 	ethChainConfig *params.ChainConfig
 	Primer         *StatePrimer
 }

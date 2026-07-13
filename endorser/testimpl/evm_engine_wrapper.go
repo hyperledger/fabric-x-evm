@@ -15,7 +15,7 @@ import (
 	ethstate "github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
-	"github.com/hyperledger/fabric-x-evm/endorser"
+	"github.com/hyperledger/fabric-x-evm/endorser/execution"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
 
@@ -32,14 +32,14 @@ const (
 // EVMEngineWrapper wraps an EVMEngine and adds custom executor support for testing.
 // It can operate in different modes to support different testing scenarios.
 type EVMEngineWrapper struct {
-	*endorser.EVMEngine
+	*execution.EVMEngine
 	mode              ExecutorMode
 	ethStateDB        *ethstate.StateDB
 	balancePriming    *BalancePrimingConfig
 	blockContext      *vm.BlockContext
 	namespace         string
-	kvs               endorser.KVSSnapshotter
-	evmConfig         endorser.EVMConfig
+	kvs               execution.KVSSnapshotter
+	evmConfig         execution.EVMConfig
 	monotonicVersions bool
 }
 
@@ -47,10 +47,10 @@ type EVMEngineWrapper struct {
 // The wrapper needs access to the engine's configuration to create custom executors.
 func NewEVMEngineWrapper(
 	namespace string,
-	kvs endorser.KVSSnapshotter,
-	evmConfig endorser.EVMConfig,
+	kvs execution.KVSSnapshotter,
+	evmConfig execution.EVMConfig,
 	monotonicVersions bool,
-	engine *endorser.EVMEngine,
+	engine *execution.EVMEngine,
 ) *EVMEngineWrapper {
 	return &EVMEngineWrapper{
 		EVMEngine:         engine,

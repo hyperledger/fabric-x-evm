@@ -11,6 +11,10 @@ import "errors"
 // ErrUnprotectedTx signals a transaction without EIP-155 replay protection.
 var ErrUnprotectedTx = errors.New("only replay-protected (EIP-155) transactions allowed over RPC")
 
+// ErrTransactionAlreadyPending signals that a transaction with the same hash
+// is already queued or in-progress; the caller should not resubmit it.
+var ErrTransactionAlreadyPending = errors.New("transaction already pending")
+
 // ErrNonceLookup wraps a backend failure to fetch the sender's nonce, so the
 // API layer can distinguish backend faults from tx-rejection causes.
 var ErrNonceLookup = errors.New("look up nonce")

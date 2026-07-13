@@ -39,7 +39,8 @@ import (
 	"github.com/ethereum/go-ethereum/triedb/hashdb"
 	"github.com/ethereum/go-ethereum/triedb/pathdb"
 	"github.com/holiman/uint256"
-	"github.com/hyperledger/fabric-x-evm/endorser"
+	"github.com/hyperledger/fabric-x-evm/endorser/execution"
+	"github.com/hyperledger/fabric-x-evm/endorser/storage"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	fabricstate "github.com/hyperledger/fabric-x-sdk/state"
 	"golang.org/x/crypto/sha3"
@@ -262,11 +263,11 @@ func (t *StateTest) Run(subtest StateSubtest, vmconfig vm.Config, snapshotter bo
 	}
 	// Get logs - need to access the underlying ethStateDB for both types
 	var logs common.Hash
-	if dualDB, ok := st.StateDB.(*endorser.DualStateDB); ok {
+	if dualDB, ok := st.StateDB.(*execution.DualStateDB); ok {
 		logs = rlpHash(dualDB.EthStateDB().Logs())
 	} else if ethDB, ok := st.StateDB.(*state.StateDB); ok {
 		logs = rlpHash(ethDB.Logs())
-	} else if loggerDB, ok := st.StateDB.(*endorser.EthStateDBLogger); ok {
+	} else if loggerDB, ok := st.StateDB.(*execution.EthStateDBLogger); ok {
 		logs = rlpHash(loggerDB.Logs())
 	}
 	if logs != common.Hash(post.Logs) {
@@ -276,7 +277,7 @@ func (t *StateTest) Run(subtest StateSubtest, vmconfig vm.Config, snapshotter bo
 }
 
 // StateTestState groups all the state database objects together for use in tests.
-// StateDB can be either *state.StateDB or *endorser.DualStateDB
+// StateDB can be either *state.StateDB or *execution.DualStateDB
 type StateTestState struct {
 	StateDB   vm.StateDB
 	TrieDB    *triedb.Database
@@ -409,7 +410,7 @@ func (t *StateTest) RunNoVerify(subtest StateSubtest, vmconfig vm.Config, snapsh
 	st.StateDB.AddBalance(block.Coinbase(), new(uint256.Int), tracing.BalanceChangeUnspecified)
 
 	// Commit the state - need to access the underlying ethStateDB
-	if dualDB, ok := st.StateDB.(*endorser.DualStateDB); ok {
+	if dualDB, ok := st.StateDB.(*execution.DualStateDB); ok {
 		root, err = dualDB.EthStateDB().Commit(block.NumberU64(), config.IsEIP158(block.Number()), config.IsCancun(block.Number(), block.Time()))
 		if err != nil {
 			return st, common.Hash{}, 0, fmt.Errorf("commit failed: %w", err)
@@ -419,7 +420,7 @@ func (t *StateTest) RunNoVerify(subtest StateSubtest, vmconfig vm.Config, snapsh
 		if err != nil {
 			return st, common.Hash{}, 0, fmt.Errorf("commit failed: %w", err)
 		}
-	} else if loggerDB, ok := st.StateDB.(*endorser.EthStateDBLogger); ok {
+	} else if loggerDB, ok := st.StateDB.(*execution.EthStateDBLogger); ok {
 		root, err = loggerDB.Commit(block.NumberU64(), config.IsEIP158(block.Number()), config.IsCancun(block.Number(), block.Time()))
 		if err != nil {
 			return st, common.Hash{}, 0, fmt.Errorf("commit failed: %w", err)
@@ -595,7 +596,7 @@ func makePreState(db ethdb.Database, accounts types.GenesisAlloc, snapshotter bo
 	statedb, _ = state.New(root, sdb)
 
 	// Wrap with logger for debugging
-	loggedStateDB := endorser.NewEthStateDBLogger(statedb)
+	loggedStateDB := execution.NewEthStateDBLogger(statedb)
 
 	// Return plain ethStateDB (not wrapped in DualStateDB)
 	// The Run method already handles both DualStateDB and plain StateDB
@@ -617,13 +618,13 @@ func makePreStateWithDualState(db ethdb.Database, accounts types.GenesisAlloc, s
 
 	// Create a mock StateDB for DualStateDB
 	fabricDB, _ := fabricstate.NewWriteDB("testchannel", ":memory:")
-	fabricDBWrapper := endorser.NewVersionedDBWrapper(fabricDB)
+	fabricDBWrapper := storage.NewVersionedDBWrapper(fabricDB)
 	fabricDBSnapshot, _ := fabricDBWrapper.NewSnapshot(1)
 	defer fabricDBSnapshot.Close()
-	fabricStateDB, _ := endorser.NewStateDB(context.TODO(), fabricDBSnapshot, "testns", 0, false)
+	fabricStateDB, _ := execution.NewStateDB(context.TODO(), fabricDBSnapshot, "testns", 0, false)
 
 	// Use DualStateDB instead of plain StateDB for debugging
-	statedb := endorser.NewDualStateDB(ethStateDB, fabricStateDB)
+	statedb := execution.NewDualStateDB(ethStateDB, fabricStateDB)
 
 	// Populate accounts
 	for addr, a := range accounts {
@@ -678,8 +679,8 @@ func makePreStateWithDualState(db ethdb.Database, accounts types.GenesisAlloc, s
 	// since we just committed block 0
 	fabricDBSnapshot2, _ := fabricDBWrapper.NewSnapshot(1)
 	defer fabricDBSnapshot2.Close()
-	fabricStateDB, _ = endorser.NewStateDB(context.TODO(), fabricDBSnapshot2, "testns", 1, false)
-	statedb = endorser.NewDualStateDB(ethStateDB, fabricStateDB)
+	fabricStateDB, _ = execution.NewStateDB(context.TODO(), fabricDBSnapshot2, "testns", 1, false)
+	statedb = execution.NewDualStateDB(ethStateDB, fabricStateDB)
 
 	return StateTestState{statedb, trieDB, snaps}
 }

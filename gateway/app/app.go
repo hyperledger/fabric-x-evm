@@ -23,11 +23,13 @@ import (
 	"golang.org/x/sync/errgroup"
 	_ "modernc.org/sqlite"
 
+	eapi "github.com/hyperledger/fabric-x-evm/endorser/api"
 	eapp "github.com/hyperledger/fabric-x-evm/endorser/app"
-	endorsertestimpl "github.com/hyperledger/fabric-x-evm/endorser/testimpl"
+	estorage "github.com/hyperledger/fabric-x-evm/endorser/storage"
 	"github.com/hyperledger/fabric-x-evm/gateway/api"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
+	"github.com/hyperledger/fabric-x-evm/gateway/storage"
 	"github.com/hyperledger/fabric-x-evm/gateway/testimpl"
 )
 
@@ -63,7 +65,7 @@ func NewWithSigner(ctx context.Context, cfg config.Config, gwSigner sdk.Signer) 
 	logger := sdk.NewStdLogger("gateway")
 
 	// Create endorsers and their synchronizers.
-	endorsers := make([]core.Endorser, 0, len(cfg.Endorsers))
+	endorsers := make([]eapi.Service, 0, len(cfg.Endorsers))
 	endorserSyncs := make([]*network.Synchronizer, 0, len(cfg.Endorsers))
 	var firstKVS interface{} // Keep first endorser's KVS for test server
 	for i, ecfg := range cfg.Endorsers {
@@ -89,7 +91,7 @@ func NewWithSigner(ctx context.Context, cfg config.Config, gwSigner sdk.Signer) 
 
 // buildApp wires up the gateway from pre-built endorsers. Used by NewWithSigner
 // and directly by integration tests that manage their own endorsers.
-func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorsers []core.Endorser, endorserSyncs []*network.Synchronizer, lightKVS interface{}) (*App, error) {
+func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorsers []eapi.Service, endorserSyncs []*network.Synchronizer, lightKVS interface{}) (*App, error) {
 	ec, err := core.NewEndorsementClient(endorsers, gwSigner, cfg.Network.Channel, cfg.Network.Namespace, cfg.Network.NsVersion)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create endorsement client: %w", err)
@@ -163,15 +165,15 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 			return nil, fmt.Errorf("failed to load test accounts: %w", err)
 		}
 
-		lightKVSExt, ok := lightKVS.(*endorsertestimpl.LightKVSExt)
+		revertibleKVS, ok := lightKVS.(estorage.Revertible)
 		if !ok {
-			return nil, fmt.Errorf("test RPC enabled but lightKVS is not LightKVSExt")
+			return nil, fmt.Errorf("test RPC enabled but lightKVS is not Revertible")
 		}
 
 		// Wrap the chain's store with SnapshotStore for snapshot/revert functionality
-		snapshotStore := testimpl.NewSnapshotStore(chain.Store)
+		snapshotStore := storage.NewSnapshotStore(chain.Store)
 
-		rpcServer, err = testimpl.NewTestServer(gateway, testAccountMgr.Addresses, testAccountMgr.PrivateKeys, lightKVSExt, snapshotStore)
+		rpcServer, err = testimpl.NewTestServer(gateway, testAccountMgr.Addresses, testAccountMgr.PrivateKeys, revertibleKVS, snapshotStore)
 		if err != nil {
 			return nil, err
 		}

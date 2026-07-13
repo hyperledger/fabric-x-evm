@@ -10,9 +10,10 @@ import (
 	"fmt"
 
 	"github.com/hyperledger/fabric-x-evm/common"
-	"github.com/hyperledger/fabric-x-evm/endorser"
 	"github.com/hyperledger/fabric-x-evm/endorser/config"
-	"github.com/hyperledger/fabric-x-evm/endorser/testimpl"
+	"github.com/hyperledger/fabric-x-evm/endorser/core"
+	"github.com/hyperledger/fabric-x-evm/endorser/execution"
+	"github.com/hyperledger/fabric-x-evm/endorser/storage"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	efab "github.com/hyperledger/fabric-x-sdk/endorsement/fabric"
@@ -32,25 +33,25 @@ func NewEndorser(
 	network common.Network,
 	logger sdk.Logger,
 	testImpl bool,
-) (*endorser.Endorser, *sdknet.Synchronizer, interface{}, error) {
+) (*core.Endorser, *sdknet.Synchronizer, interface{}, error) {
 	// Signer is the identity to connect to the peer for synchronizing, and for signing the endorsement.
 	signer, err := identity.SignerFromMSP(cfg.Identity.MSPDir, cfg.Identity.MspID)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to create signer: %w", err)
 	}
 
-	var kvs endorser.KVS
+	var kvs storage.KVS
 	switch cfg.Database.Database {
 	case "sqlite":
 		writeDB, err := state.NewWriteDB(network.Channel, cfg.Database.ConnString)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("failed to initialize store: %w", err)
 		}
-		kvs = endorser.NewVersionedDBWrapper(writeDB)
+		kvs = storage.NewVersionedDBWrapper(writeDB)
 	case "memory":
-		baseLightKVS := endorser.NewLightKVS(cfg.Database.HistorySize)
+		baseLightKVS := storage.NewLightKVS(cfg.Database.HistorySize)
 		if testImpl {
-			kvs = testimpl.NewLightKVSExt(baseLightKVS)
+			kvs = storage.NewRevertibleLightKVS(baseLightKVS)
 		} else {
 			kvs = baseLightKVS
 		}
@@ -58,7 +59,7 @@ func NewEndorser(
 		return nil, nil, nil, fmt.Errorf("invalid endorser database type %s, must be sqlite or memory", cfg.Database.Database)
 	}
 
-	evmConfig := endorser.EVMConfig{
+	evmConfig := execution.EVMConfig{
 		ChainConfig: common.BuildChainConfig(network.ChainID),
 		MaxTxGas:    network.MaxTxGas,
 		DebugLogs:   cfg.DebugLogs,
@@ -80,10 +81,9 @@ func NewEndorser(
 
 	// Executing transactions and signing the endorsement.
 	monotonicVersions := network.Protocol == "fabric-x"
-	end, err := endorser.New(
-		endorser.NewEVMEngine(network.Namespace, kvs, evmConfig, monotonicVersions),
+	end, err := core.New(
+		execution.NewEVMEngine(network.Namespace, kvs, evmConfig, monotonicVersions),
 		builder,
-		network.ChainID,
 	)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to create endorser: %w", err)

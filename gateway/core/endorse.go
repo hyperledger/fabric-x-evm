@@ -21,32 +21,26 @@ import (
 	"github.com/hyperledger/fabric-x-common/protoutil"
 
 	"github.com/hyperledger/fabric-x-evm/common"
+	"github.com/hyperledger/fabric-x-evm/endorser/api"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
 
-// Endorser interface defines the contract for endorsement providers.
-// This allows different implementations (e.g., local, gRPC client, mock).
-type Endorser interface {
-	ProcessEVMTransaction(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction) (*peer.ProposalResponse, error)
-	ProcessCall(ctx context.Context, callMsg *ethereum.CallMsg, blockNumber *big.Int) (*peer.ProposalResponse, error)
-	ProcessStateQuery(ctx context.Context, query common.StateQuery) (*peer.ProposalResponse, error)
-}
-
 // EndorsementClient forwards ethereum-style transactions and calls
 // to the endorsers and returns their signed fabric-style responses.
 type EndorsementClient struct {
-	endorsers []Endorser
+	endorsers []api.Service
 	signer    Signer
 	channel   string
 	namespace string
 	nsVersion string
 }
 
-// NewEndorsementClient creates an EndorsementClient from Endorser interface instances.
-// This allows using concrete endorsers, wrapped endorsers (e.g., from testimpl package), or other implementations.
-func NewEndorsementClient(endorsers []Endorser, signer Signer, channel, namespace, nsVersion string) (*EndorsementClient, error) {
+// NewEndorsementClient creates an EndorsementClient from api.Service instances.
+// This allows using concrete endorsers, wrapped endorsers (e.g., from testimpl package), remote
+// gRPC clients to other organizations' endorsers, or other implementations.
+func NewEndorsementClient(endorsers []api.Service, signer Signer, channel, namespace, nsVersion string) (*EndorsementClient, error) {
 	return &EndorsementClient{
 		endorsers: endorsers,
 		signer:    signer,
@@ -78,19 +72,30 @@ func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Tra
 	errs := make([]error, len(e.endorsers)) // indexed — deterministic error order
 
 	for i, end := range e.endorsers {
-		processEndorsement := func(index int, endorser Endorser) {
+		processEndorsement := func(index int, endorser api.Service) {
 			pResp, err := endorser.ProcessEVMTransaction(ctx, inv, tx)
 			if err != nil {
-				errs[index] = fmt.Errorf("process EVM transaction: %w", err)
+				// A Go error is a transport/delivery failure (e.g. gRPC), not a tx outcome.
+				errs[index] = fmt.Errorf("call endorser: %w", err)
 				cancel() // signal other goroutines to stop early
 				return
 			}
-			res[index] = pResp
+			// Application outcomes ride in the status. A success and a revert are
+			// committed; a valid tx whose execution failed is endorsable here but
+			// not yet committed (a follow-up will mine it). An invalid (rejected) tx
+			// or a server fault is an error the caller must see.
+			switch pResp.Response.Status {
+			case common.StatusOK, common.StatusEVMRevert, common.StatusExecFailure:
+				res[index] = pResp
+			default:
+				errs[index] = fmt.Errorf("process EVM transaction: %s", pResp.Response.Message)
+				cancel()
+			}
 		}
 
 		if len(e.endorsers) > 1 {
 			wg.Add(1)
-			go func(index int, endorser Endorser) {
+			go func(index int, endorser api.Service) {
 				defer wg.Done()
 				processEndorsement(index, endorser)
 			}(i, end)
@@ -125,7 +130,9 @@ func (e *EndorsementClient) CallContract(ctx context.Context, args ethereum.Call
 	if res.Response.Status == common.StatusEVMRevert {
 		return nil, &domain.RevertError{Reason: res.Response.Message, Data: res.Response.Payload}
 	}
-	if res.Response.Status == common.StatusEVMExecFailure {
+	// For a call, both a failed execution and a rejected tx are surfaced as an
+	// execution error (-32000); only the reverted case carries data.
+	if res.Response.Status == common.StatusExecFailure || res.Response.Status == common.StatusTxRejected {
 		return nil, &domain.ExecutionError{Message: res.Response.Message}
 	}
 	if res.Response.Status < 200 || res.Response.Status >= 400 {

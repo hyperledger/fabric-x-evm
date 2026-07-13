@@ -4,7 +4,7 @@ Copyright IBM Corp. All Rights Reserved.
 SPDX-License-Identifier: LGPL-3.0-or-later
 */
 
-package testimpl
+package storage
 
 import (
 	"context"
@@ -15,10 +15,9 @@ import (
 	"sync/atomic"
 
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
-	"github.com/hyperledger/fabric-x-evm/gateway/storage"
 )
 
-var storeLogger = flogging.MustGetLogger("gateway.testimpl.store")
+var storeLogger = flogging.MustGetLogger("gateway.storage.snapshot_store")
 
 const snapshotRingBufferSize = 128
 
@@ -27,16 +26,25 @@ type snapshot struct {
 	DbPath      string // path to the snapshot database file
 }
 
-// SnapshotStore extends storage.Store with snapshot and revert capabilities
+// Revertible is implemented by stores that support interactive snapshot/rollback —
+// e.g. the Hardhat evm_snapshot/evm_revert RPCs on a single-node testnode. The
+// production Store alone does not implement this; only a SnapshotStore wrapping one
+// does, and only when test-RPC is explicitly enabled.
+type Revertible interface {
+	Snapshot(ctx context.Context) (uint64, error)
+	RevertToBlock(ctx context.Context, blockNumber uint64) error
+}
+
+// SnapshotStore extends Store with snapshot and revert capabilities
 type SnapshotStore struct {
-	*storage.Store
+	*Store
 	SnapshotsMu   sync.RWMutex
 	Snapshots     [snapshotRingBufferSize]*snapshot
 	AttachCounter atomic.Uint64 // counter for unique ATTACH DATABASE aliases
 }
 
-// NewSnapshotStore creates a new SnapshotStore that wraps a storage.Store
-func NewSnapshotStore(store *storage.Store) *SnapshotStore {
+// NewSnapshotStore creates a new SnapshotStore that wraps a Store
+func NewSnapshotStore(store *Store) *SnapshotStore {
 	return &SnapshotStore{
 		Store: store,
 	}
@@ -142,10 +150,10 @@ func (s *SnapshotStore) Snapshot(ctx context.Context) (uint64, error) {
 	return currentBlockNumber, nil
 }
 
-// RevertToSnapshot restores the database to a previously saved snapshot at the given block number.
+// RevertToBlock restores the database to a previously saved snapshot at the given block number.
 // It also restores the cached block number.
 // Uses ATTACH DATABASE and SQL to restore data, which works reliably with shared memory databases.
-func (s *SnapshotStore) RevertToSnapshot(ctx context.Context, blockNumber uint64) error {
+func (s *SnapshotStore) RevertToBlock(ctx context.Context, blockNumber uint64) error {
 	storeLogger.Debugf("Starting restore to block %d", blockNumber)
 
 	// Find the snapshot

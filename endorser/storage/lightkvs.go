@@ -4,7 +4,7 @@ Copyright IBM Corp. All Rights Reserved.
 SPDX-License-Identifier: LGPL-3.0-or-later
 */
 
-package endorser
+package storage
 
 import (
 	"context"
@@ -15,7 +15,8 @@ import (
 	"sync/atomic"
 
 	"github.com/hyperledger/fabric-x-common/api/committerpb"
-	"github.com/hyperledger/fabric-x-evm/gateway/core"
+	"github.com/hyperledger/fabric-x-evm/common"
+	"github.com/hyperledger/fabric-x-evm/endorser/execution"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 )
 
@@ -23,6 +24,16 @@ var (
 	// ErrKeyNotFound is returned when a key is not found in the store.
 	ErrKeyNotFound = errors.New("key not found")
 )
+
+// KVS is implemented by both LightKVS and VersionedDBWrapper.
+// It combines snapshot reads, block handling, and lifecycle management.
+type KVS interface {
+	execution.KVSSnapshotter
+	blocks.BlockHandler
+	blocks.RecordGetter
+	BlockNumber(context.Context) (uint64, error)
+	Close() error
+}
 
 // LightKVS is a lightweight versioned key-value store with snapshot isolation.
 // It supports concurrent readers and a single writer.
@@ -72,7 +83,7 @@ type ValueVersion struct {
 
 // Reader provides a consistent view of the store at a specific point in time.
 // All Get operations see the state as it was when Begin() was called.
-// Reader implements the ReadStore interface for compatibility with StateDB.
+// Reader implements the execution.ReadStore interface for compatibility with StateDB.
 type Reader struct {
 	// Snapshot holds a reference to the immutable snapshot
 	// This prevents the snapshot from being garbage collected
@@ -146,7 +157,7 @@ func NewLightKVS(historySize int) *LightKVS {
 // If no matching snapshot is found, it returns an error.
 //
 // Readers must call Close() when done to allow garbage collection of old snapshots.
-func (kvs *LightKVS) NewSnapshot(blockNumber uint64) (ReadStore, error) {
+func (kvs *LightKVS) NewSnapshot(blockNumber uint64) (execution.ReadStore, error) {
 	// Load the current snapshot
 	current := kvs.Current.Load()
 
@@ -192,7 +203,7 @@ func (kvs *LightKVS) Get(namespace, key string, lastBlock uint64) (*blocks.Write
 }
 
 // Get retrieves the value and version for a key from the reader's snapshot.
-// This implements the ReadStore interface with the signature:
+// This implements the execution.ReadStore interface with the signature:
 // Get(namespace, key string) (*blocks.WriteRecord, error)
 func (r *Reader) Get(namespace, key string) (*blocks.WriteRecord, error) {
 	if r.Snapshot == nil {
@@ -383,7 +394,7 @@ func (kvs *LightKVS) Handle(ctx context.Context, b blocks.Block) error {
 // HandleTx implements the core.TxHandler interface.
 // It processes a batch of transaction notifications by extracting writes and applying them.
 // This is called by the notification dispatcher when transactions are committed.
-func (kvs *LightKVS) HandleTx(ctx context.Context, notifs []core.TxNotification) error {
+func (kvs *LightKVS) HandleTx(ctx context.Context, notifs []common.TxNotification) error {
 	// Collect all writes from all notifications in the batch
 	var allUpdates []KeyValueVersion
 

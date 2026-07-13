@@ -8,19 +8,19 @@ package testimpl
 
 import (
 	"github.com/ethereum/go-ethereum/core/state"
-	"github.com/hyperledger/fabric-x-evm/endorser"
+	"github.com/hyperledger/fabric-x-evm/endorser/core"
 )
 
 // EndorserWrapper wraps an Endorser and adds ethStateDB management for testing.
 // It injects an EVMEngineWrapper into the endorser to provide DualStateDB support.
 type EndorserWrapper struct {
-	*endorser.Endorser
+	*core.Endorser
 	engineWrapper *EVMEngineWrapper
 }
 
 // NewEndorserWrapper creates a new EndorserWrapper by injecting the engine wrapper into the endorser.
 func NewEndorserWrapper(
-	end *endorser.Endorser,
+	end *core.Endorser,
 	engineWrapper *EVMEngineWrapper,
 ) *EndorserWrapper {
 	// Inject the engine wrapper into the endorser

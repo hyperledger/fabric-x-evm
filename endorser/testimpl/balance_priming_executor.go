@@ -15,7 +15,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
-	"github.com/hyperledger/fabric-x-evm/endorser"
+	"github.com/hyperledger/fabric-x-evm/endorser/execution"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
@@ -46,15 +46,15 @@ type NonceAware interface {
 
 // BalancePrimingExecutor wraps an Executor and adds balance priming support for testing.
 type BalancePrimingExecutor struct {
-	*endorser.Executor
-	state endorser.ExtendedStateDB
+	*execution.Executor
+	state execution.ExtendedStateDB
 }
 
 // NewBalancePrimingExecutor creates a new executor with balance priming support.
 func NewBalancePrimingExecutor(
 	namespace string,
-	kvs endorser.KVSSnapshotter,
-	evmConfig endorser.EVMConfig,
+	kvs execution.KVSSnapshotter,
+	evmConfig execution.EVMConfig,
 	monotonicVersions bool,
 	balancePriming *BalancePrimingConfig,
 	blockContext *vm.BlockContext,
@@ -65,14 +65,14 @@ func NewBalancePrimingExecutor(
 		return nil, err
 	}
 
-	stateDB, err := endorser.NewStateDB(context.TODO(), reader, namespace, 0, monotonicVersions)
+	stateDB, err := execution.NewStateDB(context.TODO(), reader, namespace, 0, monotonicVersions)
 	if err != nil {
 		reader.Close()
 		return nil, err
 	}
 
 	// Wrap with balance priming wrapper if configured
-	var finalStateDB endorser.ExtendedStateDB = stateDB
+	var finalStateDB execution.ExtendedStateDB = stateDB
 	if balancePriming != nil && balancePriming.Enabled {
 		finalStateDB = NewBalancePrimingWrapper(
 			stateDB,
@@ -81,7 +81,7 @@ func NewBalancePrimingExecutor(
 		)
 	}
 
-	executor, err := endorser.NewExecutor(finalStateDB, reader, nil, evmConfig)
+	executor, err := execution.NewExecutor(finalStateDB, reader, nil, evmConfig)
 	if err != nil {
 		reader.Close()
 		return nil, err

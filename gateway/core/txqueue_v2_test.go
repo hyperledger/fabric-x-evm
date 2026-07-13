@@ -359,6 +359,22 @@ func TestTxQueueV2_Complete_NonExistentTransaction(t *testing.T) {
 	assert.Len(t, q.hashMap, 0)
 }
 
+func TestTxQueueV2_Complete_DirectRemovesFromPending(t *testing.T) {
+	q := NewTxQueueV2()
+	tx := testTxV2(1)
+
+	q.Enqueue(tx)
+	_, ok := q.Dequeue()
+	require.True(t, ok)
+	require.NotNil(t, q.IsPending(tx.Hash()))
+
+	q.Complete(tx.Hash())
+
+	assert.Nil(t, q.IsPending(tx.Hash()))
+	_, exists := q.pendingMap[tx.Hash()]
+	assert.False(t, exists)
+}
+
 func TestTxQueueV2_Complete_SignalsOneWorkerForOnePromotion(t *testing.T) {
 	q := NewTxQueueV2()
 

@@ -17,7 +17,8 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
-	endorsertestimpl "github.com/hyperledger/fabric-x-evm/endorser/testimpl"
+	estorage "github.com/hyperledger/fabric-x-evm/endorser/storage"
+	"github.com/hyperledger/fabric-x-evm/gateway/storage"
 )
 
 var hardhatLogger = flogging.MustGetLogger("gateway.testimpl.hardhat")
@@ -54,21 +55,14 @@ func (api *HardhatAPI) SetCode(ctx context.Context, address common.Address, code
 // be enabled in production environments.
 type EvmAPI struct {
 	mu       sync.Mutex
-	lightKVS *endorsertestimpl.LightKVSExt
-	store    interface {
-		Snapshot(ctx context.Context) (uint64, error)
-		RevertToSnapshot(ctx context.Context, blockNumber uint64) error
-	}
+	lightKVS estorage.Revertible
+	store    storage.Revertible
 	// Map snapshot IDs (hex strings) to block numbers
 	snapshots map[string]uint64
 }
 
 // NewEvmAPI creates a new EVM API instance with LightKVS and Store for state management.
-func NewEvmAPI(lightKVS *endorsertestimpl.LightKVSExt, store interface {
-	Snapshot(ctx context.Context) (uint64, error)
-	RevertToSnapshot(ctx context.Context, blockNumber uint64) error
-}) *EvmAPI {
-	// Wrap the base LightKVS in LightKVSExt to get extended functionality
+func NewEvmAPI(lightKVS estorage.Revertible, store storage.Revertible) *EvmAPI {
 	return &EvmAPI{
 		lightKVS:  lightKVS,
 		store:     store,
@@ -113,7 +107,7 @@ func (api *EvmAPI) Snapshot(ctx context.Context) (string, error) {
 }
 
 // Revert reverts the state to a previous snapshot (evm_revert).
-// Uses LightKVS.RevertToBlock to restore ledger state and Store.RevertToSnapshot
+// Uses LightKVS.RevertToBlock to restore ledger state and Store.RevertToBlock
 // to restore the database state.
 func (api *EvmAPI) Revert(ctx context.Context, snapshotID string) (bool, error) {
 	hardhatLogger.Debugf("EvmAPI.Revert() called with snapshotID=%s", snapshotID)
@@ -154,8 +148,8 @@ func (api *EvmAPI) Revert(ctx context.Context, snapshotID string) (bool, error) 
 
 	// Revert the Store database to the same block number
 	hardhatLogger.Debugf("EvmAPI.Revert() reverting Store to block %d", blockNumber)
-	if err := api.store.RevertToSnapshot(ctx, blockNumber); err != nil {
-		hardhatLogger.Debugf("EvmAPI.Revert() Store.RevertToSnapshot returned error: %v", err)
+	if err := api.store.RevertToBlock(ctx, blockNumber); err != nil {
+		hardhatLogger.Debugf("EvmAPI.Revert() Store.RevertToBlock returned error: %v", err)
 		return false, fmt.Errorf("failed to revert Store to block %d: %w", blockNumber, err)
 	}
 	hardhatLogger.Debugf("EvmAPI.Revert() Store reverted successfully to block %d", blockNumber)

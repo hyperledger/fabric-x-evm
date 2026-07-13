@@ -13,6 +13,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/hyperledger/fabric-x-common/api/committerpb"
+	cmn "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 )
 
@@ -26,6 +27,10 @@ import (
 //
 // Thread-safety: All map and slice operations are protected by the RWMutex.
 // The inProgressMap is safe for concurrent access as long as proper locking is used.
+//
+// Persistence: the queue is in-memory only. On gateway restart both
+// pendingQueue and inProgressMap are lost; clients must resubmit any
+// unconfirmed transactions.
 type TxQueue struct {
 	mu            sync.RWMutex                       // Protects all fields below
 	cond          *sync.Cond                         // Signals when new transactions arrive
@@ -147,7 +152,7 @@ func (q *TxQueue) Handle(ctx context.Context, block *domain.Block) error {
 
 // HandleTx implements the TxHandler interface for processing transaction notifications.
 // It extracts ethereum transaction hashes from the notifications and marks them as complete.
-func (q *TxQueue) HandleTx(ctx context.Context, notifs []TxNotification) error {
+func (q *TxQueue) HandleTx(ctx context.Context, notifs []cmn.TxNotification) error {
 	for _, notif := range notifs {
 		q.mu.Lock()
 		q.total++

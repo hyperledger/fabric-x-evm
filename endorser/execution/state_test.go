@@ -4,7 +4,7 @@ Copyright IBM Corp. All Rights Reserved.
 SPDX-License-Identifier: LGPL-3.0-or-later
 */
 
-package endorser
+package execution
 
 import (
 	"bytes"
@@ -120,7 +120,7 @@ func assertEqual[T comparable](t *testing.T, label string, got1, got2, expected 
 }
 
 func snapshotDB(t *testing.T, backend *state.VersionedDB, blockNum uint64) *StateDB {
-	wrapper := NewVersionedDBWrapper(backend)
+	wrapper := &testVersionedDBSnapshotter{db: backend}
 	snapshot, err := wrapper.NewSnapshot(blockNum)
 	if err != nil {
 		t.Fatal(err)

@@ -15,8 +15,9 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/rpc"
-	endorsertestimpl "github.com/hyperledger/fabric-x-evm/endorser/testimpl"
+	estorage "github.com/hyperledger/fabric-x-evm/endorser/storage"
 	"github.com/hyperledger/fabric-x-evm/gateway/api"
+	"github.com/hyperledger/fabric-x-evm/gateway/storage"
 )
 
 // NewTestServer creates an RPC server with test-only methods enabled.
@@ -28,10 +29,7 @@ import (
 // SECURITY WARNING: This server performs server-side transaction signing,
 // which is inherently insecure. Use ONLY for development and testing.
 // NEVER use in production environments.
-func NewTestServer(b api.Backend, testAccounts []common.Address, testAccountKeys map[common.Address]*ecdsa.PrivateKey, lightKVS *endorsertestimpl.LightKVSExt, store interface {
-	Snapshot(ctx context.Context) (uint64, error)
-	RevertToSnapshot(ctx context.Context, blockNumber uint64) error
-}) (*rpc.Server, error) {
+func NewTestServer(b api.Backend, testAccounts []common.Address, testAccountKeys map[common.Address]*ecdsa.PrivateKey, lightKVS estorage.Revertible, store storage.Revertible) (*rpc.Server, error) {
 	srv := rpc.NewServer()
 
 	// Create production API

@@ -29,8 +29,10 @@ import (
 	"github.com/hyperledger/fabric-protos-go-apiv2/ledger/rwset"
 	"github.com/hyperledger/fabric-protos-go-apiv2/ledger/rwset/kvrwset"
 	"github.com/hyperledger/fabric-x-common/protoutil"
-	"github.com/hyperledger/fabric-x-evm/endorser"
+	eapi "github.com/hyperledger/fabric-x-evm/endorser/api"
 	econf "github.com/hyperledger/fabric-x-evm/endorser/config"
+	"github.com/hyperledger/fabric-x-evm/endorser/execution"
+	"github.com/hyperledger/fabric-x-evm/endorser/storage"
 	"github.com/hyperledger/fabric-x-evm/endorser/testimpl"
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
 	"github.com/hyperledger/fabric-x-evm/gateway/storage/trie"
@@ -288,7 +290,7 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 	st.Close()
 
 	// Create EVMConfig to pass to test harness
-	evmConfig := endorser.EVMConfig{
+	evmConfig := execution.EVMConfig{
 		ChainConfig: config,
 		DebugLogs:   true,
 	}
@@ -446,10 +448,10 @@ type ethereumTestHarness struct {
 // wrappedEndorserFactory creates endorsers wrapped with testimpl wrappers for ethStateDB tracking.
 // blockCtx injects the test-specific EVM block context (fork rules, coinbase, difficulty, etc.).
 func wrappedEndorserFactory(blockCtx *vm.BlockContext) EndorserFactory {
-	return func(t *testing.T, ecfg econf.Endorser, channel, namespace string, evmConfig endorser.EVMConfig, protocol string) (endorser.KVS, endorsement.Builder, core.Endorser) {
+	return func(t *testing.T, ecfg econf.Endorser, channel, namespace string, evmConfig execution.EVMConfig, protocol string) (storage.KVS, endorsement.Builder, eapi.Service) {
 		db, builder, end := NewEndorser(t, ecfg, channel, namespace, evmConfig, protocol)
 
-		engine := endorser.NewEVMEngine(namespace, db, evmConfig, protocol == "fabric-x")
+		engine := execution.NewEVMEngine(namespace, db, evmConfig, protocol == "fabric-x")
 		engineWrapper := testimpl.NewEVMEngineWrapper(namespace, db, evmConfig, protocol == "fabric-x", engine)
 		engineWrapper.SetBlockContext(blockCtx)
 
@@ -460,7 +462,7 @@ func wrappedEndorserFactory(blockCtx *vm.BlockContext) EndorserFactory {
 
 // newEthereumTestHarness creates a test harness with pre-state primed from ethereum test format.
 // blockCtx provides the test-specific EVM block context injected into the engine wrapper.
-func newEthereumTestHarness(t *testing.T, evmConfig endorser.EVMConfig, pre types.GenesisAlloc, blockCtx *vm.BlockContext) (*ethereumTestHarness, error) {
+func newEthereumTestHarness(t *testing.T, evmConfig execution.EVMConfig, pre types.GenesisAlloc, blockCtx *vm.BlockContext) (*ethereumTestHarness, error) {
 	t.Helper()
 
 	th, err := NewLocalTestHarnessWithFactory(t, TestLogger{T: t}, evmConfig, "", "bypass", nil, wrappedEndorserFactory(blockCtx))

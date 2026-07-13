@@ -4,7 +4,7 @@ Copyright IBM Corp. All Rights Reserved.
 SPDX-License-Identifier: LGPL-3.0-or-later
 */
 
-package endorser
+package execution
 
 import (
 	"testing"
@@ -22,7 +22,7 @@ func TestNewExecutor_WrapsStateDBWhenDebugEnabled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	kvs := NewVersionedDBWrapper(backend)
+	kvs := &testVersionedDBSnapshotter{db: backend}
 	cfg := EVMConfig{
 		ChainConfig: common.BuildChainConfig(4011),
 		DebugLogs:   true,
@@ -51,7 +51,7 @@ func TestExecute_MaxTxGas(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		kvs := NewVersionedDBWrapper(backend)
+		kvs := &testVersionedDBSnapshotter{db: backend}
 		cfg := EVMConfig{
 			ChainConfig: common.BuildChainConfig(4011),
 			MaxTxGas:    maxTxGas,
@@ -76,21 +76,21 @@ func TestExecute_MaxTxGas(t *testing.T) {
 	// MaxTxGas below intrinsic gas (21000 for a simple transfer) → must fail
 	ex := newExecutor(1_000)
 	defer ex.Close()
-	if _, err := ex.Execute(msg()); err == nil {
+	if _, err := ex.execute(msg()); err == nil {
 		t.Fatal("expected error when MaxTxGas < intrinsic gas, got nil")
 	}
 
 	// MaxTxGas at exactly intrinsic gas → simple transfer must succeed
 	ex2 := newExecutor(21_000)
 	defer ex2.Close()
-	if _, err := ex2.Execute(msg()); err != nil {
+	if _, err := ex2.execute(msg()); err != nil {
 		t.Fatalf("expected success when MaxTxGas == intrinsic gas, got: %v", err)
 	}
 
 	// MaxTxGas = 0 (unlimited) → declared gas used as-is, must succeed
 	ex3 := newExecutor(0)
 	defer ex3.Close()
-	if _, err := ex3.Execute(msg()); err != nil {
+	if _, err := ex3.execute(msg()); err != nil {
 		t.Fatalf("expected success when MaxTxGas == 0 (unlimited), got: %v", err)
 	}
 }
@@ -100,7 +100,7 @@ func TestNewExecutor_BareStateDBWhenDebugDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	kvs := NewVersionedDBWrapper(backend)
+	kvs := &testVersionedDBSnapshotter{db: backend}
 	cfg := EVMConfig{
 		ChainConfig: common.BuildChainConfig(4011),
 		DebugLogs:   false,

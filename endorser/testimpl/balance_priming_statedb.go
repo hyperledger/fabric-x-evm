@@ -11,7 +11,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/holiman/uint256"
-	"github.com/hyperledger/fabric-x-evm/endorser"
+	"github.com/hyperledger/fabric-x-evm/endorser/execution"
 )
 
 // Default prime value: 1 billion tokens (with 6 decimals for USDC)
@@ -20,7 +20,7 @@ var primeValue = new(uint256.Int).Mul(uint256.NewInt(1_000_000_000_000), uint256
 // BalancePrimingWrapper wraps a StateDB and intercepts GetState calls to prime
 // ERC-20 balance slots with a high value when they are zero.
 type BalancePrimingWrapper struct {
-	endorser.ExtendedStateDB
+	execution.ExtendedStateDB
 	contractAddr    common.Address // The ERC-20 contract address
 	senderAddr      common.Address // The sender address to prime
 	mappingPosition uint64         // The position of the balances mapping in storage
@@ -30,7 +30,7 @@ type BalancePrimingWrapper struct {
 }
 
 // NewBalancePrimingWrapper creates a new wrapper that primes ERC-20 balance slots.
-func NewBalancePrimingWrapper(stateDB endorser.ExtendedStateDB, contractAddr common.Address, mappingPosition uint64) *BalancePrimingWrapper {
+func NewBalancePrimingWrapper(stateDB execution.ExtendedStateDB, contractAddr common.Address, mappingPosition uint64) *BalancePrimingWrapper {
 	return &BalancePrimingWrapper{
 		ExtendedStateDB: stateDB,
 		contractAddr:    contractAddr,

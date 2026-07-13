@@ -4,18 +4,19 @@ Copyright IBM Corp. All Rights Reserved.
 SPDX-License-Identifier: LGPL-3.0-or-later
 */
 
-package endorser
+package storage
 
 import (
 	"context"
 
 	"github.com/hyperledger/fabric-x-common/api/committerpb"
-	"github.com/hyperledger/fabric-x-evm/gateway/core"
+	"github.com/hyperledger/fabric-x-evm/common"
+	"github.com/hyperledger/fabric-x-evm/endorser/execution"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/state"
 )
 
-// VersionedDBWrapper wraps a VersionedDB to implement KVSSnapshotter.
+// VersionedDBWrapper wraps a VersionedDB to implement execution.KVSSnapshotter.
 // It provides snapshot isolation by capturing the current block number
 // when NewSnapshot() is called, and using that block number for all
 // subsequent Get operations on the snapshot.
@@ -33,7 +34,7 @@ func NewVersionedDBWrapper(db *state.VersionedDB) *VersionedDBWrapper {
 // NewSnapshot creates a new snapshot of the state at the specified block number.
 // It returns a VersionedDBSnapshot that will use this block number for all Get operations,
 // providing snapshot isolation. If blockNumber is 0 it resolves to the latest committed block.
-func (w *VersionedDBWrapper) NewSnapshot(blockNumber uint64) (ReadStore, error) {
+func (w *VersionedDBWrapper) NewSnapshot(blockNumber uint64) (execution.ReadStore, error) {
 	if blockNumber == 0 {
 		latest, err := w.db.BlockNumber(context.Background())
 		if err != nil {
@@ -49,14 +50,14 @@ func (w *VersionedDBWrapper) NewSnapshot(blockNumber uint64) (ReadStore, error) 
 
 // VersionedDBSnapshot represents a point-in-time snapshot of the VersionedDB.
 // All Get operations will read state as of the snapshot's block number.
-// It implements the ReadStore interface required by StateDB.
+// It implements the execution.ReadStore interface required by StateDB.
 type VersionedDBSnapshot struct {
 	db          *state.VersionedDB
 	blockNumber uint64
 }
 
 // Get retrieves the value for a key as of the snapshot's block number.
-// This implements the ReadStore interface with the signature:
+// This implements the execution.ReadStore interface with the signature:
 // Get(namespace, key string) (*blocks.WriteRecord, error)
 //
 // The snapshot's block number is automatically appended as the lastBlock
@@ -82,15 +83,15 @@ func (w *VersionedDBWrapper) Handle(ctx context.Context, b blocks.Block) error {
 	return w.db.Handle(ctx, b)
 }
 
-// HandleTx implements the core.TxHandler interface.
+// HandleTx implements the common.TxHandler interface.
 // It creates a synthetic block with the transactions and delegates to the underlying VersionedDB.
-func (w *VersionedDBWrapper) HandleTx(ctx context.Context, notifs []core.TxNotification) error {
+func (w *VersionedDBWrapper) HandleTx(ctx context.Context, notifs []common.TxNotification) error {
 	if len(notifs) == 0 {
 		return nil
 	}
 
 	// Group notifications by block number
-	blockMap := make(map[uint64][]core.TxNotification)
+	blockMap := make(map[uint64][]common.TxNotification)
 	for _, notif := range notifs {
 		blockMap[notif.BlockNum] = append(blockMap[notif.BlockNum], notif)
 	}

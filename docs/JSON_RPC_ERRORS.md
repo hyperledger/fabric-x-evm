@@ -30,6 +30,7 @@ The single source of truth in code is [`gateway/api/rpcerr`](../gateway/api/rpce
 | `core.ErrMaxInitCodeSizeExceeded` | `-32003` |
 | `txpool.ErrInvalidSender` | `-32003` |
 | `domain.ErrUnprotectedTx` (non-EIP-155) | `-32003` |
+| `domain.ErrTransactionAlreadyPending` (duplicate submission) | `-32003` |
 | `domain.ErrNonceLookup` (state lookup failure) | `-32603` |
 | Any other error | `-32603` |
 

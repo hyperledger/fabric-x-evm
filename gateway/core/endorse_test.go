@@ -17,13 +17,16 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-evm/common"
+	"github.com/hyperledger/fabric-x-evm/endorser/api"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
 
 type stubEndorser struct {
-	callResp *peer.ProposalResponse
-	callErr  error
+	callResp  *peer.ProposalResponse
+	callErr   error
+	queryResp *peer.ProposalResponse
+	queryErr  error
 }
 
 func (s *stubEndorser) ProcessEVMTransaction(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction) (*peer.ProposalResponse, error) {
@@ -33,11 +36,11 @@ func (s *stubEndorser) ProcessCall(ctx context.Context, callMsg *ethereum.CallMs
 	return s.callResp, s.callErr
 }
 func (s *stubEndorser) ProcessStateQuery(ctx context.Context, query common.StateQuery) (*peer.ProposalResponse, error) {
-	return nil, nil
+	return s.queryResp, s.queryErr
 }
 
 func newClient(stub *stubEndorser) *EndorsementClient {
-	return &EndorsementClient{endorsers: []Endorser{stub}}
+	return &EndorsementClient{endorsers: []api.Service{stub}}
 }
 
 func TestCallContract_Status201ReturnsRevertError(t *testing.T) {
@@ -69,7 +72,7 @@ func TestCallContract_Status201ReturnsRevertError(t *testing.T) {
 
 func TestCallContract_Status500IsGenericError(t *testing.T) {
 	c := newClient(&stubEndorser{callResp: &peer.ProposalResponse{
-		Response: &peer.Response{Status: common.StatusError, Message: "endorser dead"},
+		Response: &peer.Response{Status: common.StatusServerError, Message: "endorser dead"},
 	}})
 
 	_, err := c.CallContract(context.Background(), ethereum.CallMsg{}, nil)
@@ -89,7 +92,7 @@ func TestCallContract_Status500IsGenericError(t *testing.T) {
 
 func TestCallContract_Status400ReturnsExecutionError(t *testing.T) {
 	c := newClient(&stubEndorser{callResp: &peer.ProposalResponse{
-		Response: &peer.Response{Status: common.StatusEVMExecFailure, Message: "out of gas"},
+		Response: &peer.Response{Status: common.StatusExecFailure, Message: "out of gas"},
 	}})
 
 	_, err := c.CallContract(context.Background(), ethereum.CallMsg{}, nil)

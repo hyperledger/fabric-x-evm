@@ -16,6 +16,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-x-common/api/committerpb"
+	cmn "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 )
 
@@ -84,6 +85,10 @@ const (
 // - Pending map: Tracks transactions currently being processed by workers
 //
 // Thread-safety: All operations are protected by a single RWMutex.
+//
+// Persistence: the queue is in-memory only. On gateway restart the ready,
+// waiting, and pending state is lost; clients must resubmit any unconfirmed
+// transactions.
 type TxQueueV2 struct {
 	mu   sync.RWMutex
 	cond *sync.Cond
@@ -283,6 +288,21 @@ func (q *TxQueueV2) Dequeue() (*types.Transaction, bool) {
 	}
 }
 
+// Complete removes a transaction from tracking and promotes any transactions
+// that were blocked by it. Safe to call for a hash that is not currently
+// tracked.
+func (q *TxQueueV2) Complete(hash common.Hash) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	promoted := q.completeUnlocked(hash)
+	if promoted == 1 {
+		q.cond.Signal()
+	} else if promoted > 1 {
+		q.cond.Broadcast()
+	}
+}
+
 // completeUnlocked is the internal implementation of Complete that assumes the lock is held.
 // Returns the number of transactions promoted to the ready list.
 func (q *TxQueueV2) completeUnlocked(hash common.Hash) int {
@@ -409,7 +429,7 @@ func (q *TxQueueV2) Handle(ctx context.Context, block *domain.Block) error {
 // Returns (total transactions processed, invalid transactions).
 // HandleTx processes transaction notifications and marks transactions as complete.
 // This method implements the TxHandler interface for use with the notification system.
-func (q *TxQueueV2) HandleTx(ctx context.Context, notifs []TxNotification) error {
+func (q *TxQueueV2) HandleTx(ctx context.Context, notifs []cmn.TxNotification) error {
 	// Pre-extract transaction hashes and statuses outside the lock
 	numNotifs := len(notifs)
 	txHashes := make([]common.Hash, numNotifs)

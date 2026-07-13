@@ -31,7 +31,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // GetStateAndCommittedState is handled by querying the ReadStore directly
 // for committed state, and replaying the journal for current state.
-package endorser
+package execution
 
 import (
 	"context"

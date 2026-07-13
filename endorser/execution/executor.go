@@ -4,7 +4,7 @@ Copyright IBM Corp. All Rights Reserved.
 SPDX-License-Identifier: LGPL-3.0-or-later
 */
 
-package endorser
+package execution
 
 import (
 	"context"
@@ -23,7 +23,6 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/holiman/uint256"
 	fxcommon "github.com/hyperledger/fabric-x-evm/common"
-	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
 
@@ -36,18 +35,10 @@ type EVMConfig struct {
 	DebugLogs bool
 }
 
+// KVSSnapshotter is the port execution uses to obtain a versioned read snapshot
+// of the world state. storage.LightKVS and storage.VersionedDBWrapper implement it.
 type KVSSnapshotter interface {
 	NewSnapshot(blockNumber uint64) (ReadStore, error)
-}
-
-// KVS is implemented by both LightKVS and VersionedDBWrapper.
-// It combines snapshot reads, block handling, and lifecycle management.
-type KVS interface {
-	KVSSnapshotter
-	blocks.BlockHandler
-	blocks.RecordGetter
-	BlockNumber(context.Context) (uint64, error)
-	Close() error
 }
 
 // EVMEngine manages EVM execution and state reads for an endorser.
@@ -85,10 +76,11 @@ func (e *EVMEngine) Execute(ctx context.Context, tx *types.Transaction) (endorse
 	defer ex.Close()
 
 	ret, err := ex.Send(tx)
-	if err != nil && !errors.Is(err, vm.ErrExecutionReverted) {
-		return endorsement.ExecutionResult{}, err
-	}
-	if errors.Is(err, vm.ErrExecutionReverted) {
+	if err != nil {
+		if !errors.Is(err, vm.ErrExecutionReverted) {
+			return endorsement.ExecutionResult{}, err
+		}
+		// Revert: a committed outcome, endorsed as Status 201 with a revert event.
 		event, mErr := fxcommon.MarshalRevert(ret, "", tx.Hash().Hex())
 		if mErr != nil {
 			return endorsement.ExecutionResult{}, fmt.Errorf("marshal revert event: %w", mErr)
@@ -106,7 +98,7 @@ func (e *EVMEngine) Execute(ctx context.Context, tx *types.Transaction) (endorse
 	if l := ex.state.Logs(); len(l) > 0 {
 		logs, err = json.Marshal(l)
 		if err != nil {
-			return endorsement.ExecutionResult{}, errors.New("error marshaling logs")
+			return endorsement.ExecutionResult{}, fmt.Errorf("marshal logs: %w", err)
 		}
 	}
 
@@ -186,7 +178,13 @@ func (e *EVMEngine) newExecutor(blockNumber *big.Int) (*Executor, error) {
 	if e.evmConfig.DebugLogs {
 		state = NewStateDBLogger(stateDB)
 	}
-	return NewExecutor(state, reader, blockNumber, e.evmConfig)
+
+	ex, err := NewExecutor(state, reader, blockNumber, e.evmConfig)
+	if err != nil {
+		reader.Close()
+		return nil, err
+	}
+	return ex, nil
 }
 
 // newSnapshotAt returns an ExtendedStateDB over the state at the given Fabric block height (0 = latest).
@@ -274,11 +272,11 @@ func (h *Executor) Close() error {
 	return nil
 }
 
-// CallMsgToMessage converts an ethereum.CallMsg into a core.Message.
+// callMsgToMessage converts an ethereum.CallMsg into a core.Message.
 // The baseFee parameter is used to calculate the effective gas price for EIP-1559 transactions.
 // If baseFee is nil, legacy gas pricing is used.
 // skipNonceCheck and skipTxCheck control whether nonce and EOA checks should be skipped.
-func CallMsgToMessage(msg ethereum.CallMsg, baseFee *big.Int, skipNonceCheck, skipTxCheck bool) *core.Message {
+func callMsgToMessage(msg ethereum.CallMsg, baseFee *big.Int, skipNonceCheck, skipTxCheck bool) *core.Message {
 	var (
 		gasPrice  *big.Int
 		gasFeeCap *big.Int
@@ -356,16 +354,17 @@ func CallMsgToMessage(msg ethereum.CallMsg, baseFee *big.Int, skipNonceCheck, sk
 // Call executes a read-only call (eth_call semantics).
 // An empty revert is treated as a non-error: many Ethereum tools probe contracts this way.
 func (h *Executor) Call(msg ethereum.CallMsg) ([]byte, error) {
-	ret, err := h.Execute(CallMsgToMessage(msg, h.BlockCtx.BaseFee, true, true))
+	ret, err := h.execute(callMsgToMessage(msg, h.BlockCtx.BaseFee, true, true))
 	if errors.Is(err, vm.ErrExecutionReverted) && len(ret) == 0 {
 		return nil, nil // empty revert on a call is not an error
 	}
-	return ret, formatRevert(ret, err)
+	return ret, err
 }
 
-// PrepareMessage validates the sender nonce and converts tx to a core.Message.
-// Exported for use by testimpl wrappers that need to build a message without
-// applying the production free-gas defaults.
+// PrepareMessage is the transaction gate: it recovers the sender (validating the
+// signature), checks the nonce against ledger state, and converts tx to a
+// core.Message. Exported for testimpl wrappers that build a message without the
+// production free-gas defaults.
 func (h *Executor) PrepareMessage(tx *types.Transaction) (*core.Message, error) {
 	signer := types.MakeSigner(h.ChainCfg, h.BlockCtx.BlockNumber, h.BlockCtx.Time)
 
@@ -390,21 +389,19 @@ func (h *Executor) PrepareMessage(tx *types.Transaction) (*core.Message, error) 
 func (h *Executor) Send(tx *types.Transaction) ([]byte, error) {
 	msg, err := h.PrepareMessage(tx)
 	if err != nil {
-		return nil, err
+		// Invalid transaction rejected before execution (bad signature, nonce, ...).
+		return nil, &TxRejected{err: err}
 	}
 
-	ret, err := h.Execute(msg)
-	if err != nil {
-		return nil, formatRevert(ret, err)
-	}
-
-	return ret, nil
+	// Return the raw EVM result: on a revert that ret is the revert data (used to
+	// build the revert event); on other faults geth leaves it empty.
+	return h.execute(msg)
 }
 
-// Execute applies production defaults then runs the EVM via ApplyMessage.
+// execute applies production defaults then runs the EVM via ApplyMessage.
 // Gas prices are always zeroed (free gas) so buyGas never requires ETH balance.
 // If MaxTxGas is set, msg.GasLimit is capped before execution.
-func (h *Executor) Execute(msg *core.Message) ([]byte, error) {
+func (h *Executor) execute(msg *core.Message) ([]byte, error) {
 	if msg.GasLimit == 0 {
 		msg.GasLimit = 5_000_000
 	}
@@ -438,30 +435,52 @@ func (h *Executor) ApplyMessage(msg *core.Message) ([]byte, error) {
 	// Use ApplyMessage to execute the transaction
 	result, err := core.ApplyMessage(evm, msg, gp)
 	if err != nil {
-		// Revert to the snapshot on error from ApplyMessage
-		// This mimicks geth's approach and permits tests to pass
+		// Pre-execution rejection: the message can't be applied to this state
+		// (nonce, funds, intrinsic gas, ...) and would never be accepted in a block.
+		// Snapshot revert mirrors geth.
 		h.state.RevertToSnapshot(snapshot)
-		return nil, err
+		return nil, &TxRejected{err: err}
 	}
 
-	// Return the result data and any execution error
-	// Note: result.Err contains execution errors (e.g., revert, out of gas, code size exceeded)
-	// These are not fatal errors - the transaction is included but failed
 	if result.Err != nil {
-		return result.ReturnData, result.Err
+		// The transaction is valid but its EVM execution failed. A revert is a
+		// committed outcome carrying a reason; other faults (out of gas, invalid
+		// opcode, ...) are ExecFailures. Both are distinct from a pre-execution
+		// rejection.
+		if errors.Is(result.Err, vm.ErrExecutionReverted) {
+			if reason, uErr := abi.UnpackRevert(result.ReturnData); uErr == nil {
+				return result.ReturnData, fmt.Errorf("%w: %v", vm.ErrExecutionReverted, reason)
+			}
+			return result.ReturnData, result.Err
+		}
+		return result.ReturnData, &ExecFailure{err: result.Err}
 	}
 	return result.ReturnData, nil
 }
 
-// formatRevert enriches a revert error with the ABI-decoded reason string.
-// If the data cannot be unpacked, the original error is returned unchanged.
-func formatRevert(ret []byte, err error) error {
-	if !errors.Is(err, vm.ErrExecutionReverted) {
-		return err
-	}
-	reason, errUnpack := abi.UnpackRevert(ret)
-	if errUnpack != nil {
-		return err
-	}
-	return fmt.Errorf("%w: %v", vm.ErrExecutionReverted, reason)
-}
+// TxRejected tags an invalid transaction rejected before execution (nonce, funds,
+// intrinsic gas, signature, ...): it can never be included in a block, so the
+// caller sees an error rather than an endorsement.
+type TxRejected struct{ err error }
+
+// NewTxRejected wraps err as a TxRejected fault. Exported for tests and callers
+// outside this package that need to construct one (the err field itself stays
+// unexported so callers always go through Unwrap()).
+func NewTxRejected(err error) *TxRejected { return &TxRejected{err: err} }
+
+func (e *TxRejected) Error() string { return e.err.Error() }
+func (e *TxRejected) Unwrap() error { return e.err }
+
+// ExecFailure tags a valid transaction whose EVM execution faulted (out of gas,
+// invalid opcode, ...) — in Ethereum it is mined with a failed receipt, distinct
+// from a revert (which carries a reason) and from a pre-execution rejection. Both
+// wrap the original go-ethereum error so errors.Is/errors.As still match the
+// underlying value (e.g. vm.ErrOutOfGas).
+type ExecFailure struct{ err error }
+
+// NewExecFailure wraps err as an ExecFailure fault. Exported for tests and
+// callers outside this package; see NewTxRejected for why err stays unexported.
+func NewExecFailure(err error) *ExecFailure { return &ExecFailure{err: err} }
+
+func (e *ExecFailure) Error() string { return e.err.Error() }
+func (e *ExecFailure) Unwrap() error { return e.err }

@@ -4,7 +4,7 @@ Copyright IBM Corp. All Rights Reserved.
 SPDX-License-Identifier: LGPL-3.0-or-later
 */
 
-package core
+package common
 
 import (
 	"context"
@@ -39,9 +39,11 @@ type TxNotification struct {
 	Events []byte
 }
 
-var notifLogger = flogging.MustGetLogger("gateway.core.notification")
+var notifLogger = flogging.MustGetLogger("evm.notification")
 
 // TxHandler defines the interface for handlers that process transaction notifications in batches.
+// Both gateway and endorser components implement this to receive committed-transaction
+// notifications over the AllTxStreamer path (an alternative to the block-synchronizer path).
 type TxHandler interface {
 	HandleTx(ctx context.Context, notifs []TxNotification) error
 }
@@ -60,7 +62,6 @@ type AllTxBatchDispatcher struct {
 // NewAllTxBatchDispatcher creates a dispatcher that extracts EthTxBytes from event metadata
 // and dispatches them as TxNotifications to the handler chain.
 func NewAllTxBatchDispatcher(handlers ...TxHandler) *AllTxBatchDispatcher {
-	// cache parameter is ignored (kept for API compatibility)
 	return &AllTxBatchDispatcher{handlers: handlers}
 }
 

@@ -26,8 +26,11 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/hyperledger/fabric-x-common/api/committerpb"
-	"github.com/hyperledger/fabric-x-evm/endorser"
+	fxcommon "github.com/hyperledger/fabric-x-evm/common"
+	eapi "github.com/hyperledger/fabric-x-evm/endorser/api"
 	econf "github.com/hyperledger/fabric-x-evm/endorser/config"
+	"github.com/hyperledger/fabric-x-evm/endorser/execution"
+	"github.com/hyperledger/fabric-x-evm/endorser/storage"
 	"github.com/hyperledger/fabric-x-evm/endorser/testimpl"
 	gwcore "github.com/hyperledger/fabric-x-evm/gateway/core"
 	gwtestimpl "github.com/hyperledger/fabric-x-evm/gateway/testimpl"
@@ -49,15 +52,15 @@ var orderers = flag.Int("orderers", 8, "number of goroutines submitting transact
 var outstanding = flag.Int("outstanding", 1000, "maximum number of outstanding transactions")
 
 // TxCompletionTracker forwards all transaction completion notifications to a single channel.
-// It implements gwcore.TxHandler to receive notifications from the notification system.
+// It implements common.TxHandler to receive notifications from the notification system.
 type TxCompletionTracker struct {
 	mu           sync.Mutex
-	completionCh chan gwcore.TxNotification
+	completionCh chan fxcommon.TxNotification
 	stopped      bool
 }
 
 // NewTxCompletionTracker creates a new tracker with a completion channel.
-func NewTxCompletionTracker(completionCh chan gwcore.TxNotification) *TxCompletionTracker {
+func NewTxCompletionTracker(completionCh chan fxcommon.TxNotification) *TxCompletionTracker {
 	return &TxCompletionTracker{
 		completionCh: completionCh,
 	}
@@ -71,9 +74,9 @@ func (t *TxCompletionTracker) Stop() {
 	t.stopped = true
 }
 
-// HandleTx implements gwcore.TxHandler. It receives notifications about completed transactions
+// HandleTx implements common.TxHandler. It receives notifications about completed transactions
 // and forwards them to the completion channel.
-func (t *TxCompletionTracker) HandleTx(ctx context.Context, notifs []gwcore.TxNotification) error {
+func (t *TxCompletionTracker) HandleTx(ctx context.Context, notifs []fxcommon.TxNotification) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.stopped {
@@ -92,14 +95,14 @@ func (t *TxCompletionTracker) HandleTx(ctx context.Context, notifs []gwcore.TxNo
 
 // balancePrimingEndorserFactory creates endorsers with balance priming support for testing.
 func balancePrimingEndorserFactory(balancePriming *testimpl.BalancePrimingConfig) integration.EndorserFactory {
-	return func(t *testing.T, ecfg econf.Endorser, channel, namespace string, evmConfig endorser.EVMConfig, protocol string) (endorser.KVS, endorsement.Builder, gwcore.Endorser) {
+	return func(t *testing.T, ecfg econf.Endorser, channel, namespace string, evmConfig execution.EVMConfig, protocol string) (storage.KVS, endorsement.Builder, eapi.Service) {
 		// Create the base endorser components
 		db, builder, baseEndorser := integration.NewEndorser(t, ecfg, channel, namespace, evmConfig, protocol)
 
 		// Extract the base EVMEngine
-		baseEngine, ok := baseEndorser.Engine.(*endorser.EVMEngine)
+		baseEngine, ok := baseEndorser.Engine.(*execution.EVMEngine)
 		if !ok {
-			t.Fatalf("Expected *endorser.EVMEngine, got %T", baseEndorser.Engine)
+			t.Fatalf("Expected *execution.EVMEngine, got %T", baseEndorser.Engine)
 		}
 
 		// Wrap the engine with balance priming support
@@ -228,13 +231,13 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 		ContractAddress: USDCAddr,
 		MappingPosition: 9, // USDC balance mapping is at slot 9
 	}
-	evmConfig := endorser.EVMConfig{}
+	evmConfig := execution.EVMConfig{}
 
 	// Setup test harness with USDC contract and balance priming enabled
 	factory := balancePrimingEndorserFactory(balancePriming)
 
 	// Create completion channel for transaction notifications
-	completionCh := make(chan gwcore.TxNotification, numOutstandingTx*2)
+	completionCh := make(chan fxcommon.TxNotification, numOutstandingTx*2)
 
 	// Create completion tracker for async transaction monitoring
 	tracker := NewTxCompletionTracker(completionCh)

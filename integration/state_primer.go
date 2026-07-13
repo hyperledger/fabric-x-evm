@@ -23,7 +23,7 @@ import (
 	"github.com/holiman/uint256"
 	pb "github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	lc "github.com/hyperledger/fabric-x-evm/common"
-	"github.com/hyperledger/fabric-x-evm/endorser"
+	"github.com/hyperledger/fabric-x-evm/endorser/execution"
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
@@ -32,7 +32,7 @@ import (
 )
 
 type KVSSnapshotter interface {
-	NewSnapshot(blockNumber uint64) (endorser.ReadStore, error)
+	NewSnapshot(blockNumber uint64) (execution.ReadStore, error)
 }
 
 // StatePrimer provides a builder pattern for priming ledger state.
@@ -42,7 +42,7 @@ type StatePrimer struct {
 	gw                *core.Gateway
 	submitter         core.Submitter
 	kvs               KVSSnapshotter
-	reader            endorser.ReadStore
+	reader            execution.ReadStore
 	namespace         string
 	signer            sdk.Signer
 	builders          []endorsement.Builder
@@ -51,7 +51,7 @@ type StatePrimer struct {
 	monotonicVersions bool
 
 	// DualStateDB that tracks both Fabric and Ethereum state
-	stateDB endorser.ExtendedStateDB
+	stateDB execution.ExtendedStateDB
 
 	priv *ecdsa.PrivateKey
 }
@@ -73,7 +73,7 @@ func NewStatePrimer(
 	if err != nil {
 		return nil, err
 	}
-	stateDB, err := endorser.NewStateDBWithDualState(context.TODO(), store, namespace, 0, monotonicVersions, nil)
+	stateDB, err := execution.NewStateDBWithDualState(context.TODO(), store, namespace, 0, monotonicVersions, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -278,7 +278,7 @@ func (sp *StatePrimer) Reset() (*StatePrimer, error) {
 		return nil, err
 	}
 	sp.reader = reader
-	stateDB, err := endorser.NewStateDBWithDualState(context.TODO(), sp.reader, sp.namespace, 0, sp.monotonicVersions, nil)
+	stateDB, err := execution.NewStateDBWithDualState(context.TODO(), sp.reader, sp.namespace, 0, sp.monotonicVersions, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -290,7 +290,7 @@ func (sp *StatePrimer) Reset() (*StatePrimer, error) {
 // GetEthStateDB extracts the ethStateDB from the underlying DualStateDB.
 // This allows the primed state to be reused in subsequent operations.
 func (sp *StatePrimer) GetEthStateDB() *ethstate.StateDB {
-	if dualDB, ok := sp.stateDB.(*endorser.DualStateDB); ok {
+	if dualDB, ok := sp.stateDB.(*execution.DualStateDB); ok {
 		return dualDB.EthStateDB()
 	}
 	return nil

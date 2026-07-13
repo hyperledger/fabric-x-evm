@@ -14,14 +14,14 @@ import (
 	ethstate "github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
-	"github.com/hyperledger/fabric-x-evm/endorser"
+	"github.com/hyperledger/fabric-x-evm/endorser/execution"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
 
 // ExecutorWrapper wraps an Executor and adds DualStateDB support for testing.
 type ExecutorWrapper struct {
-	*endorser.Executor
-	state      *endorser.DualStateDB
+	*execution.Executor
+	state      *execution.DualStateDB
 	ethStateDB *ethstate.StateDB
 }
 
@@ -30,8 +30,8 @@ type ExecutorWrapper struct {
 // injecting test-specific fork/coinbase/difficulty values.
 func NewExecutorWrapper(
 	namespace string,
-	kvs endorser.KVSSnapshotter,
-	evmConfig endorser.EVMConfig,
+	kvs execution.KVSSnapshotter,
+	evmConfig execution.EVMConfig,
 	monotonicVersions bool,
 	ethStateDB *ethstate.StateDB,
 	blockContext *vm.BlockContext,
@@ -43,17 +43,17 @@ func NewExecutorWrapper(
 	}
 
 	// Create StateDB with the reader
-	stateDB, err := endorser.NewStateDB(context.TODO(), reader, namespace, 0, monotonicVersions)
+	stateDB, err := execution.NewStateDB(context.TODO(), reader, namespace, 0, monotonicVersions)
 	if err != nil {
 		reader.Close()
 		return nil, err
 	}
 
 	// Create DualStateDB that wraps both the Fabric StateDB and the Ethereum StateDB
-	dualStateDB := endorser.NewDualStateDB(ethStateDB, stateDB)
+	dualStateDB := execution.NewDualStateDB(ethStateDB, stateDB)
 
 	// Create the executor using the public API with the DualStateDB
-	executor, err := endorser.NewExecutor(dualStateDB, reader, nil, evmConfig)
+	executor, err := execution.NewExecutor(dualStateDB, reader, nil, evmConfig)
 	if err != nil {
 		reader.Close()
 		return nil, err
