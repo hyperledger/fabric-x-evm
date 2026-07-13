@@ -29,16 +29,13 @@ import (
 	"github.com/hyperledger/fabric-protos-go-apiv2/ledger/rwset"
 	"github.com/hyperledger/fabric-protos-go-apiv2/ledger/rwset/kvrwset"
 	"github.com/hyperledger/fabric-x-common/protoutil"
-	eapi "github.com/hyperledger/fabric-x-evm/endorser/api"
 	econf "github.com/hyperledger/fabric-x-evm/endorser/config"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
-	"github.com/hyperledger/fabric-x-evm/endorser/storage"
 	"github.com/hyperledger/fabric-x-evm/endorser/testimpl"
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
 	"github.com/hyperledger/fabric-x-evm/gateway/storage/trie"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
-	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	"google.golang.org/grpc/grpclog"
 	"google.golang.org/protobuf/proto"
 )
@@ -448,7 +445,7 @@ type ethereumTestHarness struct {
 // wrappedEndorserFactory creates endorsers wrapped with testimpl wrappers for ethStateDB tracking.
 // blockCtx injects the test-specific EVM block context (fork rules, coinbase, difficulty, etc.).
 func wrappedEndorserFactory(blockCtx *vm.BlockContext) EndorserFactory {
-	return func(t *testing.T, ecfg econf.Endorser, channel, namespace string, evmConfig execution.EVMConfig, protocol string) (storage.KVS, endorsement.Builder, eapi.Service) {
+	return func(t *testing.T, ecfg econf.Endorser, channel, namespace string, evmConfig execution.EVMConfig, protocol string) EndorserComponents {
 		db, builder, end := NewEndorser(t, ecfg, channel, namespace, evmConfig, protocol)
 
 		engine := execution.NewEVMEngine(namespace, db, evmConfig, protocol == "fabric-x")
@@ -456,7 +453,7 @@ func wrappedEndorserFactory(blockCtx *vm.BlockContext) EndorserFactory {
 		engineWrapper.SetBlockContext(blockCtx)
 
 		wrapper := testimpl.NewEndorserWrapper(end, engineWrapper)
-		return db, builder, wrapper
+		return EndorserComponents{KVS: db, Builder: builder, Service: wrapper}
 	}
 }
 

@@ -65,7 +65,7 @@ func NewWithSigner(ctx context.Context, cfg config.Config, gwSigner sdk.Signer) 
 	// Create endorsers and their synchronizers.
 	endorsers := make([]eapi.Service, 0, len(cfg.Endorsers))
 	endorserSyncs := make([]*network.Synchronizer, 0, len(cfg.Endorsers))
-	var firstKVS interface{} // Keep first endorser's KVS for test server
+	var firstKVS estorage.KVS // Keep first endorser's KVS for test server
 	for i, ecfg := range cfg.Endorsers {
 		// Set history size: always 128 for test RPC (snapshot/revert), else default to 2 if not set
 		if cfg.Gateway.EnableTestRPC {
@@ -89,7 +89,7 @@ func NewWithSigner(ctx context.Context, cfg config.Config, gwSigner sdk.Signer) 
 
 // buildApp wires up the gateway from pre-built endorsers. Used by NewWithSigner
 // and directly by integration tests that manage their own endorsers.
-func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorsers []eapi.Service, endorserSyncs []*network.Synchronizer, lightKVS interface{}) (*App, error) {
+func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorsers []eapi.Service, endorserSyncs []*network.Synchronizer, lightKVS estorage.KVS) (*App, error) {
 	orderers := make([]network.OrdererConf, len(cfg.Gateway.Orderers))
 	for i, o := range cfg.Gateway.Orderers {
 		orderers[i] = o.ToOrdererConf()
@@ -176,7 +176,7 @@ func (a *App) Run(ctx context.Context) error {
 
 	// Wait for initial sync before serving traffic
 	for i, sync := range a.endorserSyncs {
-		if err := waitUntilSynced(gctx, sync, 10*time.Second); err != nil {
+		if err := WaitUntilSynced(gctx, sync, 10*time.Second); err != nil {
 			return err
 		}
 		appLogger.Debugf("endorser %d synced", i)
@@ -239,7 +239,8 @@ func (a *App) Shutdown() error {
 	return nil
 }
 
-func waitUntilSynced(ctx context.Context, sync *network.Synchronizer, timeout time.Duration) error {
+// WaitUntilSynced blocks until sync reports Ready or timeout elapses, polling every 100ms.
+func WaitUntilSynced(ctx context.Context, sync *network.Synchronizer, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
