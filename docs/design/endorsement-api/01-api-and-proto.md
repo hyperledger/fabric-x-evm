@@ -105,22 +105,23 @@ data.
 ## What Execute's Endorsement Covers
 
 `Execute` is the only RPC whose result feeds a Fabric transaction, so it is the
-only one that needs an endorsement signature. What exactly is signed - and how
-the gateway maps it into the envelope the orderer/committer expect - is the key
-open design point:
+only one that needs an endorsement signature. Following maintainer review, what
+is signed is settled per platform, keeping the wire as small as possible:
 
-- **Option A - gateway-built proposal, endorser signs against its hash.** The
-  gateway keeps building the Fabric proposal (as today) and sends the proposal
-  hash with `ExecuteRequest`; the endorser signs (result, proposal hash). Wire
-  stays clean; envelope assembly stays where it is today.
-- **Option B - endorser signs (tx, result) directly.** No proposal artifacts on
-  the wire at all; the gateway (or a shared helper) maps the signed result into
-  the envelope format the committer validates. Most radical; depends on what
-  the committer's validation actually requires of the signature.
+- **Fabric-X - no proposal on the wire.** Fabric-X does not require the proposal
+  bytes for a valid transaction, so the endorser signs the execution result
+  directly and the gateway packages it without a proposal. Fewer bytes, less
+  complexity; this is expected to be a small change in the SDK
+  `fabricx.TxPackager`.
+- **Classic Fabric - proposal hash only.** For Fabric the proposal is required
+  as part of the submitted transaction and the payload must include the
+  `ProposalHash`. The gateway builds the proposal and sends only its **hash**
+  with `ExecuteRequest`; the endorser signs against that hash. The full proposal
+  never crosses the wire.
 
-> Open for discussion: which option satisfies the committer's endorsement
-> validation with the least machinery. To be settled with the maintainers
-> before the proto is finalized.
+> Decision (with @arner): leave the proposal out entirely for Fabric-X; send only
+> the proposal hash for classic Fabric. To be confirmed in code that
+> `fabricx.TxPackager` accepts a transaction without the proposal bytes.
 
 ## Errors
 
@@ -152,10 +153,17 @@ part once this API shape is agreed.
 ## Unary vs Streaming
 
 **Unary RPCs for v1**, laid out so a streaming variant can be added without
-breaking changes. Unary matches the current one-shot call semantics and is
-easy to reason about. If the mempool throughput work (#50) shows per-call
-overhead matters, an `ExecuteStream` can be added alongside the unary method,
-the way the orderer keeps a connection open.
+breaking changes. Unary matches the current one-shot call semantics and is easy
+to reason about. It is also not as serial as it looks: gRPC runs over HTTP/2,
+which multiplexes many concurrent requests over one pooled connection, so at
+high throughput the limiting factor is per-call overhead rather than unary vs
+streaming as such.
+
+**Throughput target: 15-20k tps.** Rather than assume, we benchmark the unary
+path against this target as part of the mempool throughput work (#50). If
+per-call overhead proves to be the bottleneck, an `ExecuteStream` can be added
+alongside the unary method (the way the orderer keeps a connection open) - an
+additive, non-breaking change.
 
 ## Alignment with fabric-x-committer
 
@@ -166,23 +174,25 @@ state reads) are our own rather than bent generic messages.
 
 ## Code Reuse
 
-Three options for the server-side gRPC and endorsement plumbing:
+**Decision (with @arner): do not depend on fabric-x-committer code broadly.**
+Start from **fabric-x-common plus the basic gRPC packages**, and pull in a
+single committer package for the server/config scaffolding we would otherwise
+rewrite:
 
-1. **Duplicate** the needed pieces from fabric-x-committer into fabric-x-evm.
-   *Pro:* no new dependency, full control. *Con:* drift over time.
-2. **Depend** on fabric-x-committer directly. *Pro:* single source of truth.
-   *Con:* couples fabric-x-evm to committer internals not meant as public API.
-3. **Upstream** the shared pieces into fabric-x-common, then depend on that.
-   *Pro:* clean shared home. *Con:* needs @senthil / maintainer buy-in and is
-   the slowest path.
+- **`fabric-x-committer/utils/serve`** - gRPC server bootstrap (listen, TLS,
+  graceful shutdown), a health-check service, and a `ServerConfig` filled from
+  `fabric-x-common/common/viperutil`. This is the only committer import the
+  `fabric-x-samples/custom-endorser` needs, so it is a known-minimal dependency.
 
-> Recommendation pending maintainer input: prefer (3) for anything genuinely
-> shared, fall back to (1) for small EVM-specific glue.
+Everything else (health, reflection, status codes) is stock
+`google.golang.org/grpc`. Anything genuinely shared beyond this can later be
+upstreamed into fabric-x-common rather than depended on from the committer.
 
 ## Proto Sketch
 
-Illustrative, not final - the `ExecuteResponse` endorsement fields settle with
-the open question above.
+Illustrative, not final. Per the decision above, `ExecuteRequest` carries no
+proposal for Fabric-X (and only a proposal hash for classic Fabric), and
+`ExecuteResponse` carries the signed execution result.
 
 ```proto
 syntax = "proto3";
