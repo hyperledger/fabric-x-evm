@@ -14,7 +14,6 @@
 - [Current Architecture](#current-architecture)
 - [Target Architecture](#target-architecture)
 - [Document Series](#document-series)
-- [Open Questions](#open-questions)
 - [Time Plan](#time-plan)
 - [Risks](#risks)
 - [Glossary](#glossary)
@@ -122,20 +121,6 @@ flowchart LR
 
 Design choices and their reasoning are stated inline where each choice is made;
 part 3 additionally closes with a **Decisions and Alternatives** section.
-
-## Open Questions
-
-These are resolved in later parts, but listed here so reviewers see them early:
-
-- **Execute's endorsement:** with no proposal on the wire, what exactly does
-  the endorser sign, and how does the gateway map the signed result into the
-  envelope the committer validates?
-- **Streaming:** do we keep a connection open (like the orderer) for
-  throughput, or use unary calls?
-- **Code reuse:** duplicate the needed pieces from fabric-x-committer, depend
-  on it directly, or move shared code into fabric-x-common (needs @senthil).
-- **Security beyond mTLS:** authorization, and resilience (timeouts,
-  retries, connection pooling, backpressure).
 
 ## Time Plan
 
