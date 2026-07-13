@@ -18,8 +18,6 @@ import (
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/identity"
 	"github.com/hyperledger/fabric-x-sdk/network"
-	nfab "github.com/hyperledger/fabric-x-sdk/network/fabric"
-	nfabx "github.com/hyperledger/fabric-x-sdk/network/fabricx"
 	"golang.org/x/sync/errgroup"
 	_ "modernc.org/sqlite"
 
@@ -67,7 +65,7 @@ func NewWithSigner(ctx context.Context, cfg config.Config, gwSigner sdk.Signer) 
 	// Create endorsers and their synchronizers.
 	endorsers := make([]eapi.Service, 0, len(cfg.Endorsers))
 	endorserSyncs := make([]*network.Synchronizer, 0, len(cfg.Endorsers))
-	var firstKVS interface{} // Keep first endorser's KVS for test server
+	var firstKVS estorage.KVS // Keep first endorser's KVS for test server
 	for i, ecfg := range cfg.Endorsers {
 		// Set history size: always 128 for test RPC (snapshot/revert), else default to 2 if not set
 		if cfg.Gateway.EnableTestRPC {
@@ -75,7 +73,13 @@ func NewWithSigner(ctx context.Context, cfg config.Config, gwSigner sdk.Signer) 
 		} else if ecfg.Database.HistorySize == 0 {
 			ecfg.Database.HistorySize = 2
 		}
-		end, sync, kvs, err := eapp.NewEndorser(ecfg, cfg.Network, logger, cfg.Gateway.EnableTestRPC)
+		// load the identity to connect to the peer for synchronizing, and for signing the endorsement.
+		eSigner, err := identity.SignerFromMSP(ecfg.Identity.MSPDir, ecfg.Identity.MspID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create signer: %w", err)
+		}
+
+		end, sync, kvs, err := eapp.NewEndorser(ecfg, cfg.Network, eSigner, logger, cfg.Gateway.EnableTestRPC)
 		if err != nil {
 			return nil, fmt.Errorf("endorser %d (%s): %w", i, ecfg.Name, err)
 		}
@@ -91,35 +95,16 @@ func NewWithSigner(ctx context.Context, cfg config.Config, gwSigner sdk.Signer) 
 
 // buildApp wires up the gateway from pre-built endorsers. Used by NewWithSigner
 // and directly by integration tests that manage their own endorsers.
-func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorsers []eapi.Service, endorserSyncs []*network.Synchronizer, lightKVS interface{}) (*App, error) {
-	ec, err := core.NewEndorsementClient(endorsers, gwSigner, cfg.Network.Channel, cfg.Network.Namespace, cfg.Network.NsVersion)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create endorsement client: %w", err)
-	}
-
+func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorsers []eapi.Service, endorserSyncs []*network.Synchronizer, lightKVS estorage.KVS) (*App, error) {
 	orderers := make([]network.OrdererConf, len(cfg.Gateway.Orderers))
 	for i, o := range cfg.Gateway.Orderers {
 		orderers[i] = o.ToOrdererConf()
 	}
 
 	// Create multiple submitter instances for parallel submission (one per worker)
-	submitterCount := cfg.Gateway.SubmitterCount
-	if submitterCount <= 0 {
-		submitterCount = core.DefaultNumWorkers
-	}
-	submitters := make([]core.Submitter, submitterCount)
-	for i := 0; i < submitterCount; i++ {
-		switch cfg.Network.Protocol {
-		case "fabric":
-			submitters[i], err = nfab.NewSubmitter(ctx, orderers, gwSigner, 0, logger)
-		case "fabric-x", "":
-			submitters[i], err = nfabx.NewSubmitter(ctx, orderers, gwSigner, 0, logger)
-		default:
-			return nil, fmt.Errorf("unsupported protocol: %q", cfg.Network.Protocol)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("failed to create submitter %d: %w", i, err)
-		}
+	submitters, err := NewNetworkSubmitters(ctx, cfg.Network.Protocol, orderers, gwSigner, cfg.Gateway.SubmitterCount, logger)
+	if err != nil {
+		return nil, err
 	}
 
 	chain, err := core.NewChain(cfg.Gateway.Database.ConnString, cfg.Gateway.Database.TriePath, false)
@@ -127,28 +112,15 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 		return nil, fmt.Errorf("failed to create chain: %w", err)
 	}
 
-	// Create BatchSubmitter infrastructure (no cache needed — app uses chain-based synchronizer)
-	endorsementChan := make(chan sdk.Endorsement, 1000)
-	batchSubmitter := core.NewBatchSubmitter(submitters, endorsementChan, cfg.Gateway.SubmitterCount)
-	batchSubmitter.Start(ctx)
-
 	// Gateway owns the BatchSubmitter and will handle its lifecycle
-	gateway, err := core.New(ec, batchSubmitter, chain, cfg.Network.ChainID, cfg.Gateway.WorkerCount, nil, endorsementChan)
+	gateway, err := BuildGateway(ctx, endorsers, gwSigner, cfg.Network, chain, submitters, cfg.Gateway.SubmitterCount, cfg.Gateway.WorkerCount, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create gateway: %w", err)
+		return nil, err
 	}
 
 	// Create synchronizer with both chain and gateway as handlers
 	// Chain must be called first to persist blocks, then gateway to mark transactions complete
-	var gwSync *network.Synchronizer
-	switch cfg.Network.Protocol {
-	case "fabric":
-		gwSync, err = nfab.NewSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, chain, gateway)
-	case "fabric-x", "":
-		gwSync, err = nfabx.NewSynchronizer(chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, chain, gateway)
-	default:
-		return nil, fmt.Errorf("unsupported protocol: %q", cfg.Network.Protocol)
-	}
+	gwSync, err := NewGatewaySynchronizer(cfg.Network.Protocol, chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, chain, gateway)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gateway synchronizer: %w", err)
 	}
@@ -210,7 +182,7 @@ func (a *App) Run(ctx context.Context) error {
 
 	// Wait for initial sync before serving traffic
 	for i, sync := range a.endorserSyncs {
-		if err := waitUntilSynced(gctx, sync, 10*time.Second); err != nil {
+		if err := WaitUntilSynced(gctx, sync, 10*time.Second); err != nil {
 			return err
 		}
 		appLogger.Debugf("endorser %d synced", i)
@@ -273,7 +245,8 @@ func (a *App) Shutdown() error {
 	return nil
 }
 
-func waitUntilSynced(ctx context.Context, sync *network.Synchronizer, timeout time.Duration) error {
+// WaitUntilSynced blocks until sync reports Ready or timeout elapses, polling every 100ms.
+func WaitUntilSynced(ctx context.Context, sync *network.Synchronizer, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
