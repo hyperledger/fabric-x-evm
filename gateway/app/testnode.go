@@ -86,14 +86,12 @@ func NewTestNode(ctx context.Context, tcfg TestNodeConfig) (*App, error) {
 			ChainID:   tcfg.ChainID,
 		},
 		Gateway: config.Gateway{
-			Listen:           tcfg.Listen,
-			Database:         config.DB{ConnString: ":memory:"},
-			Orderers:         []common.ClientConfig{{Endpoint: orderer}},
-			Committer:        common.ClientConfig{Endpoint: peer},
-			EnableTestRPC:    true,
-			TestAccountsPath: tcfg.TestAccountsPath,
+			Listen:    tcfg.Listen,
+			Database:  config.DB{ConnString: ":memory:"},
+			Orderers:  []common.ClientConfig{{Endpoint: orderer}},
+			Committer: common.ClientConfig{Endpoint: peer},
 		},
 	}
 
-	return buildApp(ctx, cfg, signer, logger, []eapi.Service{endorser}, nil, endorserKVS, endorserKVS)
+	return buildApp(ctx, cfg, signer, logger, []eapi.Service{endorser}, nil, endorserKVS, true, tcfg.TestAccountsPath, endorserKVS)
 }

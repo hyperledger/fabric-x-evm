@@ -122,24 +122,18 @@ func newTestNodeCmd() *cobra.Command {
 	cmd.Flags().Int64Var(&chainID, "chain-id", 31337, "Ethereum chain ID (self-contained mode only)")
 	cmd.Flags().StringVar(&protocol, "protocol", "fabric-x", "Network protocol: fabric or fabric-x (self-contained mode only)")
 
-	return cmd
-}
+	// --listen/--chain-id/--protocol only apply to the self-contained path; reject them
+	// alongside --config instead of silently ignoring them.
+	cmd.MarkFlagsMutuallyExclusive("config", "listen")
+	cmd.MarkFlagsMutuallyExclusive("config", "chain-id")
+	cmd.MarkFlagsMutuallyExclusive("config", "protocol")
 
-func printTestNodeWarning() {
-	fmt.Println("========================================")
-	fmt.Println("WARNING: Test node mode enabled")
-	fmt.Println("WARNING: Test RPC methods enabled")
-	fmt.Println("WARNING: Server-side signing is UNSAFE")
-	fmt.Println("WARNING: Using in-memory trie DB")
-	fmt.Println("WARNING: NEVER use in production")
-	fmt.Println("========================================")
+	return cmd
 }
 
 // runSelfContainedTestNode starts a testnode with no external dependencies: an
 // in-process fabrictest network, ephemeral local identities, in-memory storage.
 func runSelfContainedTestNode(ctx context.Context, listen string, chainID int64, protocol, testAccountsPath string) error {
-	printTestNodeWarning()
-
 	application, err := app.NewTestNode(ctx, app.TestNodeConfig{
 		Listen:           listen,
 		ChainID:          chainID,
@@ -163,15 +157,7 @@ func runTestNodeWithConfig(ctx context.Context, configPath, testAccountsPath str
 		return fmt.Errorf("invalid config %q: %w", configPath, err)
 	}
 
-	cfg.Gateway.EnableTestRPC = true
-
-	if testAccountsPath != "" {
-		cfg.Gateway.TestAccountsPath = testAccountsPath
-	}
-
-	printTestNodeWarning()
-
-	application, err := app.New(ctx, cfg)
+	application, err := app.NewTestNodeWithConfig(ctx, cfg, testAccountsPath)
 	if err != nil {
 		return err
 	}

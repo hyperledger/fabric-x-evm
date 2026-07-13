@@ -49,7 +49,7 @@ type App struct {
 func (a *App) Gateway() *core.Gateway { return a.gateway }
 
 // New creates a new gateway application from the provided configuration.
-// It loads the gateway signer from the MSP directory configured in cfg.
+// It loads the gateway signer from the MSP directory configured in cfg. Test RPC is never enabled.
 func New(ctx context.Context, cfg config.Config) (*App, error) {
 	gwSigner, err := identity.SignerFromMSP(cfg.Gateway.Identity.MSPDir, cfg.Gateway.Identity.MspID)
 	if err != nil {
@@ -61,6 +61,20 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 // NewWithSigner builds the gateway application with the provided signer.
 // Useful for callers that manage identity externally, such as integration tests.
 func NewWithSigner(ctx context.Context, cfg config.Config, gwSigner sdk.Signer) (*App, error) {
+	return newApp(ctx, cfg, gwSigner, false, "")
+}
+
+// NewTestNodeWithConfig builds a gateway against a real ordering backend described by cfg,
+// with test RPC forced on.
+func NewTestNodeWithConfig(ctx context.Context, cfg config.Config, testAccountsPath string) (*App, error) {
+	gwSigner, err := identity.SignerFromMSP(cfg.Gateway.Identity.MSPDir, cfg.Gateway.Identity.MspID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create gateway signer: %w", err)
+	}
+	return newApp(ctx, cfg, gwSigner, true, testAccountsPath)
+}
+
+func newApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, enableTestRPC bool, testAccountsPath string) (*App, error) {
 	logger := sdk.NewStdLogger("gateway")
 
 	// Create endorsers and their synchronizers.
@@ -69,7 +83,7 @@ func NewWithSigner(ctx context.Context, cfg config.Config, gwSigner sdk.Signer) 
 	var firstKVS estorage.KVS // Keep first endorser's KVS for test server
 	for i, ecfg := range cfg.Endorsers {
 		// Set history size: always 128 for test RPC (snapshot/revert), else default to 2 if not set
-		if cfg.Gateway.EnableTestRPC {
+		if enableTestRPC {
 			ecfg.Database.HistorySize = 128
 		} else if ecfg.Database.HistorySize == 0 {
 			ecfg.Database.HistorySize = 2
@@ -80,7 +94,7 @@ func NewWithSigner(ctx context.Context, cfg config.Config, gwSigner sdk.Signer) 
 			return nil, fmt.Errorf("failed to create signer: %w", err)
 		}
 
-		end, sync, kvs, err := eapp.NewEndorser(ecfg, cfg.Network, eSigner, logger, cfg.Gateway.EnableTestRPC)
+		end, sync, kvs, err := eapp.NewEndorser(ecfg, cfg.Network, eSigner, logger, enableTestRPC)
 		if err != nil {
 			return nil, fmt.Errorf("endorser %d (%s): %w", i, ecfg.Name, err)
 		}
@@ -91,13 +105,12 @@ func NewWithSigner(ctx context.Context, cfg config.Config, gwSigner sdk.Signer) 
 		}
 	}
 
-	return buildApp(ctx, cfg, gwSigner, logger, endorsers, endorserSyncs, firstKVS)
+	return buildApp(ctx, cfg, gwSigner, logger, endorsers, endorserSyncs, firstKVS, enableTestRPC, testAccountsPath)
 }
 
-// buildApp wires up the gateway from pre-built endorsers. Used by NewWithSigner
-// and directly by integration tests that manage their own endorsers.
+// buildApp wires up the gateway from pre-built endorsers.
 // extraHandlers are prepended to the synchronizer handler list, ahead of chain/gateway.
-func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorsers []eapi.Service, endorserSyncs []*network.Synchronizer, lightKVS estorage.KVS, extraHandlers ...blocks.BlockHandler) (*App, error) {
+func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorsers []eapi.Service, endorserSyncs []*network.Synchronizer, lightKVS estorage.KVS, enableTestRPC bool, testAccountsPath string, extraHandlers ...blocks.BlockHandler) (*App, error) {
 	orderers := make([]network.OrdererConf, len(cfg.Gateway.Orderers))
 	for i, o := range cfg.Gateway.Orderers {
 		orderers[i] = o.ToOrdererConf()
@@ -121,7 +134,7 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 	}
 
 	// Chain must be called before gateway, to persist blocks before marking transactions complete.
-	handlers := append(append([]blocks.BlockHandler{}, extraHandlers...), chain, gateway)
+	handlers := append(extraHandlers, chain, gateway)
 	gwSync, err := NewGatewaySynchronizer(cfg.Network.Protocol, chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, handlers...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gateway synchronizer: %w", err)
@@ -129,12 +142,12 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 
 	// Create RPC server - use test server if explicitly enabled
 	var rpcServer *rpc.Server
-	if cfg.Gateway.EnableTestRPC {
+	if enableTestRPC {
 		// UNSAFE: Test RPC methods enabled - load test accounts
 		appLogger.Warn("Test RPC methods enabled (eth_accounts, eth_sendTransaction)")
 		appLogger.Warn("Server-side signing is unsafe and should never be used in production")
 
-		testAccountMgr, err := testimpl.LoadTestAccounts(cfg.Gateway.TestAccountsPath)
+		testAccountMgr, err := testimpl.LoadTestAccounts(testAccountsPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load test accounts: %w", err)
 		}
