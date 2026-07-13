@@ -73,7 +73,13 @@ func NewWithSigner(ctx context.Context, cfg config.Config, gwSigner sdk.Signer) 
 		} else if ecfg.Database.HistorySize == 0 {
 			ecfg.Database.HistorySize = 2
 		}
-		end, sync, kvs, err := eapp.NewEndorser(ecfg, cfg.Network, logger, cfg.Gateway.EnableTestRPC)
+		// load the identity to connect to the peer for synchronizing, and for signing the endorsement.
+		eSigner, err := identity.SignerFromMSP(ecfg.Identity.MSPDir, ecfg.Identity.MspID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create signer: %w", err)
+		}
+
+		end, sync, kvs, err := eapp.NewEndorser(ecfg, cfg.Network, eSigner, logger, cfg.Gateway.EnableTestRPC)
 		if err != nil {
 			return nil, fmt.Errorf("endorser %d (%s): %w", i, ecfg.Name, err)
 		}

@@ -18,7 +18,6 @@ import (
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	efab "github.com/hyperledger/fabric-x-sdk/endorsement/fabric"
 	efabx "github.com/hyperledger/fabric-x-sdk/endorsement/fabricx"
-	"github.com/hyperledger/fabric-x-sdk/identity"
 	sdknet "github.com/hyperledger/fabric-x-sdk/network"
 	nfab "github.com/hyperledger/fabric-x-sdk/network/fabric"
 	nfabx "github.com/hyperledger/fabric-x-sdk/network/fabricx"
@@ -85,15 +84,10 @@ func NewEndorserCore(
 func NewEndorser(
 	cfg config.Endorser,
 	network common.Network,
+	signer sdk.Signer,
 	logger sdk.Logger,
 	testImpl bool,
 ) (*core.Endorser, *sdknet.Synchronizer, storage.KVS, error) {
-	// Signer is the identity to connect to the peer for synchronizing, and for signing the endorsement.
-	signer, err := identity.SignerFromMSP(cfg.Identity.MSPDir, cfg.Identity.MspID)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to create signer: %w", err)
-	}
-
 	evmConfig := execution.EVMConfig{
 		ChainConfig: common.BuildChainConfig(network.ChainID),
 		MaxTxGas:    network.MaxTxGas,
