@@ -11,6 +11,7 @@ package testimpl
 
 import (
 	"crypto/ecdsa"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -19,6 +20,9 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 )
+
+//go:embed test_accounts.json
+var embeddedTestAccounts []byte
 
 // TestAccount represents a test account with address and private key
 type TestAccount struct {
@@ -37,21 +41,26 @@ type TestAccountManager struct {
 	PrivateKeys map[common.Address]*ecdsa.PrivateKey
 }
 
-// LoadTestAccounts loads test accounts from a JSON file and pre-converts private keys
+// DefaultTestAccounts returns the embedded default Hardhat test accounts.
+func DefaultTestAccounts() (*TestAccountManager, error) {
+	return parseTestAccounts(embeddedTestAccounts)
+}
+
+// LoadTestAccounts loads test accounts from a JSON file and pre-converts private keys.
+// An empty path returns DefaultTestAccounts().
 func LoadTestAccounts(path string) (*TestAccountManager, error) {
 	if path == "" {
-		// Return empty manager if no path configured
-		return &TestAccountManager{
-			Addresses:   []common.Address{},
-			PrivateKeys: make(map[common.Address]*ecdsa.PrivateKey),
-		}, nil
+		return DefaultTestAccounts()
 	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read test accounts file: %w", err)
 	}
+	return parseTestAccounts(data)
+}
 
+func parseTestAccounts(data []byte) (*TestAccountManager, error) {
 	var accountsFile TestAccountsFile
 	if err := json.Unmarshal(data, &accountsFile); err != nil {
 		return nil, fmt.Errorf("failed to parse test accounts JSON: %w", err)
