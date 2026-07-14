@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // parsers maps a --format value to the adapter that turns a runner's raw output
@@ -23,7 +24,7 @@ var parsers = map[string]func([]byte) ([]Result, error){
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: baseline <check|update> [flags]")
+		fmt.Fprintln(os.Stderr, "usage: baseline <check|update|tag> [flags]")
 		os.Exit(2)
 	}
 
@@ -33,8 +34,10 @@ func main() {
 		code = runCheck(os.Args[2:])
 	case "update":
 		code = runUpdate(os.Args[2:])
+	case "tag":
+		code = runTag(os.Args[2:])
 	default:
-		fmt.Fprintf(os.Stderr, "unknown subcommand %q (want check or update)\n", os.Args[1])
+		fmt.Fprintf(os.Stderr, "unknown subcommand %q (want check, update, or tag)\n", os.Args[1])
 		code = 2
 	}
 	os.Exit(code)
@@ -187,5 +190,79 @@ func runUpdate(args []string) int {
 
 	fmt.Printf("%s: %d entries removed, %d entries added, %d total now\n",
 		f.baselinePath, len(diff.Stale), len(diff.Regressions), len(updated))
+	return 0
+}
+
+// tagMatching sets Cause (and Note, if given) on every baseline entry that is
+// still failing (present in messageByID) and whose ID or current message
+// contains match. Returns how many entries changed. A human decision, made in
+// bulk instead of one JSON edit at a time.
+//
+// An entry that already has a Cause is left untouched unless force is true —
+// a broad ID match (e.g. a whole describe block) can otherwise silently
+// clobber a more specific tag an earlier pass already got right.
+func tagMatching(baseline []Entry, messageByID map[string]string, match, cause, note string, force bool) int {
+	n := 0
+	for i, e := range baseline {
+		if e.Cause != "" && !force {
+			continue
+		}
+		msg, stillFailing := messageByID[e.ID]
+		if !stillFailing {
+			continue
+		}
+		if !strings.Contains(e.ID, match) && !strings.Contains(msg, match) {
+			continue
+		}
+		baseline[i].Cause = cause
+		if note != "" {
+			baseline[i].Note = note
+		}
+		n++
+	}
+	return n
+}
+
+func runTag(args []string) int {
+	fs := flag.NewFlagSet("tag", flag.ContinueOnError)
+	baselinePath := fs.String("baseline", "", "path to the baseline JSON file")
+	resultsGlob := fs.String("results", "", "glob of raw results files to parse")
+	format := fs.String("format", "mocha-json", "raw results format (mocha-json)")
+	match := fs.String("match", "", "substring to match against each entry's ID or current failure message")
+	cause := fs.String("cause", "", "cause to assign to every matching entry")
+	note := fs.String("note", "", "optional note to assign alongside cause")
+	force := fs.Bool("force", false, "overwrite entries that already have a cause (default: leave them untouched)")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+	if *baselinePath == "" || *resultsGlob == "" || *match == "" || *cause == "" {
+		fmt.Fprintln(os.Stderr, "usage: baseline tag --baseline <path> --results <glob> --match <substring> --cause <name> [--note <text>] [--force]")
+		return 2
+	}
+
+	results, err := loadResults(*format, *resultsGlob)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+	baseline, err := LoadBaseline(*baselinePath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+
+	diff := Diff(results, baseline)
+	messageByID := make(map[string]string, len(diff.Expected))
+	for _, exp := range diff.Expected {
+		messageByID[exp.Entry.ID] = exp.Result.Message
+	}
+
+	n := tagMatching(baseline, messageByID, *match, *cause, *note, *force)
+	if err := SaveBaseline(*baselinePath, baseline); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+	fmt.Printf("%s: tagged %d entries matching %q with cause %q\n", *baselinePath, n, *match, *cause)
 	return 0
 }

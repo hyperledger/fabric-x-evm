@@ -29,10 +29,14 @@ Currently supports Mocha's JSON reporter (`--format mocha-json`, the default).
 
 ```shell
 cd testdata/openzeppelin-contracts
-HARDHAT_REPORTER=json npx hardhat test test/token/ERC20/ERC20.test.js \
-  --config ../hardhat.wrapper.config.js --network fabricevm \
-  > /tmp/oz-results.json
+HARDHAT_JSON_OUTPUT=/tmp/oz-results.json npx hardhat test test/token/ERC20/ERC20.test.js \
+  --config ../hardhat.wrapper.config.js --network fabricevm
 ```
+
+`HARDHAT_JSON_OUTPUT` switches to the combined reporter
+([`testdata/mocha-spec-and-json-reporter.js`](../../testdata/mocha-spec-and-json-reporter.js)):
+the usual pass/fail console view still prints live, and the JSON lands at the given path —
+one run gives both, instead of picking one or the other.
 
 ## Check (the CI gate)
 
@@ -58,7 +62,7 @@ nothing is listed yet):
 $ go run ./cmd/baseline check --suite oz-hardhat --baseline /tmp/empty.json --results /tmp/permit-results.json
 # Baseline check: oz-hardhat
 
-2 passed, 4 failed, 0 skipped (6 total)
+2 passed, 4 failed, 0 skipped (6 total, 33.3% passing)
 
 ## Regressions (4)
 
@@ -72,21 +76,27 @@ $ echo $?
 ```
 
 Same run again after the baseline is seeded (see `update` below) — clean, with the histogram
-grouping the four by their shared cause:
+grouping the four by their shared, auto-tagged cause (see `inferCause` in `baseline.go`: a message
+naming its own missing RPC method, or matching one of our own known constants, gets tagged without a
+human needing to look):
 
 ```
 $ go run ./cmd/baseline check --suite oz-hardhat --baseline testdata/oz_known_failures.json --results /tmp/permit-results.json
 # Baseline check: oz-hardhat
 
-2 passed, 4 failed, 0 skipped (6 total)
+2 passed, 4 failed, 0 skipped (6 total, 33.3% passing)
 
 ## Expected failures by cause (4)
 
-- the method eth_signTypedData_v4 does not exist/is not available: 4
+- eth_signTypedData_v4: 4
 
 $ echo $?
 0
 ```
+
+A run spanning multiple suites (multiple `--results` files, or one glob matching several) adds a
+`## By suite` breakdown, sorted worst-first, so you can see at a glance where compatibility still
+needs the most work — and watch that shrink over time as fixes land.
 
 ## Update (seed or reconcile the baseline)
 
@@ -97,9 +107,10 @@ go run ./cmd/baseline update \
   --results /tmp/oz-results.json
 ```
 
-Rewrites the baseline file: drops stale entries, adds a blank-`cause` entry for every new failure.
-Safe to run any time — for the initial seed, or after a dependency bump shifts what fails. No
-hand-curation needed to land it; tag `cause` on entries later, opportunistically.
+Rewrites the baseline file: drops stale entries, adds an entry for every new failure — auto-tagging
+`cause` for the high-confidence signatures `inferCause` recognizes, leaving the rest blank for a
+human to tag opportunistically (or bulk-tag with `tag`, below). Safe to run any time — for the
+initial seed, or after a dependency bump shifts what fails. No hand-curation needed to land it.
 
 ```
 $ go run ./cmd/baseline update --suite oz-hardhat --baseline testdata/oz_known_failures.json --results /tmp/permit-results.json
@@ -108,16 +119,37 @@ testdata/oz_known_failures.json: 0 entries removed, 4 entries added, 4 total now
 $ cat testdata/oz_known_failures.json
 [
   {
-    "id": "ERC20Permit permit accepts owner signature"
+    "id": "ERC20Permit permit accepts owner signature",
+    "cause": "eth_signTypedData_v4"
   },
   {
-    "id": "ERC20Permit permit rejects expired permit"
+    "id": "ERC20Permit permit rejects expired permit",
+    "cause": "eth_signTypedData_v4"
   },
   {
-    "id": "ERC20Permit permit rejects other signature"
+    "id": "ERC20Permit permit rejects other signature",
+    "cause": "eth_signTypedData_v4"
   },
   {
-    "id": "ERC20Permit permit rejects reused signature"
+    "id": "ERC20Permit permit rejects reused signature",
+    "cause": "eth_signTypedData_v4"
   }
 ]
 ```
+
+## Tag (bulk-assign a cause)
+
+```shell
+go run ./cmd/baseline tag \
+  --baseline testdata/oz_known_failures.json \
+  --results '/tmp/oz-hardhat-results/*.json' \
+  --match "Packing" \
+  --cause "max-code-size"
+```
+
+Sets `cause` (and optionally `--note`) on every still-failing entry whose ID or current message
+contains `--match` — for a symptom that's too broad or too varied in wording for `inferCause` to
+recognize automatically, but that a human can look at once and confidently label in bulk (e.g. a
+whole describe block, or a message fragment shared across many tests). Entries that already have a
+cause are left alone unless `--force` is passed — a broad match shouldn't silently overwrite a more
+specific tag an earlier, more targeted pass already got right.

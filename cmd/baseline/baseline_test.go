@@ -73,6 +73,39 @@ func TestParseMochaJSON_HookFailure(t *testing.T) {
 	}
 }
 
+func TestSuiteOf(t *testing.T) {
+	cases := []struct{ file, want string }{
+		{"/repo/testdata/openzeppelin-contracts/test/token/ERC20/ERC20.test.js", "token"},
+		{"/repo/testdata/openzeppelin-contracts/test/finance/VestingWallet.test.js", "finance"},
+		{"", ""},
+		{"no-test-dir-here.js", "no-test-dir-here.js"},
+	}
+	for _, c := range cases {
+		if got := suiteOf(c.file); got != c.want {
+			t.Errorf("suiteOf(%q) = %q, want %q", c.file, got, c.want)
+		}
+	}
+}
+
+func TestBySuite(t *testing.T) {
+	results := []Result{
+		{ID: "a", Status: StatusPass, File: "/x/test/token/A.test.js"},
+		{ID: "b", Status: StatusFail, File: "/x/test/token/B.test.js"},
+		{ID: "c", Status: StatusPass, File: "/x/test/utils/C.test.js"},
+		{ID: "d", Status: StatusPass, File: "/x/test/utils/D.test.js"},
+	}
+
+	stats := bySuite(results)
+
+	want := []suiteStats{
+		{name: "token", pass: 1, fail: 1}, // 50% — worse, sorts first
+		{name: "utils", pass: 2, fail: 0}, // 100%
+	}
+	if !reflect.DeepEqual(stats, want) {
+		t.Fatalf("got %+v, want %+v", stats, want)
+	}
+}
+
 func TestBaseline_RoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "known_failures.json")
 
@@ -152,6 +185,51 @@ func TestDiff_NothingWrong(t *testing.T) {
 	diff := Diff(results, baseline)
 	if diff.Regressed() {
 		t.Fatalf("expected clean diff, got regressions=%+v stale=%+v", diff.Regressions, diff.Stale)
+	}
+}
+
+func TestInferCause(t *testing.T) {
+	cases := []struct {
+		message string
+		want    string
+	}{
+		{"the method hardhat_mine does not exist/is not available", "hardhat_mine"},
+		{"the method eth_signTypedData_v4 does not exist/is not available", "eth_signTypedData_v4"},
+		{"insufficient funds for gas * price + value: address 0xabc have 0 want 100", "insufficient-funds"},
+		{"execution reverted", ""},
+		{"expected 3 to equal 4", ""},
+	}
+	for _, c := range cases {
+		if got := inferCause(c.message); got != c.want {
+			t.Errorf("inferCause(%q) = %q, want %q", c.message, got, c.want)
+		}
+	}
+}
+
+func TestReconcile_AutoTagsKnownCauses(t *testing.T) {
+	baseline := []Entry{
+		{ID: "still failing, untagged"},
+	}
+	diff := DiffResult{
+		Regressions: []Result{
+			{ID: "new hardhat_mine failure", Status: StatusFail, Message: "the method hardhat_mine does not exist/is not available"},
+		},
+		Expected: []ExpectedFailure{
+			{
+				Result: Result{ID: "still failing, untagged", Status: StatusFail, Message: "the method eth_signTypedData_v4 does not exist/is not available"},
+				Entry:  baseline[0],
+			},
+		},
+	}
+
+	got := Reconcile(baseline, diff)
+
+	want := []Entry{
+		{ID: "still failing, untagged", Cause: "eth_signTypedData_v4"},
+		{ID: "new hardhat_mine failure", Cause: "hardhat_mine"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v, want %+v", got, want)
 	}
 }
 

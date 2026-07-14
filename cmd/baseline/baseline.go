@@ -11,7 +11,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"sort"
+	"strings"
 )
 
 // Status is the outcome of a single test, normalized across runner formats.
@@ -25,16 +27,19 @@ const (
 
 // Result is one test's outcome, normalized from whatever runner produced it.
 // ID is the runner's own full test name, used verbatim (Mocha's fullTitle,
-// or go test's hierarchical subtest name) — never reformatted.
+// or go test's hierarchical subtest name) — never reformatted. File is the
+// source file the runner attributes the test to, if it reports one; used only
+// to group the report by suite, never persisted to a baseline Entry.
 type Result struct {
 	ID      string
 	Status  Status
 	Message string
+	File    string
 }
 
 // Entry is one checked-in baseline record: a test expected to fail today.
 // Cause and Note are optional human annotations, filled in opportunistically —
-// never required for an entry to be valid (see BASELINE_PLAN.md's "Two workflows").
+// never required for an entry to be valid.
 type Entry struct {
 	ID    string `json:"id"`
 	Cause string `json:"cause,omitempty"`
@@ -57,7 +62,7 @@ type DiffResult struct {
 
 // Regressed reports whether the diff should fail CI: any regression, or any stale
 // entry (a listed test that no longer fails is exactly as much "baseline doesn't
-// match reality" as a new failure — see BASELINE_PLAN.md's diff semantics).
+// match reality" as a new failure).
 func (d DiffResult) Regressed() bool {
 	return len(d.Regressions) > 0 || len(d.Stale) > 0
 }
@@ -67,6 +72,7 @@ func (d DiffResult) Regressed() bool {
 // shape; err is an empty object for a pass, or has Message set for a failure.
 type mochaTest struct {
 	FullTitle string   `json:"fullTitle"`
+	File      string   `json:"file"`
 	Err       mochaErr `json:"err"`
 }
 
@@ -102,7 +108,7 @@ func ParseMochaJSON(data []byte) ([]Result, error) {
 	seen := make(map[string]bool, len(report.Tests))
 	for _, t := range report.Tests {
 		seen[t.FullTitle] = true
-		r := Result{ID: t.FullTitle}
+		r := Result{ID: t.FullTitle, File: t.File}
 		switch {
 		case pending[t.FullTitle]:
 			r.Status = StatusSkip
@@ -122,7 +128,7 @@ func ParseMochaJSON(data []byte) ([]Result, error) {
 		if seen[f.FullTitle] {
 			continue
 		}
-		results = append(results, Result{ID: f.FullTitle, Status: StatusFail, Message: f.Err.Message})
+		results = append(results, Result{ID: f.FullTitle, Status: StatusFail, Message: f.Err.Message, File: f.File})
 	}
 	return results, nil
 }
@@ -163,8 +169,11 @@ func SaveBaseline(path string, entries []Entry) error {
 	return nil
 }
 
-// Diff compares current results against a baseline. See BASELINE_PLAN.md's "Diff
-// semantics" for the 4-way matrix this implements.
+// Diff compares current results against a baseline: failing-and-listed is
+// expected (the normal case), failing-and-unlisted is a regression, and
+// listed-but-not-failing (including a listed ID that no longer appears in
+// results at all — renamed or removed upstream) is stale and should be
+// removed from the baseline.
 func Diff(results []Result, baseline []Entry) DiffResult {
 	byID := make(map[string]Entry, len(baseline))
 	for _, e := range baseline {
@@ -198,30 +207,139 @@ func Diff(results []Result, baseline []Entry) DiffResult {
 	return out
 }
 
-// Reconcile computes the updated baseline for `update`: drop stale entries, add a
-// blank-cause entry for every regression. Existing entries (including their cause/
-// note tags) are left untouched.
+// causeSignature is a high-confidence, mechanical rule for deriving a cause from
+// a failure message: the message names its own cause (a missing RPC method) —
+// never a guess at what a generic assertion diff is actually about. Order
+// matters: first match wins.
+var causeSignatures = []struct {
+	pattern *regexp.Regexp
+	cause   func(match []string) string
+}{
+	{
+		pattern: regexp.MustCompile(`^the method (\S+) does not exist/is not available$`),
+		cause:   func(m []string) string { return m[1] },
+	},
+	{
+		pattern: regexp.MustCompile(`^insufficient funds for gas \* price \+ value`),
+		cause:   func(m []string) string { return "insufficient-funds" },
+	},
+}
+
+// inferCause returns the cause tag for a message matching a known signature
+// above, or "" if none match — left for a human to tag opportunistically.
+func inferCause(message string) string {
+	for _, sig := range causeSignatures {
+		if m := sig.pattern.FindStringSubmatch(message); m != nil {
+			return sig.cause(m)
+		}
+	}
+	return ""
+}
+
+// Reconcile computes the updated baseline for `update`: drop stale entries, add
+// an entry for every regression, and backfill `cause` (via inferCause) for any
+// entry — new or existing — that doesn't already have one. An existing cause,
+// however it was set, is never overwritten.
 func Reconcile(baseline []Entry, diff DiffResult) []Entry {
 	stale := make(map[string]bool, len(diff.Stale))
 	for _, e := range diff.Stale {
 		stale[e.ID] = true
 	}
+	messageByID := make(map[string]string, len(diff.Expected))
+	for _, exp := range diff.Expected {
+		messageByID[exp.Entry.ID] = exp.Result.Message
+	}
 
 	out := make([]Entry, 0, len(baseline)+len(diff.Regressions))
 	for _, e := range baseline {
-		if !stale[e.ID] {
-			out = append(out, e)
+		if stale[e.ID] {
+			continue
 		}
+		if e.Cause == "" {
+			e.Cause = inferCause(messageByID[e.ID])
+		}
+		out = append(out, e)
 	}
 	for _, r := range diff.Regressions {
-		out = append(out, Entry{ID: r.ID})
+		out = append(out, Entry{ID: r.ID, Cause: inferCause(r.Message)})
 	}
 	return out
 }
 
-// WriteReport prints a human-readable summary: headline counts, regressions, stale
-// entries, and a cause histogram of expected failures (grouped by the entry's Cause
-// tag, falling back to the raw failure message when Cause is blank).
+// passRate is the percentage of executed (non-skipped) results that passed.
+// Skipped results are excluded from the denominator — they're neither a pass
+// nor a fail, so including them would dilute the number in either direction.
+func passRate(pass, fail int) float64 {
+	if pass+fail == 0 {
+		return 0
+	}
+	return float64(pass) / float64(pass+fail) * 100
+}
+
+// suiteOf derives a coarse grouping label from a test's source file path — the
+// first path segment under "test/", e.g. ".../test/token/ERC20/ERC20.test.js"
+// -> "token". Falls back to the full file (or "" if the runner didn't report
+// one, e.g. go test has no per-test file) when the path doesn't have that shape.
+func suiteOf(file string) string {
+	const marker = "/test/"
+	idx := strings.LastIndex(file, marker)
+	if idx == -1 {
+		return file
+	}
+	rest := file[idx+len(marker):]
+	if slash := strings.Index(rest, "/"); slash != -1 {
+		return rest[:slash]
+	}
+	return rest
+}
+
+type suiteStats struct {
+	name             string
+	pass, fail, skip int
+}
+
+// bySuite buckets results by suiteOf(r.File), sorted by pass rate ascending
+// (the worst-performing suite first) — the same ROI-ranking idea as the cause
+// histogram, but for "where to look next" rather than "what to fix next".
+func bySuite(results []Result) []suiteStats {
+	stats := make(map[string]*suiteStats)
+	var order []string
+	for _, r := range results {
+		name := suiteOf(r.File)
+		s, ok := stats[name]
+		if !ok {
+			s = &suiteStats{name: name}
+			stats[name] = s
+			order = append(order, name)
+		}
+		switch r.Status {
+		case StatusPass:
+			s.pass++
+		case StatusFail:
+			s.fail++
+		case StatusSkip:
+			s.skip++
+		}
+	}
+
+	out := make([]suiteStats, 0, len(order))
+	for _, name := range order {
+		out = append(out, *stats[name])
+	}
+	sort.Slice(out, func(i, j int) bool {
+		ri, rj := passRate(out[i].pass, out[i].fail), passRate(out[j].pass, out[j].fail)
+		if ri != rj {
+			return ri < rj
+		}
+		return out[i].name < out[j].name
+	})
+	return out
+}
+
+// WriteReport prints a human-readable summary: headline counts and pass rate, a
+// per-suite breakdown (to see where compatibility is improving), regressions,
+// stale entries, and a cause histogram of expected failures (grouped by the
+// entry's Cause tag, falling back to the raw failure message when blank).
 func WriteReport(w io.Writer, suite string, results []Result, diff DiffResult) {
 	var pass, fail, skip int
 	for _, r := range results {
@@ -236,7 +354,16 @@ func WriteReport(w io.Writer, suite string, results []Result, diff DiffResult) {
 	}
 
 	fmt.Fprintf(w, "# Baseline check: %s\n\n", suite)
-	fmt.Fprintf(w, "%d passed, %d failed, %d skipped (%d total)\n\n", pass, fail, skip, len(results))
+	fmt.Fprintf(w, "%d passed, %d failed, %d skipped (%d total, %.1f%% passing)\n\n",
+		pass, fail, skip, len(results), passRate(pass, fail))
+
+	if suites := bySuite(results); len(suites) > 1 {
+		fmt.Fprintf(w, "## By suite\n\n")
+		for _, s := range suites {
+			fmt.Fprintf(w, "- %s: %d/%d passing (%.0f%%)\n", s.name, s.pass, s.pass+s.fail, passRate(s.pass, s.fail))
+		}
+		fmt.Fprintln(w)
+	}
 
 	if len(diff.Regressions) > 0 {
 		fmt.Fprintf(w, "## Regressions (%d)\n\n", len(diff.Regressions))
