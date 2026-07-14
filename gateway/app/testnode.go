@@ -68,7 +68,7 @@ func NewTestNode(ctx context.Context, tcfg TestNodeConfig) (*App, error) {
 		return nil, fmt.Errorf("failed to create endorser: %w", err)
 	}
 
-	// db1 makes fabrictest's MVCC validation read the same DB the endorser reads.
+	// endorserKVS makes fabrictest's MVCC validation read the same DB the endorser reads.
 	nw, err := fabrictest.Start(ctx, testNodeNamespace, protocol, fabrictest.Config{}, endorserKVS)
 	if err != nil {
 		return nil, fmt.Errorf("failed to start in-process network: %w", err)
