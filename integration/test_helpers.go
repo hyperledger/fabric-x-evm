@@ -27,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
 
+	"github.com/hyperledger/fabric-protos-go-apiv2/msp"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-common/protoutil"
 	"github.com/hyperledger/fabric-x-evm/common"
@@ -51,6 +52,7 @@ import (
 	nfab "github.com/hyperledger/fabric-x-sdk/network/fabric"
 	nfabx "github.com/hyperledger/fabric-x-sdk/network/fabricx"
 	"github.com/hyperledger/fabric-x-sdk/notification"
+	"google.golang.org/protobuf/proto"
 )
 
 // GetERC20BalanceSlot computes the storage slot for a balance in an ERC-20 mapping(address => uint256).
@@ -71,7 +73,7 @@ func (localSigner) Sign(msg []byte) ([]byte, error) {
 }
 
 func (localSigner) Serialize() ([]byte, error) {
-	return []byte("serialised identity"), nil
+	return proto.Marshal(&msp.SerializedIdentity{Mspid: "test-msp", IdBytes: []byte("serialised identity")})
 }
 
 // NewStatePrimer returns a reset StatePrimer ready for a new batch of state operations.
@@ -765,6 +767,9 @@ func waitForCommitT(t *testing.T, ec *ethclient.Client, tx *types.Transaction) {
 }
 
 func waitForCommit(ctx context.Context, ec *ethclient.Client, tx *types.Transaction) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
 	var err error
 
 	backoff := time.Duration(0)
@@ -775,7 +780,7 @@ func waitForCommit(ctx context.Context, ec *ethclient.Client, tx *types.Transact
 		_, pending, err = ec.TransactionByHash(ctx, tx.Hash())
 		if err != nil {
 			if !strings.Contains(err.Error(), "not found") {
-				return err
+				return fmt.Errorf("waiting for tx %s to commit: %w", tx.Hash(), err)
 			}
 			pending = true
 		}

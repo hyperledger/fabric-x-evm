@@ -344,7 +344,7 @@ func (sp *StatePrimer) commitAndWait(end sdk.Endorsement, tx *types.Transaction,
 	}
 
 	if wait {
-		waitForCommit(context.Background(), ec, tx)
+		return waitForCommit(context.Background(), ec, tx)
 	}
 
 	return nil
