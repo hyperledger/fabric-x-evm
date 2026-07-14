@@ -1,4 +1,4 @@
-# Endorsement API Design — Errors and Security
+# Endorsement API Design - Errors and Security
 
 > Part 2 of the endorsement API design. It defines how errors travel across the
 > gRPC boundary and the security and resilience properties the boundary must
@@ -8,9 +8,9 @@
 ## Table of Contents
 
 - [Scope](#scope)
-- [Error Model Today](#error-model-today)
-- [Three Error Classes](#three-error-classes)
-- [Two Channels: gRPC Status vs In-Band Response](#two-channels-grpc-status-vs-in-band-response)
+- [Error Model in the Endorser](#error-model-in-the-endorser)
+- [Error Classes](#error-classes)
+- [Two Channels: Response Status vs gRPC Error](#two-channels-response-status-vs-grpc-error)
 - [Error Mapping](#error-mapping)
 - [Transport Security: mTLS](#transport-security-mtls)
 - [Authentication and Authorization](#authentication-and-authorization)
@@ -22,129 +22,131 @@ How the API represents and transports failures, and how the boundary is secured
 and kept resilient. Configuration mechanics (where certs and timeouts are set)
 are in part 3; this part defines *what* the semantics must be.
 
-## Error Model Today
+## Error Model in the Endorser
 
-The endorser already distinguishes outcomes by status code in
-[`endorser/endorser.go`](../../../endorser/endorser.go):
+After the endorser restructure (#229), the endorser returns **every application
+outcome as a response with a status code** - never as a Go error. The Go error
+return is reserved for real gRPC/connectivity faults. This already prepares the
+code for the gRPC API and keeps application errors and infrastructure errors
+cleanly separate. Status codes are defined in
+[`common/proposal.go`](../../../common/proposal.go) and set in
+[`endorser/core/endorser.go`](../../../endorser/core/endorser.go):
 
-- **200 OK** - success, payload carries the result.
-- **201** - the EVM **reverted**; still in the success range so a transaction is
-  cut and the receipt records `status=0`, but distinguishable from 200.
-- **500** - an **execution error** occurred; returned in the `ProposalResponse`.
-- **Go error return** (`nil, err`) — a **pre-execution validation error**
-  (nonce, gas, signer, EIP-3860, blob checks); the transaction is rejected
-  before any envelope is cut.
+- **200 `StatusOK`** - success; payload carries the result.
+- **201 `StatusEVMRevert`** - the EVM **reverted**; a committed outcome, the
+  receipt records `status=0`.
+- **400 `StatusTxRejected`** - an **invalid transaction**, rejected before
+  execution (nonce, funds, intrinsic gas, signature).
+- **460 `StatusExecFailure`** - a **valid transaction whose EVM execution
+  failed** (out of gas, invalid opcode); should be mined (not yet).
+- **500 `StatusServerError`** - a server-side fault (e.g. a signing failure).
 
-The gateway consumes these in
-[`gateway/core/endorse.go`](../../../gateway/core/endorse.go): status `201`
-becomes a `*domain.RevertError` (mapped to JSON-RPC `-32000` with reason and
-data), any status outside `200–399` becomes a generic error.
+`ProcessEVMTransaction` returns `(response, nil)` for all of these; the gateway
+maps the status to its Ethereum response (e.g. a revert → JSON-RPC `-32000` with
+reason and data).
 
-## Three Error Classes
+## Error Classes
 
-Mapping to the classes the design must preserve:
+The status codes above fall into two groups:
 
-1. **Revert** - deterministic EVM revert. Carries a reason string and revert
-   data. Not a failure of the infrastructure; the transaction is valid and gets
-   committed with `status=0`. Status `201`.
-2. **Execution error** - the transaction executed but failed (out of gas,
-   invalid opcode). Status `500`, message in the response.
-3. **Server / transport error** - the endorser could not produce a result:
-   pre-execution validation rejection, endorser unavailable, timeout, internal
-   panic. These are *not* normal endorsement outcomes.
+**Application outcomes - carried in the response (status code):**
 
-## Two Channels: gRPC Status vs In-Band Response
+1. **Revert** (`201`) - deterministic EVM revert with reason + data. A committed
+   outcome; the transaction is valid and mined with `status=0`.
+2. **Tx rejected** (`400`) - an invalid transaction, rejected before execution
+   (nonce, funds, intrinsic gas, signature).
+3. **Exec failure** (`460`) - a valid transaction whose EVM execution failed
+   (out of gas, invalid opcode).
+4. **Server error** (`500`) - a server-side fault (e.g. a signing failure).
 
-gRPC gives us two independent channels; using both preserves the current
-two-outcome contract (`(response, nil)` vs `(nil, err)`):
+**Transport / connectivity - carried as a gRPC status error (Go error):**
 
-- **In-band typed response** (gRPC status `OK`): normal endorsement outcomes the
-  gateway must inspect. `Execute` carries the outcome in its `ExecuteResponse`
-  `status`/`message`/`payload` fields — success (200), revert (201), and
-  execution error (500) — the same triple the endorser produces today, now as
-  typed fields rather than a wrapped `peer.ProposalResponse`. The RPC succeeded;
-  the *result* carries the status.
-- **gRPC error status**: the endorser could not deliver a valid endorsement —
-  pre-execution rejection (`INVALID_ARGUMENT` / `FAILED_PRECONDITION`),
-  unavailable (`UNAVAILABLE`), deadline (`DEADLINE_EXCEEDED`), internal
-  (`INTERNAL`). This maps to the current `(nil, err)` return. `Call` reverts also
-  travel here (gRPC error with structured revert reason + data), so the gateway
-  maps them to JSON-RPC `-32000`.
+- endorser unavailable, deadline exceeded, internal transport fault. These are
+  *not* endorsement outcomes; only these ever surface as a gRPC error.
 
-To preserve the exact go-ethereum error for JSON-RPC mapping, pre-execution
-rejections attach structured details (`google.rpc.Status` details or a typed
-error message) rather than collapsing to an opaque string.
+## Two Channels: Response Status vs gRPC Error
 
-> **Open question (maintainer):** is `google.rpc.Status` details the preferred
-> carrier for the exact go-ethereum error, or would you rather define a typed
-> error enum in the proto?
+The API keeps application errors and infrastructure errors cleanly separate,
+matching the restructured endorser:
+
+- **Response status (in-band):** every application outcome. `Execute` carries it
+  in the `ExecuteResponse` `status`/`message`/`payload` fields - OK (200),
+  revert (201), tx-rejected (400), exec-failure (460), server-error (500). The
+  RPC itself succeeds; the *result* carries the status. The read RPCs likewise
+  return any application error (e.g. an `eth_call` revert) in their response, so
+  the gateway can map it to JSON-RPC `-32000`.
+- **gRPC error (Go error):** reserved for real transport/connectivity faults -
+  `UNAVAILABLE`, `DEADLINE_EXCEEDED`, `INTERNAL`. Nothing application-level
+  travels here.
+
+This mirrors the endorser, where `ProcessEVMTransaction` returns
+`(response, nil)` for every application outcome and reserves the Go error for
+infrastructure faults.
 
 ## Error Mapping
 
-| Outcome | Endorser today | gRPC channel | Gateway result |
-|---------|----------------|--------------|----------------|
-| Success | status 200 | in-band `ExecuteResponse`, gRPC OK | payload |
-| Revert (`Execute`) | status 201 | in-band `ExecuteResponse`, gRPC OK | committed with `status=0` |
-| Revert (`Call`) | status 201 | gRPC error + revert details | `RevertError` → JSON-RPC `-32000` |
-| Execution error | status 500 | in-band `ExecuteResponse`, gRPC OK | generic error |
-| Pre-execution reject | `nil, err` | `INVALID_ARGUMENT` + details | typed error (nonce/gas/etc.) |
-| Endorser down | n/a | `UNAVAILABLE` | retryable error |
-| Timeout | n/a | `DEADLINE_EXCEEDED` | retryable error |
-| Server panic / bug | n/a | `INTERNAL` | non-retryable error |
+| Outcome | Status | Channel | Gateway result |
+|---------|--------|---------|----------------|
+| Success | `200` | in-band response, gRPC OK | payload |
+| Revert | `201` | in-band response, gRPC OK | mined with `status=0`; `eth_call` → JSON-RPC `-32000` |
+| Tx rejected | `400` | in-band response, gRPC OK | typed error (nonce/funds/gas/signature) |
+| Exec failure | `460` | in-band response, gRPC OK | execution error surfaced (mining planned) |
+| Server error | `500` | in-band response, gRPC OK | generic error |
+| Endorser down | - | gRPC `UNAVAILABLE` | retryable error |
+| Timeout | - | gRPC `DEADLINE_EXCEEDED` | retryable error |
+| Transport fault | - | gRPC `INTERNAL` | non-retryable error |
 
-The gateway's client translates the gRPC status plus the in-band
-`ExecuteResponse` status back into the same Go errors and results it produces
-today, so the JSON-RPC layer above is unchanged.
+The gateway inspects the in-band status for every application outcome; only
+transport-level gRPC errors bypass the response. The JSON-RPC layer above is
+unchanged.
 
 ## Transport Security: mTLS
 
 - **mTLS is required.** Both sides present certificates: the gateway
   authenticates the endorser, and the endorser authenticates the gateway. No
   plaintext or server-only-TLS fallback.
-- Reuse the existing TLS material and conventions already used for the endorser
-  ↔ committer connection (`PeerConf.TLSPath` in
-  [`endorser/config`](../../../endorser/config/config.go)); the new API adds its
-  own server-side listener credentials plus client credentials on the gateway.
-- Pin a modern TLS floor (TLS 1.2+/1.3) and support certificate rotation
-  without dropping in-flight requests.
+- The endorser trusts a **list of CA certificates of trusted organizations**,
+  using the committer's exact TLS config format (`ca-cert-paths`):
 
-> **Open question (maintainer):** reuse the endorser↔committer `PeerConf.TLSPath`
-> conventions for the new listener — and is hot certificate rotation required for
-> v1, or is drain-and-restart acceptable?
+```yaml
+tls:
+  mode: mtls
+  cert-path: /node-tls/server.crt
+  key-path: /node-tls/server.key
+  ca-cert-paths:
+    - /orderer-cas/orderer-org-1/msp/tlscacerts/tlsca.orderer-org-1-cert.pem
+    - /orderer-cas/orderer-org-2/msp/tlscacerts/tlsca.orderer-org-2-cert.pem
+```
+
+- Pin a modern TLS floor (TLS 1.2+/1.3). Certificate rotation is a
+  drain-and-restart of the listener, not a hot swap.
 
 ## Authentication and Authorization
 
 - **Authentication:** the client identity is the mTLS peer certificate. The
-  endorser only accepts connections presenting a trusted client cert.
-- **Authorization:** restrict callers to the trusted gateway(s). Options: a CA
-  trust anchor scoped to gateway certs, or an explicit allowlist of client
-  identities / MSP IDs. The endorser is not a public endpoint.
+  endorser accepts only connections whose cert chains to one of its trusted
+  organization CAs (the `ca-cert-paths` above).
+- **Authorization (v1):** mTLS is the authorization boundary - trust is the CA
+  list and the endorser is not a public endpoint. Finer-grained, per-client
+  authorization can be layered on later; a stricter committer authorization
+  design is in progress in
+  [fabric-x-rfcs#7](https://github.com/hyperledger/fabric-x-rfcs/pull/7).
 - **Identity vs signing:** this is orthogonal to the MSP identity the endorser
-  uses to *sign* endorsements — that behavior is unchanged. mTLS governs *who
+  uses to *sign* endorsements - that behavior is unchanged. mTLS governs *who
   may call*; the endorsement signature governs *who endorsed*.
-
-> **Open question (maintainer):** is an mTLS trust anchor scoped to gateway certs
-> enough, or do you want an explicit allowlist of client identities / MSP IDs
-> enforced on the endorser?
 
 ## Resilience
 
 - **Deadlines:** the RPC honors the caller's context deadline; the current code
   already threads `context.Context` through every operation, so this is a
   transport-level pass-through.
-- **Retries:** transient failures (`UNAVAILABLE`, `DEADLINE_EXCEEDED`) are
-  retryable. Retry policy lives with the caller, and must be **coordinated with
-  the mempool retry work (#50)** to avoid double-retrying the same transaction
-  at two layers. Non-transient errors (`INVALID_ARGUMENT`, revert, execution
-  error) are not retried.
+- **Retries (v1):** retry lives entirely with the caller (gateway / mempool
+  #50) and the endorser stays **stateless** - no server-side retry or idempotency
+  keys. Only transport failures (`UNAVAILABLE`, `DEADLINE_EXCEEDED`) are
+  retryable; application statuses (revert, tx-rejected, exec-failure) are not.
+  Coordinate with #50 to avoid double-retrying the same transaction.
 - **Connection management:** long-lived, pooled connections with keepalive
   between gateway and endorser rather than per-call dial cost.
-- **Backpressure:** bound in-flight requests / max concurrent streams so a
-  surge does not exhaust the endorser; surface overload as `RESOURCE_EXHAUSTED`
-  so the caller can back off.
-
-> **Open question (maintainer):** confirm retry lives entirely with the caller
-> (gateway / mempool #50) and the endorser stays stateless — no server-side retry
-> or idempotency keys for v1? And should the endorser enforce per-client rate
-> limits / quotas, or is bounding in-flight requests + `RESOURCE_EXHAUSTED`
-> enough for v1?
+- **Backpressure (v1):** bounding in-flight requests / max concurrent streams
+  and surfacing overload as `RESOURCE_EXHAUSTED` is sufficient - no per-client
+  rate limits or quotas yet.
