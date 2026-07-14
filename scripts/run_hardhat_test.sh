@@ -14,8 +14,24 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-TEST_PATH="${1:-test/token/ERC20/ERC20.test.js}"
+FULL_SUITE=0
+TEST_PATH="test/token/ERC20/ERC20.test.js"
+if [ "${1:-}" = "--full" ]; then
+    FULL_SUITE=1
+elif [ -n "${1:-}" ]; then
+    TEST_PATH="$1"
+fi
 TESTNODE_PID=""
+
+# The compatible set: every test/**/*.test.js except test/account/** and
+# test/utils/Blockhash.test.js, which need the hardhat-predeploy plugin
+# (stubbed as a no-op by the test backend).
+COMPAT_DIRS=(access crosschain finance governance metatx proxy token utils)
+# Under testdata/ (gitignored by default, not /tmp) so a human actually notices
+# it's there — e.g. `grep '"fullTitle": "..."' -A2 testdata/oz-hardhat-results/*.json`
+# to find which file a failing test lives in, without any code needing to track it.
+RESULTS_DIR="${PROJECT_ROOT}/testdata/oz-hardhat-results"
+BASELINE_PATH="${PROJECT_ROOT}/testdata/oz_known_failures.json"
 
 cleanup() {
     if [ -n "${TESTNODE_PID}" ] && kill -0 "${TESTNODE_PID}" 2>/dev/null; then
@@ -103,6 +119,50 @@ run_tests() {
     npx hardhat test "${TEST_PATH}" --config "${WRAPPER_CONFIG}" --network fabricevm --bail
 }
 
+# run_full_suite drives the whole OZ compatible set, one Hardhat invocation per
+# top-level test/ directory, with --bail off. Splitting per-directory (rather
+# than one giant run) means a load-time crash in one directory's tests doesn't
+# zero out the report for the other seven; each directory's output lands in
+# its own file for `cmd/baseline` to glob-merge. HARDHAT_JSON_OUTPUT switches
+# to the combined reporter, so the usual pass/fail console view still streams
+# by live while the JSON is written straight to file (not stdout).
+run_full_suite() {
+    echo -e "${YELLOW}Running full OZ compatible set (per-directory)...${NC}"
+    rm -rf "${RESULTS_DIR}"
+    mkdir -p "${RESULTS_DIR}"
+    cd "${OZ_DIR}"
+
+    for dir in "${COMPAT_DIRS[@]}"; do
+        echo -e "${YELLOW}-- test/${dir} --${NC}"
+        local files=()
+        if [ "${dir}" = "utils" ]; then
+            while IFS= read -r f; do files+=("$f"); done < <(find "test/${dir}" -name '*.test.js' ! -name 'Blockhash.test.js' | sort)
+        else
+            while IFS= read -r f; do files+=("$f"); done < <(find "test/${dir}" -name '*.test.js' | sort)
+        fi
+
+        if HARDHAT_JSON_OUTPUT="${RESULTS_DIR}/${dir}.json" npx hardhat test "${files[@]}" \
+            --config "${WRAPPER_CONFIG}" --network fabricevm; then
+            echo -e "${GREEN}test/${dir}: all passed${NC}"
+        else
+            echo -e "${YELLOW}test/${dir}: has failures (expected — see ${RESULTS_DIR}/${dir}.json)${NC}"
+        fi
+    done
+
+    echo ""
+    echo -e "${GREEN}Results written to ${RESULTS_DIR}/*.json${NC}"
+    echo ""
+
+    cd "${PROJECT_ROOT}"
+    # Report only — this script's own exit status stays tied to whether the
+    # suite ran at all, not to the baseline diff. Regressions failing the
+    # build is what the (not-yet-built) CI gate is for; a local, exploratory
+    # --full run shouldn't error out just because a known failure is still
+    # known to fail.
+    go run ./cmd/baseline check --suite oz-hardhat \
+        --baseline "${BASELINE_PATH}" --results "${RESULTS_DIR}/*.json" || true
+}
+
 main() {
     echo -e "${GREEN}========================================${NC}"
     echo -e "${GREEN}Fabric-EVM Hardhat Integration Test${NC}"
@@ -113,7 +173,11 @@ main() {
     check_prerequisites
     init_openzeppelin
     start_testnode
-    run_tests
+    if [ "${FULL_SUITE}" -eq 1 ]; then
+        run_full_suite
+    else
+        run_tests
+    fi
 }
 
 main
