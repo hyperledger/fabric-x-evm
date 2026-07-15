@@ -28,7 +28,7 @@ import (
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
-	"github.com/hyperledger/fabric-x-sdk/network"
+	nfab "github.com/hyperledger/fabric-x-sdk/network/fabric"
 )
 
 type KVSSnapshotter interface {
@@ -232,11 +232,10 @@ func (sp *StatePrimer) Commit(ctx context.Context, wait bool) error {
 	}
 
 	// Create a proposal for the priming transaction
-	prop, err := network.NewSignedProposal(
+	prop, err := nfab.NewSignedProposal(
 		sp.signer,
 		sp.channel,
 		sp.namespace,
-		sp.nsVersion,
 		[][]byte{{byte(lc.ProposalTypeEVMTx)}, ethTxBytes},
 	)
 	if err != nil {
@@ -345,7 +344,7 @@ func (sp *StatePrimer) commitAndWait(end sdk.Endorsement, tx *types.Transaction,
 	}
 
 	if wait {
-		waitForCommit(context.Background(), ec, tx)
+		return waitForCommit(context.Background(), ec, tx)
 	}
 
 	return nil

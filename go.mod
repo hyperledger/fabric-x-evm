@@ -17,12 +17,13 @@ require (
 	github.com/hyperledger/fabric-lib-go v1.1.5-0.20260607181445-fc4b05c5d38f
 	github.com/hyperledger/fabric-protos-go-apiv2 v0.3.7
 	github.com/hyperledger/fabric-x-common v0.2.6
-	github.com/hyperledger/fabric-x-sdk v0.0.0-20260616145749-cbf8346ea95b
+	github.com/hyperledger/fabric-x-sdk v0.0.0-20260708130638-9e7b178c2405
 	github.com/prometheus/client_golang v1.23.2
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/crypto v0.52.0
 	golang.org/x/sync v0.20.0
+	golang.org/x/time v0.15.0
 	google.golang.org/grpc v1.81.1
 	google.golang.org/protobuf v1.36.11
 	modernc.org/sqlite v1.50.1
@@ -161,7 +162,6 @@ require (
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
-	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/tools v0.45.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260511170946-3700d4141b60 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260511170946-3700d4141b60 // indirect

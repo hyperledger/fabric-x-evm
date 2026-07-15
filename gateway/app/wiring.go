@@ -9,6 +9,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"time"
 
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
@@ -34,9 +35,9 @@ func NewNetworkSubmitters(ctx context.Context, protocol string, orderers []netwo
 		var err error
 		switch protocol {
 		case "fabric":
-			submitters[i], err = nfab.NewSubmitter(ctx, orderers, gwSigner, 0, logger)
+			submitters[i], err = nfab.NewSubmitter(ctx, orderers, gwSigner, time.Duration(0), logger)
 		case "fabric-x", "":
-			submitters[i], err = nfabx.NewSubmitter(ctx, orderers, gwSigner, 0, logger)
+			submitters[i], err = nfabx.NewSubmitter(ctx, orderers, time.Duration(0), logger)
 		default:
 			return nil, fmt.Errorf("unsupported protocol: %q", protocol)
 		}
@@ -70,14 +71,17 @@ func NewGatewaySynchronizer(protocol string, db network.BlockHeightReader, chann
 // responsible for creating the chain store (so they can register its cleanup independently
 // of the rest of this wiring) and for creating and starting the synchronizer(s) that feed
 // committed blocks to chain/gateway/endorsers.
-func BuildGateway(ctx context.Context, endorsers []eapi.Service, gwSigner sdk.Signer, netCfg common.Network, chain core.Store, submitters []core.Submitter, submitterCount int, workerCount int, txQueue core.TxQueueInterface) (*core.Gateway, error) {
+func BuildGateway(ctx context.Context, endorsers []eapi.Service, gwSigner sdk.Signer, netCfg common.Network, chain core.Store, submitters []core.Submitter, submitterCount int, workerCount int, txQueue core.TxQueueInterface, endorsementChanSize int, txPerSec int) (*core.Gateway, error) {
 	ec, err := core.NewEndorsementClient(endorsers, gwSigner, netCfg.Channel, netCfg.Namespace, netCfg.NsVersion)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create endorsement client: %w", err)
 	}
 
-	endorsementChan := make(chan sdk.Endorsement, 1000)
-	batchSubmitter := core.NewBatchSubmitter(submitters, endorsementChan, submitterCount)
+	if endorsementChanSize <= 0 {
+		endorsementChanSize = 1000
+	}
+	endorsementChan := make(chan sdk.Endorsement, endorsementChanSize)
+	batchSubmitter := core.NewBatchSubmitter(submitters, endorsementChan, submitterCount, txPerSec)
 	batchSubmitter.Start(ctx)
 
 	gw, err := core.New(ec, batchSubmitter, chain, netCfg.ChainID, workerCount, txQueue, endorsementChan)

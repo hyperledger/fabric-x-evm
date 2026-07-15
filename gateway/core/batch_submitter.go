@@ -15,6 +15,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	sdk "github.com/hyperledger/fabric-x-sdk"
+	"golang.org/x/time/rate"
 )
 
 var batchLogger = flogging.MustGetLogger("gateway.core.batch_submitter")
@@ -37,24 +38,29 @@ var SetBatchSubmitterQueueSizeMetric func(size int)
 // originating Ethereum transaction.
 // Multiple worker goroutines read from inputChan and submit in parallel.
 // Each worker has its own submitter instance for better performance.
+// Rate limiting is optionally applied across all workers to ensure aggregate submission rate
+// does not exceed the configured limit.
 type BatchSubmitter struct {
-	submitters []Submitter // One submitter per worker for parallel submission
-	inputChan  chan sdk.Endorsement
-	stopChan   chan struct{}
-	doneChan   chan struct{}
-	numWorkers int
+	submitters  []Submitter // One submitter per worker for parallel submission
+	inputChan   chan sdk.Endorsement
+	stopChan    chan struct{}
+	doneChan    chan struct{}
+	numWorkers  int
+	rateLimiter *rate.Limiter // Shared rate limiter across all workers (nil if disabled)
 }
 
 const DefaultNumWorkers = 16
 
 // NewBatchSubmitter creates a new BatchSubmitter.
-// If cache is non-nil, EthTxBytes are stored per-transaction before submission.
 // numWorkers specifies the number of parallel submission goroutines (default: 16).
 // Creates one submitter instance per worker for optimal parallel performance.
+// txPerSec sets the aggregate submission rate limit across all workers; when zero,
+// rate limiting is disabled.
 func NewBatchSubmitter(
 	submitters []Submitter,
 	inputChan chan sdk.Endorsement,
 	numWorkers int,
+	txPerSec int,
 ) *BatchSubmitter {
 	if numWorkers <= 0 {
 		numWorkers = DefaultNumWorkers
@@ -65,12 +71,19 @@ func NewBatchSubmitter(
 		panic(fmt.Sprintf("Only %d submitters provided for %d workers.", len(submitters), numWorkers))
 	}
 
+	var rateLimiter *rate.Limiter
+	if txPerSec > 0 {
+		rateLimiter = rate.NewLimiter(rate.Limit(txPerSec), txPerSec)
+		batchLogger.Infof("Rate limiting enabled: %d tx/s", txPerSec)
+	}
+
 	return &BatchSubmitter{
-		submitters: submitters,
-		inputChan:  inputChan,
-		stopChan:   make(chan struct{}),
-		doneChan:   make(chan struct{}),
-		numWorkers: numWorkers,
+		submitters:  submitters,
+		inputChan:   inputChan,
+		stopChan:    make(chan struct{}),
+		doneChan:    make(chan struct{}),
+		numWorkers:  numWorkers,
+		rateLimiter: rateLimiter,
 	}
 }
 
@@ -142,6 +155,13 @@ func (bs *BatchSubmitter) worker(ctx context.Context, workerID int, wg *sync.Wai
 }
 
 func (bs *BatchSubmitter) submitOne(ctx context.Context, workerID int, end sdk.Endorsement) error {
+	// Wait for rate limiter to allow this submission (if enabled)
+	if bs.rateLimiter != nil {
+		if err := bs.rateLimiter.Wait(ctx); err != nil {
+			return fmt.Errorf("rate limiter wait failed: %w", err)
+		}
+	}
+
 	var txid string
 	t0 := time.Now()
 	err := bs.submitters[workerID].Submit(ctx, end)
