@@ -10,8 +10,10 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hyperledger/fabric-protos-go-apiv2/msp"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/fabrictest"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/hyperledger/fabric-x-evm/common"
 	eapi "github.com/hyperledger/fabric-x-evm/endorser/api"
@@ -22,10 +24,14 @@ import (
 )
 
 // localSigner is a no-MSP signer: fabrictest doesn't validate real certificates.
+// Serialize still must produce a real msp.SerializedIdentity — the packager
+// unmarshals it as protobuf, so a plain byte string fails wire-format parsing.
 type localSigner struct{}
 
 func (localSigner) Sign(msg []byte) ([]byte, error) { return []byte("signature"), nil }
-func (localSigner) Serialize() ([]byte, error)      { return []byte("serialised identity"), nil }
+func (localSigner) Serialize() ([]byte, error) {
+	return proto.Marshal(&msp.SerializedIdentity{Mspid: "test-msp", IdBytes: []byte("serialised identity")})
+}
 
 // TestNodeConfig carries the flags exposed by `fxevm testnode`'s self-contained
 // (no --config) path.
