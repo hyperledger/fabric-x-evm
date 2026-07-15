@@ -23,6 +23,28 @@ exists so a `go test -json` adapter can be added later for `TestEthereumTests`, 
 `eth_tests.skip`/`.slow` with the same mechanism at per-subtest granularity — not built yet, but the
 reason the result model and CLI are format-agnostic rather than Mocha-specific.
 
+## After bumping `testdata/openzeppelin-contracts`
+
+Not a special case — the same loop as any other run, just with more worth actually reading before you
+reconcile:
+
+1. **Regenerate results** against the new submodule commit — see [Generate results](#generate-results).
+2. **`check` first, before `update`.** Don't skip straight to reconciling:
+   - **Regressions** — failing tests not yet in the baseline. Could be a genuine new incompatibility,
+     or just upstream renaming/rewording an already-known-failing test under a new ID. Worth a skim,
+     especially if the count is large or unexpected.
+   - **Stale entries** — baseline entries no longer failing. Either the underlying issue got fixed for
+     real, or upstream renamed/removed the test. Either way, safe to drop.
+3. **`update`** to reconcile: drops the stale entries, adds the regressions (auto-tagged where the
+   message matches a known signature, blank otherwise).
+4. If the bump introduced a fresh batch of an already-understood symptom (e.g. more tests hitting an
+   RPC method we haven't implemented), bulk-tag them with `tag` instead of hand-editing dozens of
+   entries.
+
+One thing this tool *can't* see: whether the compatible-set **exclusions** themselves are still right
+(new test directories, files that now need the `hardhat-predeploy` plugin, etc.) — that's decided in
+`scripts/run_hardhat_test.sh` / `docs/OZ_COMPAT.md`, not here.
+
 ## Generate results
 
 Currently supports Mocha's JSON reporter (`--format mocha-json`, the default).
