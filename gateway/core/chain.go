@@ -93,6 +93,32 @@ func (c *Chain) Handle(ctx context.Context, b blocks.Block) error {
 	return nil
 }
 
+// EnsureGenesisBlock inserts an empty block 0 if the store has no blocks yet, so
+// eth_getBlockByNumber("latest") is never null before the first transaction commits.
+// Real Fabric/fabric-x channels always deliver a genesis block already; this is only
+// for backends (like fabrictest) that don't.
+func (c *Chain) EnsureGenesisBlock(ctx context.Context) error {
+	latest, err := c.Store.LatestBlock(ctx, false)
+	if err != nil {
+		return err
+	}
+	if latest != nil {
+		return nil
+	}
+
+	genesisHash := crypto.Keccak256([]byte("fxevm-testnode-genesis"))
+	if err := c.Store.InsertBlock(ctx, domain.Block{
+		BlockNumber: 0,
+		BlockHash:   genesisHash,
+		ParentHash:  make([]byte, common.HashLength),
+		StateRoot:   types.EmptyRootHash[:],
+	}); err != nil {
+		return err
+	}
+	c.prevHash = common.BytesToHash(genesisHash)
+	return nil
+}
+
 // Close releases the trie and database resources.
 func (c *Chain) Close() error {
 	if c.ts != nil {
