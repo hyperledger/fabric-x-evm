@@ -119,8 +119,7 @@ flowchart LR
 | 3 | `03-client-config-testing.md` | Endorsement client, configuration, testing |
 | 4 | `04-implementation-plan.md` | Small-PR rollout sequence |
 
-Design choices and their reasoning are stated inline where each choice is made;
-part 3 additionally closes with a **Decisions and Alternatives** section.
+Design choices and their reasoning are stated inline where each choice is made.
 
 ## Time Plan
 
