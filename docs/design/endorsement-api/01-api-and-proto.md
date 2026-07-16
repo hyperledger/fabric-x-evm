@@ -17,7 +17,7 @@
 - [Errors](#errors)
 - [Serialization Choices](#serialization-choices)
 - [Unary vs Streaming](#unary-vs-streaming)
-- [Alignment with fabric-x-committer](#alignment-with-fabric-x-committer)
+- [Alignment](#alignment)
 - [Code Reuse](#code-reuse)
 - [Proto Sketch](#proto-sketch)
 
@@ -165,28 +165,29 @@ per-call overhead proves to be the bottleneck, an `ExecuteStream` can be added
 alongside the unary method (the way the orderer keeps a connection open) - an
 additive, non-breaking change.
 
-## Alignment with fabric-x-committer
+## Alignment
 
-The lightweight reference is `fabric-x-samples/custom-endorser`. We align on
-server scaffolding and connection-handling patterns, and on fabric-x-common
-naming where an equivalent concept exists. EVM-specific messages (call args,
-state reads) are our own rather than bent generic messages.
+The lightweight reference is `fabric-x-samples/custom-endorser`. We align on the
+server scaffolding and connection-handling patterns it demonstrates (now via
+`serve` in fabric-x-common - see Code Reuse), and on fabric-x-common naming where
+an equivalent concept exists. EVM-specific messages (call args, state reads) are
+our own rather than bent generic messages.
 
 ## Code Reuse
 
-**Decision (with @arner): do not depend on fabric-x-committer code broadly.**
-Start from **fabric-x-common plus the basic gRPC packages**, and pull in a
-single committer package for the server/config scaffolding we would otherwise
-rewrite:
+**We do not depend on fabric-x-committer.** The server needs standard gRPC
+bootstrapping - listen, TLS, graceful shutdown, health check, and config - which
+the committer's `utils/serve` package provides and the
+`fabric-x-samples/custom-endorser` sample is built on. Identifying that as the
+one reusable piece led to committer
+[#675](https://github.com/hyperledger/fabric-x-committer/issues/675): @arner is
+**publishing `serve` (+ `connection`, `retry`) into fabric-x-common**, agreed by
+the committer maintainers.
 
-- **`fabric-x-committer/utils/serve`** - gRPC server bootstrap (listen, TLS,
-  graceful shutdown), a health-check service, and a `ServerConfig` filled from
-  `fabric-x-common/common/viperutil`. This is the only committer import the
-  `fabric-x-samples/custom-endorser` needs, so it is a known-minimal dependency.
-
-Everything else (health, reflection, status codes) is stock
-`google.golang.org/grpc`. Anything genuinely shared beyond this can later be
-upstreamed into fabric-x-common rather than depended on from the committer.
+fabric-x-evm already depends on fabric-x-common, so we take the bootstrap **from
+fabric-x-common** - a single source of truth, the right dependency direction
+(common ← evm), and no fabric-x-committer dependency. Everything else
+(reflection, status codes) is stock `google.golang.org/grpc`.
 
 ## Proto Sketch
 
