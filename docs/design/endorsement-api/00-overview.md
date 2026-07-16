@@ -1,4 +1,4 @@
-# Endorsement API Design — Overview
+# Endorsement API Design - Overview
 
 > This is part 0 of a multi-part design for a custom gRPC endorsement API
 > exposed by the fabric-x-evm gateway's endorser component. It frames the

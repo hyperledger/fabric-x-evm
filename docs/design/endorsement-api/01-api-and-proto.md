@@ -1,4 +1,4 @@
-# Endorsement API Design — Proto and API
+# Endorsement API Design - Proto and API
 
 > First part of the endorsement API design (#22). It defines the gRPC service,
 > the proto messages, what we serialize, and the RPC/streaming shape. See

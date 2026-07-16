@@ -1,4 +1,4 @@
-# Endorsement API Design — Implementation Plan
+# Endorsement API Design - Implementation Plan
 
 > Part 4 of the endorsement API design. It sequences the implementation into
 > small, low-disruption PRs. See [00-overview.md](00-overview.md) for framing,

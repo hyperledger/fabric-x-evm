@@ -1,4 +1,4 @@
-# Endorsement API Design — Client, Configuration, and Testing
+# Endorsement API Design - Client, Configuration, and Testing
 
 > Part 3 of the endorsement API design. It covers the gateway-side endorsement
 > client, the configuration on both ends, and the testing strategy. See
