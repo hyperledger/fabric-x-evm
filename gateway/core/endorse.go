@@ -8,7 +8,6 @@ package core
 
 import (
 	"context"
-	"crypto/rand"
 	"fmt"
 	"sync"
 
@@ -16,9 +15,7 @@ import (
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/core/types"
-	fabCommon "github.com/hyperledger/fabric-protos-go-apiv2/common"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
-	"github.com/hyperledger/fabric-x-common/protoutil"
 
 	"github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/endorser/api"
@@ -157,63 +154,5 @@ func (e *EndorsementClient) GetState(ctx context.Context, query common.StateQuer
 
 // createInvocation creates an endorsement.Invocation from the given parameters
 func (e *EndorsementClient) createInvocation(args [][]byte) (endorsement.Invocation, error) {
-	// Get the creator from the signer
-	creator, err := e.signer.Serialize()
-	if err != nil {
-		return endorsement.Invocation{}, fmt.Errorf("failed to serialize creator: %w", err)
-	}
-
-	// Generate a random nonce
-	nonce := make([]byte, 24)
-	if _, err := rand.Read(nonce); err != nil {
-		return endorsement.Invocation{}, fmt.Errorf("failed to generate nonce: %w", err)
-	}
-
-	// Compute TxID from nonce and creator
-	txID := protoutil.ComputeTxID(nonce, creator)
-
-	proposal, _, err := protoutil.CreateChaincodeProposalWithTxIDNonceAndTransient(
-		protoutil.ComputeTxID(nonce, creator),
-		fabCommon.HeaderType_ENDORSER_TRANSACTION,
-		e.channel,
-		&peer.ChaincodeInvocationSpec{
-			ChaincodeSpec: &peer.ChaincodeSpec{
-				Type: peer.ChaincodeSpec_CAR, // FIXME: should we put some special value here?
-				ChaincodeId: &peer.ChaincodeID{
-					Name:    e.namespace,
-					Version: e.nsVersion,
-				},
-				Input: &peer.ChaincodeInput{
-					Args: args,
-				},
-			},
-		},
-		nonce,
-		creator,
-		nil,
-	)
-	if err != nil {
-		return endorsement.Invocation{}, fmt.Errorf("failed to create the proposal: %w", err)
-	}
-
-	hdr, err := protoutil.UnmarshalHeader(proposal.Header)
-	if err != nil {
-		return endorsement.Invocation{}, fmt.Errorf("failed to deserialise header: %w", err)
-	}
-
-	proposalHash, err := protoutil.GetProposalHash1(hdr, proposal.Payload)
-	if err != nil {
-		return endorsement.Invocation{}, fmt.Errorf("failed to compute proposal hash: %w", err)
-	}
-
-	return endorsement.Invocation{
-		TxID:         txID,
-		Nonce:        nonce,
-		Creator:      creator,
-		Args:         args,
-		CCID:         &peer.ChaincodeID{Name: e.namespace, Version: e.nsVersion},
-		Channel:      e.channel,
-		Proposal:     proposal,
-		ProposalHash: proposalHash,
-	}, nil
+	return endorsement.NewInvocation(e.signer, e.channel, e.namespace, e.nsVersion, args)
 }
