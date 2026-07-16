@@ -14,9 +14,8 @@
 - [Configuration](#configuration)
   - [Endorser (Server) Config](#endorser-server-config)
   - [Gateway (Client) Config](#gateway-client-config)
-  - [Embedded vs Split Deployment](#embedded-vs-split-deployment)
+  - [Co-located and Remote Endorsers](#co-located-and-remote-endorsers)
 - [Testing](#testing)
-- [Decisions and Alternatives](#decisions-and-alternatives)
 
 ## Scope
 
@@ -45,29 +44,32 @@ it does not change `EndorsementClient` or anything above it.
 - Connection lifecycle (dial, keepalive, pooling, close) lives inside the
   `grpcEndorser`, created once at startup from config and reused across calls.
 
-> **Open question (maintainer):** the #229 restructure introduced `api.Service`
-> with the pre-redesign shape (`ProcessEVMTransaction` / `ProcessCall` /
-> `ProcessStateQuery` returning `peer.ProposalResponse`). Adopting the part-1
-> design means evolving `api.Service` to the six per-function methods above, so
-> the in-process `core.Endorser` and the gRPC client share one clean contract.
-> Confirm we should refactor `api.Service` this way - its comment currently says
-> the gRPC pair would implement it "without changing this contract".
+> **Resolved (with @arner):** `api.Service` is refactored from its current
+> `ProcessEVMTransaction` / `ProcessCall` / `ProcessStateQuery` /
+> `peer.ProposalResponse` shape to the six per-function methods above. It is not
+> consumed elsewhere yet, so we have the freedom to shape it to fit the API
+> cleanly; the in-process `core.Endorser` and the gRPC client then share one
+> contract.
 
 ## Calling Our Own Endorser
 
-"How do we call our own endorser?" - the gateway constructs its `endorsers`
-slice from configured endpoints at startup, the same way it already builds
-orderer and committer clients:
+There are no standalone endorsers today, so **every gateway also runs an
+endorser**, and the common case is multi-org endorsement - e.g. Org A collecting
+endorsements from Org A, Org B, and Org C. The gateway holds one gRPC
+`api.Service` client per org it endorses with:
 
-- In the **embedded** deployment, the gateway keeps constructing in-process
-  endorsers via `endorser/app.NewEndorser` (no gRPC); the in-process
-  `core.Endorser` satisfies `api.Service` directly, preserving today's
-  single-binary path.
-- In the **split** deployment, the gateway builds `grpcEndorser` values from a
-  list of endorser endpoints and dials them over mTLS.
+- **Other orgs' endorsers** are dialed remotely over mTLS - straightforward.
+- **The gateway's own co-located endorser** (same org, same process) is reached
+  over the **same gRPC path on localhost**, not through a special in-process
+  shortcut. Only the address differs.
 
-Selection is a configuration concern (see below), not a code-path the caller
-has to know about - both satisfy `api.Service`.
+Routing the self-call over a localhost loopback is slightly awkward - it
+serializes a call to the same process - but it keeps **one uniform code path**
+for every endorser, which is the simpler thing to build for v1. This may be
+revisited later: a local first-endorsement pass could determine the dirty
+read/write set (Ethereum AccessList-style) to warm the storage cache, seed a
+bulk committer query, and feed the dependency graph (#59). If we add that, the
+self-call may become a direct in-process step.
 
 ## Configuration
 
@@ -75,18 +77,21 @@ has to know about - both satisfy `api.Service`.
 
 The endorser today has no network listener - it is embedded
 ([`endorser/config`](../../../endorser/config/config.go)). The API adds a gRPC
-server, and per the part-1 code-reuse decision its config comes from the
-committer's `serve` package rather than a hand-rolled struct. `serve.Config` /
-`ServerConfig` already provides what the server needs:
+server whose config carries:
 
 - **endpoint** (listen address),
 - **TLS** (`mode: mtls`, `cert-path`, `key-path`, `ca-cert-paths`) - the exact
-  committer format from part 2, with the TLS 1.2 floor built in,
+  committer format from part 2, with a TLS 1.2 floor,
 - **keep-alive**, **max-concurrent-streams**, and **rate-limit** - the
   backpressure knobs part 2 calls for.
 
-So the endorser's server config is a `serve.Config` block alongside the existing
-identity/database fields, not a new bespoke struct.
+The server bootstrap (listen, TLS, interceptors, health, config) comes from the
+`serve` package, which is being **published into fabric-x-common** (committer
+[#675](https://github.com/hyperledger/fabric-x-committer/issues/675), agreed by
+the committer maintainers). fabric-x-evm already depends on fabric-x-common, so
+this reuses battle-tested serving code **without any fabric-x-committer
+dependency** and in the right dependency direction. The config shape above is
+`serve`'s own config.
 
 ### Gateway (Client) Config
 
@@ -97,16 +102,17 @@ client fits the same mold: a list of endorser endpoints, each a
 `common.ClientConfig` (endpoint + TLS). This reuses `Endpoint.Address()`,
 `Validate()`, and the existing TLS wiring rather than inventing new config.
 
-### Embedded vs Split Deployment
+### Co-located and Remote Endorsers
 
-- **Embedded (current):** top-level config carries `Endorsers []endorser.Endorser`
-  built in-process. Unchanged; the default.
-- **Split (new):** the gateway carries endorser **client** endpoints
-  (`[]common.ClientConfig`) and dials them; each endorser process runs the gRPC
-  server with its own `serve.Config` (endpoint + mTLS + keep-alive/limits).
+- **Co-located endorser:** built in-process as today
+  (`Endorsers []endorser.Endorser`), but it now also runs the gRPC server, and
+  the gateway reaches it as a localhost endpoint rather than an in-process call.
+- **Remote endorsers:** other orgs' endorsers, dialed from configured endpoints
+  (`[]common.ClientConfig`) over mTLS.
 
-The two are mutually exclusive per gateway and chosen by which config block is
-present, so no existing deployment changes behavior.
+Both are the same `api.Service` gRPC client; only the address differs. Each
+endorser process runs the gRPC server with its own config (endpoint + mTLS +
+keep-alive/limits).
 
 ## Testing
 
@@ -130,34 +136,3 @@ present, so no existing deployment changes behavior.
   layer (#50).
 - **Backward compatibility:** the embedded path keeps passing the existing
   endorser and gateway suites unchanged.
-
-## Decisions and Alternatives
-
-**D3.1 - Implement the gRPC client as another `api.Service`.** Keeps
-`EndorsementClient` and the whole gateway above it untouched; `api.Service` is
-the published contract the #229 restructure created for exactly this.
-*Alternative:* add a gRPC-aware layer in the gateway - rejected, needless churn
-behind an interface that already exists for this.
-
-**D3.2 - Reuse `common.ClientConfig` (client) and the committer `serve.Config`
-(server).** The client endpoints match orderers/committer; the server config
-comes from `fabric-x-committer/utils/serve`, giving mTLS, keep-alive, and
-backpressure for free (part-1 code-reuse decision). *Alternative:* a bespoke
-endorser config on both ends - rejected, duplicates existing plumbing.
-
-**D3.3 - Keep embedded and split deployments mutually exclusive per gateway.**
-The embedded path stays the default and unchanged; split is opt-in by config.
-*Alternative:* always route through gRPC (loopback for embedded) - rejected for
-now, it adds serialization cost to the single-binary path with no benefit.
-
-**D3.4 - Prove parity by running shared tests against both `api.Service`
-implementations.** Behavioral equivalence is the core correctness property of
-this change. *Alternative:* test only the gRPC path - rejected, parity with the
-in-process baseline is exactly what must be guaranteed.
-
-**D3.5 - Evolve `api.Service` to the six per-function methods.** So the
-in-process `core.Endorser` and the gRPC client share one clean contract that
-matches the part-1 API. *Alternative:* keep the three-method / `ProposalResponse`
-`api.Service` and translate at the gRPC layer - rejected, it keeps two shapes and
-re-introduces the proposal framing part 1 removed. (Flagged for maintainer
-confirmation - see the open question above.)
