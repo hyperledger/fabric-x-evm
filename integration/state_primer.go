@@ -13,7 +13,6 @@ import (
 	"math/big"
 	"math/rand"
 	"os"
-	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	ethstate "github.com/ethereum/go-ethereum/core/state"
@@ -28,7 +27,6 @@ import (
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
-	nfab "github.com/hyperledger/fabric-x-sdk/network/fabric"
 )
 
 type KVSSnapshotter interface {
@@ -231,18 +229,15 @@ func (sp *StatePrimer) Commit(ctx context.Context, wait bool) error {
 		return err
 	}
 
-	// Create a proposal for the priming transaction
-	prop, err := nfab.NewSignedProposal(
+	// Create the invocation for the priming transaction. Must carry sp.nsVersion (like the
+	// real endorsement path does) or the committer rejects it as INVALID_CHAINCODE.
+	inv, err := endorsement.NewInvocation(
 		sp.signer,
 		sp.channel,
 		sp.namespace,
+		sp.nsVersion,
 		[][]byte{{byte(lc.ProposalTypeEVMTx)}, ethTxBytes},
 	)
-	if err != nil {
-		return err
-	}
-
-	inv, err := endorsement.Parse(prop, time.Time{})
 	if err != nil {
 		return err
 	}
