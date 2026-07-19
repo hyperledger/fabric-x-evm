@@ -44,7 +44,7 @@ checks:
 
 .PHONY: unit-tests
 unit-tests:
-	go test ./... -short
+	go test ./... -short -coverprofile=coverage.out -covermode=atomic
 
 .PHONY: pre-pull-images
 pre-pull-images:

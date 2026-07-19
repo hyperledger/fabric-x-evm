@@ -38,3 +38,6 @@ integration/perf/*.html
 integration/perf/*.json
 
 *.log
+
+# unit-test coverage profile (uploaded to Codecov in CI)
+coverage.out
