@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/ethereum/go-ethereum"
+	ethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-evm/common"
@@ -23,20 +24,29 @@ import (
 )
 
 type stubEndorser struct {
-	callResp  *peer.ProposalResponse
-	callErr   error
-	queryResp *peer.ProposalResponse
-	queryErr  error
+	callPayload []byte
+	callErr     error
+	nonce       uint64
+	nonceErr    error
 }
 
-func (s *stubEndorser) ProcessEVMTransaction(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction) (*peer.ProposalResponse, error) {
+func (s *stubEndorser) Execute(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction) (*peer.ProposalResponse, error) {
 	return nil, nil
 }
-func (s *stubEndorser) ProcessCall(ctx context.Context, callMsg *ethereum.CallMsg, _ *big.Int) (*peer.ProposalResponse, error) {
-	return s.callResp, s.callErr
+func (s *stubEndorser) Call(ctx context.Context, msg *ethereum.CallMsg, _ *big.Int) ([]byte, error) {
+	return s.callPayload, s.callErr
 }
-func (s *stubEndorser) ProcessStateQuery(ctx context.Context, query common.StateQuery) (*peer.ProposalResponse, error) {
-	return s.queryResp, s.queryErr
+func (s *stubEndorser) BalanceAt(ctx context.Context, _ ethcommon.Address, _ *big.Int) (*big.Int, error) {
+	return big.NewInt(0), nil
+}
+func (s *stubEndorser) StorageAt(ctx context.Context, _ ethcommon.Address, _ ethcommon.Hash, _ *big.Int) ([]byte, error) {
+	return nil, nil
+}
+func (s *stubEndorser) CodeAt(ctx context.Context, _ ethcommon.Address, _ *big.Int) ([]byte, error) {
+	return nil, nil
+}
+func (s *stubEndorser) NonceAt(ctx context.Context, _ ethcommon.Address, _ *big.Int) (uint64, error) {
+	return s.nonce, s.nonceErr
 }
 
 func newClient(stub *stubEndorser) *EndorsementClient {
@@ -45,13 +55,14 @@ func newClient(stub *stubEndorser) *EndorsementClient {
 
 func TestCallContract_Status201ReturnsRevertError(t *testing.T) {
 	payload := []byte{0x08, 0xc3, 0x79, 0xa0, 0xde, 0xad, 0xbe, 0xef}
-	c := newClient(&stubEndorser{callResp: &peer.ProposalResponse{
-		Response: &peer.Response{
+	c := newClient(&stubEndorser{
+		callPayload: payload,
+		callErr: &common.CallError{
 			Status:  common.StatusEVMRevert,
 			Message: "execution reverted: out of stock",
-			Payload: payload,
+			Data:    payload,
 		},
-	}})
+	})
 
 	_, err := c.CallContract(context.Background(), ethereum.CallMsg{}, nil)
 
@@ -71,9 +82,9 @@ func TestCallContract_Status201ReturnsRevertError(t *testing.T) {
 }
 
 func TestCallContract_Status500IsGenericError(t *testing.T) {
-	c := newClient(&stubEndorser{callResp: &peer.ProposalResponse{
-		Response: &peer.Response{Status: common.StatusServerError, Message: "endorser dead"},
-	}})
+	c := newClient(&stubEndorser{
+		callErr: &common.CallError{Status: common.StatusServerError, Message: "endorser dead"},
+	})
 
 	_, err := c.CallContract(context.Background(), ethereum.CallMsg{}, nil)
 
@@ -91,9 +102,9 @@ func TestCallContract_Status500IsGenericError(t *testing.T) {
 }
 
 func TestCallContract_Status400ReturnsExecutionError(t *testing.T) {
-	c := newClient(&stubEndorser{callResp: &peer.ProposalResponse{
-		Response: &peer.Response{Status: common.StatusExecFailure, Message: "out of gas"},
-	}})
+	c := newClient(&stubEndorser{
+		callErr: &common.CallError{Status: common.StatusExecFailure, Message: "out of gas"},
+	})
 
 	_, err := c.CallContract(context.Background(), ethereum.CallMsg{}, nil)
 
@@ -108,9 +119,7 @@ func TestCallContract_Status400ReturnsExecutionError(t *testing.T) {
 
 func TestCallContract_Status200ReturnsPayload(t *testing.T) {
 	want := []byte{0xde, 0xad}
-	c := newClient(&stubEndorser{callResp: &peer.ProposalResponse{
-		Response: &peer.Response{Status: common.StatusOK, Payload: want},
-	}})
+	c := newClient(&stubEndorser{callPayload: want})
 
 	got, err := c.CallContract(context.Background(), ethereum.CallMsg{}, nil)
 	if err != nil {

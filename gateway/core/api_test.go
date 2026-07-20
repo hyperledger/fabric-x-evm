@@ -10,18 +10,14 @@ import (
 	"context"
 	"testing"
 
-	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// nonceStub returns a stubEndorser whose ProcessStateQuery yields an empty
-// payload with Status 200 — Gateway.NonceAt resolves this to nonce 0.
+// nonceStub returns a stubEndorser whose NonceAt yields nonce 0.
 func nonceStub() *stubEndorser {
-	return &stubEndorser{
-		queryResp: &peer.ProposalResponse{Response: &peer.Response{Status: 200}},
-	}
+	return &stubEndorser{}
 }
 
 func TestSendTransaction_DuplicateRejected(t *testing.T) {

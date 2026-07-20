@@ -95,7 +95,7 @@ func processEVMTxWithEngineErr(t *testing.T, execErr error) *peer.ProposalRespon
 	f := &Endorser{Engine: &stubEngine{execErr: execErr}}
 	tx := types.NewTx(&types.LegacyTx{Gas: 21000, GasPrice: big.NewInt(0)})
 
-	resp, err := f.ProcessEVMTransaction(context.Background(), endorsement.Invocation{}, tx)
+	resp, err := f.Execute(context.Background(), endorsement.Invocation{}, tx)
 	if err != nil {
 		t.Fatalf("ProcessEVMTransaction must encode the failure in the response, got Go error: %v", err)
 	}
