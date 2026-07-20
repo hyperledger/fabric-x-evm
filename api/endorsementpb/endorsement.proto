@@ -1,0 +1,114 @@
+/*
+Copyright IBM Corp. All Rights Reserved.
+
+SPDX-License-Identifier: LGPL-3.0-or-later
+*/
+
+syntax = "proto3";
+
+option go_package = "github.com/hyperledger/fabric-x-evm/api/endorsementpb";
+
+package endorsementpb;
+
+// EvmEndorsement is the endorser's API: one RPC per engine function. Execute is
+// the only RPC that returns an endorsement; the reads return plain values.
+service EvmEndorsement {
+    // Execute endorses an Ethereum transaction.
+    rpc Execute(ExecuteRequest) returns (ExecuteResponse) {};
+
+    // Call runs a read-only eth_call.
+    rpc Call(CallRequest) returns (CallResponse) {};
+
+    rpc BalanceAt(BalanceRequest) returns (BalanceResponse) {};
+    rpc StorageAt(StorageRequest) returns (StorageResponse) {};
+    rpc CodeAt(CodeRequest) returns (CodeResponse) {};
+    rpc NonceAt(NonceRequest) returns (NonceResponse) {};
+}
+
+message ExecuteRequest {
+    // Marshaled Ethereum transaction (types.Transaction.MarshalBinary).
+    bytes ethereum_tx = 1;
+
+    // Proposal hash, required by classic Fabric because the submitted payload
+    // must carry it. Fabric-X does not need the proposal, so this is empty
+    // there and the full proposal never crosses the wire.
+    bytes proposal_hash = 2;
+}
+
+message ExecuteResponse {
+    // Serialized read-write set of the execution.
+    bytes read_write_set = 1;
+    bytes event = 2;
+
+    // Outcome of the execution: OK, revert, rejected, exec failure, or server
+    // error. Application outcomes travel here, not as a gRPC error.
+    int32 status = 3;
+    string message = 4;
+    bytes payload = 5;
+
+    // Serialized identity of the endorser and its signature over the result.
+    bytes endorser_id = 6;
+    bytes signature = 7;
+}
+
+message CallRequest {
+    // 20-byte address; empty when unset.
+    bytes from = 1;
+    // 20-byte address; empty for contract creation.
+    bytes to = 2;
+    uint64 gas = 3;
+    // Big-endian integer bytes.
+    bytes gas_price = 4;
+    bytes value = 5;
+    bytes data = 6;
+    // Absent means latest.
+    optional uint64 block_number = 7;
+}
+
+message CallResponse {
+    bytes return_data = 1;
+
+    // Set when the call did not succeed; carries the revert reason and payload.
+    int32 status = 2;
+    string message = 3;
+}
+
+message BalanceRequest {
+    bytes account = 1;
+    optional uint64 block_number = 2;
+}
+
+message BalanceResponse {
+    // Big-endian integer bytes.
+    bytes balance = 1;
+}
+
+message StorageRequest {
+    bytes account = 1;
+    // 32-byte storage key.
+    bytes key = 2;
+    optional uint64 block_number = 3;
+}
+
+message StorageResponse {
+    // 32-byte storage word.
+    bytes value = 1;
+}
+
+message CodeRequest {
+    bytes account = 1;
+    optional uint64 block_number = 2;
+}
+
+message CodeResponse {
+    bytes code = 1;
+}
+
+message NonceRequest {
+    bytes account = 1;
+    optional uint64 block_number = 2;
+}
+
+message NonceResponse {
+    uint64 nonce = 1;
+}

@@ -42,6 +42,15 @@ checks:
 	@go tool staticcheck ./... || (echo "Staticcheck failed"; exit 1)
 	@find . -type d -name testdata -prune -o -name '*.go' -print | xargs go tool addlicense -check || (echo "Missing license headers"; exit 1)
 
+.PHONY: proto
+proto:
+	@echo "Generating protobufs..."
+	@protoc \
+		-I="$(CURDIR)" \
+		--go_out=paths=source_relative:. \
+		--go-grpc_out=paths=source_relative:. \
+		$(CURDIR)/api/*/*.proto
+
 .PHONY: unit-tests
 unit-tests:
 	go test ./... -short -coverprofile=coverage.out -covermode=atomic
