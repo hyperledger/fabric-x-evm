@@ -10,7 +10,9 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # Pinned ethereum/execution-specs conformance fixtures (tests@v20.0.1: Osaka + BPO1 + BPO2).
 # Bump the tag and checksum together, deliberately.
 VERSION="tests@v20.0.1"
-URL="https://github.com/ethereum/execution-specs/releases/download/tests%40v20.0.1/fixtures.tar.gz"
+# Derive the URL from VERSION (URL-encoding the '@') so a version bump only
+# touches VERSION + SHA256, never a separately-pinned URL.
+URL="https://github.com/ethereum/execution-specs/releases/download/${VERSION/@/%40}/fixtures.tar.gz"
 SHA256="3586193db06d4d5745d5e90b3c3008c2255a4e19ccd8f11a3ce887aec8c0b17c"
 
 DEST_DIR="${PROJECT_ROOT}/testdata/execution-specs-tests"
