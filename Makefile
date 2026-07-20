@@ -214,6 +214,10 @@ test-local:
 test-local-x:
 	@go test -timeout 30s -v -run ^TestLocalX$$ ./integration
 
+.PHONY: fetch-execution-specs-tests
+fetch-execution-specs-tests:
+	@./scripts/fetch_execution_specs_tests.sh
+
 .PHONY: eth-tests
 eth-tests:
 	@go test -test.fullpath=true -timeout 2000s -run ^TestEthereumTests$$ github.com/hyperledger/fabric-x-evm/integration
