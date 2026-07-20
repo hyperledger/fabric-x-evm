@@ -35,11 +35,8 @@ jobs:
         run: make unit-tests
 
       - name: Upload coverage to Codecov
-        # Fork PRs don't get CODECOV_TOKEN; skip the upload there instead of failing it.
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: codecov/codecov-action@v5
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage.out
           fail_ci_if_error: false
 
