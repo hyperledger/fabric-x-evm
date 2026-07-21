@@ -68,7 +68,7 @@ func runExecutionSpecStateTestFile(t *testing.T, path string) {
 	}
 	for name, test := range tests {
 		// EEST bakes the fork into the test name, so skip a test with no allowlisted fork entirely.
-		if !hasAllowlistedFork(test) {
+		if !hasAllowlistedFork(test, executionSpecForks) {
 			continue
 		}
 		t.Run(name, func(t *testing.T) {
@@ -78,10 +78,10 @@ func runExecutionSpecStateTestFile(t *testing.T, path string) {
 	}
 }
 
-// hasAllowlistedFork reports whether any subtest targets an allowlisted fork.
-func hasAllowlistedFork(test *StateTest) bool {
+// hasAllowlistedFork reports whether any subtest targets a fork in the allowlist.
+func hasAllowlistedFork(test *StateTest, forkAllowlist map[string]struct{}) bool {
 	for _, subtest := range test.Subtests() {
-		if _, ok := executionSpecForks[subtest.Fork]; ok {
+		if _, ok := forkAllowlist[subtest.Fork]; ok {
 			return true
 		}
 	}
