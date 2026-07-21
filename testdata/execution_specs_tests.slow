@@ -1,0 +1,3 @@
+# Slow tests for the execution-specs conformance suite (run only with -very_slow).
+# One test path per line; blank lines and lines starting with '#' are ignored.
+# Populated in the skip/slow triage chunk (#237) — empty for now.
