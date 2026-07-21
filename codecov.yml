@@ -10,3 +10,4 @@ coverage:
 ignore:
   - "testdata"
   - "**/*.sql.go" # sqlc-generated
+  - "**/*.pb.go" # protoc-generated

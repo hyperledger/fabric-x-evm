@@ -7,6 +7,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package core
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"math/big"
@@ -65,16 +66,20 @@ func TestResponseStatusServerError(t *testing.T) {
 	}
 }
 
-// stubEngine is an EVMEngineInterface whose Execute returns a fixed error, so we
-// can drive ProcessEVMTransaction's failure classification.
+// stubEngine is an EVMEngineInterface whose Execute and Call return fixed
+// values, so we can drive the endorser's failure classification.
 type stubEngine struct {
-	execErr error
+	execErr     error
+	callPayload []byte
+	callErr     error
 }
 
 func (s *stubEngine) Execute(context.Context, *types.Transaction) (endorsement.ExecutionResult, error) {
 	return endorsement.ExecutionResult{}, s.execErr
 }
-func (s *stubEngine) Call(ethereum.CallMsg, *big.Int) ([]byte, error) { return nil, nil }
+func (s *stubEngine) Call(ethereum.CallMsg, *big.Int) ([]byte, error) {
+	return s.callPayload, s.callErr
+}
 func (s *stubEngine) BalanceAt(context.Context, ethcommon.Address, *big.Int) (*big.Int, error) {
 	return nil, nil
 }
@@ -127,5 +132,54 @@ func TestProcessEVMTransaction_InfraErrorIs500(t *testing.T) {
 
 	if resp.Response.Status != common.StatusServerError {
 		t.Fatalf("status = %d, want %d (StatusServerError)", resp.Response.Status, common.StatusServerError)
+	}
+}
+
+// Call surfaces an EVM revert as a *common.CallError carrying the revert status
+// and the returned payload.
+func TestCall_Revert(t *testing.T) {
+	payload := []byte{0x08, 0xc3, 0x79, 0xa0}
+	f := &Endorser{Engine: &stubEngine{callPayload: payload, callErr: vm.ErrExecutionReverted}}
+
+	got, err := f.Call(context.Background(), &ethereum.CallMsg{}, nil)
+
+	var callErr *common.CallError
+	if !errors.As(err, &callErr) {
+		t.Fatalf("expected *common.CallError, got %T (%v)", err, err)
+	}
+	if callErr.Status != common.StatusEVMRevert {
+		t.Errorf("Status = %d, want %d", callErr.Status, common.StatusEVMRevert)
+	}
+	if !bytes.Equal(callErr.Data, payload) || !bytes.Equal(got, payload) {
+		t.Errorf("payload: CallError.Data = %x, returned = %x, want %x", callErr.Data, got, payload)
+	}
+}
+
+// A valid call whose execution failed is classified StatusExecFailure.
+func TestCall_ExecFailure(t *testing.T) {
+	f := &Endorser{Engine: &stubEngine{callErr: execution.NewExecFailure(vm.ErrOutOfGas)}}
+
+	_, err := f.Call(context.Background(), &ethereum.CallMsg{}, nil)
+
+	var callErr *common.CallError
+	if !errors.As(err, &callErr) {
+		t.Fatalf("expected *common.CallError, got %T (%v)", err, err)
+	}
+	if callErr.Status != common.StatusExecFailure {
+		t.Errorf("Status = %d, want %d", callErr.Status, common.StatusExecFailure)
+	}
+}
+
+// A successful call returns the payload and no error.
+func TestCall_Success(t *testing.T) {
+	want := []byte{0xde, 0xad}
+	f := &Endorser{Engine: &stubEngine{callPayload: want}}
+
+	got, err := f.Call(context.Background(), &ethereum.CallMsg{}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("payload = %x, want %x", got, want)
 	}
 }

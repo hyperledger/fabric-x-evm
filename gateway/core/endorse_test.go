@@ -129,3 +129,43 @@ func TestCallContract_Status200ReturnsPayload(t *testing.T) {
 		t.Errorf("payload = %x, want %x", got, want)
 	}
 }
+
+// A rejected tx (400) also maps to *ExecutionError, like a failed execution.
+func TestCallContract_TxRejectedReturnsExecutionError(t *testing.T) {
+	c := newClient(&stubEndorser{
+		callErr: &common.CallError{Status: common.StatusTxRejected, Message: "nonce too low"},
+	})
+
+	_, err := c.CallContract(context.Background(), ethereum.CallMsg{}, nil)
+
+	var exec *domain.ExecutionError
+	if !errors.As(err, &exec) {
+		t.Fatalf("expected *ExecutionError, got %T (%v)", err, err)
+	}
+	if exec.Message != "nonce too low" {
+		t.Errorf("Message = %q, want %q", exec.Message, "nonce too low")
+	}
+}
+
+// A plain (non-CallError) error is a transport failure: it is wrapped, not
+// turned into a revert or execution error.
+func TestCallContract_TransportErrorIsWrapped(t *testing.T) {
+	c := newClient(&stubEndorser{callErr: errors.New("connection refused")})
+
+	_, err := c.CallContract(context.Background(), ethereum.CallMsg{}, nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	var revert *domain.RevertError
+	if errors.As(err, &revert) {
+		t.Errorf("transport error must not be *RevertError, got %v", revert)
+	}
+	var exec *domain.ExecutionError
+	if errors.As(err, &exec) {
+		t.Errorf("transport error must not be *ExecutionError, got %v", exec)
+	}
+	if err.Error() != "process call: connection refused" {
+		t.Errorf("error = %q, want %q", err.Error(), "process call: connection refused")
+	}
+}
