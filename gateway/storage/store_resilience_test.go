@@ -53,7 +53,7 @@ func countTableRows(t *testing.T, store *Store, table string) int {
 	t.Helper()
 
 	var count int
-	err := store.db.QueryRowContext(t.Context(), fmt.Sprintf("SELECT COUNT(*) FROM %s", table)).Scan(&count)
+	err := store.DB.QueryRowContext(t.Context(), fmt.Sprintf("SELECT COUNT(*) FROM %s", table)).Scan(&count)
 	require.NoError(t, err)
 	return count
 }

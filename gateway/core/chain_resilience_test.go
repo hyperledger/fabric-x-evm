@@ -61,7 +61,7 @@ func TestHandle_ReprocessingSameBlockKeepsIndexesAndTrieStable(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "gateway.db")
 	triePath := filepath.Join(t.TempDir(), "trie")
 
-	chain, err := NewChain(dbPath, triePath)
+	chain, err := NewChain(dbPath, triePath, true)
 	require.NoError(t, err)
 	defer chain.Close()
 
@@ -90,7 +90,7 @@ func TestHandle_ReprocessingSameBlockKeepsIndexesAndTrieStable(t *testing.T) {
 			Number:    0,
 			Valid:     true,
 			Status:    0,
-			InputArgs: [][]byte{[]byte("invoke"), txBytes},
+			InputArgs: [][]byte{{byte(fc.ProposalTypeEVMTx)}, txBytes},
 			Events:    resilienceEvents(t, "fabric-tx-1", logs),
 			NsRWS: []blocks.NsReadWriteSet{{
 				Namespace: "evmcc",
