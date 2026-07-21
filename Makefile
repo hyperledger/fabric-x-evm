@@ -44,7 +44,7 @@ checks:
 
 .PHONY: unit-tests
 unit-tests:
-	go test ./... -short
+	go test ./... -short -coverprofile=coverage.out -covermode=atomic
 
 .PHONY: pre-pull-images
 pre-pull-images:
@@ -213,6 +213,10 @@ test-local:
 .PHONY: test-local-x
 test-local-x:
 	@go test -timeout 30s -v -run ^TestLocalX$$ ./integration
+
+.PHONY: fetch-execution-specs-tests
+fetch-execution-specs-tests:
+	@./scripts/fetch_execution_specs_tests.sh
 
 .PHONY: eth-tests
 eth-tests:

@@ -126,6 +126,14 @@ those tests:
 git submodule update --init --recursive
 ```
 
+The newer `ethereum/execution-specs` conformance fixtures (Osaka+) are fetched
+separately — they are downloaded and checksum-verified into a gitignored
+`testdata/execution-specs-tests/` directory rather than vendored as a submodule:
+
+```shell
+make fetch-execution-specs-tests
+```
+
 #### Local
 
 The simplest integration tests don't require a Fabric network, but still
