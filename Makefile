@@ -235,6 +235,10 @@ eth-tests-slow:
 eth-tests-slow-legacy:
 	@go test -test.fullpath=true -timeout 10000s -run ^TestEthereumTests$$ github.com/hyperledger/fabric-x-evm/integration -very_slow -legacy
 
+.PHONY: eth-tests-execution-specs
+eth-tests-execution-specs: fetch-execution-specs-tests
+	@go test -test.fullpath=true -timeout 2000s -run ^TestExecutionSpecStateTests$$ github.com/hyperledger/fabric-x-evm/integration
+
 .PHONY: hardhat-tests
 hardhat-tests:
 	@./scripts/run_hardhat_test.sh
