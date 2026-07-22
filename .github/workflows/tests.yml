@@ -4,9 +4,10 @@ on:
   push:
     branches: [ "main" ]
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
+    types: [ opened, synchronize, reopened, labeled ]
     branches: [ "main" ]
   workflow_dispatch:
+
 
 permissions:
   contents: read
@@ -40,14 +41,70 @@ jobs:
           files: ./coverage.out
           fail_ci_if_error: false
 
-      - name: Hardhat integration tests
-        run: make hardhat-tests
+  oz-hardhat-compat:
+    name: OZ Hardhat Compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Cache OZ node_modules
+        uses: actions/cache@v4
+        with:
+          path: testdata/openzeppelin-contracts/node_modules
+          key: ${{ runner.os }}-oz-node-modules-${{ hashFiles('testdata/openzeppelin-contracts/package-lock.json') }}
+
+      - name: Hardhat OZ compatibility suite (full)
+        run: make hardhat-tests-full
+
+      - name: OZ baseline check (gate)
+        run: |
+          mkdir -p oz-baseline-artifact
+          set +e
+          go run ./cmd/baseline check --suite oz-hardhat > oz-baseline-artifact/report.md
+          check_status=$?
+          set -e
+          cat oz-baseline-artifact/report.md
+          if [ "${check_status}" -ne 0 ]; then
+            {
+              echo ""
+              echo "---"
+              echo "A regression above that's actually expected, or a stale entry now passing? Run:"
+              echo "  go run ./cmd/baseline update --suite oz-hardhat"
+              echo "and commit the updated testdata/oz_known_failures.json."
+            } >> oz-baseline-artifact/report.md
+          fi
+          # Structured summary for the comment step; check_status above is the real gate.
+          go run ./cmd/baseline check --suite oz-hardhat --json > oz-baseline-artifact/summary.json || true
+          exit "${check_status}"
+
+      - name: Record PR number for report comment
+        if: always() && github.event_name == 'pull_request'
+        run: echo "${{ github.event.pull_request.number }}" > oz-baseline-artifact/pr_number.txt
+
+      - name: Upload OZ baseline report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oz-baseline-report
+          path: oz-baseline-artifact/
+          retention-days: 1
+          if-no-files-found: warn
 
   integration-tests:
     name: Integration Tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: quick-tests
+    needs: [ quick-tests, oz-hardhat-compat ]
     if: |
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||

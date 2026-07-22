@@ -18,10 +18,11 @@ diff: new unlisted failure → regression; listed test that now passes → stale
 instead of a list someone has to remember to prune by hand. It makes the approach consistent and
 measurable.
 
-**Currently wired up for OpenZeppelin only, not yet used anywhere in CI.** The `--format` flag
-exists so a `go test -json` adapter can be added later for `TestEthereumTests`, replacing
-`eth_tests.skip`/`.slow` with the same mechanism at per-subtest granularity — not built yet, but the
-reason the result model and CLI are format-agnostic rather than Mocha-specific.
+**Currently wired up for OpenZeppelin only** — gates every PR via the `oz-hardhat-compat` job in
+[`tests.yml`](../../.github/workflows/tests.yml). The `--format` flag exists so a `go test -json`
+adapter can be added later for `TestEthereumTests`, replacing `eth_tests.skip`/`.slow` with the same
+mechanism at per-subtest granularity — not built yet, but the reason the result model and CLI are
+format-agnostic rather than Mocha-specific.
 
 ## After bumping `testdata/openzeppelin-contracts`
 
@@ -74,6 +75,11 @@ that).
 Prints a summary and exits non-zero if anything regressed:
 - a failure that isn't in the baseline (a real regression), or
 - a baseline entry that's no longer failing (stale — remove it).
+
+`--json` prints a machine-readable `Summary` instead (same counts, regressions, stale entries, and
+cause histogram, structured rather than prose) — for a caller building its own presentation, e.g. the
+PR-comment bot in [`baseline-report-comment.yml`](../../.github/workflows/baseline-report-comment.yml),
+instead of re-parsing the human-readable report. Same exit code either way.
 
 `--results` is a glob (matched with `filepath.Glob`, so quote it against your shell expanding it
 early) that merges several files — useful since a Mocha file that crashes at load time can zero out

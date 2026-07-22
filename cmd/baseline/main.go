@@ -8,6 +8,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -76,6 +77,7 @@ type commonFlags struct {
 	format       string
 	baselinePath string
 	resultsGlob  string
+	jsonOutput   bool
 }
 
 func parseCommonFlags(name string, args []string) (*commonFlags, error) {
@@ -85,6 +87,7 @@ func parseCommonFlags(name string, args []string) (*commonFlags, error) {
 	fs.StringVar(&f.format, "format", "mocha-json", "raw results format (mocha-json)")
 	fs.StringVar(&f.baselinePath, "baseline", "", "path to the baseline JSON file (defaults from --suite if known)")
 	fs.StringVar(&f.resultsGlob, "results", "", "glob of raw results files to parse (defaults from --suite if known)")
+	fs.BoolVar(&f.jsonOutput, "json", false, "(check only) print a machine-readable Summary as JSON instead of the human-readable report")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
@@ -179,11 +182,20 @@ func runCheck(args []string) int {
 
 	diff := Diff(results, baseline)
 
-	var buf bytes.Buffer
-	WriteReport(&buf, f.suite, results, diff)
-	fmt.Print(buf.String())
-	if err := writeStepSummary(buf.Bytes()); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+	if f.jsonOutput {
+		data, err := json.MarshalIndent(BuildSummary(f.suite, results, diff), "", "  ")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 2
+		}
+		fmt.Println(string(data))
+	} else {
+		var buf bytes.Buffer
+		WriteReport(&buf, f.suite, results, diff)
+		fmt.Print(buf.String())
+		if err := writeStepSummary(buf.Bytes()); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
 	}
 
 	if diff.Regressed() {

@@ -298,9 +298,9 @@ type suiteStats struct {
 	pass, fail, skip int
 }
 
-// bySuite buckets results by suiteOf(r.File), sorted by pass rate ascending
-// (the worst-performing suite first) — the same ROI-ranking idea as the cause
-// histogram, but for "where to look next" rather than "what to fix next".
+// bySuite buckets results by suiteOf(r.File), sorted alphabetically by name —
+// a stable order to scan or diff against a previous run, independent of any
+// run's actual pass rates.
 func bySuite(results []Result) []suiteStats {
 	stats := make(map[string]*suiteStats)
 	var order []string
@@ -327,10 +327,6 @@ func bySuite(results []Result) []suiteStats {
 		out = append(out, *stats[name])
 	}
 	sort.Slice(out, func(i, j int) bool {
-		ri, rj := passRate(out[i].pass, out[i].fail), passRate(out[j].pass, out[j].fail)
-		if ri != rj {
-			return ri < rj
-		}
 		return out[i].name < out[j].name
 	})
 	return out
@@ -418,4 +414,98 @@ func groupExpected(expected []ExpectedFailure) []expectedGroup {
 		return out[i].key < out[j].key
 	})
 	return out
+}
+
+// Summary is check's machine-readable counterpart to WriteReport's prose: the
+// same underlying results/diff, structured for a caller that wants to build its
+// own presentation (e.g. a CI bot posting a PR comment) instead of re-parsing
+// rendered text. Every slice field is always present (never omitted/null), even
+// when empty, so a consumer never needs to guard against a missing key.
+type Summary struct {
+	Suite       string         `json:"suite"`
+	Pass        int            `json:"pass"`
+	Fail        int            `json:"fail"`
+	Skip        int            `json:"skip"`
+	Total       int            `json:"total"`
+	PassRate    float64        `json:"passRate"`
+	SummaryLine string         `json:"summaryLine"` // exactly WriteReport's stats line, so the two never drift apart
+	BySuite     []SuiteSummary `json:"bySuite"`
+	Regressions []Regression   `json:"regressions"`
+	Stale       []string       `json:"stale"`
+	Causes      []CauseCount   `json:"causes"`
+}
+
+type SuiteSummary struct {
+	Name     string  `json:"name"`
+	Pass     int     `json:"pass"`
+	Total    int     `json:"total"`
+	PassRate float64 `json:"passRate"`
+}
+
+type Regression struct {
+	ID      string `json:"id"`
+	Message string `json:"message"`
+}
+
+type CauseCount struct {
+	Cause string `json:"cause"`
+	Count int    `json:"count"`
+}
+
+// BuildSummary computes Summary from the same inputs WriteReport renders from,
+// reusing its helpers (passRate, bySuite, groupExpected) so the two can never
+// disagree on the underlying numbers, only on presentation.
+func BuildSummary(suite string, results []Result, diff DiffResult) Summary {
+	var pass, fail, skip int
+	for _, r := range results {
+		switch r.Status {
+		case StatusPass:
+			pass++
+		case StatusFail:
+			fail++
+		case StatusSkip:
+			skip++
+		}
+	}
+	rate := passRate(pass, fail)
+
+	bySuiteList := []SuiteSummary{}
+	for _, s := range bySuite(results) {
+		bySuiteList = append(bySuiteList, SuiteSummary{
+			Name:     s.name,
+			Pass:     s.pass,
+			Total:    s.pass + s.fail,
+			PassRate: passRate(s.pass, s.fail),
+		})
+	}
+
+	regressions := []Regression{}
+	for _, r := range diff.Regressions {
+		regressions = append(regressions, Regression{ID: r.ID, Message: r.Message})
+	}
+
+	stale := []string{}
+	for _, e := range diff.Stale {
+		stale = append(stale, e.ID)
+	}
+
+	causes := []CauseCount{}
+	for _, group := range groupExpected(diff.Expected) {
+		causes = append(causes, CauseCount{Cause: group.key, Count: len(group.items)})
+	}
+
+	return Summary{
+		Suite:    suite,
+		Pass:     pass,
+		Fail:     fail,
+		Skip:     skip,
+		Total:    len(results),
+		PassRate: rate,
+		SummaryLine: fmt.Sprintf("%d passed, %d failed, %d skipped (%d total, %.1f%% passing)",
+			pass, fail, skip, len(results), rate),
+		BySuite:     bySuiteList,
+		Regressions: regressions,
+		Stale:       stale,
+		Causes:      causes,
+	}
 }

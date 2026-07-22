@@ -7,6 +7,8 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -88,18 +90,18 @@ func TestSuiteOf(t *testing.T) {
 }
 
 func TestBySuite(t *testing.T) {
+	// "zzz" is the worse suite (0%) but must still sort after "aaa" (100%) —
+	// proves the order is alphabetical, not pass-rate.
 	results := []Result{
-		{ID: "a", Status: StatusPass, File: "/x/test/token/A.test.js"},
-		{ID: "b", Status: StatusFail, File: "/x/test/token/B.test.js"},
-		{ID: "c", Status: StatusPass, File: "/x/test/utils/C.test.js"},
-		{ID: "d", Status: StatusPass, File: "/x/test/utils/D.test.js"},
+		{ID: "a", Status: StatusPass, File: "/x/test/aaa/A.test.js"},
+		{ID: "b", Status: StatusFail, File: "/x/test/zzz/B.test.js"},
 	}
 
 	stats := bySuite(results)
 
 	want := []suiteStats{
-		{name: "token", pass: 1, fail: 1}, // 50% — worse, sorts first
-		{name: "utils", pass: 2, fail: 0}, // 100%
+		{name: "aaa", pass: 1, fail: 0},
+		{name: "zzz", pass: 0, fail: 1},
 	}
 	if !reflect.DeepEqual(stats, want) {
 		t.Fatalf("got %+v, want %+v", stats, want)
@@ -185,6 +187,61 @@ func TestDiff_NothingWrong(t *testing.T) {
 	diff := Diff(results, baseline)
 	if diff.Regressed() {
 		t.Fatalf("expected clean diff, got regressions=%+v stale=%+v", diff.Regressions, diff.Stale)
+	}
+}
+
+func TestBuildSummary(t *testing.T) {
+	results := []Result{
+		{ID: "regression", Status: StatusFail, Message: "new break", File: "test/token/ERC20.test.js"},
+		{ID: "expected-fail", Status: StatusFail, Message: "known issue", File: "test/token/ERC20.test.js"},
+		{ID: "now-passing", Status: StatusPass, File: "test/access/AccessControl.test.js"},
+		{ID: "unlisted-pass", Status: StatusPass, File: "test/access/AccessControl.test.js"},
+	}
+	baseline := []Entry{
+		{ID: "expected-fail", Cause: "some-cause"},
+		{ID: "now-passing"},
+	}
+
+	diff := Diff(results, baseline)
+	summary := BuildSummary("oz-hardhat", results, diff)
+
+	if summary.Suite != "oz-hardhat" || summary.Pass != 2 || summary.Fail != 2 || summary.Skip != 0 || summary.Total != 4 {
+		t.Fatalf("counts = %+v", summary)
+	}
+	if summary.SummaryLine != "2 passed, 2 failed, 0 skipped (4 total, 50.0% passing)" {
+		t.Fatalf("summaryLine = %q", summary.SummaryLine)
+	}
+	if len(summary.Regressions) != 1 || summary.Regressions[0] != (Regression{ID: "regression", Message: "new break"}) {
+		t.Fatalf("regressions = %+v", summary.Regressions)
+	}
+	if len(summary.Stale) != 1 || summary.Stale[0] != "now-passing" {
+		t.Fatalf("stale = %+v", summary.Stale)
+	}
+	if len(summary.Causes) != 1 || summary.Causes[0] != (CauseCount{Cause: "some-cause", Count: 1}) {
+		t.Fatalf("causes = %+v", summary.Causes)
+	}
+	if len(summary.BySuite) != 2 {
+		t.Fatalf("bySuite = %+v", summary.BySuite)
+	}
+}
+
+func TestBuildSummary_EmptySlicesMarshalAsEmptyArraysNotNull(t *testing.T) {
+	results := []Result{{ID: "unlisted-pass", Status: StatusPass}}
+	summary := BuildSummary("oz-hardhat", results, Diff(results, nil))
+
+	data, err := json.Marshal(summary)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	// Every slice field must serialize as "[]", never "null" — a consumer reading
+	// this JSON should never need to guard against a missing/null key. bySuite
+	// isn't asserted here: a single result always yields exactly one suiteStats
+	// bucket (grouped under suiteOf("") == ""), never zero — see TestSuiteOf.
+	for _, field := range []string{`"regressions":[]`, `"stale":[]`, `"causes":[]`} {
+		if !bytes.Contains(data, []byte(field)) {
+			t.Fatalf("expected %s in JSON, got %s", field, data)
+		}
 	}
 }
 

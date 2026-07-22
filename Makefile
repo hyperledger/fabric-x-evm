@@ -248,12 +248,12 @@ eth-tests-slow-legacy:
 eth-tests-execution-specs: fetch-execution-specs-tests
 	@go test -test.fullpath=true -timeout 2000s -run ^TestExecutionSpecStateTests$$ github.com/hyperledger/fabric-x-evm/integration
 
+# Single-file smoke test — CI runs hardhat-tests-full (below) instead.
 .PHONY: hardhat-tests
 hardhat-tests:
 	@./scripts/run_hardhat_test.sh
 
-# Runs the full OZ compatible set, not just ERC20.test.js.
-# Local only, not CI-gated — hardhat-tests above is what CI runs.
+# Full OZ compatible set — what CI's oz-hardhat-compat job runs.
 .PHONY: hardhat-tests-full
 hardhat-tests-full:
 	@./scripts/run_hardhat_test.sh --full
