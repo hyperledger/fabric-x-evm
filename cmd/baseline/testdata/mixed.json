@@ -1,0 +1,17 @@
+{
+  "stats": { "suites": 1, "tests": 3, "passes": 1, "pending": 1, "failures": 1 },
+  "tests": [
+    { "fullTitle": "Foo bar test A", "err": {} },
+    { "fullTitle": "Foo bar test B", "err": { "message": "boom B" } },
+    { "fullTitle": "Foo bar test C", "err": {} }
+  ],
+  "pending": [
+    { "fullTitle": "Foo bar test C", "err": {} }
+  ],
+  "failures": [
+    { "fullTitle": "Foo bar test B", "err": { "message": "boom B" } }
+  ],
+  "passes": [
+    { "fullTitle": "Foo bar test A", "err": {} }
+  ]
+}

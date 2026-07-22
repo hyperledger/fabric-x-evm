@@ -8,6 +8,7 @@ testdata/*
 !testdata/ethereum-tests
 !testdata/openzeppelin-contracts
 !testdata/hardhat.wrapper.config.js
+!testdata/mocha-spec-and-json-reporter.js
 !testdata/configtx.yaml
 !testdata/crypto-config.yaml
 !testdata/fxconfig.yaml
