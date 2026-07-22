@@ -520,9 +520,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 
 	// Start worker goroutines - they continuously submit without waiting for completion
 	for range numWorkers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 
 			for item := range workChan {
 				i := item.index
@@ -562,15 +560,13 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 					metrics.RecordTransactionSent()
 				}
 			}
-		}()
+		})
 	}
 
 	// Progress logging goroutine
 	stopLogging := make(chan struct{})
 	var loggingWg sync.WaitGroup
-	loggingWg.Add(1)
-	go func() {
-		defer loggingWg.Done()
+	loggingWg.Go(func() {
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
 
@@ -627,7 +623,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 				return
 			}
 		}
-	}()
+	})
 
 	// Feed work to the workers (refill goroutine)
 	var refillWg sync.WaitGroup

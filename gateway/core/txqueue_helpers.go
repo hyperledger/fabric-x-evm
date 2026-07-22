@@ -7,6 +7,8 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package core
 
 import (
+	"slices"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 )
@@ -20,7 +22,7 @@ func participantsForTx(tx *types.Transaction) []common.Address {
 		participants = append(participants, sender)
 	}
 
-	if recipient, ok := recipientForTx(tx); ok && !containsAddress(participants, recipient) {
+	if recipient, ok := recipientForTx(tx); ok && !slices.Contains(participants, recipient) {
 		participants = append(participants, recipient)
 	}
 
@@ -59,14 +61,4 @@ func recipientForTx(tx *types.Transaction) (common.Address, bool) {
 	// Extract recipient from ERC20 transfer calldata (offset 4 + 12 bytes)
 	recipientOffset := 4 + 12
 	return common.BytesToAddress(data[recipientOffset : recipientOffset+20]), true
-}
-
-// containsAddress checks if a slice of addresses contains the target address.
-func containsAddress(addresses []common.Address, target common.Address) bool {
-	for _, address := range addresses {
-		if address == target {
-			return true
-		}
-	}
-	return false
 }

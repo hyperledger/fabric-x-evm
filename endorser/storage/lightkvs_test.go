@@ -528,7 +528,7 @@ func TestConcurrentReaders(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(numReaders)
 
-	for i := 0; i < numReaders; i++ {
+	for range numReaders {
 		go func() {
 			defer wg.Done()
 			reader, err := kvs.NewSnapshot(BlockAt(1))
@@ -1181,7 +1181,7 @@ func TestConcurrentReadersWithUpdates(t *testing.T) {
 
 	// Start readers
 	wg.Add(numReaders)
-	for i := 0; i < numReaders; i++ {
+	for i := range numReaders {
 		go func(id int) {
 			defer wg.Done()
 			// Request block 0 (current snapshot) to get whatever state exists at this moment
@@ -1211,7 +1211,7 @@ func TestConcurrentReadersWithUpdates(t *testing.T) {
 	}
 
 	// Perform updates concurrently (single writer, but testing atomicity)
-	for i := 0; i < numUpdates; i++ {
+	for i := range numUpdates {
 		updates := []KeyValueVersion{
 			{
 				Key:      "ns1:key1",
@@ -1323,7 +1323,7 @@ func TestSnapshotHistoryEviction(t *testing.T) {
 		updates := []KeyValueVersion{
 			{
 				Key:      "ns1:key1",
-				Value:    []byte(fmt.Sprintf("value_block%d", i)),
+				Value:    fmt.Appendf(nil, "value_block%d", i),
 				BlockNum: uint64(i),
 				TxNum:    0,
 				TxID:     fmt.Sprintf("tx%d", i),

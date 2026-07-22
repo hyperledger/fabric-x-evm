@@ -440,8 +440,8 @@ func suiteOf(file string) string {
 		return file
 	}
 	rest := file[idx+len(marker):]
-	if slash := strings.Index(rest, "/"); slash != -1 {
-		return rest[:slash]
+	if before, _, ok := strings.Cut(rest, "/"); ok {
+		return before
 	}
 	return rest
 }

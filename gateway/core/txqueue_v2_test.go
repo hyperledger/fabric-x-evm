@@ -409,7 +409,7 @@ func TestTxQueueV2_Complete_SignalsOneWorkerForOnePromotion(t *testing.T) {
 	var mu sync.Mutex
 
 	// Start multiple workers
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		go func() {
 			q.mu.Lock()
 			for q.readyList.Len() == 0 && !q.done {
@@ -498,7 +498,7 @@ func TestTxQueueV2_Close_WakesUpWorkers(t *testing.T) {
 	done := make(chan bool, 3)
 
 	// Start multiple workers
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		go func() {
 			_, ok := q.Dequeue()
 			assert.False(t, ok)
@@ -512,7 +512,7 @@ func TestTxQueueV2_Close_WakesUpWorkers(t *testing.T) {
 	q.Close()
 
 	// All workers should wake up
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		select {
 		case <-done:
 			// Worker woke up
@@ -723,10 +723,8 @@ func TestTxQueueV2_ConcurrentEnqueueDequeue(t *testing.T) {
 	var wg sync.WaitGroup
 
 	// Enqueue transactions with unique senders AND recipients so they don't block each other
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < numTxs; i++ {
+	wg.Go(func() {
+		for i := range numTxs {
 			// Create unique private key and recipient for each transaction
 			privKey, _ := crypto.GenerateKey()
 			// Use i to create unique recipient addresses
@@ -737,16 +735,14 @@ func TestTxQueueV2_ConcurrentEnqueueDequeue(t *testing.T) {
 			tx := createSignedTx(uint64(i), addr, privKey)
 			q.Enqueue(tx)
 		}
-	}()
+	})
 
 	// Dequeue transactions
 	dequeued := make([]*types.Transaction, 0, numTxs)
 	var dequeueMu sync.Mutex
 
-	for i := 0; i < numWorkers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range numWorkers {
+		wg.Go(func() {
 			for {
 				tx, ok := q.Dequeue()
 				if !ok {
@@ -756,7 +752,7 @@ func TestTxQueueV2_ConcurrentEnqueueDequeue(t *testing.T) {
 				dequeued = append(dequeued, tx)
 				dequeueMu.Unlock()
 			}
-		}()
+		})
 	}
 
 	// Wait for all enqueues

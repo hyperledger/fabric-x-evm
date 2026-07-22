@@ -239,7 +239,7 @@ func (r *Reader) Get(namespace, key string) (*blocks.WriteRecord, error) {
 
 		if false {
 			// Debug: JSON dump the record with truncated value
-			logRec := map[string]interface{}{
+			logRec := map[string]any{
 				"namespace": namespace,
 				"key":       key,
 				"block_num": vv.BlockNum,
@@ -314,7 +314,7 @@ func (kvs *LightKVS) Update(updates []KeyValueVersion) error {
 
 			if false {
 				// Debug: JSON dump the record with truncated value
-				logRec := map[string]interface{}{
+				logRec := map[string]any{
 					"key":       update.Key,
 					"block_num": update.BlockNum,
 					"tx_num":    update.TxNum,
