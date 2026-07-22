@@ -33,6 +33,30 @@ func writeMochaFixture(t *testing.T, dir, name, fullTitle, errMessage string) st
 	return path
 }
 
+func TestApplySuiteDefaults(t *testing.T) {
+	baselinePath, resultsGlob := "", ""
+	applySuiteDefaults("oz-hardhat", &baselinePath, &resultsGlob)
+	if baselinePath != "testdata/oz_known_failures.json" || resultsGlob != "testdata/oz-hardhat-results/*.json" {
+		t.Fatalf("got baseline=%q results=%q", baselinePath, resultsGlob)
+	}
+}
+
+func TestApplySuiteDefaults_ExplicitValuesWin(t *testing.T) {
+	baselinePath, resultsGlob := "custom.json", "custom/*.json"
+	applySuiteDefaults("oz-hardhat", &baselinePath, &resultsGlob)
+	if baselinePath != "custom.json" || resultsGlob != "custom/*.json" {
+		t.Fatalf("explicit values should not be overridden, got baseline=%q results=%q", baselinePath, resultsGlob)
+	}
+}
+
+func TestApplySuiteDefaults_UnknownSuiteLeavesFlagsEmpty(t *testing.T) {
+	baselinePath, resultsGlob := "", ""
+	applySuiteDefaults("some-future-suite", &baselinePath, &resultsGlob)
+	if baselinePath != "" || resultsGlob != "" {
+		t.Fatalf("unrecognized suite should not set defaults, got baseline=%q results=%q", baselinePath, resultsGlob)
+	}
+}
+
 func TestLoadResults_AgreeingDuplicateIsFolded(t *testing.T) {
 	dir := t.TempDir()
 	writeMochaFixture(t, dir, "a.json", "shared test", "")

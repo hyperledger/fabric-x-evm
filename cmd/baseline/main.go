@@ -22,6 +22,34 @@ var parsers = map[string]func([]byte) ([]Result, error){
 	"mocha-json": ParseMochaJSON,
 }
 
+// suiteDefaults gives --baseline/--results a sensible default from --suite alone, so
+// the common case (CI, docs, day-to-day invocations) doesn't need to repeat both
+// paths every time. Explicit --baseline/--results always override; an unrecognized
+// --suite is still fine, it just doesn't unlock defaults (--suite is otherwise only
+// a report-header label).
+var suiteDefaults = map[string]struct {
+	baselinePath string
+	resultsGlob  string
+}{
+	"oz-hardhat": {
+		baselinePath: "testdata/oz_known_failures.json",
+		resultsGlob:  "testdata/oz-hardhat-results/*.json",
+	},
+}
+
+func applySuiteDefaults(suite string, baselinePath, resultsGlob *string) {
+	d, ok := suiteDefaults[suite]
+	if !ok {
+		return
+	}
+	if *baselinePath == "" {
+		*baselinePath = d.baselinePath
+	}
+	if *resultsGlob == "" {
+		*resultsGlob = d.resultsGlob
+	}
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, "usage: baseline <check|update|tag> [flags]")
@@ -53,13 +81,14 @@ type commonFlags struct {
 func parseCommonFlags(name string, args []string) (*commonFlags, error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	f := &commonFlags{}
-	fs.StringVar(&f.suite, "suite", "", "suite name, for the report header")
+	fs.StringVar(&f.suite, "suite", "", "suite name, for the report header; a known suite (e.g. oz-hardhat) also supplies --baseline/--results defaults")
 	fs.StringVar(&f.format, "format", "mocha-json", "raw results format (mocha-json)")
-	fs.StringVar(&f.baselinePath, "baseline", "", "path to the baseline JSON file")
-	fs.StringVar(&f.resultsGlob, "results", "", "glob of raw results files to parse")
+	fs.StringVar(&f.baselinePath, "baseline", "", "path to the baseline JSON file (defaults from --suite if known)")
+	fs.StringVar(&f.resultsGlob, "results", "", "glob of raw results files to parse (defaults from --suite if known)")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
+	applySuiteDefaults(f.suite, &f.baselinePath, &f.resultsGlob)
 	if f.baselinePath == "" {
 		return nil, fmt.Errorf("--baseline is required")
 	}
@@ -225,8 +254,9 @@ func tagMatching(baseline []Entry, messageByID map[string]string, match, cause, 
 
 func runTag(args []string) int {
 	fs := flag.NewFlagSet("tag", flag.ContinueOnError)
-	baselinePath := fs.String("baseline", "", "path to the baseline JSON file")
-	resultsGlob := fs.String("results", "", "glob of raw results files to parse")
+	suite := fs.String("suite", "", "suite name; a known suite (e.g. oz-hardhat) supplies --baseline/--results defaults")
+	baselinePath := fs.String("baseline", "", "path to the baseline JSON file (defaults from --suite if known)")
+	resultsGlob := fs.String("results", "", "glob of raw results files to parse (defaults from --suite if known)")
 	format := fs.String("format", "mocha-json", "raw results format (mocha-json)")
 	match := fs.String("match", "", "substring to match against each entry's ID or current failure message")
 	cause := fs.String("cause", "", "cause to assign to every matching entry")
@@ -236,8 +266,9 @@ func runTag(args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
+	applySuiteDefaults(*suite, baselinePath, resultsGlob)
 	if *baselinePath == "" || *resultsGlob == "" || *match == "" || *cause == "" {
-		fmt.Fprintln(os.Stderr, "usage: baseline tag --baseline <path> --results <glob> --match <substring> --cause <name> [--note <text>] [--force]")
+		fmt.Fprintln(os.Stderr, "usage: baseline tag --suite <name> --match <substring> --cause <name> [--baseline <path>] [--results <glob>] [--note <text>] [--force]")
 		return 2
 	}
 

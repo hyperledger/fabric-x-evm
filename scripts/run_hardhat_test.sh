@@ -31,7 +31,6 @@ COMPAT_DIRS=(access crosschain finance governance metatx proxy token utils)
 # it's there — e.g. `grep '"fullTitle": "..."' -A2 testdata/oz-hardhat-results/*.json`
 # to find which file a failing test lives in, without any code needing to track it.
 RESULTS_DIR="${PROJECT_ROOT}/testdata/oz-hardhat-results"
-BASELINE_PATH="${PROJECT_ROOT}/testdata/oz_known_failures.json"
 
 cleanup() {
     if [ -n "${TESTNODE_PID}" ] && kill -0 "${TESTNODE_PID}" 2>/dev/null; then
@@ -159,8 +158,7 @@ run_full_suite() {
     # build is what the (not-yet-built) CI gate is for; a local, exploratory
     # --full run shouldn't error out just because a known failure is still
     # known to fail.
-    go run ./cmd/baseline check --suite oz-hardhat \
-        --baseline "${BASELINE_PATH}" --results "${RESULTS_DIR}/*.json" || true
+    go run ./cmd/baseline check --suite oz-hardhat || true
 }
 
 main() {
