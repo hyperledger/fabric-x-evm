@@ -154,13 +154,21 @@ func (e *EVMEngine) NonceAt(_ context.Context, account common.Address, blockNumb
 	return snap.GetNonce(account), nil
 }
 
+// resolveStateBlockNumber converts a state-query block number to the KVSSnapshotter
+// convention (0 = latest). nil and any negative value (an unresolved go-ethereum block-tag
+// sentinel) resolve to 0/latest rather than corrupting via *big.Int.Uint64()'s absolute-value
+// conversion.
+func resolveStateBlockNumber(blockNumber *big.Int) uint64 {
+	if blockNumber == nil || blockNumber.Sign() < 0 {
+		return 0
+	}
+	return blockNumber.Uint64()
+}
+
 // newExecutor creates a fresh executor with an isolated StateDB.
 // blockNumber selects the Fabric block height for the state snapshot (nil = latest).
 func (e *EVMEngine) newExecutor(blockNumber *big.Int) (*Executor, error) {
-	var stateBlockNum uint64
-	if blockNumber != nil {
-		stateBlockNum = blockNumber.Uint64()
-	}
+	stateBlockNum := resolveStateBlockNumber(blockNumber)
 
 	// Begin a new reader to get snapshot isolation
 	reader, err := e.kvs.NewSnapshot(stateBlockNum)
@@ -190,10 +198,7 @@ func (e *EVMEngine) newExecutor(blockNumber *big.Int) (*Executor, error) {
 // newSnapshotAt returns an ExtendedStateDB over the state at the given Fabric block height (0 = latest).
 // The caller must close the returned reader when done.
 func (e *EVMEngine) newSnapshotAt(blockNumber *big.Int) (ExtendedStateDB, ReadStore, error) {
-	blockNum := uint64(0)
-	if blockNumber != nil {
-		blockNum = blockNumber.Uint64()
-	}
+	blockNum := resolveStateBlockNumber(blockNumber)
 
 	// Begin a new reader to get snapshot isolation
 	reader, err := e.kvs.NewSnapshot(blockNum)

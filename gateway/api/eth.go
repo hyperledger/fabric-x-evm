@@ -439,14 +439,8 @@ func filterCriteriaToLogFilter(crit filters.FilterCriteria) domain.LogFilter {
 		hash := crit.BlockHash.Bytes()
 		filter.BlockHash = &hash
 	} else {
-		if crit.FromBlock != nil {
-			from := crit.FromBlock.Uint64()
-			filter.FromBlock = &from
-		}
-		if crit.ToBlock != nil {
-			to := crit.ToBlock.Uint64()
-			filter.ToBlock = &to
-		}
+		filter.FromBlock = resolveLogFilterBlockNumber(crit.FromBlock)
+		filter.ToBlock = resolveLogFilterBlockNumber(crit.ToBlock)
 	}
 
 	if len(crit.Addresses) > 0 {
@@ -584,9 +578,15 @@ func (api *EthAPI) blockNumberOrHashToBlockNumber(ctx context.Context, numOrHash
 	return new(big.Int).SetUint64(*num), nil
 }
 
-// rpcBlockNumberToBigInt converts rpc.BlockNumber to *big.Int
+// rpcBlockNumberToBigInt converts rpc.BlockNumber to *big.Int for state queries.
+// "earliest" resolves to block 0; every other negative sentinel (latest, pending, safe,
+// finalized, and any future one) resolves to nil/"latest" — every committed Fabric block
+// is final, so finalized == latest is semantically correct here too.
 func rpcBlockNumberToBigInt(num rpc.BlockNumber) *big.Int {
-	if num == rpc.PendingBlockNumber || num == rpc.LatestBlockNumber {
+	if num == rpc.EarliestBlockNumber {
+		return big.NewInt(0)
+	}
+	if num < 0 {
 		return nil
 	}
 	return big.NewInt(num.Int64())
@@ -603,4 +603,22 @@ func blockNumberToUint64(num rpc.BlockNumber) uint64 {
 		return math.MaxUint64
 	}
 	return uint64(num)
+}
+
+// resolveLogFilterBlockNumber converts a FilterCriteria block bound to a LogFilter bound:
+// nil (omitted), "latest", "pending", "safe" and "finalized" all resolve to nil (open end);
+// "earliest" resolves to block 0.
+func resolveLogFilterBlockNumber(n *big.Int) *uint64 {
+	if n == nil {
+		return nil
+	}
+	if n.Cmp(big.NewInt(int64(rpc.EarliestBlockNumber))) == 0 {
+		zero := uint64(0)
+		return &zero
+	}
+	if n.Sign() < 0 {
+		return nil
+	}
+	v := n.Uint64()
+	return &v
 }
