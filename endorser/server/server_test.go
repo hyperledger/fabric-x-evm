@@ -62,13 +62,18 @@ func (s *stubService) NonceAt(_ context.Context, _ ethcommon.Address, _ *big.Int
 	return s.nonce, s.readErr
 }
 
+type stubSigner struct{}
+
+func (stubSigner) Sign([]byte) ([]byte, error) { return []byte("sig"), nil }
+func (stubSigner) Serialize() ([]byte, error)  { return []byte("creator"), nil }
+
 // newTestClient stands up the Server on an in-memory bufconn connection and
 // returns a client wired to it.
 func newTestClient(t *testing.T, svc *stubService) endorsementpb.EvmEndorsementClient {
 	t.Helper()
 	lis := bufconn.Listen(1024 * 1024)
 	gs := grpc.NewServer()
-	endorsementpb.RegisterEvmEndorsementServer(gs, New(svc))
+	endorsementpb.RegisterEvmEndorsementServer(gs, New(svc, stubSigner{}, "ch", "ns", "1.0"))
 	go func() { _ = gs.Serve(lis) }()
 	t.Cleanup(gs.Stop)
 

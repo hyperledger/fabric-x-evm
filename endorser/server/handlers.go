@@ -30,16 +30,29 @@ func (s *Server) Execute(ctx context.Context, req *endorsementpb.ExecuteRequest)
 	if err := tx.UnmarshalBinary(req.GetEthereumTx()); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "unmarshal tx: %v", err)
 	}
-	// Provisional: today the client builds the invocation (creator identity +
-	// proposal); the wire shape that carries it, and the fabricx.TxPackager
-	// change behind the Fabric-X "no proposal on the wire" decision, are
-	// finalized with the client PR (#244). Until then the server forwards with
-	// an empty invocation; req.proposal_hash is reserved for classic Fabric.
-	resp, err := s.svc.Execute(ctx, endorsement.Invocation{}, tx)
+	inv, err := s.invocation(req.GetEthereumTx(), req.GetProposalHash())
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "build invocation: %v", err)
+	}
+	resp, err := s.svc.Execute(ctx, inv, tx)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "execute: %v", err)
 	}
 	return executeResponse(resp), nil
+}
+
+// invocation rebuilds the endorsement invocation from the transaction using the
+// endorser's identity and namespace, keeping the caller's proposal hash when set.
+func (s *Server) invocation(ethTx, proposalHash []byte) (endorsement.Invocation, error) {
+	args := [][]byte{{byte(common.ProposalTypeEVMTx)}, ethTx}
+	inv, err := endorsement.NewInvocation(s.signer, s.channel, s.namespace, s.nsVersion, args)
+	if err != nil {
+		return endorsement.Invocation{}, err
+	}
+	if len(proposalHash) > 0 {
+		inv.ProposalHash = proposalHash
+	}
+	return inv, nil
 }
 
 // Call runs a read-only eth_call. A revert or failed execution is an
@@ -48,8 +61,7 @@ func (s *Server) Execute(ctx context.Context, req *endorsementpb.ExecuteRequest)
 func (s *Server) Call(ctx context.Context, req *endorsementpb.CallRequest) (*endorsementpb.CallResponse, error) {
 	out, err := s.svc.Call(ctx, callMsg(req), blockNumber(req.BlockNumber))
 	if err != nil {
-		var ce *common.CallError
-		if errors.As(err, &ce) {
+		if ce, ok := errors.AsType[*common.CallError](err); ok {
 			return &endorsementpb.CallResponse{ReturnData: ce.Data, Status: ce.Status, Message: ce.Message}, nil
 		}
 		return nil, status.Errorf(codes.Internal, "call: %v", err)
@@ -119,8 +131,6 @@ func callMsg(req *endorsementpb.CallRequest) *ethereum.CallMsg {
 }
 
 // executeResponse maps the endorser's ProposalResponse onto the wire response.
-// The read-write set and event live inside the payload today; splitting them
-// into their own fields is finalized with the client PR (#244).
 func executeResponse(pr *peer.ProposalResponse) *endorsementpb.ExecuteResponse {
 	out := &endorsementpb.ExecuteResponse{}
 	if r := pr.GetResponse(); r != nil {
