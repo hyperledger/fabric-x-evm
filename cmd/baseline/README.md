@@ -43,7 +43,7 @@ reconcile:
 
 One thing this tool *can't* see: whether the compatible-set **exclusions** themselves are still right
 (new test directories, files that now need the `hardhat-predeploy` plugin, etc.) — that's decided in
-`scripts/run_hardhat_test.sh` / `docs/OZ_COMPAT.md`, not here.
+`scripts/run_hardhat_test.sh`, not here.
 
 ## Generate results
 

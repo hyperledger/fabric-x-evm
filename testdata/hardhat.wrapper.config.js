@@ -20,10 +20,12 @@ BigInt.prototype.toJSON = function () {
 
 // This Hardhat version has no --reporter CLI flag; the mocha reporter must come from
 // config. Gated by an env var so a plain `npx hardhat test` still gets the normal
-// human-readable reporter.
+// human-readable reporter. When set, use the combined reporter (mocha-spec-and-json-
+// reporter.js) so a single run gives both the live console view and the JSON file
+// cmd/baseline parses, instead of picking one or the other.
 const mochaConfig = { ...ozConfig.mocha };
-if (process.env.HARDHAT_REPORTER) {
-  mochaConfig.reporter = process.env.HARDHAT_REPORTER;
+if (process.env.HARDHAT_JSON_OUTPUT) {
+  mochaConfig.reporter = path.join(__dirname, 'mocha-spec-and-json-reporter.js');
 }
 
 module.exports = {
