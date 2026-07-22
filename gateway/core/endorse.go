@@ -8,12 +8,14 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
 	"math/big"
 
 	"github.com/ethereum/go-ethereum"
+	ethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 
@@ -70,7 +72,7 @@ func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Tra
 
 	for i, end := range e.endorsers {
 		processEndorsement := func(index int, endorser api.Service) {
-			pResp, err := endorser.ProcessEVMTransaction(ctx, inv, tx)
+			pResp, err := endorser.Execute(ctx, inv, tx)
 			if err != nil {
 				// A Go error is a transport/delivery failure (e.g. gRPC), not a tx outcome.
 				errs[index] = fmt.Errorf("call endorser: %w", err)
@@ -117,39 +119,48 @@ func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Tra
 }
 
 // CallContract queries a smart contract and returns the value.
-// Status 201 from the endorser signals an EVM revert; surface as
-// *domain.RevertError so the API layer can map to JSON-RPC -32000.
+// An EVM revert from the endorser is surfaced as *domain.RevertError so the API
+// layer can map it to JSON-RPC -32000.
 func (e *EndorsementClient) CallContract(ctx context.Context, args ethereum.CallMsg, blockNumber *big.Int) ([]byte, error) {
-	res, err := e.endorsers[0].ProcessCall(ctx, &args, blockNumber)
-	if err != nil {
+	payload, err := e.endorsers[0].Call(ctx, &args, blockNumber)
+	if err == nil {
+		return payload, nil
+	}
+
+	callErr, ok := errors.AsType[*common.CallError](err)
+	if !ok {
+		// Not an application outcome: a transport/delivery failure.
 		return nil, fmt.Errorf("process call: %w", err)
 	}
-	if res.Response.Status == common.StatusEVMRevert {
-		return nil, &domain.RevertError{Reason: res.Response.Message, Data: res.Response.Payload}
+	if callErr.Reverted() {
+		return nil, &domain.RevertError{Reason: callErr.Message, Data: callErr.Data}
 	}
 	// For a call, both a failed execution and a rejected tx are surfaced as an
 	// execution error (-32000); only the reverted case carries data.
-	if res.Response.Status == common.StatusExecFailure || res.Response.Status == common.StatusTxRejected {
-		return nil, &domain.ExecutionError{Message: res.Response.Message}
+	if callErr.Status == common.StatusExecFailure || callErr.Status == common.StatusTxRejected {
+		return nil, &domain.ExecutionError{Message: callErr.Message}
 	}
-	if res.Response.Status < 200 || res.Response.Status >= 400 {
-		return nil, fmt.Errorf("query response was not successful, error code %d, msg %s", res.Response.Status, res.Response.Message)
-	}
-
-	return res.Response.Payload, nil
+	return nil, fmt.Errorf("query response was not successful, error code %d, msg %s", callErr.Status, callErr.Message)
 }
 
-// GetState returns ledger state.
-func (e *EndorsementClient) GetState(ctx context.Context, query common.StateQuery) ([]byte, error) {
-	res, err := e.endorsers[0].ProcessStateQuery(ctx, query)
-	if err != nil {
-		return nil, fmt.Errorf("process state query: %w", err)
-	}
-	if res.Response.Status < 200 || res.Response.Status >= 400 {
-		return nil, fmt.Errorf("query response was not successful, error code %d, msg %s", res.Response.Status, res.Response.Message)
-	}
+// BalanceAt returns an account's balance at the given block.
+func (e *EndorsementClient) BalanceAt(ctx context.Context, account ethcommon.Address, blockNumber *big.Int) (*big.Int, error) {
+	return e.endorsers[0].BalanceAt(ctx, account, blockNumber)
+}
 
-	return res.Response.Payload, nil
+// StorageAt returns the storage word at key for an account.
+func (e *EndorsementClient) StorageAt(ctx context.Context, account ethcommon.Address, key ethcommon.Hash, blockNumber *big.Int) ([]byte, error) {
+	return e.endorsers[0].StorageAt(ctx, account, key, blockNumber)
+}
+
+// CodeAt returns an account's contract code.
+func (e *EndorsementClient) CodeAt(ctx context.Context, account ethcommon.Address, blockNumber *big.Int) ([]byte, error) {
+	return e.endorsers[0].CodeAt(ctx, account, blockNumber)
+}
+
+// NonceAt returns an account's nonce.
+func (e *EndorsementClient) NonceAt(ctx context.Context, account ethcommon.Address, blockNumber *big.Int) (uint64, error) {
+	return e.endorsers[0].NonceAt(ctx, account, blockNumber)
 }
 
 // createInvocation creates an endorsement.Invocation from the given parameters

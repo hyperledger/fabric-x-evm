@@ -8,7 +8,6 @@ package core
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"math/big"
@@ -52,10 +51,10 @@ func New(engine *execution.EVMEngine, builder endorsement.Builder) (*Endorser, e
 	}, nil
 }
 
-// ProcessEVMTransaction processes an Ethereum transaction and returns a signed proposal response.
+// Execute endorses an Ethereum transaction and returns a signed proposal response.
 // Reverts are endorsed and submitted (so the receipt records status=0); client-caused failures
 // (invalid tx or failed execution) surface as a non-2xx status that CreateSignedTx won't submit.
-func (f *Endorser) ProcessEVMTransaction(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction) (*peer.ProposalResponse, error) {
+func (f *Endorser) Execute(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction) (*peer.ProposalResponse, error) {
 	// Signature and nonce are validated inside the engine during execution.
 	res, err := f.Engine.Execute(ctx, ethTx)
 	if err != nil {
@@ -71,60 +70,55 @@ func (f *Endorser) ProcessEVMTransaction(ctx context.Context, inv endorsement.In
 	return resp, nil
 }
 
-// ProcessCall processes an Ethereum call (query) and returns a proposal response
-func (f *Endorser) ProcessCall(ctx context.Context, callMsg *ethereum.CallMsg, blockNumber *big.Int) (*peer.ProposalResponse, error) {
-	res, err := f.Engine.Call(*callMsg, blockNumber)
-	return response(res, err), nil
+// Call runs a read-only eth_call. A revert or failed execution comes back as a
+// *common.CallError; on a revert the payload is returned alongside it.
+func (f *Endorser) Call(ctx context.Context, msg *ethereum.CallMsg, blockNumber *big.Int) ([]byte, error) {
+	res, err := f.Engine.Call(*msg, blockNumber)
+	if err != nil {
+		return res, &common.CallError{Status: classify(err), Message: err.Error(), Data: res}
+	}
+	return res, nil
 }
 
-// ProcessStateQuery processes a state query and returns a proposal response
-func (f *Endorser) ProcessStateQuery(ctx context.Context, query common.StateQuery) (*peer.ProposalResponse, error) {
-	// Execute the query based on query type
-	var res []byte
-	var err error
+func (f *Endorser) BalanceAt(ctx context.Context, account ethcommon.Address, blockNumber *big.Int) (*big.Int, error) {
+	return f.Engine.BalanceAt(ctx, account, blockNumber)
+}
 
-	switch query.Type {
-	case common.QueryTypeBalance:
-		bal, balErr := f.Engine.BalanceAt(ctx, query.Account, query.BlockNumber)
-		if balErr != nil {
-			return response(nil, balErr), nil
-		}
-		res = bal.Bytes()
-	case common.QueryTypeCode:
-		res, err = f.Engine.CodeAt(ctx, query.Account, query.BlockNumber)
-	case common.QueryTypeStorage:
-		res, err = f.Engine.StorageAt(ctx, query.Account, query.Key, query.BlockNumber)
-	case common.QueryTypeNonce:
-		nonce, nonceErr := f.Engine.NonceAt(ctx, query.Account, query.BlockNumber)
-		if nonceErr != nil {
-			return response(nil, nonceErr), nil
-		}
-		res = make([]byte, 8)
-		binary.BigEndian.PutUint64(res, nonce)
-	default:
-		return response(nil, fmt.Errorf("unknown state query %d", query.Type)), nil
+func (f *Endorser) StorageAt(ctx context.Context, account ethcommon.Address, key ethcommon.Hash, blockNumber *big.Int) ([]byte, error) {
+	return f.Engine.StorageAt(ctx, account, key, blockNumber)
+}
+
+func (f *Endorser) CodeAt(ctx context.Context, account ethcommon.Address, blockNumber *big.Int) ([]byte, error) {
+	return f.Engine.CodeAt(ctx, account, blockNumber)
+}
+
+func (f *Endorser) NonceAt(ctx context.Context, account ethcommon.Address, blockNumber *big.Int) (uint64, error) {
+	return f.Engine.NonceAt(ctx, account, blockNumber)
+}
+
+// classify maps an engine error to a status code. A revert is a committed
+// outcome; an *execution.ExecFailure is a valid tx whose EVM execution failed;
+// an *execution.TxRejected is an invalid client tx; anything else is a
+// server-side fault.
+func classify(err error) int32 {
+	if errors.Is(err, vm.ErrExecutionReverted) {
+		return common.StatusEVMRevert
 	}
-
-	return response(res, err), nil
+	if _, ok := errors.AsType[*execution.ExecFailure](err); ok {
+		return common.StatusExecFailure
+	}
+	if _, ok := errors.AsType[*execution.TxRejected](err); ok {
+		return common.StatusTxRejected
+	}
+	return common.StatusServerError
 }
 
 func response(res []byte, err error) *peer.ProposalResponse {
 	if err != nil {
-		// A revert is a committed outcome; an *execution.ExecFailure is a valid tx
-		// whose EVM execution failed; an *execution.TxRejected is an invalid client
-		// tx; anything else is a server-side fault.
-		status := common.StatusServerError
-		if errors.Is(err, vm.ErrExecutionReverted) {
-			status = common.StatusEVMRevert
-		} else if _, ok := errors.AsType[*execution.ExecFailure](err); ok {
-			status = common.StatusExecFailure
-		} else if _, ok := errors.AsType[*execution.TxRejected](err); ok {
-			status = common.StatusTxRejected
-		}
 		return &peer.ProposalResponse{
 			Version: 1,
 			Response: &peer.Response{
-				Status:  status,
+				Status:  classify(err),
 				Message: err.Error(),
 				Payload: res,
 			},

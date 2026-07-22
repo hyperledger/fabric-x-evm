@@ -42,6 +42,15 @@ checks:
 	@go tool staticcheck ./... || (echo "Staticcheck failed"; exit 1)
 	@find . -type d -name testdata -prune -o -name '*.go' -print | xargs go tool addlicense -check || (echo "Missing license headers"; exit 1)
 
+.PHONY: proto
+proto:
+	@echo "Generating protobufs..."
+	@protoc \
+		-I="$(CURDIR)" \
+		--go_out=paths=source_relative:. \
+		--go-grpc_out=paths=source_relative:. \
+		$(CURDIR)/api/*/*.proto
+
 .PHONY: unit-tests
 unit-tests:
 	go test ./... -short -coverprofile=coverage.out -covermode=atomic
@@ -234,6 +243,10 @@ eth-tests-slow:
 .PHONY: eth-tests-slow-legacy
 eth-tests-slow-legacy:
 	@go test -test.fullpath=true -timeout 10000s -run ^TestEthereumTests$$ github.com/hyperledger/fabric-x-evm/integration -very_slow -legacy
+
+.PHONY: eth-tests-execution-specs
+eth-tests-execution-specs: fetch-execution-specs-tests
+	@go test -test.fullpath=true -timeout 2000s -run ^TestExecutionSpecStateTests$$ github.com/hyperledger/fabric-x-evm/integration
 
 .PHONY: hardhat-tests
 hardhat-tests:

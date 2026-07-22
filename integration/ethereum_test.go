@@ -221,8 +221,17 @@ func runEthereumTestFile(t *testing.T, path string) {
 
 // runSingleEthereumTest executes one ethereum test case with all configurations
 func runSingleEthereumTest(t *testing.T, stateTest *StateTest) {
-	// Iterate through all subtests (fork/index combinations)
+	runStateTestSubtests(t, stateTest, nil)
+}
+
+// runStateTestSubtests runs each fork/index subtest; a non-nil forkAllowlist restricts to those forks.
+func runStateTestSubtests(t *testing.T, stateTest *StateTest, forkAllowlist map[string]struct{}) {
 	for _, subtest := range stateTest.Subtests() {
+		if forkAllowlist != nil {
+			if _, ok := forkAllowlist[subtest.Fork]; !ok {
+				continue
+			}
+		}
 		key := fmt.Sprintf("%s/%d", subtest.Fork, subtest.Index)
 
 		if testing.Short() && rand.Intn(2) > 0 {

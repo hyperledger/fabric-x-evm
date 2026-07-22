@@ -8,7 +8,6 @@ package core
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
 	"log"
 	"math"
@@ -248,53 +247,19 @@ func (g *Gateway) GetBlockTxCountByNumber(ctx context.Context, num uint64) (int6
 
 // BalanceAt returns the balance of an account.
 func (g *Gateway) BalanceAt(ctx context.Context, account common.Address, blockNumber *big.Int) (*big.Int, error) {
-	res, err := g.endorsers.GetState(ctx, cmn.StateQuery{
-		Account:     account,
-		BlockNumber: blockNumber,
-		Type:        cmn.QueryTypeBalance,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return big.NewInt(0).SetBytes(res), err
+	return g.endorsers.BalanceAt(ctx, account, blockNumber)
 }
 
 func (g *Gateway) StorageAt(ctx context.Context, account common.Address, key common.Hash, blockNumber *big.Int) ([]byte, error) {
-	res, err := g.endorsers.GetState(ctx, cmn.StateQuery{
-		Account:     account,
-		Key:         key,
-		BlockNumber: blockNumber,
-		Type:        cmn.QueryTypeStorage,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return res, err
+	return g.endorsers.StorageAt(ctx, account, key, blockNumber)
 }
 
 func (g *Gateway) CodeAt(ctx context.Context, account common.Address, blockNumber *big.Int) ([]byte, error) {
-	res, err := g.endorsers.GetState(ctx, cmn.StateQuery{
-		Account:     account,
-		BlockNumber: blockNumber,
-		Type:        cmn.QueryTypeCode,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return res, err
+	return g.endorsers.CodeAt(ctx, account, blockNumber)
 }
 
 func (g *Gateway) NonceAt(ctx context.Context, account common.Address, blockNumber *big.Int) (uint64, error) {
-	res, err := g.endorsers.GetState(ctx, cmn.StateQuery{
-		Account:     account,
-		BlockNumber: blockNumber,
-		Type:        cmn.QueryTypeNonce,
-	})
-	if len(res) == 0 || err != nil {
-		return 0, err
-	}
-
-	return binary.BigEndian.Uint64(res), err
+	return g.endorsers.NonceAt(ctx, account, blockNumber)
 }
 
 // Transactions
