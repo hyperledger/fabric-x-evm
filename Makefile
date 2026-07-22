@@ -252,6 +252,12 @@ eth-tests-execution-specs: fetch-execution-specs-tests
 hardhat-tests:
 	@./scripts/run_hardhat_test.sh
 
+# Runs the full OZ compatible set, not just ERC20.test.js.
+# Local only, not CI-gated — hardhat-tests above is what CI runs.
+.PHONY: hardhat-tests-full
+hardhat-tests-full:
+	@./scripts/run_hardhat_test.sh --full
+
 .PHONY: perf-tests
 perf-tests: pre-pull-images
 	@VERBOSE=$(VERBOSE) FABRIC_VERSION=$(FABRIC_VERSION) ./scripts/run_perf_test.sh

@@ -51,7 +51,7 @@ Currently supports Mocha's JSON reporter (`--format mocha-json`, the default).
 
 ```shell
 cd testdata/openzeppelin-contracts
-HARDHAT_JSON_OUTPUT=/tmp/oz-results.json npx hardhat test test/token/ERC20/ERC20.test.js \
+HARDHAT_JSON_OUTPUT=../oz-hardhat-results/erc20.json npx hardhat test test/token/ERC20/ERC20.test.js \
   --config ../hardhat.wrapper.config.js --network fabricevm
 ```
 
@@ -66,22 +66,24 @@ one run gives both, instead of picking one or the other.
 go run ./cmd/baseline check \
   --suite oz-hardhat \
   --baseline testdata/oz_known_failures.json \
-  --results /tmp/oz-results.json
+  --results 'testdata/oz-hardhat-results/*.json'
 ```
 
 Prints a summary and exits non-zero if anything regressed:
 - a failure that isn't in the baseline (a real regression), or
 - a baseline entry that's no longer failing (stale — remove it).
 
-`--results` accepts a glob (`--results '/tmp/oz-results/*.json'`) to merge several files — useful
-since a Mocha file that crashes at load time can zero out the whole report for that invocation, so
-running per-file/per-directory and merging is safer than one giant run.
+`--results` is a glob (matched with `filepath.Glob`, so quote it against your shell expanding it
+early) that merges several files — useful since a Mocha file that crashes at load time can zero out
+the whole report for that invocation, so running per-file/per-directory and merging is safer than one
+giant run. `testdata/oz-hardhat-results/` is exactly what `scripts/run_hardhat_test.sh --full` writes
+one file per top-level `test/` directory into, so the command above works as-is after a real run.
 
 Sample output, an empty baseline against a real run of `ERC20Permit.test.js` (regressions, since
 nothing is listed yet):
 
 ```
-$ go run ./cmd/baseline check --suite oz-hardhat --baseline /tmp/empty.json --results /tmp/permit-results.json
+$ go run ./cmd/baseline check --suite oz-hardhat --baseline /tmp/empty-baseline.json --results testdata/oz-hardhat-results/permit-example.json
 # Baseline check: oz-hardhat
 
 2 passed, 4 failed, 0 skipped (6 total, 33.3% passing)
@@ -99,11 +101,10 @@ $ echo $?
 
 Same run again after the baseline is seeded (see `update` below) — clean, with the histogram
 grouping the four by their shared, auto-tagged cause (see `inferCause` in `baseline.go`: a message
-naming its own missing RPC method, or matching one of our own known constants, gets tagged without a
-human needing to look):
+naming its own missing RPC method gets tagged without a human needing to look):
 
 ```
-$ go run ./cmd/baseline check --suite oz-hardhat --baseline testdata/oz_known_failures.json --results /tmp/permit-results.json
+$ go run ./cmd/baseline check --suite oz-hardhat --baseline testdata/oz_known_failures.json --results testdata/oz-hardhat-results/permit-example.json
 # Baseline check: oz-hardhat
 
 2 passed, 4 failed, 0 skipped (6 total, 33.3% passing)
@@ -126,7 +127,7 @@ needs the most work — and watch that shrink over time as fixes land.
 go run ./cmd/baseline update \
   --suite oz-hardhat \
   --baseline testdata/oz_known_failures.json \
-  --results /tmp/oz-results.json
+  --results 'testdata/oz-hardhat-results/*.json'
 ```
 
 Rewrites the baseline file: drops stale entries, adds an entry for every new failure — auto-tagging
@@ -135,7 +136,7 @@ human to tag opportunistically (or bulk-tag with `tag`, below). Safe to run any 
 initial seed, or after a dependency bump shifts what fails. No hand-curation needed to land it.
 
 ```
-$ go run ./cmd/baseline update --suite oz-hardhat --baseline testdata/oz_known_failures.json --results /tmp/permit-results.json
+$ go run ./cmd/baseline update --suite oz-hardhat --baseline testdata/oz_known_failures.json --results testdata/oz-hardhat-results/permit-example.json
 testdata/oz_known_failures.json: 0 entries removed, 4 entries added, 4 total now
 
 $ cat testdata/oz_known_failures.json
@@ -164,7 +165,7 @@ $ cat testdata/oz_known_failures.json
 ```shell
 go run ./cmd/baseline tag \
   --baseline testdata/oz_known_failures.json \
-  --results '/tmp/oz-hardhat-results/*.json' \
+  --results 'testdata/oz-hardhat-results/*.json' \
   --match "Packing" \
   --cause "max-code-size"
 ```

@@ -18,6 +18,7 @@ testdata/*
 !testdata/eth_tests.skip
 !testdata/execution_specs_tests.skip
 !testdata/execution_specs_tests.slow
+!testdata/oz_known_failures.json
 !testdata/shared_config.yaml
 *.un~
 *.swp
