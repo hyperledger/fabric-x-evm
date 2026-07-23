@@ -176,6 +176,14 @@ func (tx *stTransaction) UnmarshalJSON(data []byte) error {
 		Sender               *common.Address
 		BlobVersionedHashes  []common.Hash
 		BlobGasFeeCap        *math.HexOrDecimal256 `json:"maxFeePerBlobGas"`
+		AuthorizationList    []*struct {
+			ChainID *math.HexOrDecimal256 `json:"chainId"`
+			Address common.Address        `json:"address"`
+			Nonce   math.HexOrDecimal64   `json:"nonce"`
+			V       math.HexOrDecimal64   `json:"v"`
+			R       *math.HexOrDecimal256 `json:"r"`
+			S       *math.HexOrDecimal256 `json:"s"`
+		} `json:"authorizationList"`
 	}
 	var dec stTransactionMarshaling
 	if err := json.Unmarshal(data, &dec); err != nil {
@@ -204,6 +212,19 @@ func (tx *stTransaction) UnmarshalJSON(data []byte) error {
 	tx.BlobVersionedHashes = dec.BlobVersionedHashes
 	if dec.BlobGasFeeCap != nil {
 		tx.BlobGasFeeCap = (*big.Int)(dec.BlobGasFeeCap)
+	}
+	if dec.AuthorizationList != nil {
+		tx.AuthorizationList = make([]*stAuthorization, len(dec.AuthorizationList))
+		for i, auth := range dec.AuthorizationList {
+			tx.AuthorizationList[i] = &stAuthorization{
+				ChainID: (*big.Int)(auth.ChainID),
+				Address: auth.Address,
+				Nonce:   uint64(auth.Nonce),
+				V:       uint8(auth.V),
+				R:       (*big.Int)(auth.R),
+				S:       (*big.Int)(auth.S),
+			}
+		}
 	}
 	return nil
 }

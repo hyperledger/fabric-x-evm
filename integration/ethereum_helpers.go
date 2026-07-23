@@ -140,6 +140,68 @@ func buildTransaction(testTx *stTransaction, dataIndex, gasIndex, valueIndex int
 		return tx, nil
 	}
 
+	// EIP-7702 SetCodeTx (type 4); gate on presence so an empty auth list still builds a (rejectable) type-4.
+	if testTx.AuthorizationList != nil {
+		maxFeePerGas := testTx.MaxFeePerGas
+		if maxFeePerGas == nil {
+			maxFeePerGas = gasPrice
+		}
+		maxPriorityFeePerGas := testTx.MaxPriorityFeePerGas
+		if maxPriorityFeePerGas == nil {
+			maxPriorityFeePerGas = gasPrice
+		}
+
+		var accessList types.AccessList
+		if testTx.AccessLists != nil && dataIndex < len(testTx.AccessLists) && testTx.AccessLists[dataIndex] != nil {
+			accessList = *testTx.AccessLists[dataIndex]
+		}
+
+		authList := make([]types.SetCodeAuthorization, len(testTx.AuthorizationList))
+		for i, auth := range testTx.AuthorizationList {
+			chainID := auth.ChainID
+			if chainID == nil {
+				chainID = big.NewInt(0)
+			}
+			authList[i] = types.SetCodeAuthorization{
+				ChainID: *uint256.MustFromBig(chainID),
+				Address: auth.Address,
+				Nonce:   auth.Nonce,
+				V:       auth.V,
+				R:       *uint256.MustFromBig(auth.R),
+				S:       *uint256.MustFromBig(auth.S),
+			}
+		}
+
+		// SetCodeTx requires a non-nil recipient.
+		var toAddr common.Address
+		if to != nil {
+			toAddr = *to
+		}
+
+		txData := &types.SetCodeTx{
+			ChainID:    uint256.MustFromBig(config.ChainID),
+			Nonce:      nonce,
+			GasTipCap:  uint256.MustFromBig(maxPriorityFeePerGas),
+			GasFeeCap:  uint256.MustFromBig(maxFeePerGas),
+			Gas:        gasLimit,
+			To:         toAddr,
+			Value:      uint256.MustFromBig(value),
+			Data:       data,
+			AccessList: accessList,
+			AuthList:   authList,
+		}
+
+		if len(testTx.PrivateKey) > 0 {
+			key, err := crypto.ToECDSA(testTx.PrivateKey)
+			if err != nil {
+				return nil, fmt.Errorf("invalid secret key: %w", err)
+			}
+			return types.SignNewTx(key, types.LatestSignerForChainID(config.ChainID), txData)
+		}
+
+		return types.NewTx(txData), nil
+	}
+
 	// Handle EIP-1559 transactions
 	if testTx.MaxFeePerGas != nil || testTx.MaxPriorityFeePerGas != nil {
 		maxFeePerGas := testTx.MaxFeePerGas
