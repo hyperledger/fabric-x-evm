@@ -333,12 +333,13 @@ func (sp *StatePrimer) commitAndWait(end sdk.Endorsement, tx *types.Transaction,
 		}
 	}
 
-	ec, err := NewNativeEthClient(sp.gw)
-	if err != nil {
-		return err
-	}
-
+	// Only create the in-proc RPC client when we wait; the no-wait path leaked it.
 	if wait {
+		ec, err := NewNativeEthClient(sp.gw)
+		if err != nil {
+			return err
+		}
+		defer ec.Close()
 		return waitForCommit(context.Background(), ec, tx)
 	}
 
