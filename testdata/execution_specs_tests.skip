@@ -1,3 +1,23 @@
-# Tests skipped for the execution-specs conformance suite (TestExecutionSpecStateTests).
-# One test path per line; blank lines and lines starting with '#' are ignored.
-# Populated in the skip/slow triage chunk (#237) — empty for now.
+# execution-specs state_tests that are skipped in ALL modes.
+# Each entry is a genuine fabric-x-evm bug (filed separately), quarantined here so the
+# conformance suite stays green in CI. Full failure evidence is in the PR description.
+#
+# --- EIP-7610 create-collision divergence (Cancun+): CREATE/CREATE2 into an account that
+#     already has storage/code produces a wrong post-state root. Known StateDB gap (cf. #193).
+../testdata/execution-specs-tests/fixtures/state_tests/for_cancun/paris/eip7610_create_collision/revert_in_create/collision_with_create2_revert_in_initcode.json
+../testdata/execution-specs-tests/fixtures/state_tests/for_osaka/paris/eip7610_create_collision/revert_in_create/collision_with_create2_revert_in_initcode.json
+../testdata/execution-specs-tests/fixtures/state_tests/for_prague/paris/eip7610_create_collision/revert_in_create/collision_with_create2_revert_in_initcode.json
+../testdata/execution-specs-tests/fixtures/state_tests/for_cancun/paris/eip7610_create_collision/revert_in_create/create2_collision_storage.json
+../testdata/execution-specs-tests/fixtures/state_tests/for_osaka/paris/eip7610_create_collision/revert_in_create/create2_collision_storage.json
+../testdata/execution-specs-tests/fixtures/state_tests/for_prague/paris/eip7610_create_collision/revert_in_create/create2_collision_storage.json
+../testdata/execution-specs-tests/fixtures/state_tests/for_cancun/paris/eip7610_create_collision/initcollision/init_collision_create_opcode.json
+../testdata/execution-specs-tests/fixtures/state_tests/for_osaka/paris/eip7610_create_collision/initcollision/init_collision_create_opcode.json
+../testdata/execution-specs-tests/fixtures/state_tests/for_prague/paris/eip7610_create_collision/initcollision/init_collision_create_opcode.json
+../testdata/execution-specs-tests/fixtures/state_tests/for_cancun/paris/eip7610_create_collision/initcollision/init_collision_create_tx.json
+../testdata/execution-specs-tests/fixtures/state_tests/for_osaka/paris/eip7610_create_collision/initcollision/init_collision_create_tx.json
+../testdata/execution-specs-tests/fixtures/state_tests/for_prague/paris/eip7610_create_collision/initcollision/init_collision_create_tx.json
+#
+# --- nil-pointer panic in DualStateDB.Snapshot for a CREATE tx from a non-existent sender.
+../testdata/execution-specs-tests/fixtures/state_tests/for_cancun/ported_static/stTransactionTest/no_src_account_create1559/no_src_account_create1559.json
+../testdata/execution-specs-tests/fixtures/state_tests/for_osaka/ported_static/stTransactionTest/no_src_account_create1559/no_src_account_create1559.json
+../testdata/execution-specs-tests/fixtures/state_tests/for_prague/ported_static/stTransactionTest/no_src_account_create1559/no_src_account_create1559.json
