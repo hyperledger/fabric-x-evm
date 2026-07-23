@@ -73,6 +73,30 @@ jobs:
       - name: Fabric integration tests
         run: make integration-tests
 
+  execution-specs-tests:
+    name: Execution-Specs Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: quick-tests
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'want-integration-tests'))
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Execution-specs state tests
+        run: make eth-tests-execution-specs
+
   optional-tests:
     name: Optional Tests
     runs-on: ubuntu-latest
