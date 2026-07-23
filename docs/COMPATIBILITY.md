@@ -365,7 +365,7 @@ will get no matches and must rely on `eth_getLogs` instead.
 MVCC conflict — the two are indistinguishable at this level (see Transaction lifecycle and
 finality).
 
-**Reverted transactions emit no events**: when a transaction reverts — including a transfer blocked by a compliance contract such as ERC-1404 — no events are emitted and the on-chain log for that transaction is empty. Audit trail for rejected operations must be captured at the application layer.
+**Reverted transactions emit no events**: when a transaction reverts — including a transfer blocked by a compliance contract such as ERC-1404 — no events are emitted and the on-chain log for that transaction is empty. This is consistent with other EVM based systems.
 
 ---
 
