@@ -227,6 +227,12 @@ roots. Because the EVM reads account state (existence, `HasSelfDestructed`, stor
 root — SELFDESTRUCT and CREATE/CREATE2-collision / empty-account cases. These divergences are
 deliberate consequences of the modern-only semantics above, not regressions.
 
+The newer execution-specs suite (`TestExecutionSpecStateTests`, Osaka-forward fixtures) exercises
+the same paths and compares against the fixtures' expected roots. Its known-divergent cases are
+quarantined in `testdata/execution_specs_tests.skip`: the EIP-7610 create-collision fixtures above,
+and a `CREATE` transaction from a non-existent sender (currently a nil-pointer panic in
+`DualStateDB.Snapshot`). All other Osaka-forward state tests pass.
+
 **Native ETH balances not funded**: balances are implemented but unused. Accounts have zero ETH 
 balance by default. Value transfers inside the EVM (`CALL` with value, `SELFDESTRUCT` beneficiary, 
 etc.) will fail or produce wrong results for accounts that were never explicitly funded.
