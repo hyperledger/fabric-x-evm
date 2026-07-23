@@ -18,6 +18,7 @@ import (
 	ethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
+	"github.com/hyperledger/fabric-x-committer/utils/serve"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -41,12 +42,19 @@ type stubService struct {
 	code     []byte
 	nonce    uint64
 	readErr  error
+
+	// captured from the last call, so tests can assert what was forwarded
+	gotInv   endorsement.Invocation
+	gotMsg   *ethereum.CallMsg
+	gotBlock *big.Int
 }
 
-func (s *stubService) Execute(_ context.Context, _ endorsement.Invocation, _ *types.Transaction) (*peer.ProposalResponse, error) {
+func (s *stubService) Execute(_ context.Context, inv endorsement.Invocation, _ *types.Transaction) (*peer.ProposalResponse, error) {
+	s.gotInv = inv
 	return s.execResp, s.execErr
 }
-func (s *stubService) Call(_ context.Context, _ *ethereum.CallMsg, _ *big.Int) ([]byte, error) {
+func (s *stubService) Call(_ context.Context, msg *ethereum.CallMsg, blockNumber *big.Int) ([]byte, error) {
+	s.gotMsg, s.gotBlock = msg, blockNumber
 	return s.callOut, s.callErr
 }
 func (s *stubService) BalanceAt(_ context.Context, _ ethcommon.Address, _ *big.Int) (*big.Int, error) {
@@ -62,18 +70,13 @@ func (s *stubService) NonceAt(_ context.Context, _ ethcommon.Address, _ *big.Int
 	return s.nonce, s.readErr
 }
 
-type stubSigner struct{}
-
-func (stubSigner) Sign([]byte) ([]byte, error) { return []byte("sig"), nil }
-func (stubSigner) Serialize() ([]byte, error)  { return []byte("creator"), nil }
-
 // newTestClient stands up the Server on an in-memory bufconn connection and
 // returns a client wired to it.
 func newTestClient(t *testing.T, svc *stubService) endorsementpb.EvmEndorsementClient {
 	t.Helper()
 	lis := bufconn.Listen(1024 * 1024)
 	gs := grpc.NewServer()
-	endorsementpb.RegisterEvmEndorsementServer(gs, New(svc, stubSigner{}, "ch", "ns", "1.0"))
+	endorsementpb.RegisterEvmEndorsementServer(gs, New(svc))
 	go func() { _ = gs.Serve(lis) }()
 	t.Cleanup(gs.Stop)
 
@@ -137,12 +140,39 @@ func TestNonceAt_Forwards(t *testing.T) {
 	}
 }
 
-func TestReadError_IsGRPCError(t *testing.T) {
-	client := newTestClient(t, &stubService{readErr: errors.New("db down")})
-
-	_, err := client.BalanceAt(context.Background(), &endorsementpb.BalanceRequest{Account: ethcommon.Address{}.Bytes()})
-	if status.Code(err) != codes.Internal {
-		t.Fatalf("code = %v, want Internal", status.Code(err))
+// A failed state read is infrastructure, not an application outcome, so every
+// reader surfaces it as a gRPC error.
+func TestReadErrors_AreGRPCErrors(t *testing.T) {
+	ctx := context.Background()
+	addr := ethcommon.Address{}.Bytes()
+	tests := []struct {
+		name string
+		call func(endorsementpb.EvmEndorsementClient) error
+	}{
+		{"balance", func(c endorsementpb.EvmEndorsementClient) error {
+			_, err := c.BalanceAt(ctx, &endorsementpb.BalanceRequest{Account: addr})
+			return err
+		}},
+		{"storage", func(c endorsementpb.EvmEndorsementClient) error {
+			_, err := c.StorageAt(ctx, &endorsementpb.StorageRequest{Account: addr, Key: ethcommon.Hash{}.Bytes()})
+			return err
+		}},
+		{"code", func(c endorsementpb.EvmEndorsementClient) error {
+			_, err := c.CodeAt(ctx, &endorsementpb.CodeRequest{Account: addr})
+			return err
+		}},
+		{"nonce", func(c endorsementpb.EvmEndorsementClient) error {
+			_, err := c.NonceAt(ctx, &endorsementpb.NonceRequest{Account: addr})
+			return err
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := newTestClient(t, &stubService{readErr: errors.New("db down")})
+			if got := status.Code(tt.call(client)); got != codes.Internal {
+				t.Errorf("code = %v, want Internal", got)
+			}
+		})
 	}
 }
 
@@ -235,5 +265,110 @@ func TestExecute_TransportErrorIsGRPCError(t *testing.T) {
 	_, err := client.Execute(context.Background(), &endorsementpb.ExecuteRequest{EthereumTx: raw})
 	if status.Code(err) != codes.Internal {
 		t.Fatalf("code = %v, want Internal", status.Code(err))
+	}
+}
+
+// The sender's invocation is mapped onto the invocation the builder consumes.
+func TestExecute_ForwardsInvocation(t *testing.T) {
+	svc := &stubService{execResp: &peer.ProposalResponse{Response: &peer.Response{Status: common.StatusOK}}}
+	client := newTestClient(t, svc)
+
+	tx := types.NewTx(&types.LegacyTx{Nonce: 0, Gas: 21000, GasPrice: big.NewInt(1)})
+	raw, _ := tx.MarshalBinary()
+
+	_, err := client.Execute(context.Background(), &endorsementpb.ExecuteRequest{
+		EthereumTx:   raw,
+		ProposalHash: []byte{0xaa},
+		Invocation: &endorsementpb.Invocation{
+			TxId:             "tx-1",
+			Args:             [][]byte{{0xfb}, raw},
+			ChaincodeName:    "evm",
+			ChaincodeVersion: "1.0",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got := svc.gotInv
+	if got.TxID != "tx-1" {
+		t.Errorf("TxID = %q, want tx-1", got.TxID)
+	}
+	if got.CCID.GetName() != "evm" || got.CCID.GetVersion() != "1.0" {
+		t.Errorf("CCID = %v", got.CCID)
+	}
+	if !bytes.Equal(got.ProposalHash, []byte{0xaa}) {
+		t.Errorf("ProposalHash = %x, want aa", got.ProposalHash)
+	}
+	if len(got.Args) != 2 {
+		t.Errorf("Args = %d, want 2", len(got.Args))
+	}
+}
+
+// A response carrying neither a Response nor an Endorsement maps to an empty result.
+func TestExecute_EmptyProposalResponse(t *testing.T) {
+	client := newTestClient(t, &stubService{execResp: &peer.ProposalResponse{}})
+
+	tx := types.NewTx(&types.LegacyTx{Nonce: 0, Gas: 21000, GasPrice: big.NewInt(1)})
+	raw, _ := tx.MarshalBinary()
+
+	resp, err := client.Execute(context.Background(), &endorsementpb.ExecuteRequest{EthereumTx: raw})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.GetStatus() != 0 || len(resp.GetEndorserId()) != 0 || len(resp.GetSignature()) != 0 {
+		t.Errorf("resp = %+v, want empty", resp)
+	}
+}
+
+// Every optional call field and the block selector reach the engine.
+func TestCall_ForwardsAllFields(t *testing.T) {
+	svc := &stubService{callOut: []byte{0x01}}
+	client := newTestClient(t, svc)
+
+	from := ethcommon.HexToAddress("0x1111111111111111111111111111111111111111")
+	to := ethcommon.HexToAddress("0x2222222222222222222222222222222222222222")
+	blockNumber := uint64(7)
+
+	if _, err := client.Call(context.Background(), &endorsementpb.CallRequest{
+		From:        from.Bytes(),
+		To:          to.Bytes(),
+		Gas:         21000,
+		GasPrice:    big.NewInt(5).Bytes(),
+		Value:       big.NewInt(9).Bytes(),
+		Data:        []byte{0xde, 0xad},
+		BlockNumber: &blockNumber,
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	msg := svc.gotMsg
+	if msg.From != from {
+		t.Errorf("From = %s, want %s", msg.From, from)
+	}
+	if msg.To == nil || *msg.To != to {
+		t.Errorf("To = %v, want %s", msg.To, to)
+	}
+	if msg.Gas != 21000 || msg.GasPrice.Int64() != 5 || msg.Value.Int64() != 9 {
+		t.Errorf("gas = %d, gasPrice = %v, value = %v", msg.Gas, msg.GasPrice, msg.Value)
+	}
+	if !bytes.Equal(msg.Data, []byte{0xde, 0xad}) {
+		t.Errorf("Data = %x", msg.Data)
+	}
+	if svc.gotBlock == nil || svc.gotBlock.Uint64() != 7 {
+		t.Errorf("blockNumber = %v, want 7", svc.gotBlock)
+	}
+}
+
+// RegisterService exposes both the endorsement and health services.
+func TestRegisterService(t *testing.T) {
+	gs := grpc.NewServer()
+	New(&stubService{}).RegisterService(serve.Servers{GRPC: gs})
+
+	info := gs.GetServiceInfo()
+	for _, name := range []string{"endorsementpb.EvmEndorsement", "grpc.health.v1.Health"} {
+		if _, ok := info[name]; !ok {
+			t.Errorf("%s not registered", name)
+		}
 	}
 }

@@ -33,6 +33,18 @@ message ExecuteRequest {
     // must carry it. Fabric-X does not need the proposal, so this is empty
     // there and the full proposal never crosses the wire.
     bytes proposal_hash = 2;
+
+    // Invocation built by the sender, which the endorser passes to the builder.
+    Invocation invocation = 3;
+}
+
+// Invocation carries the parts of the sender's invocation that the endorsement
+// builder consumes.
+message Invocation {
+    string tx_id = 1;
+    repeated bytes args = 2;
+    string chaincode_name = 3;
+    string chaincode_version = 4;
 }
 
 message ExecuteResponse {

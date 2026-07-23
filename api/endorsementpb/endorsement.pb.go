@@ -33,7 +33,9 @@ type ExecuteRequest struct {
 	// Proposal hash, required by classic Fabric because the submitted payload
 	// must carry it. Fabric-X does not need the proposal, so this is empty
 	// there and the full proposal never crosses the wire.
-	ProposalHash  []byte `protobuf:"bytes,2,opt,name=proposal_hash,json=proposalHash,proto3" json:"proposal_hash,omitempty"`
+	ProposalHash []byte `protobuf:"bytes,2,opt,name=proposal_hash,json=proposalHash,proto3" json:"proposal_hash,omitempty"`
+	// Invocation built by the sender, which the endorser passes to the builder.
+	Invocation    *Invocation `protobuf:"bytes,3,opt,name=invocation,proto3" json:"invocation,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -82,6 +84,83 @@ func (x *ExecuteRequest) GetProposalHash() []byte {
 	return nil
 }
 
+func (x *ExecuteRequest) GetInvocation() *Invocation {
+	if x != nil {
+		return x.Invocation
+	}
+	return nil
+}
+
+// Invocation carries the parts of the sender's invocation that the endorsement
+// builder consumes.
+type Invocation struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	TxId             string                 `protobuf:"bytes,1,opt,name=tx_id,json=txId,proto3" json:"tx_id,omitempty"`
+	Args             [][]byte               `protobuf:"bytes,2,rep,name=args,proto3" json:"args,omitempty"`
+	ChaincodeName    string                 `protobuf:"bytes,3,opt,name=chaincode_name,json=chaincodeName,proto3" json:"chaincode_name,omitempty"`
+	ChaincodeVersion string                 `protobuf:"bytes,4,opt,name=chaincode_version,json=chaincodeVersion,proto3" json:"chaincode_version,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *Invocation) Reset() {
+	*x = Invocation{}
+	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Invocation) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Invocation) ProtoMessage() {}
+
+func (x *Invocation) ProtoReflect() protoreflect.Message {
+	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Invocation.ProtoReflect.Descriptor instead.
+func (*Invocation) Descriptor() ([]byte, []int) {
+	return file_api_endorsementpb_endorsement_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *Invocation) GetTxId() string {
+	if x != nil {
+		return x.TxId
+	}
+	return ""
+}
+
+func (x *Invocation) GetArgs() [][]byte {
+	if x != nil {
+		return x.Args
+	}
+	return nil
+}
+
+func (x *Invocation) GetChaincodeName() string {
+	if x != nil {
+		return x.ChaincodeName
+	}
+	return ""
+}
+
+func (x *Invocation) GetChaincodeVersion() string {
+	if x != nil {
+		return x.ChaincodeVersion
+	}
+	return ""
+}
+
 type ExecuteResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Serialized read-write set of the execution.
@@ -101,7 +180,7 @@ type ExecuteResponse struct {
 
 func (x *ExecuteResponse) Reset() {
 	*x = ExecuteResponse{}
-	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[1]
+	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -113,7 +192,7 @@ func (x *ExecuteResponse) String() string {
 func (*ExecuteResponse) ProtoMessage() {}
 
 func (x *ExecuteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[1]
+	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -126,7 +205,7 @@ func (x *ExecuteResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecuteResponse.ProtoReflect.Descriptor instead.
 func (*ExecuteResponse) Descriptor() ([]byte, []int) {
-	return file_api_endorsementpb_endorsement_proto_rawDescGZIP(), []int{1}
+	return file_api_endorsementpb_endorsement_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *ExecuteResponse) GetReadWriteSet() []byte {
@@ -197,7 +276,7 @@ type CallRequest struct {
 
 func (x *CallRequest) Reset() {
 	*x = CallRequest{}
-	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[2]
+	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -209,7 +288,7 @@ func (x *CallRequest) String() string {
 func (*CallRequest) ProtoMessage() {}
 
 func (x *CallRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[2]
+	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -222,7 +301,7 @@ func (x *CallRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CallRequest.ProtoReflect.Descriptor instead.
 func (*CallRequest) Descriptor() ([]byte, []int) {
-	return file_api_endorsementpb_endorsement_proto_rawDescGZIP(), []int{2}
+	return file_api_endorsementpb_endorsement_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *CallRequest) GetFrom() []byte {
@@ -286,7 +365,7 @@ type CallResponse struct {
 
 func (x *CallResponse) Reset() {
 	*x = CallResponse{}
-	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[3]
+	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -298,7 +377,7 @@ func (x *CallResponse) String() string {
 func (*CallResponse) ProtoMessage() {}
 
 func (x *CallResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[3]
+	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -311,7 +390,7 @@ func (x *CallResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CallResponse.ProtoReflect.Descriptor instead.
 func (*CallResponse) Descriptor() ([]byte, []int) {
-	return file_api_endorsementpb_endorsement_proto_rawDescGZIP(), []int{3}
+	return file_api_endorsementpb_endorsement_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *CallResponse) GetReturnData() []byte {
@@ -345,7 +424,7 @@ type BalanceRequest struct {
 
 func (x *BalanceRequest) Reset() {
 	*x = BalanceRequest{}
-	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[4]
+	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -357,7 +436,7 @@ func (x *BalanceRequest) String() string {
 func (*BalanceRequest) ProtoMessage() {}
 
 func (x *BalanceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[4]
+	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -370,7 +449,7 @@ func (x *BalanceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BalanceRequest.ProtoReflect.Descriptor instead.
 func (*BalanceRequest) Descriptor() ([]byte, []int) {
-	return file_api_endorsementpb_endorsement_proto_rawDescGZIP(), []int{4}
+	return file_api_endorsementpb_endorsement_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *BalanceRequest) GetAccount() []byte {
@@ -397,7 +476,7 @@ type BalanceResponse struct {
 
 func (x *BalanceResponse) Reset() {
 	*x = BalanceResponse{}
-	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[5]
+	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -409,7 +488,7 @@ func (x *BalanceResponse) String() string {
 func (*BalanceResponse) ProtoMessage() {}
 
 func (x *BalanceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[5]
+	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -422,7 +501,7 @@ func (x *BalanceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BalanceResponse.ProtoReflect.Descriptor instead.
 func (*BalanceResponse) Descriptor() ([]byte, []int) {
-	return file_api_endorsementpb_endorsement_proto_rawDescGZIP(), []int{5}
+	return file_api_endorsementpb_endorsement_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *BalanceResponse) GetBalance() []byte {
@@ -444,7 +523,7 @@ type StorageRequest struct {
 
 func (x *StorageRequest) Reset() {
 	*x = StorageRequest{}
-	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[6]
+	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -456,7 +535,7 @@ func (x *StorageRequest) String() string {
 func (*StorageRequest) ProtoMessage() {}
 
 func (x *StorageRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[6]
+	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -469,7 +548,7 @@ func (x *StorageRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StorageRequest.ProtoReflect.Descriptor instead.
 func (*StorageRequest) Descriptor() ([]byte, []int) {
-	return file_api_endorsementpb_endorsement_proto_rawDescGZIP(), []int{6}
+	return file_api_endorsementpb_endorsement_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *StorageRequest) GetAccount() []byte {
@@ -503,7 +582,7 @@ type StorageResponse struct {
 
 func (x *StorageResponse) Reset() {
 	*x = StorageResponse{}
-	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[7]
+	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -515,7 +594,7 @@ func (x *StorageResponse) String() string {
 func (*StorageResponse) ProtoMessage() {}
 
 func (x *StorageResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[7]
+	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -528,7 +607,7 @@ func (x *StorageResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StorageResponse.ProtoReflect.Descriptor instead.
 func (*StorageResponse) Descriptor() ([]byte, []int) {
-	return file_api_endorsementpb_endorsement_proto_rawDescGZIP(), []int{7}
+	return file_api_endorsementpb_endorsement_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *StorageResponse) GetValue() []byte {
@@ -548,7 +627,7 @@ type CodeRequest struct {
 
 func (x *CodeRequest) Reset() {
 	*x = CodeRequest{}
-	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[8]
+	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -560,7 +639,7 @@ func (x *CodeRequest) String() string {
 func (*CodeRequest) ProtoMessage() {}
 
 func (x *CodeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[8]
+	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -573,7 +652,7 @@ func (x *CodeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CodeRequest.ProtoReflect.Descriptor instead.
 func (*CodeRequest) Descriptor() ([]byte, []int) {
-	return file_api_endorsementpb_endorsement_proto_rawDescGZIP(), []int{8}
+	return file_api_endorsementpb_endorsement_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *CodeRequest) GetAccount() []byte {
@@ -599,7 +678,7 @@ type CodeResponse struct {
 
 func (x *CodeResponse) Reset() {
 	*x = CodeResponse{}
-	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[9]
+	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -611,7 +690,7 @@ func (x *CodeResponse) String() string {
 func (*CodeResponse) ProtoMessage() {}
 
 func (x *CodeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[9]
+	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -624,7 +703,7 @@ func (x *CodeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CodeResponse.ProtoReflect.Descriptor instead.
 func (*CodeResponse) Descriptor() ([]byte, []int) {
-	return file_api_endorsementpb_endorsement_proto_rawDescGZIP(), []int{9}
+	return file_api_endorsementpb_endorsement_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *CodeResponse) GetCode() []byte {
@@ -644,7 +723,7 @@ type NonceRequest struct {
 
 func (x *NonceRequest) Reset() {
 	*x = NonceRequest{}
-	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[10]
+	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -656,7 +735,7 @@ func (x *NonceRequest) String() string {
 func (*NonceRequest) ProtoMessage() {}
 
 func (x *NonceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[10]
+	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -669,7 +748,7 @@ func (x *NonceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NonceRequest.ProtoReflect.Descriptor instead.
 func (*NonceRequest) Descriptor() ([]byte, []int) {
-	return file_api_endorsementpb_endorsement_proto_rawDescGZIP(), []int{10}
+	return file_api_endorsementpb_endorsement_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *NonceRequest) GetAccount() []byte {
@@ -695,7 +774,7 @@ type NonceResponse struct {
 
 func (x *NonceResponse) Reset() {
 	*x = NonceResponse{}
-	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[11]
+	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -707,7 +786,7 @@ func (x *NonceResponse) String() string {
 func (*NonceResponse) ProtoMessage() {}
 
 func (x *NonceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[11]
+	mi := &file_api_endorsementpb_endorsement_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -720,7 +799,7 @@ func (x *NonceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NonceResponse.ProtoReflect.Descriptor instead.
 func (*NonceResponse) Descriptor() ([]byte, []int) {
-	return file_api_endorsementpb_endorsement_proto_rawDescGZIP(), []int{11}
+	return file_api_endorsementpb_endorsement_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *NonceResponse) GetNonce() uint64 {
@@ -734,11 +813,20 @@ var File_api_endorsementpb_endorsement_proto protoreflect.FileDescriptor
 
 const file_api_endorsementpb_endorsement_proto_rawDesc = "" +
 	"\n" +
-	"#api/endorsementpb/endorsement.proto\x12\rendorsementpb\"V\n" +
+	"#api/endorsementpb/endorsement.proto\x12\rendorsementpb\"\x91\x01\n" +
 	"\x0eExecuteRequest\x12\x1f\n" +
 	"\vethereum_tx\x18\x01 \x01(\fR\n" +
 	"ethereumTx\x12#\n" +
-	"\rproposal_hash\x18\x02 \x01(\fR\fproposalHash\"\xd8\x01\n" +
+	"\rproposal_hash\x18\x02 \x01(\fR\fproposalHash\x129\n" +
+	"\n" +
+	"invocation\x18\x03 \x01(\v2\x19.endorsementpb.InvocationR\n" +
+	"invocation\"\x89\x01\n" +
+	"\n" +
+	"Invocation\x12\x13\n" +
+	"\x05tx_id\x18\x01 \x01(\tR\x04txId\x12\x12\n" +
+	"\x04args\x18\x02 \x03(\fR\x04args\x12%\n" +
+	"\x0echaincode_name\x18\x03 \x01(\tR\rchaincodeName\x12+\n" +
+	"\x11chaincode_version\x18\x04 \x01(\tR\x10chaincodeVersion\"\xd8\x01\n" +
 	"\x0fExecuteResponse\x12$\n" +
 	"\x0eread_write_set\x18\x01 \x01(\fR\freadWriteSet\x12\x14\n" +
 	"\x05event\x18\x02 \x01(\fR\x05event\x12\x16\n" +
@@ -807,39 +895,41 @@ func file_api_endorsementpb_endorsement_proto_rawDescGZIP() []byte {
 	return file_api_endorsementpb_endorsement_proto_rawDescData
 }
 
-var file_api_endorsementpb_endorsement_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_api_endorsementpb_endorsement_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_api_endorsementpb_endorsement_proto_goTypes = []any{
 	(*ExecuteRequest)(nil),  // 0: endorsementpb.ExecuteRequest
-	(*ExecuteResponse)(nil), // 1: endorsementpb.ExecuteResponse
-	(*CallRequest)(nil),     // 2: endorsementpb.CallRequest
-	(*CallResponse)(nil),    // 3: endorsementpb.CallResponse
-	(*BalanceRequest)(nil),  // 4: endorsementpb.BalanceRequest
-	(*BalanceResponse)(nil), // 5: endorsementpb.BalanceResponse
-	(*StorageRequest)(nil),  // 6: endorsementpb.StorageRequest
-	(*StorageResponse)(nil), // 7: endorsementpb.StorageResponse
-	(*CodeRequest)(nil),     // 8: endorsementpb.CodeRequest
-	(*CodeResponse)(nil),    // 9: endorsementpb.CodeResponse
-	(*NonceRequest)(nil),    // 10: endorsementpb.NonceRequest
-	(*NonceResponse)(nil),   // 11: endorsementpb.NonceResponse
+	(*Invocation)(nil),      // 1: endorsementpb.Invocation
+	(*ExecuteResponse)(nil), // 2: endorsementpb.ExecuteResponse
+	(*CallRequest)(nil),     // 3: endorsementpb.CallRequest
+	(*CallResponse)(nil),    // 4: endorsementpb.CallResponse
+	(*BalanceRequest)(nil),  // 5: endorsementpb.BalanceRequest
+	(*BalanceResponse)(nil), // 6: endorsementpb.BalanceResponse
+	(*StorageRequest)(nil),  // 7: endorsementpb.StorageRequest
+	(*StorageResponse)(nil), // 8: endorsementpb.StorageResponse
+	(*CodeRequest)(nil),     // 9: endorsementpb.CodeRequest
+	(*CodeResponse)(nil),    // 10: endorsementpb.CodeResponse
+	(*NonceRequest)(nil),    // 11: endorsementpb.NonceRequest
+	(*NonceResponse)(nil),   // 12: endorsementpb.NonceResponse
 }
 var file_api_endorsementpb_endorsement_proto_depIdxs = []int32{
-	0,  // 0: endorsementpb.EvmEndorsement.Execute:input_type -> endorsementpb.ExecuteRequest
-	2,  // 1: endorsementpb.EvmEndorsement.Call:input_type -> endorsementpb.CallRequest
-	4,  // 2: endorsementpb.EvmEndorsement.BalanceAt:input_type -> endorsementpb.BalanceRequest
-	6,  // 3: endorsementpb.EvmEndorsement.StorageAt:input_type -> endorsementpb.StorageRequest
-	8,  // 4: endorsementpb.EvmEndorsement.CodeAt:input_type -> endorsementpb.CodeRequest
-	10, // 5: endorsementpb.EvmEndorsement.NonceAt:input_type -> endorsementpb.NonceRequest
-	1,  // 6: endorsementpb.EvmEndorsement.Execute:output_type -> endorsementpb.ExecuteResponse
-	3,  // 7: endorsementpb.EvmEndorsement.Call:output_type -> endorsementpb.CallResponse
-	5,  // 8: endorsementpb.EvmEndorsement.BalanceAt:output_type -> endorsementpb.BalanceResponse
-	7,  // 9: endorsementpb.EvmEndorsement.StorageAt:output_type -> endorsementpb.StorageResponse
-	9,  // 10: endorsementpb.EvmEndorsement.CodeAt:output_type -> endorsementpb.CodeResponse
-	11, // 11: endorsementpb.EvmEndorsement.NonceAt:output_type -> endorsementpb.NonceResponse
-	6,  // [6:12] is the sub-list for method output_type
-	0,  // [0:6] is the sub-list for method input_type
-	0,  // [0:0] is the sub-list for extension type_name
-	0,  // [0:0] is the sub-list for extension extendee
-	0,  // [0:0] is the sub-list for field type_name
+	1,  // 0: endorsementpb.ExecuteRequest.invocation:type_name -> endorsementpb.Invocation
+	0,  // 1: endorsementpb.EvmEndorsement.Execute:input_type -> endorsementpb.ExecuteRequest
+	3,  // 2: endorsementpb.EvmEndorsement.Call:input_type -> endorsementpb.CallRequest
+	5,  // 3: endorsementpb.EvmEndorsement.BalanceAt:input_type -> endorsementpb.BalanceRequest
+	7,  // 4: endorsementpb.EvmEndorsement.StorageAt:input_type -> endorsementpb.StorageRequest
+	9,  // 5: endorsementpb.EvmEndorsement.CodeAt:input_type -> endorsementpb.CodeRequest
+	11, // 6: endorsementpb.EvmEndorsement.NonceAt:input_type -> endorsementpb.NonceRequest
+	2,  // 7: endorsementpb.EvmEndorsement.Execute:output_type -> endorsementpb.ExecuteResponse
+	4,  // 8: endorsementpb.EvmEndorsement.Call:output_type -> endorsementpb.CallResponse
+	6,  // 9: endorsementpb.EvmEndorsement.BalanceAt:output_type -> endorsementpb.BalanceResponse
+	8,  // 10: endorsementpb.EvmEndorsement.StorageAt:output_type -> endorsementpb.StorageResponse
+	10, // 11: endorsementpb.EvmEndorsement.CodeAt:output_type -> endorsementpb.CodeResponse
+	12, // 12: endorsementpb.EvmEndorsement.NonceAt:output_type -> endorsementpb.NonceResponse
+	7,  // [7:13] is the sub-list for method output_type
+	1,  // [1:7] is the sub-list for method input_type
+	1,  // [1:1] is the sub-list for extension type_name
+	1,  // [1:1] is the sub-list for extension extendee
+	0,  // [0:1] is the sub-list for field type_name
 }
 
 func init() { file_api_endorsementpb_endorsement_proto_init() }
@@ -847,18 +937,18 @@ func file_api_endorsementpb_endorsement_proto_init() {
 	if File_api_endorsementpb_endorsement_proto != nil {
 		return
 	}
-	file_api_endorsementpb_endorsement_proto_msgTypes[2].OneofWrappers = []any{}
-	file_api_endorsementpb_endorsement_proto_msgTypes[4].OneofWrappers = []any{}
-	file_api_endorsementpb_endorsement_proto_msgTypes[6].OneofWrappers = []any{}
-	file_api_endorsementpb_endorsement_proto_msgTypes[8].OneofWrappers = []any{}
-	file_api_endorsementpb_endorsement_proto_msgTypes[10].OneofWrappers = []any{}
+	file_api_endorsementpb_endorsement_proto_msgTypes[3].OneofWrappers = []any{}
+	file_api_endorsementpb_endorsement_proto_msgTypes[5].OneofWrappers = []any{}
+	file_api_endorsementpb_endorsement_proto_msgTypes[7].OneofWrappers = []any{}
+	file_api_endorsementpb_endorsement_proto_msgTypes[9].OneofWrappers = []any{}
+	file_api_endorsementpb_endorsement_proto_msgTypes[11].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_endorsementpb_endorsement_proto_rawDesc), len(file_api_endorsementpb_endorsement_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   12,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

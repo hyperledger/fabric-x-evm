@@ -30,34 +30,27 @@ func (s *Server) Execute(ctx context.Context, req *endorsementpb.ExecuteRequest)
 	if err := tx.UnmarshalBinary(req.GetEthereumTx()); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "unmarshal tx: %v", err)
 	}
-	inv, err := s.invocation(req.GetEthereumTx(), req.GetProposalHash())
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "build invocation: %v", err)
-	}
-	resp, err := s.svc.Execute(ctx, inv, tx)
+	resp, err := s.svc.Execute(ctx, invocation(req), tx)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "execute: %v", err)
 	}
 	return executeResponse(resp), nil
 }
 
-// invocation rebuilds the endorsement invocation from the transaction using the
-// endorser's identity and namespace, keeping the caller's proposal hash when set.
-func (s *Server) invocation(ethTx, proposalHash []byte) (endorsement.Invocation, error) {
-	args := [][]byte{{byte(common.ProposalTypeEVMTx)}, ethTx}
-	inv, err := endorsement.NewInvocation(s.signer, s.channel, s.namespace, s.nsVersion, args)
-	if err != nil {
-		return endorsement.Invocation{}, err
+// invocation maps the sender's invocation onto the endorsement invocation the
+// builder consumes.
+func invocation(req *endorsementpb.ExecuteRequest) endorsement.Invocation {
+	i := req.GetInvocation()
+	return endorsement.Invocation{
+		TxID:         i.GetTxId(),
+		Args:         i.GetArgs(),
+		CCID:         &peer.ChaincodeID{Name: i.GetChaincodeName(), Version: i.GetChaincodeVersion()},
+		ProposalHash: req.GetProposalHash(),
 	}
-	if len(proposalHash) > 0 {
-		inv.ProposalHash = proposalHash
-	}
-	return inv, nil
 }
 
-// Call runs a read-only eth_call. A revert or failed execution is an
-// application outcome carried in the response; only transport faults are a
-// gRPC error.
+// Call runs a read-only eth_call. A revert or failed execution is carried in
+// the response; only transport faults are a gRPC error.
 func (s *Server) Call(ctx context.Context, req *endorsementpb.CallRequest) (*endorsementpb.CallResponse, error) {
 	out, err := s.svc.Call(ctx, callMsg(req), blockNumber(req.BlockNumber))
 	if err != nil {
