@@ -10,6 +10,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -24,6 +25,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/hyperledger/fabric-protos-go-apiv2/ledger/rwset"
@@ -335,10 +337,12 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 	}
 
 	if tx.Type() != types.BlobTxType && // our pre-execution validation doesn't support blob txes yet
+		tx.Type() != types.SetCodeTxType && // nor set-code (EIP-7702) txes yet
 		tx.Protected() { // our pre-execution validation only support protected transactions
 
-		// err out if we got a pre-validation error which we wouldn't get again when endorsing
-		if preExecErr != nil && execErr == nil {
+		// err out if we got a pre-validation error which we wouldn't get again when endorsing.
+		// ErrOversizedData is a mempool-only size limit, not a consensus rule, so don't fail on it.
+		if preExecErr != nil && execErr == nil && !errors.Is(preExecErr, txpool.ErrOversizedData) {
 			t.Fatalf("unexpected pre-validation error %q", preExecErr)
 		}
 	}
