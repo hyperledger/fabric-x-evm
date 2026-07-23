@@ -162,13 +162,20 @@ func buildTransaction(testTx *stTransaction, dataIndex, gasIndex, valueIndex int
 			if chainID == nil {
 				chainID = big.NewInt(0)
 			}
+			r, s := auth.R, auth.S
+			if r == nil {
+				r = big.NewInt(0)
+			}
+			if s == nil {
+				s = big.NewInt(0)
+			}
 			authList[i] = types.SetCodeAuthorization{
 				ChainID: *uint256.MustFromBig(chainID),
 				Address: auth.Address,
 				Nonce:   auth.Nonce,
 				V:       auth.V,
-				R:       *uint256.MustFromBig(auth.R),
-				S:       *uint256.MustFromBig(auth.S),
+				R:       *uint256.MustFromBig(r),
+				S:       *uint256.MustFromBig(s),
 			}
 		}
 
