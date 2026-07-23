@@ -400,7 +400,6 @@ func NewLocalTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig e
 		protocol = "fabric"
 	}
 
-	tname := strings.ReplaceAll(strings.ReplaceAll(t.Name(), "/", "_"), ".", "-")
 	dir := t.TempDir()
 	cfg := config.Config{
 		Network: common.Network{
@@ -412,8 +411,8 @@ func NewLocalTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig e
 		},
 		Gateway: config.Gateway{
 			Database: config.DB{
-				ConnString: filepath.Join(dir, tname+"gateway.db"),
-				TriePath:   filepath.Join(dir, tname+"triedb.db"),
+				ConnString: filepath.Join(dir, "gateway.db"),
+				TriePath:   filepath.Join(dir, "triedb.db"),
 			},
 			SyncTimeout: 2 * time.Second,
 			Orderers: []common.ClientConfig{
@@ -429,7 +428,7 @@ func NewLocalTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig e
 				Name:      "endorser1",
 				Database: econf.DB{
 					Database:    "memory",
-					ConnString:  filepath.Join(dir, tname+"endorser1.db"),
+					ConnString:  filepath.Join(dir, "endorser1.db"),
 					HistorySize: 1,
 				},
 			},
