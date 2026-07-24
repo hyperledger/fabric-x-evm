@@ -214,6 +214,14 @@ func TestStateReaders_MapValues(t *testing.T) {
 	}
 }
 
+// A negative block number is an unresolved block-tag sentinel, not a real
+// height, and must resolve to latest rather than converting to a nonsense uint64.
+func TestBlockNumberProto_NegativeIsLatest(t *testing.T) {
+	if got := blockNumberProto(big.NewInt(-1)); got != nil {
+		t.Errorf("blockNumberProto(-1) = %v, want nil", got)
+	}
+}
+
 func TestClose_NilConn(t *testing.T) {
 	if err := (&Client{}).Close(); err != nil {
 		t.Fatalf("unexpected error: %v", err)

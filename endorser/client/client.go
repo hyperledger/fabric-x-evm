@@ -19,11 +19,8 @@ import (
 
 	"github.com/hyperledger/fabric-x-evm/api/endorsementpb"
 	"github.com/hyperledger/fabric-x-evm/common"
-	"github.com/hyperledger/fabric-x-evm/endorser/api"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
-
-var _ api.Service = (*Client)(nil)
 
 // Client adapts a remote EvmEndorsement gRPC endpoint to the api.Service seam.
 type Client struct {
@@ -145,10 +142,10 @@ func callRequest(msg *ethereum.CallMsg, blockNumber *big.Int) *endorsementpb.Cal
 	return req
 }
 
-// blockNumberProto turns the block selector into the optional wire field; a nil
-// selector means latest.
+// blockNumberProto turns the block selector into the optional wire field. A nil
+// selector, or a negative (unresolved block-tag sentinel) value, means latest.
 func blockNumberProto(bn *big.Int) *uint64 {
-	if bn == nil {
+	if bn == nil || bn.Sign() < 0 {
 		return nil
 	}
 	v := bn.Uint64()
