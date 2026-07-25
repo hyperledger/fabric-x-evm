@@ -262,17 +262,73 @@ func TestRPCBlockMarshalJSON(t *testing.T) {
 }
 
 type stubBackend struct {
-	blockByHash map[common.Hash]*domain.Block
-	getBlockErr error
-	callErr     error
+	// Chain
+	chainID     *big.Int
+	chainIDErr  error
+	blockNum    uint64
+	blockNumErr error
+
+	// Blocks
+	blockByHash   map[common.Hash]*domain.Block
+	blockByNumber map[uint64]*domain.Block
+	getBlockErr   error // returned from GetBlockBy*/BlockNumberByHash
+
+	// Block tx counts
+	txCountByHash      map[common.Hash]int64
+	txCountByHashErr   error
+	txCountByNumber    map[uint64]int64
+	txCountByNumberErr error
+
+	// State
+	balance    *big.Int
+	balanceErr error
+	storage    []byte
+	storageErr error
+	code       []byte
+	codeErr    error
+	nonce      uint64
+	nonceErr   error
+
+	// Send / Call
+	sendErr  error
+	lastSent *types.Transaction
+	callRet  []byte
+	callErr  error
+
+	// Tx reads
+	txByHash         map[common.Hash]*domain.Transaction
+	txByHashErr      error
+	txByBlockHashIdx map[common.Hash]map[int64]*domain.Transaction
+	txByBlockHashErr error
+	txByBlockNumIdx  map[uint64]map[int64]*domain.Transaction
+	txByBlockNumErr  error
+
+	// Logs
+	logs       []domain.Log
+	logsErr    error
+	lastFilter domain.LogFilter // captured on GetLogs for assertion
 }
 
-func (s *stubBackend) ChainID(ctx context.Context) (*big.Int, error) { return big.NewInt(1), nil }
+func (s *stubBackend) ChainID(ctx context.Context) (*big.Int, error) {
+	if s.chainIDErr != nil {
+		return nil, s.chainIDErr
+	}
+	if s.chainID != nil {
+		return s.chainID, nil
+	}
+	return big.NewInt(1), nil
+}
 func (s *stubBackend) BlockNumber(ctx context.Context) (uint64, error) {
-	return 0, nil
+	return s.blockNum, s.blockNumErr
 }
 func (s *stubBackend) GetBlockByNumber(ctx context.Context, num uint64, full bool) (*domain.Block, error) {
-	return nil, nil
+	if s.getBlockErr != nil {
+		return nil, s.getBlockErr
+	}
+	if s.blockByNumber == nil {
+		return nil, nil
+	}
+	return s.blockByNumber[num], nil
 }
 func (s *stubBackend) GetBlockByHash(ctx context.Context, hash common.Hash, full bool) (*domain.Block, error) {
 	if s.getBlockErr != nil {
@@ -298,38 +354,72 @@ func (s *stubBackend) BlockNumberByHash(ctx context.Context, hash common.Hash) (
 	return &num, nil
 }
 func (s *stubBackend) GetBlockTxCountByHash(ctx context.Context, hash common.Hash) (int64, error) {
-	return 0, nil
+	if s.txCountByHashErr != nil {
+		return 0, s.txCountByHashErr
+	}
+	return s.txCountByHash[hash], nil
 }
 func (s *stubBackend) GetBlockTxCountByNumber(ctx context.Context, num uint64) (int64, error) {
-	return 0, nil
+	if s.txCountByNumberErr != nil {
+		return 0, s.txCountByNumberErr
+	}
+	return s.txCountByNumber[num], nil
 }
 func (s *stubBackend) BalanceAt(ctx context.Context, account common.Address, blockNumber *big.Int) (*big.Int, error) {
+	if s.balanceErr != nil {
+		return nil, s.balanceErr
+	}
+	if s.balance != nil {
+		return s.balance, nil
+	}
 	return big.NewInt(0), nil
 }
 func (s *stubBackend) StorageAt(ctx context.Context, account common.Address, key common.Hash, blockNumber *big.Int) ([]byte, error) {
-	return nil, nil
+	return s.storage, s.storageErr
 }
 func (s *stubBackend) CodeAt(ctx context.Context, account common.Address, blockNumber *big.Int) ([]byte, error) {
-	return nil, nil
+	return s.code, s.codeErr
 }
 func (s *stubBackend) NonceAt(ctx context.Context, account common.Address, blockNumber *big.Int) (uint64, error) {
-	return 0, nil
+	return s.nonce, s.nonceErr
 }
-func (s *stubBackend) SendTransaction(ctx context.Context, tx *types.Transaction) error { return nil }
+func (s *stubBackend) SendTransaction(ctx context.Context, tx *types.Transaction) error {
+	s.lastSent = tx
+	return s.sendErr
+}
 func (s *stubBackend) CallContract(ctx context.Context, call ethereum.CallMsg, blockNumber *big.Int) ([]byte, error) {
-	return nil, s.callErr
+	return s.callRet, s.callErr
 }
 func (s *stubBackend) TransactionByHash(ctx context.Context, hash common.Hash) (*domain.Transaction, error) {
-	return nil, nil
+	if s.txByHashErr != nil {
+		return nil, s.txByHashErr
+	}
+	if s.txByHash == nil {
+		return nil, nil
+	}
+	return s.txByHash[hash], nil
 }
 func (s *stubBackend) GetTransactionByBlockHashAndIndex(ctx context.Context, hash common.Hash, idx int64) (*domain.Transaction, error) {
-	return nil, nil
+	if s.txByBlockHashErr != nil {
+		return nil, s.txByBlockHashErr
+	}
+	if s.txByBlockHashIdx == nil {
+		return nil, nil
+	}
+	return s.txByBlockHashIdx[hash][idx], nil
 }
 func (s *stubBackend) GetTransactionByBlockNumberAndIndex(ctx context.Context, num uint64, idx int64) (*domain.Transaction, error) {
-	return nil, nil
+	if s.txByBlockNumErr != nil {
+		return nil, s.txByBlockNumErr
+	}
+	if s.txByBlockNumIdx == nil {
+		return nil, nil
+	}
+	return s.txByBlockNumIdx[num][idx], nil
 }
 func (s *stubBackend) GetLogs(ctx context.Context, query domain.LogFilter) ([]domain.Log, error) {
-	return nil, nil
+	s.lastFilter = query
+	return s.logs, s.logsErr
 }
 
 var (
