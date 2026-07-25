@@ -590,3 +590,252 @@ func TestGetLogs_FilterTransformationByBlockHash(t *testing.T) {
 		t.Errorf("From/To should be nil when BlockHash present")
 	}
 }
+
+// ---- Coverage top-ups: eth.go remaining branches ----
+
+func TestBackendAccessor(t *testing.T) {
+	b := &stubBackend{}
+	api := NewEthAPI(b)
+	if api.Backend() != b {
+		t.Errorf("Backend() did not return the same backend")
+	}
+}
+
+func TestCall_ArgsToCallMsgError(t *testing.T) {
+	api := NewEthAPI(&stubBackend{})
+	_, err := api.Call(context.Background(), map[string]any{"gas": "not-hex"}, latestBlockRef)
+	var rpcErr rpc.Error
+	if !errors.As(err, &rpcErr) || rpcErr.ErrorCode() != -32602 {
+		t.Fatalf("want InvalidParams (-32602), got %T (%v)", err, err)
+	}
+}
+
+func TestCall_BlockNumberByHashError(t *testing.T) {
+	api := NewEthAPI(&stubBackend{getBlockErr: errBoom})
+	_, err := api.Call(context.Background(), map[string]any{}, rpc.BlockNumberOrHashWithHash(testBlockHash, false))
+	if err == nil {
+		t.Fatal("expected error from block-hash resolution")
+	}
+}
+
+func TestEstimateGas_WithExplicitBlock(t *testing.T) {
+	api := NewEthAPI(&stubBackend{})
+	blk := rpc.BlockNumberOrHashWithNumber(rpc.BlockNumber(7))
+	got, err := api.EstimateGas(context.Background(), map[string]any{}, &blk)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if got == nil || uint64(*got) != 10_000_000 {
+		t.Errorf("gas = %v, want 10000000", got)
+	}
+}
+
+func TestGetCode_BlockNumberByHashError(t *testing.T) {
+	api := NewEthAPI(&stubBackend{getBlockErr: errBoom})
+	if _, err := api.GetCode(context.Background(), testAddr, rpc.BlockNumberOrHashWithHash(testBlockHash, false)); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestGetStorageAt_BlockNumberByHashError(t *testing.T) {
+	api := NewEthAPI(&stubBackend{getBlockErr: errBoom})
+	if _, err := api.GetStorageAt(context.Background(), testAddr, common.HexToHash("0x1"), rpc.BlockNumberOrHashWithHash(testBlockHash, false)); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestGetTransactionCount_BlockNumberByHashError(t *testing.T) {
+	api := NewEthAPI(&stubBackend{getBlockErr: errBoom})
+	if _, err := api.GetTransactionCount(context.Background(), testAddr, rpc.BlockNumberOrHashWithHash(testBlockHash, false)); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestSendRawTransaction_BackendSendError(t *testing.T) {
+	_, raw := signedRawTx(t)
+	api := NewEthAPI(&stubBackend{sendErr: errBoom})
+	_, err := api.SendRawTransaction(context.Background(), raw)
+	// Non-nonceLookup errors are classified as -32003 (TxRejected).
+	var rpcErr rpc.Error
+	if !errors.As(err, &rpcErr) || rpcErr.ErrorCode() != -32003 {
+		t.Fatalf("want -32003 (TxRejected), got %T code=%d (%v)", err, rpcErr.ErrorCode(), err)
+	}
+}
+
+func TestArgsToCallMsg_HappyPathAllFields(t *testing.T) {
+	to := common.HexToAddress("0x2222222222222222222222222222222222222222")
+	msg, err := argsToCallMsg(map[string]any{
+		"from":                 testAddr.Hex(),
+		"to":                   to.Hex(),
+		"gas":                  "0x5208",
+		"gasPrice":             "0x1",
+		"value":                "0x2a",
+		"input":                "0xdeadbeef",
+		"maxFeePerGas":         "0x3",
+		"maxPriorityFeePerGas": "0x2",
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if msg.From != testAddr {
+		t.Errorf("From = %s", msg.From.Hex())
+	}
+	if msg.To == nil || *msg.To != to {
+		t.Errorf("To = %v", msg.To)
+	}
+	if msg.Gas != 0x5208 {
+		t.Errorf("Gas = %d", msg.Gas)
+	}
+	if msg.Value.Int64() != 42 {
+		t.Errorf("Value = %s", msg.Value)
+	}
+	if len(msg.Data) != 4 {
+		t.Errorf("Data len = %d", len(msg.Data))
+	}
+	if msg.GasFeeCap.Int64() != 3 || msg.GasTipCap.Int64() != 2 {
+		t.Errorf("EIP-1559 fields not parsed: fee=%s tip=%s", msg.GasFeeCap, msg.GasTipCap)
+	}
+}
+
+func TestArgsToCallMsg_DataAliasWhenInputAbsent(t *testing.T) {
+	msg, err := argsToCallMsg(map[string]any{"data": "0xcafebabe"})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(msg.Data) != 4 {
+		t.Errorf("Data len = %d, want 4", len(msg.Data))
+	}
+}
+
+func TestDomainLogToTypesLog_MultipleTopics(t *testing.T) {
+	t1 := common.HexToHash("0xaa").Bytes()
+	t2 := common.HexToHash("0xbb").Bytes()
+	got := domainLogToTypesLog(domain.Log{
+		BlockHash: make([]byte, 32),
+		TxHash:    make([]byte, 32),
+		Address:   make([]byte, 20),
+		Topics:    [][]byte{t1, t2},
+	})
+	if len(got.Topics) != 2 {
+		t.Fatalf("Topics len = %d, want 2", len(got.Topics))
+	}
+	if got.Topics[0] != common.BytesToHash(t1) || got.Topics[1] != common.BytesToHash(t2) {
+		t.Errorf("Topics content mismatch")
+	}
+}
+
+// ---- Coverage top-ups: models.go helpers called from handlers ----
+
+func TestRpcBlock_NilInputReturnsNil(t *testing.T) {
+	if rpcBlock(nil, false) != nil {
+		t.Errorf("rpcBlock(nil) should return nil")
+	}
+}
+
+func TestRpcBlock_FullWithTransactions(t *testing.T) {
+	_, raw := signedRawTx(t)
+	b := &domain.Block{
+		BlockNumber: 5,
+		BlockHash:   testBlockHash.Bytes(),
+		ParentHash:  common.Hash{}.Bytes(),
+		StateRoot:   common.Hash{}.Bytes(),
+		Transactions: []domain.Transaction{
+			{TxHash: testTxHash.Bytes(), RawTx: raw, FromAddress: testAddr.Bytes(), TxIndex: 0},
+		},
+	}
+	got := rpcBlock(b, true)
+	if got == nil || len(got.Transactions) != 1 {
+		t.Fatalf("block = %+v, want 1 tx", got)
+	}
+	tx, ok := got.Transactions[0].(*RPCTransaction)
+	if !ok {
+		t.Fatalf("tx element wrong type: %T", got.Transactions[0])
+	}
+	if tx.BlockHash == nil || *tx.BlockHash != testBlockHash {
+		t.Errorf("nested tx BlockHash not set")
+	}
+}
+
+func TestRpcBlock_NotFullReturnsHashes(t *testing.T) {
+	_, raw := signedRawTx(t)
+	b := &domain.Block{
+		BlockNumber: 5,
+		BlockHash:   testBlockHash.Bytes(),
+		ParentHash:  common.Hash{}.Bytes(),
+		StateRoot:   common.Hash{}.Bytes(),
+		Transactions: []domain.Transaction{
+			{TxHash: testTxHash.Bytes(), RawTx: raw, FromAddress: testAddr.Bytes()},
+		},
+	}
+	got := rpcBlock(b, false)
+	if got == nil || len(got.Transactions) != 1 {
+		t.Fatalf("block = %+v, want 1 tx hash", got)
+	}
+	if _, ok := got.Transactions[0].(common.Hash); !ok {
+		t.Errorf("full=false should yield hash entries, got %T", got.Transactions[0])
+	}
+}
+
+func TestRpcTransaction_NilInput(t *testing.T) {
+	if rpcTransaction(nil) != nil {
+		t.Errorf("rpcTransaction(nil) should return nil")
+	}
+}
+
+func TestRpcTransaction_InvalidRawTxReturnsNil(t *testing.T) {
+	got := rpcTransaction(&domain.Transaction{RawTx: []byte{0xff, 0xff}})
+	if got != nil {
+		t.Errorf("rpcTransaction with invalid RawTx should return nil, got %+v", got)
+	}
+}
+
+func TestRpcTransaction_ConfirmedIncludesBlockMetadata(t *testing.T) {
+	_, raw := signedRawTx(t)
+	got := rpcTransaction(&domain.Transaction{
+		RawTx:       raw,
+		FromAddress: testAddr.Bytes(),
+		BlockHash:   testBlockHash.Bytes(),
+		BlockNumber: 9,
+		TxIndex:     2,
+	})
+	if got == nil || got.BlockHash == nil || *got.BlockHash != testBlockHash {
+		t.Fatalf("block metadata missing: %+v", got)
+	}
+	if got.BlockNumber == nil || (*big.Int)(got.BlockNumber).Int64() != 9 {
+		t.Errorf("BlockNumber = %v", got.BlockNumber)
+	}
+	if got.TransactionIndex == nil || uint64(*got.TransactionIndex) != 2 {
+		t.Errorf("TransactionIndex = %v", got.TransactionIndex)
+	}
+}
+
+func TestReceipt_NilInputReturnsNil(t *testing.T) {
+	if receipt(nil) != nil {
+		t.Errorf("receipt(nil) should return nil")
+	}
+}
+
+func TestReceipt_PendingBlockHashNilReturnsNil(t *testing.T) {
+	// receipt() returns nil for pending tx (BlockHash == nil).
+	if receipt(&domain.Transaction{TxHash: testTxHash.Bytes()}) != nil {
+		t.Errorf("receipt for pending tx (nil BlockHash) should be nil")
+	}
+}
+
+func TestReceipt_ContractCreationSetsContractAddress(t *testing.T) {
+	contract := common.HexToAddress("0x3333333333333333333333333333333333333333")
+	got := receipt(&domain.Transaction{
+		TxHash:          testTxHash.Bytes(),
+		BlockHash:       testBlockHash.Bytes(),
+		BlockNumber:     3,
+		FromAddress:     testAddr.Bytes(),
+		ContractAddress: contract.Bytes(),
+		Status:          1,
+	})
+	if got == nil || got.ContractAddress != contract {
+		t.Errorf("ContractAddress = %v, want %s", got, contract.Hex())
+	}
+	if got.To != nil {
+		t.Errorf("To should be nil for contract creation, got %v", got.To)
+	}
+}
