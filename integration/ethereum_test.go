@@ -49,9 +49,6 @@ var verify_root = flag.Bool("verify_root", false, "Verify trie root computed by 
 // want_very_slow is set when we want to run the tests that we typically skip because they are too slow
 var want_very_slow = flag.Bool("very_slow", false, "Run the very slow tests that are otherwise blacklisted")
 
-// want_legacy is set when we want to run the legacy tests, which we typically skip
-var want_legacy = flag.Bool("legacy", false, "Run the legacy tests that are otherwise blacklisted")
-
 // loadSlow loads the test cases that are typically skipped because they are slow
 func loadSlow(path string) (map[string]struct{}, error) {
 	return loadList(path)
@@ -141,62 +138,46 @@ func filterSkippedTests(files []string, skip map[string]struct{}) []string {
 	return filtered
 }
 
-// TestEthereumTests runs official ethereum/tests from the git submodule
+// executionSpecForks limits the suite to Osaka-forward, plus Prague/Cancun as cheap regression.
+var executionSpecForks = map[string]struct{}{
+	"Osaka":  {},
+	"BPO1":   {},
+	"BPO2":   {},
+	"Prague": {},
+	"Cancun": {},
+}
+
+// TestEthereumTests runs the execution-specs state_tests through the shared harness, limited to executionSpecForks.
 //
-// The ethereum/tests repository is included as a git submodule at testdata/ethereum-tests/
-// To initialize: git submodule update --init --recursive
-//
-// This follows the same approach as Besu, Geth, and other Ethereum clients.
+// The fixtures are fetched on demand into testdata/execution-specs-tests/ (see `make fetch-execution-specs-tests`);
+// this is the same corpus geth and other clients validate against.
 func TestEthereumTests(t *testing.T) {
 	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr)) // disable grpc logging
 
-	// Load skip (tests we never run, in any mode)
+	testsDir := filepath.Join("..", "testdata", "execution-specs-tests", "fixtures", "state_tests")
+	if _, err := os.Stat(testsDir); os.IsNotExist(err) {
+		t.Skipf("execution-specs fixtures not found at %s; run `make fetch-execution-specs-tests`", testsDir)
+	}
+
 	skip, err := loadSkip(filepath.Join("..", "testdata", "eth_tests.skip"))
 	if err != nil {
 		t.Fatalf("Failed to load skip list: %v", err)
 	}
 	t.Logf("Loaded skip list with %d entries", len(skip))
 
-	// Load slow
 	slow, err := loadSlow(filepath.Join("..", "testdata", "eth_tests.slow"))
 	if err != nil {
-		t.Fatalf("Failed to load blacklist: %v", err)
+		t.Fatalf("Failed to load slow list: %v", err)
 	}
-	t.Logf("Loaded blacklist with %d entries", len(slow))
+	t.Logf("Loaded slow list with %d entries", len(slow))
 
-	// Find all JSON files recursively
-
-	// 1) GeneralStateTests
-	testsDir := filepath.Join("..", "testdata", "ethereum-tests", "GeneralStateTests")
-	if _, err := os.Stat(testsDir); os.IsNotExist(err) {
-		t.Fatalf("ethereum/tests corpus not found at %s; run `git submodule update --init --recursive`", testsDir)
-	}
 	allFiles, err := findJSONFiles(testsDir)
 	if err != nil {
 		t.Fatalf("Failed to find test files: %v", err)
 	}
-	t.Logf("Found %d total test files", len(allFiles))
-
-	if *want_legacy {
-		// 2) LegacyTests
-		testsDir = filepath.Join("..", "testdata", "ethereum-tests", "LegacyTests", "Constantinople", "GeneralStateTests")
-		allFiles, err = findJSONFiles(testsDir)
-		if err != nil {
-			t.Fatalf("Failed to find test files: %v", err)
-		}
-		t.Logf("Found %d total test files", len(allFiles))
-	}
-
-	// Always remove unsupported tests first.
 	allFiles = filterSkippedTests(allFiles, skip)
-
-	// Filter out slow files unless we explicitly want them
 	testFiles := filterSlowTests(allFiles, slow, *want_very_slow)
-	t.Logf("Running %d test files after filtering", len(testFiles))
-
-	// testFiles = []string{
-	// 	"../testdata/ethereum-tests/GeneralStateTests/stEIP1559/lowGasLimit.json",
-	// }
+	t.Logf("Running %d state_tests files after filtering", len(testFiles))
 
 	for _, testPath := range testFiles {
 		t.Run(filepath.Base(testPath), func(t *testing.T) {
@@ -205,25 +186,32 @@ func TestEthereumTests(t *testing.T) {
 	}
 }
 
-// runEthereumTestFile parses a test file and runs all tests within it
+// runEthereumTestFile runs one fixtures file's state tests against the fork allowlist.
 func runEthereumTestFile(t *testing.T, path string) {
 	tests, err := ParseTestFile(path)
 	if err != nil {
 		t.Fatalf("Failed to parse test file: %v", err)
 	}
-
-	// Run each StateTest with all configurations
 	for name, test := range tests {
+		// EEST bakes the fork into the test name, so skip a test with no allowlisted fork entirely.
+		if !hasAllowlistedFork(test, executionSpecForks) {
+			continue
+		}
 		t.Run(name, func(t *testing.T) {
-			t.Parallel() // Run test files in parallel
-			runSingleEthereumTest(t, test)
+			t.Parallel()
+			runStateTestSubtests(t, test, executionSpecForks)
 		})
 	}
 }
 
-// runSingleEthereumTest executes one ethereum test case with all configurations
-func runSingleEthereumTest(t *testing.T, stateTest *StateTest) {
-	runStateTestSubtests(t, stateTest, nil)
+// hasAllowlistedFork reports whether any subtest targets a fork in the allowlist.
+func hasAllowlistedFork(test *StateTest, forkAllowlist map[string]struct{}) bool {
+	for _, subtest := range test.Subtests() {
+		if _, ok := forkAllowlist[subtest.Fork]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // runStateTestSubtests runs each fork/index subtest; a non-nil forkAllowlist restricts to those forks.
@@ -269,9 +257,8 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 	// be closed to stop the background snapshot-generator goroutine.
 	st, config, block, _, context, prepareErr := stateTest.prepareTestEnvironment(subtest.Fork, subtest.Index, vm.Config{}, snapshotter, scheme)
 
-	// Check if the error from prepareTestEnvironment is expected (e.g., blob count exceeded)
-	// This matches the behavior of TestSingleAdd11 which uses checkError
-	// We must check this BEFORE trying to access block.Number() or block.Time()
+	// Check if the error from prepareTestEnvironment is expected (e.g., blob count exceeded).
+	// We must check this BEFORE trying to access block.Number() or block.Time().
 	if prepareErr != nil {
 		// Close the state before returning
 		st.Close()
