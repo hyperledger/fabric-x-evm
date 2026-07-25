@@ -118,20 +118,13 @@ make unit-tests
 
 ### Integration tests
 
-Some integration tests rely on the `ethereum/tests` corpus, vendored as a git
-submodule under `testdata/ethereum-tests`. Initialize it once before running
-those tests:
+The Ethereum conformance suite (`make eth-tests`, `TestEthereumTests`) runs the
+`ethereum/execution-specs` state-test fixtures (Osaka+). The fixtures are fetched
+on demand — downloaded and checksum-verified into a gitignored
+`testdata/execution-specs-tests/` directory — so no submodule init is required:
 
 ```shell
-git submodule update --init --recursive
-```
-
-The newer `ethereum/execution-specs` conformance fixtures (Osaka+) are fetched
-separately — they are downloaded and checksum-verified into a gitignored
-`testdata/execution-specs-tests/` directory rather than vendored as a submodule:
-
-```shell
-make fetch-execution-specs-tests
+make eth-tests
 ```
 
 #### Local

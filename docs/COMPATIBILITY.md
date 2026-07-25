@@ -43,15 +43,14 @@ is still left as the empty bloom.
 
 Alongside hand-written integration tests, the suite runs:
 
-- the official **ethereum/tests** `GeneralStateTests` from a git submodule under
-  `testdata/ethereum-tests/` (`TestEthereumTests`) — the same corpus geth and Besu use; the
-  checked-out version is filled for the current forks (Cancun/Prague). Slow and known-failing
-  vectors are blacklisted (`testdata/eth_tests.slow`); the geth-reference state-root check always
-  runs, while verification of our own trie-store root is opt-in (`-verify_root`). So this is a
-  correctness signal in progress, not a clean pass. An opt-in `-legacy` flag *instead* runs the
-  frozen Constantinople-era snapshot; that is an old-fork regression set only, and several of its
-  vectors are *expected* to fail here because this implementation targets modern (Osaka) semantics
-  — see the SELFDESTRUCT and `GetStorageRoot` notes under EVM execution differences.
+- the official **ethereum/execution-specs** `state_tests` fixtures (`TestEthereumTests`),
+  fetched on demand into `testdata/execution-specs-tests/` (`make eth-tests`) — the same
+  conformance corpus geth and other clients validate against, pinned to the current forks
+  (Osaka + BPO1/BPO2, with Prague/Cancun as cheap regression). Known-failing vectors are
+  quarantined in `testdata/eth_tests.skip` and slow ones in `testdata/eth_tests.slow`; the
+  fixtures' expected state-root check always runs, while verification of our own trie-store
+  root is opt-in (`-verify_root`). Known divergences are documented under EVM execution
+  differences below.
 - the **OpenZeppelin** contract test suites, run against a live network via Hardhat
   (`scripts/run_hardhat_test.sh`).
 
@@ -220,18 +219,17 @@ the EIP-7610 collision guard — a `CREATE`/`CREATE2` must fail if the target ad
 storage. With the stub that guard is effectively disabled: a contract can be deployed onto an
 address that has storage (but no code or nonce). Collisions detected via code or nonce still apply.
 
-**How these surface in equivalence tests**: the `ethereum/tests` harness runs the EVM against our
-StateDB while mirroring every write to a reference go-ethereum StateDB, then compares the two state
-roots. Because the EVM reads account state (existence, `HasSelfDestructed`, storage root) from
-*our* StateDB, the two deviations above make a small, known set of vectors diverge on the final
-root — SELFDESTRUCT and CREATE/CREATE2-collision / empty-account cases. These divergences are
-deliberate consequences of the modern-only semantics above, not regressions.
+**How these surface in equivalence tests**: the conformance harness runs the EVM against our
+StateDB while mirroring every write to a reference go-ethereum StateDB, then compares the state
+root against each fixture's expected root. Because the EVM reads account state (existence,
+`HasSelfDestructed`, storage root) from *our* StateDB, the two deviations above make a small, known
+set of vectors diverge on the final root — SELFDESTRUCT and CREATE/CREATE2-collision / empty-account
+cases. These divergences are deliberate consequences of the modern-only semantics above, not
+regressions.
 
-The newer execution-specs suite (`TestExecutionSpecStateTests`, Osaka-forward fixtures) exercises
-the same paths and compares against the fixtures' expected roots. Its known-divergent cases are
-quarantined in `testdata/execution_specs_tests.skip`: the EIP-7610 create-collision fixtures above,
-and a `CREATE` transaction from a non-existent sender (currently a nil-pointer panic in
-`DualStateDB.Snapshot`). All other Osaka-forward state tests pass.
+These known-divergent cases are quarantined in `testdata/eth_tests.skip`: the EIP-7610
+create-collision fixtures above, and a `CREATE` transaction from a non-existent sender (currently a
+nil-pointer panic in `DualStateDB.Snapshot`). All other Osaka-forward state tests pass.
 
 **Native ETH balances not funded**: balances are implemented but unused. Accounts have zero ETH 
 balance by default. Value transfers inside the EVM (`CALL` with value, `SELFDESTRUCT` beneficiary, 
