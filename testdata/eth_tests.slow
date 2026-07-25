@@ -1,3 +1,25 @@
 # Slow tests for the execution-specs conformance suite (run only with -very_slow).
 # One test path per line; blank lines and lines starting with '#' are ignored.
-# Populated in the skip/slow triage chunk (#237) — empty for now.
+
+# Large static-call / quadratic-complexity vectors (return/call/callcode 50000):
+# too slow for the default run, exercised only under -very_slow.
+../testdata/execution-specs-tests/fixtures/state_tests/for_cancun/ported_static/stStaticCall/static_call50000/static_call50000.json
+../testdata/execution-specs-tests/fixtures/state_tests/for_prague/ported_static/stStaticCall/static_call50000/static_call50000.json
+../testdata/execution-specs-tests/fixtures/state_tests/for_cancun/ported_static/stStaticCall/static_loop_calls_then_revert/static_loop_calls_then_revert.json
+../testdata/execution-specs-tests/fixtures/state_tests/for_prague/ported_static/stStaticCall/static_loop_calls_then_revert/static_loop_calls_then_revert.json
+../testdata/execution-specs-tests/fixtures/state_tests/for_osaka/ported_static/stStaticCall/static_loop_calls_then_revert/static_loop_calls_then_revert.json
+../testdata/execution-specs-tests/fixtures/state_tests/for_cancun/ported_static/stStaticCall/static_return50000_2/static_return50000_2.json
+../testdata/execution-specs-tests/fixtures/state_tests/for_prague/ported_static/stStaticCall/static_return50000_2/static_return50000_2.json
+../testdata/execution-specs-tests/fixtures/state_tests/for_osaka/ported_static/stStaticCall/static_return50000_2/static_return50000_2.json
+../testdata/execution-specs-tests/fixtures/state_tests/for_cancun/ported_static/stQuadraticComplexityTest/return50000/return50000.json
+../testdata/execution-specs-tests/fixtures/state_tests/for_prague/ported_static/stQuadraticComplexityTest/return50000/return50000.json
+../testdata/execution-specs-tests/fixtures/state_tests/for_osaka/ported_static/stQuadraticComplexityTest/return50000/return50000.json
+../testdata/execution-specs-tests/fixtures/state_tests/for_cancun/ported_static/stQuadraticComplexityTest/return50000_2/return50000_2.json
+../testdata/execution-specs-tests/fixtures/state_tests/for_prague/ported_static/stQuadraticComplexityTest/return50000_2/return50000_2.json
+../testdata/execution-specs-tests/fixtures/state_tests/for_osaka/ported_static/stQuadraticComplexityTest/return50000_2/return50000_2.json
+../testdata/execution-specs-tests/fixtures/state_tests/for_cancun/ported_static/stQuadraticComplexityTest/callcode50000/callcode50000.json
+../testdata/execution-specs-tests/fixtures/state_tests/for_prague/ported_static/stQuadraticComplexityTest/callcode50000/callcode50000.json
+../testdata/execution-specs-tests/fixtures/state_tests/for_cancun/ported_static/stQuadraticComplexityTest/quadratic_complexity_solidity_call_data_copy/quadratic_complexity_solidity_call_data_copy.json
+../testdata/execution-specs-tests/fixtures/state_tests/for_prague/ported_static/stQuadraticComplexityTest/quadratic_complexity_solidity_call_data_copy/quadratic_complexity_solidity_call_data_copy.json
+../testdata/execution-specs-tests/fixtures/state_tests/for_cancun/ported_static/stQuadraticComplexityTest/call50000/call50000.json
+../testdata/execution-specs-tests/fixtures/state_tests/for_prague/ported_static/stQuadraticComplexityTest/call50000/call50000.json
