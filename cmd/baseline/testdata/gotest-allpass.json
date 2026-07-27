@@ -1,0 +1,8 @@
+{"Action":"run","Test":"TestFoo"}
+{"Action":"output","Test":"TestFoo","Output":"=== RUN   TestFoo\n"}
+{"Action":"output","Test":"TestFoo","Output":"--- PASS: TestFoo (0.00s)\n"}
+{"Action":"pass","Test":"TestFoo","Elapsed":0}
+{"Action":"run","Test":"TestBar"}
+{"Action":"output","Test":"TestBar","Output":"=== RUN   TestBar\n"}
+{"Action":"output","Test":"TestBar","Output":"--- PASS: TestBar (0.00s)\n"}
+{"Action":"pass","Test":"TestBar","Elapsed":0}

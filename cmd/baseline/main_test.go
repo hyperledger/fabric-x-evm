@@ -34,26 +34,34 @@ func writeMochaFixture(t *testing.T, dir, name, fullTitle, errMessage string) st
 }
 
 func TestApplySuiteDefaults(t *testing.T) {
-	baselinePath, resultsGlob := "", ""
-	applySuiteDefaults("oz-hardhat", &baselinePath, &resultsGlob)
-	if baselinePath != "testdata/oz_known_failures.json" || resultsGlob != "testdata/oz-hardhat-results/*.json" {
-		t.Fatalf("got baseline=%q results=%q", baselinePath, resultsGlob)
+	baselinePath, resultsGlob, format := "", "", ""
+	applySuiteDefaults("oz-hardhat", &baselinePath, &resultsGlob, &format)
+	if baselinePath != "testdata/oz_known_failures.json" || resultsGlob != "testdata/oz-hardhat-results/*.json" || format != "mocha-json" {
+		t.Fatalf("got baseline=%q results=%q format=%q", baselinePath, resultsGlob, format)
+	}
+}
+
+func TestApplySuiteDefaults_EthTests(t *testing.T) {
+	baselinePath, resultsGlob, format := "", "", ""
+	applySuiteDefaults("eth-tests", &baselinePath, &resultsGlob, &format)
+	if baselinePath != "testdata/eth_known_failures.json" || resultsGlob != "testdata/eth-tests-results/*.json" || format != "go-test-json" {
+		t.Fatalf("got baseline=%q results=%q format=%q", baselinePath, resultsGlob, format)
 	}
 }
 
 func TestApplySuiteDefaults_ExplicitValuesWin(t *testing.T) {
-	baselinePath, resultsGlob := "custom.json", "custom/*.json"
-	applySuiteDefaults("oz-hardhat", &baselinePath, &resultsGlob)
-	if baselinePath != "custom.json" || resultsGlob != "custom/*.json" {
-		t.Fatalf("explicit values should not be overridden, got baseline=%q results=%q", baselinePath, resultsGlob)
+	baselinePath, resultsGlob, format := "custom.json", "custom/*.json", "custom-format"
+	applySuiteDefaults("oz-hardhat", &baselinePath, &resultsGlob, &format)
+	if baselinePath != "custom.json" || resultsGlob != "custom/*.json" || format != "custom-format" {
+		t.Fatalf("explicit values should not be overridden, got baseline=%q results=%q format=%q", baselinePath, resultsGlob, format)
 	}
 }
 
 func TestApplySuiteDefaults_UnknownSuiteLeavesFlagsEmpty(t *testing.T) {
-	baselinePath, resultsGlob := "", ""
-	applySuiteDefaults("some-future-suite", &baselinePath, &resultsGlob)
-	if baselinePath != "" || resultsGlob != "" {
-		t.Fatalf("unrecognized suite should not set defaults, got baseline=%q results=%q", baselinePath, resultsGlob)
+	baselinePath, resultsGlob, format := "", "", ""
+	applySuiteDefaults("some-future-suite", &baselinePath, &resultsGlob, &format)
+	if baselinePath != "" || resultsGlob != "" || format != "" {
+		t.Fatalf("unrecognized suite should not set defaults, got baseline=%q results=%q format=%q", baselinePath, resultsGlob, format)
 	}
 }
 

@@ -7,6 +7,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -146,6 +147,117 @@ func ParseMochaJSON(data []byte) ([]Result, error) {
 		results = append(results, Result{ID: f.FullTitle, Status: StatusFail, Message: f.Err.Message, File: f.File})
 	}
 	return results, nil
+}
+
+// goTestEvent mirrors the fields we need from `go test -json`'s event stream
+// (Go's test2json format): one JSON object per line. Test is set for every
+// event scoped to a specific test (empty for package-level events, e.g. the
+// final build/pass/fail line for the whole package, which we ignore). Output
+// carries one verbatim line of that test's -v output; -json implies -v, so
+// this is present even though we never pass -v ourselves.
+type goTestEvent struct {
+	Action string `json:"Action"`
+	Test   string `json:"Test"`
+	Output string `json:"Output"`
+}
+
+// ParseGoTestJSON converts `go test -json` output into []Result — the Go
+// analogue of ParseMochaJSON, for suites like TestEthereumTests.
+//
+// go test reports a hierarchical name for every t.Run subtest (parent/child
+// joined by "/") and emits its own pass/fail/skip event for every level.
+// We skip the parents.
+func ParseGoTestJSON(data []byte) ([]Result, error) {
+	type testInfo struct {
+		status Status
+		output strings.Builder
+	}
+	infos := make(map[string]*testInfo)
+	var order []string
+
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		var ev goTestEvent
+		if err := json.Unmarshal(line, &ev); err != nil {
+			return nil, fmt.Errorf("parse go test json: %w", err)
+		}
+		if ev.Test == "" {
+			continue // package-level event, not a specific test
+		}
+
+		info, ok := infos[ev.Test]
+		if !ok {
+			info = &testInfo{}
+			infos[ev.Test] = info
+			order = append(order, ev.Test)
+		}
+		switch ev.Action {
+		case "output":
+			info.output.WriteString(ev.Output)
+		case "pass":
+			info.status = StatusPass
+		case "fail":
+			info.status = StatusFail
+		case "skip":
+			info.status = StatusSkip
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan go test json: %w", err)
+	}
+
+	// Mark every ancestor of every reported name as "has children" so the
+	// pass below can skip aggregating parent nodes and keep only leaves.
+	hasChildren := make(map[string]bool, len(order))
+	for _, name := range order {
+		for i := 0; i < len(name); i++ {
+			if name[i] == '/' {
+				hasChildren[name[:i]] = true
+			}
+		}
+	}
+
+	results := make([]Result, 0, len(order))
+	for _, name := range order {
+		if hasChildren[name] {
+			continue
+		}
+		info := infos[name]
+		r := Result{ID: name, Status: info.status}
+		switch {
+		case r.Status == "":
+			// No terminal action ever arrived — e.g. the binary crashed or was
+			// killed mid-run. Surface it as a failure rather than silently
+			// dropping it; an incomplete run must never look clean.
+			r.Status = StatusFail
+			r.Message = "test did not complete (no pass/fail/skip event — binary may have crashed)"
+		case r.Status == StatusFail:
+			r.Message = cleanGoTestOutput(info.output.String())
+		}
+		results = append(results, r)
+	}
+	return results, nil
+}
+
+// cleanGoTestOutput strips go test's own verbose-mode banner lines (=== RUN,
+// --- FAIL, etc.) from a test's captured output, leaving just the t.Error /
+// t.Fatal text — the Go analogue of Mocha's err.message.
+func cleanGoTestOutput(raw string) string {
+	lines := strings.Split(raw, "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "=== ") || strings.HasPrefix(trimmed, "--- ") {
+			continue
+		}
+		kept = append(kept, trimmed)
+	}
+	return strings.Join(kept, "\n")
 }
 
 // LoadBaseline reads a baseline file. A missing file is an empty baseline, not an

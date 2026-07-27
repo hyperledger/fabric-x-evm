@@ -1,0 +1,10 @@
+{"Action":"run","Test":"TestFoo"}
+{"Action":"output","Test":"TestFoo","Output":"=== RUN   TestFoo\n"}
+{"Action":"output","Test":"TestFoo","Output":"    foo_test.go:10: boom A\n"}
+{"Action":"output","Test":"TestFoo","Output":"--- FAIL: TestFoo (0.00s)\n"}
+{"Action":"fail","Test":"TestFoo","Elapsed":0}
+{"Action":"run","Test":"TestBar"}
+{"Action":"output","Test":"TestBar","Output":"=== RUN   TestBar\n"}
+{"Action":"output","Test":"TestBar","Output":"    bar_test.go:20: boom B\n"}
+{"Action":"output","Test":"TestBar","Output":"--- FAIL: TestBar (0.00s)\n"}
+{"Action":"fail","Test":"TestBar","Elapsed":0}

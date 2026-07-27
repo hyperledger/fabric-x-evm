@@ -1,0 +1,13 @@
+{"Action":"run","Test":"TestParent"}
+{"Action":"output","Test":"TestParent","Output":"=== RUN   TestParent\n"}
+{"Action":"run","Test":"TestParent/child_pass"}
+{"Action":"output","Test":"TestParent/child_pass","Output":"=== RUN   TestParent/child_pass\n"}
+{"Action":"output","Test":"TestParent/child_pass","Output":"--- PASS: TestParent/child_pass (0.00s)\n"}
+{"Action":"pass","Test":"TestParent/child_pass","Elapsed":0}
+{"Action":"run","Test":"TestParent/child_fail"}
+{"Action":"output","Test":"TestParent/child_fail","Output":"=== RUN   TestParent/child_fail\n"}
+{"Action":"output","Test":"TestParent/child_fail","Output":"    nested_test.go:42: root mismatch\n"}
+{"Action":"output","Test":"TestParent/child_fail","Output":"--- FAIL: TestParent/child_fail (0.00s)\n"}
+{"Action":"fail","Test":"TestParent/child_fail","Elapsed":0}
+{"Action":"output","Test":"TestParent","Output":"--- FAIL: TestParent (0.00s)\n"}
+{"Action":"fail","Test":"TestParent","Elapsed":0}

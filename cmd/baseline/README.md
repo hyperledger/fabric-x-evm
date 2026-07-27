@@ -10,19 +10,25 @@ enough to run on every PR, but not every test in it passes today, and some never
 design choices. Without a record of which specific tests are expected to fail, a CI gate on the full
 suite either stays permanently red or has no teeth at all.
 
-We're already skipping known-failing tests via hardcoded lists `testdata/eth_tests.skip`/`.slow`,
-with flat file-path lists checked directly in
-[`integration/ethereum_test.go`](../../integration/ethereum_test.go) - inspired by `go-ethereum`.
-`cmd/baseline` generalizes that same idiom to per-test granularity (not whole files) with an actual
-diff: new unlisted failure → regression; listed test that now passes → stale entry, remove it —
-instead of a list someone has to remember to prune by hand. It makes the approach consistent and
-measurable.
+Similarly, we capture known-failing tests for the ethereum test suite. That means we get clear
+diffs: new unlisted failure → regression; listed test that now passes → stale entry, remove it —
+It makes the approach consistent and measurable.
 
-**Currently wired up for OpenZeppelin only** — gates every PR via the `oz-hardhat-compat` job in
-[`tests.yml`](../../.github/workflows/tests.yml). The `--format` flag exists so a `go test -json`
-adapter can be added later for `TestEthereumTests`, replacing `eth_tests.skip`/`.slow` with the same
-mechanism at per-subtest granularity — not built yet, but the reason the result model and CLI are
-format-agnostic rather than Mocha-specific.
+Two suites are wired up today, one per `--format`:
+
+- **`oz-hardhat`** (`--format mocha-json`) — gates every PR via the `oz-hardhat-compat` job in
+  [`tests.yml`](../../.github/workflows/tests.yml).
+- **`eth-tests`** (`--format go-test-json`) — the execution-spec-tests conformance suite
+  (`TestEthereumTests`, run via `make eth-tests` / [`run_eth_tests.sh`](../../scripts/run_eth_tests.sh)),
+  gated by the `eth-tests` job in [`tests.yml`](../../.github/workflows/tests.yml), at per-subtest
+  granularity (`fork/index`) — a bug's blast radius is visible instead of a whole file being silently
+  excluded. Two other lists remain for what the baseline can't cover: `testdata/eth_tests.skip` for
+  failures that *panic* (an unrecovered panic crashes the whole `go test` process, unlike a normal
+  assertion failure, so it's excluded before it ever runs rather than tracked as a baseline entry), and
+  `testdata/eth_tests.slow` for tests excluded purely for *runtime cost*, not correctness.
+
+The result model and CLI stayed format-agnostic from the start specifically so a second adapter would
+be "write a parser," not "redesign the tool" — `go-test-json` is the proof.
 
 ## After bumping `testdata/openzeppelin-contracts`
 
@@ -48,7 +54,9 @@ One thing this tool *can't* see: whether the compatible-set **exclusions** thems
 
 ## Generate results
 
-Currently supports Mocha's JSON reporter (`--format mocha-json`, the default).
+Two formats are supported: `--format mocha-json` (the default) and `--format go-test-json`.
+
+### `mocha-json` (OpenZeppelin / Hardhat)
 
 ```shell
 cd testdata/openzeppelin-contracts
@@ -61,16 +69,29 @@ HARDHAT_JSON_OUTPUT=../oz-hardhat-results/erc20.json npx hardhat test test/token
 the usual pass/fail console view still prints live, and the JSON lands at the given path —
 one run gives both, instead of picking one or the other.
 
+### `go-test-json` (execution-spec-tests / any Go suite)
+
+`go test`'s own `-json` flag (implies `-v`) is the reporter — no wrapper needed:
+
+```shell
+go test -run ^TestEthereumTests$ -json ./integration | tee testdata/eth-tests-results/eth-tests.json
+```
+
+[`run_eth_tests.sh`](../../scripts/run_eth_tests.sh) (`make eth-tests`) does exactly this.
+`ParseGoTestJSON` (in `baseline.go`) reads the per-line event stream test2json produces: every
+`t.Run` subtest gets a hierarchical name (`TestEthereumTests/add11.json/Prague/0`), and only the
+leaves are reported as results — a parent's own pass/fail event just aggregates its children and
+would otherwise show up as a redundant extra entry.
+
 ## Check (the CI gate)
 
 ```shell
 go run ./cmd/baseline check --suite oz-hardhat
 ```
 
-A known `--suite` (currently just `oz-hardhat`) already implies `--baseline testdata/oz_known_failures.json`
-and `--results 'testdata/oz-hardhat-results/*.json'` — pass either flag explicitly to override, e.g.
-against a scratch baseline or a single results file (see the worked examples below, which do exactly
-that).
+A known `--suite` (`oz-hardhat` or `eth-tests`) already implies `--baseline`,
+`--results`, and `--format` — pass any of the three explicitly to override, e.g. against a scratch
+baseline or a single results file (see the worked examples below, which do exactly that).
 
 Prints a summary and exits non-zero if anything regressed:
 - a failure that isn't in the baseline (a real regression), or

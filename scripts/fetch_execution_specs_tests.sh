@@ -18,6 +18,10 @@ SHA256="3586193db06d4d5745d5e90b3c3008c2255a4e19ccd8f11a3ce887aec8c0b17c"
 DEST_DIR="${PROJECT_ROOT}/testdata/execution-specs-tests"
 TARBALL="${DEST_DIR}/fixtures.tar.gz"
 FIXTURES_DIR="${DEST_DIR}/fixtures"
+# Records which tarball's checksum the current FIXTURES_DIR was extracted
+# from, so a re-run can skip the (slow, ~400 MB) extraction step the same way
+# the download step is already skipped once the tarball is present and verified.
+EXTRACTED_STAMP="${DEST_DIR}/.fixtures-extracted.sha256"
 
 # sha256 helper: sha256sum on Linux/CI, shasum on macOS.
 sha256_of() {
@@ -60,8 +64,16 @@ else
   fi
 fi
 
-echo "==> Extracting into ${DEST_DIR}/ ..."
-rm -rf "${FIXTURES_DIR}"
-tar -xzf "${TARBALL}" -C "${DEST_DIR}"
+# Same idiom as the download above: matching stamp -> idempotent skip;
+# missing/stale stamp (version bump, interrupted prior extraction, etc.) ->
+# re-extract and rewrite it.
+if [ -f "${EXTRACTED_STAMP}" ] && [ "$(cat "${EXTRACTED_STAMP}")" = "${SHA256}" ]; then
+  echo "==> fixtures already extracted; skipping"
+else
+  echo "==> Extracting into ${DEST_DIR}/ ..."
+  rm -rf "${FIXTURES_DIR}"
+  tar -xzf "${TARBALL}" -C "${DEST_DIR}"
+  echo "${SHA256}" > "${EXTRACTED_STAMP}"
+fi
 
 echo "==> Done. Fixtures at: ${FIXTURES_DIR}"

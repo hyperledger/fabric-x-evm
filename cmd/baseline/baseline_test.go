@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -72,6 +73,115 @@ func TestParseMochaJSON_HookFailure(t *testing.T) {
 	}
 	if !reflect.DeepEqual(results, want) {
 		t.Fatalf("got %+v, want %+v", results, want)
+	}
+}
+
+func mustParseGoTest(t *testing.T, path string) []Result {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	results, err := ParseGoTestJSON(data)
+	if err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	return results
+}
+
+func TestParseGoTestJSON_AllPass(t *testing.T) {
+	results := mustParseGoTest(t, "testdata/gotest-allpass.json")
+	want := []Result{
+		{ID: "TestFoo", Status: StatusPass},
+		{ID: "TestBar", Status: StatusPass},
+	}
+	if !reflect.DeepEqual(results, want) {
+		t.Fatalf("got %+v, want %+v", results, want)
+	}
+}
+
+func TestParseGoTestJSON_AllFail(t *testing.T) {
+	results := mustParseGoTest(t, "testdata/gotest-allfail.json")
+	want := []Result{
+		{ID: "TestFoo", Status: StatusFail, Message: "foo_test.go:10: boom A"},
+		{ID: "TestBar", Status: StatusFail, Message: "bar_test.go:20: boom B"},
+	}
+	if !reflect.DeepEqual(results, want) {
+		t.Fatalf("got %+v, want %+v", results, want)
+	}
+}
+
+func TestParseGoTestJSON_Mixed(t *testing.T) {
+	results := mustParseGoTest(t, "testdata/gotest-mixed.json")
+	want := []Result{
+		{ID: "TestA", Status: StatusPass},
+		{ID: "TestB", Status: StatusFail, Message: "b_test.go:5: boom B"},
+		{ID: "TestC", Status: StatusSkip},
+	}
+	if !reflect.DeepEqual(results, want) {
+		t.Fatalf("got %+v, want %+v", results, want)
+	}
+}
+
+func TestParseGoTestJSON_NestedSubtestsOnlyLeavesReported(t *testing.T) {
+	// go test emits its own pass/fail event for every level of a t.Run tree,
+	// including the parent, which merely aggregates its children -- only the
+	// leaves are meaningful baseline entries.
+	results := mustParseGoTest(t, "testdata/gotest-nested.json")
+	want := []Result{
+		{ID: "TestParent/child_pass", Status: StatusPass},
+		{ID: "TestParent/child_fail", Status: StatusFail, Message: "nested_test.go:42: root mismatch"},
+	}
+	if !reflect.DeepEqual(results, want) {
+		t.Fatalf("got %+v, want %+v", results, want)
+	}
+}
+
+func TestParseGoTestJSON_IncompleteTestTreatedAsFailure(t *testing.T) {
+	// No pass/fail/skip event ever arrived for this test (e.g. the binary
+	// panicked mid-run) -- must surface as a failure, not vanish silently.
+	results := mustParseGoTest(t, "testdata/gotest-incomplete.json")
+	want := []Result{
+		{ID: "TestCrashes", Status: StatusFail, Message: "test did not complete (no pass/fail/skip event — binary may have crashed)"},
+	}
+	if !reflect.DeepEqual(results, want) {
+		t.Fatalf("got %+v, want %+v", results, want)
+	}
+}
+
+// TestParseGoTestJSON_RealCapture replays an actual `go test -json` stream
+// (captured from a package with the same TestParent/child_pass, child_fail,
+// TestSkipped, TestCrashy shapes as the hand-written fixtures above, panic
+// trace trimmed of machine-specific paths) — confirms the hand-written
+// fixtures aren't just testing our own assumptions about test2json's shape.
+func TestParseGoTestJSON_RealCapture(t *testing.T) {
+	results := mustParseGoTest(t, "testdata/gotest-real-capture.json")
+
+	byID := make(map[string]Result, len(results))
+	for _, r := range results {
+		byID[r.ID] = r
+	}
+	if len(results) != 4 {
+		t.Fatalf("expected 4 leaf results (TestParent itself excluded), got %+v", results)
+	}
+
+	if r := byID["TestParent/child_pass"]; r.Status != StatusPass {
+		t.Errorf("child_pass = %+v", r)
+	}
+	if r := byID["TestParent/child_fail"]; r.Status != StatusFail || r.Message != "sample_test.go:11: root mismatch: got 0xabc want 0xdef" {
+		t.Errorf("child_fail = %+v", r)
+	}
+	if r := byID["TestSkipped"]; r.Status != StatusSkip {
+		t.Errorf("TestSkipped = %+v", r)
+	}
+	// TestCrashy's own "--- FAIL: TestCrashy" banner is printed *before* the
+	// panic trace output arrives, unlike a normal t.Errorf failure -- exercises
+	// that cleanGoTestOutput strips the banner wherever it falls, not just at
+	// the end.
+	if r := byID["TestCrashy"]; r.Status != StatusFail ||
+		!strings.Contains(r.Message, "panic: boom") ||
+		strings.Contains(r.Message, "--- FAIL") {
+		t.Errorf("TestCrashy = %+v", r)
 	}
 }
 

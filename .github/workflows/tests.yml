@@ -202,12 +202,11 @@ jobs:
   eth-tests:
     name: Ethereum Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    needs: quick-tests
-    if: |
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'want-integration-tests'))
+    # A cache hit finishes in ~3-4 minutes (just the test run), but a cache
+    # miss (first run, or a fixture version bump) pays for the ~400 MB
+    # download + extracting it into ~8 GB of small files too -- can take more
+    # than 15 minutes.
+    timeout-minutes: 25
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -220,5 +219,14 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Cache execution-specs fixtures
+        uses: actions/cache@v4
+        with:
+          path: testdata/execution-specs-tests
+          key: ${{ runner.os }}-execution-specs-tests-${{ hashFiles('scripts/fetch_execution_specs_tests.sh') }}
+
       - name: Ethereum tests
         run: make eth-tests
+
+      - name: Ethereum tests baseline check (gate)
+        run: go run ./cmd/baseline check --suite eth-tests

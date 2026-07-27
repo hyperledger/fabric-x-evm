@@ -1,23 +1,21 @@
-# execution-specs state_tests that are skipped in ALL modes, quarantined here so the
-# conformance suite stays green in CI.
+# execution-specs state_tests that are skipped in ALL modes.
 #
-# --- EIP-7610 create-collision divergence (Cancun+), inherited from go-ethereum:
-#     CREATE/CREATE2 onto an address that already holds storage should fail per EIP-7610,
-#     but go-ethereum v1.17.3 implements the check as a hardcoded 28-address mainnet
-#     allowlist (guard = nonce + code + that static set, never the storage root), not a
-#     general storage check. These fixtures use synthetic addresses that hold storage but
-#     are not in geth's list, so geth's guard — and therefore ours, since we run geth's EVM
-#     create path unchanged — does not treat them as collisions. Not a fabric-x-evm bug and
-#     unrelated to the GetStorageRoot stub; affects any geth-based client.
-../testdata/execution-specs-tests/fixtures/state_tests/for_cancun/paris/eip7610_create_collision/revert_in_create/collision_with_create2_revert_in_initcode.json
-../testdata/execution-specs-tests/fixtures/state_tests/for_osaka/paris/eip7610_create_collision/revert_in_create/collision_with_create2_revert_in_initcode.json
-../testdata/execution-specs-tests/fixtures/state_tests/for_prague/paris/eip7610_create_collision/revert_in_create/collision_with_create2_revert_in_initcode.json
-../testdata/execution-specs-tests/fixtures/state_tests/for_cancun/paris/eip7610_create_collision/revert_in_create/create2_collision_storage.json
-../testdata/execution-specs-tests/fixtures/state_tests/for_osaka/paris/eip7610_create_collision/revert_in_create/create2_collision_storage.json
-../testdata/execution-specs-tests/fixtures/state_tests/for_prague/paris/eip7610_create_collision/revert_in_create/create2_collision_storage.json
-../testdata/execution-specs-tests/fixtures/state_tests/for_cancun/paris/eip7610_create_collision/initcollision/init_collision_create_opcode.json
-../testdata/execution-specs-tests/fixtures/state_tests/for_osaka/paris/eip7610_create_collision/initcollision/init_collision_create_opcode.json
-../testdata/execution-specs-tests/fixtures/state_tests/for_prague/paris/eip7610_create_collision/initcollision/init_collision_create_opcode.json
-../testdata/execution-specs-tests/fixtures/state_tests/for_cancun/paris/eip7610_create_collision/initcollision/init_collision_create_tx.json
-../testdata/execution-specs-tests/fixtures/state_tests/for_osaka/paris/eip7610_create_collision/initcollision/init_collision_create_tx.json
-../testdata/execution-specs-tests/fixtures/state_tests/for_prague/paris/eip7610_create_collision/initcollision/init_collision_create_tx.json
+# Unlike the compat-only skip idiom elsewhere, every entry here is skip-listed
+# because it PANICS, not because it merely fails an assertion — a panic that
+# escapes a subtest's own goroutine crashes the whole go test process (see
+# testing.tRunner's recover-then-repanic), taking every other in-flight and
+# not-yet-run test down with it. That's categorically unsafe for
+# testdata/eth_known_failures.json to track (a baseline entry assumes the
+# suite can still report the rest of the run cleanly), so these stay
+# hard-excluded until the underlying bug is fixed. Plain assertion failures
+# (wrong post-state root, etc.) belong in the baseline instead, not here.
+#
+# --- nil-pointer panic in DualStateDB.Snapshot (go-ethereum StateDB.Snapshot
+#     on a nil object) for a CREATE tx from a non-existent sender. Confirmed via
+#     a real run: crashes the entire TestEthereumTests binary, losing ~30k
+#     other subtests' results as collateral damage (goroutine dump:
+#     endorser/execution/dual_statedb.go:373 -> executor.go:428 ->
+#     integration/ethereum_test.go:317).
+../testdata/execution-specs-tests/fixtures/state_tests/for_cancun/ported_static/stTransactionTest/no_src_account_create1559/no_src_account_create1559.json
+../testdata/execution-specs-tests/fixtures/state_tests/for_osaka/ported_static/stTransactionTest/no_src_account_create1559/no_src_account_create1559.json
+../testdata/execution-specs-tests/fixtures/state_tests/for_prague/ported_static/stTransactionTest/no_src_account_create1559/no_src_account_create1559.json
