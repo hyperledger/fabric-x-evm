@@ -66,15 +66,20 @@ type EvmAPI struct {
 	mu       sync.Mutex
 	lightKVS estorage.Revertible
 	store    storage.Revertible
+	// Taken exclusively for the duration of a snapshot or revert, so neither
+	// runs with transactions still in flight behind it. Distinct from mu, which
+	// only guards the fields below.
+	fence *txFence
 	// Map snapshot IDs (hex strings) to block numbers
 	snapshots map[string]uint64
 }
 
 // NewEvmAPI creates a new EVM API instance with LightKVS and Store for state management.
-func NewEvmAPI(lightKVS estorage.Revertible, store storage.Revertible) *EvmAPI {
+func NewEvmAPI(lightKVS estorage.Revertible, store storage.Revertible, fence *txFence) *EvmAPI {
 	return &EvmAPI{
 		lightKVS:  lightKVS,
 		store:     store,
+		fence:     fence,
 		snapshots: make(map[string]uint64),
 	}
 }
@@ -84,6 +89,11 @@ func NewEvmAPI(lightKVS estorage.Revertible, store storage.Revertible) *EvmAPI {
 // Snapshots both the LightKVS state and the Store database.
 func (api *EvmAPI) Snapshot(ctx context.Context) (string, error) {
 	hardhatLogger.Debugf("EvmAPI.Snapshot() called")
+	// Wait out anything still in flight, so the block number recorded below is
+	// one the ledger has actually settled on.
+	api.fence.Lock()
+	defer api.fence.Unlock()
+
 	api.mu.Lock()
 	defer api.mu.Unlock()
 
@@ -120,6 +130,14 @@ func (api *EvmAPI) Snapshot(ctx context.Context) (string, error) {
 // to restore the database state.
 func (api *EvmAPI) Revert(ctx context.Context, snapshotID string) (bool, error) {
 	hardhatLogger.Debugf("EvmAPI.Revert() called with snapshotID=%s", snapshotID)
+	// Waits out transactions already accepted and holds off new ones; see
+	// txFence. Waiting on the gateway alone suffices only because handlers run
+	// [endorser KVS, chain, gateway] on one synchronizer (see buildApp), so a
+	// transaction the gateway calls committed is already in the endorser's
+	// state. Giving the endorser its own synchronizer would break that.
+	api.fence.Lock()
+	defer api.fence.Unlock()
+
 	api.mu.Lock()
 	defer api.mu.Unlock()
 
