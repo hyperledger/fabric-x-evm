@@ -49,6 +49,9 @@ func (cfg Endorser) Validate() error {
 	if cfg.Database.Database == "sqlite" && cfg.Database.ConnString == "" {
 		errs = append(errs, errors.New("database.connection-string is required for sqlite"))
 	}
+	if cfg.Database.Database == "pebble" && cfg.Database.ConnString == "" {
+		errs = append(errs, errors.New("database.connection-string (data directory) is required for pebble"))
+	}
 
 	return errors.Join(errs...)
 }

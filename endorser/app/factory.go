@@ -52,8 +52,14 @@ func NewEndorserCore(
 		} else {
 			kvs = baseLightKVS
 		}
+	case "pebble":
+		pebbleKVS, err := storage.NewPebbleKVS(dbCfg.ConnString, dbCfg.HistorySize)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("failed to initialize store: %w", err)
+		}
+		kvs = pebbleKVS
 	default:
-		return nil, nil, nil, fmt.Errorf("invalid endorser database type %s, must be sqlite or memory", dbCfg.Database)
+		return nil, nil, nil, fmt.Errorf("invalid endorser database type %s, must be sqlite, memory, or pebble", dbCfg.Database)
 	}
 
 	var builder endorsement.Builder
