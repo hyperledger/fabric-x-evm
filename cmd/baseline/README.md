@@ -84,7 +84,7 @@ instead of re-parsing the human-readable report. Same exit code either way.
 `--results` is a glob (matched with `filepath.Glob`, so quote it against your shell expanding it
 early) that merges several files — useful since a Mocha file that crashes at load time can zero out
 the whole report for that invocation, so running per-file/per-directory and merging is safer than one
-giant run. `testdata/oz-hardhat-results/` is exactly what `scripts/run_hardhat_test.sh --full` writes
+giant run. `testdata/oz-hardhat-results/` is exactly what `scripts/run_hardhat_test.sh` writes
 one file per top-level `test/` directory into, so `--suite oz-hardhat` alone works as-is after a real run.
 
 Sample output, an empty baseline against a real run of `ERC20Permit.test.js` (regressions, since

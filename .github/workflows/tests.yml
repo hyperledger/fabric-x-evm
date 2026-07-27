@@ -164,7 +164,7 @@ jobs:
             ${{ runner.os }}-oz-artifacts-
 
       - name: Hardhat OZ compatibility suite (full)
-        run: make hardhat-tests-full
+        run: make hardhat-tests
 
       - name: OZ baseline check (gate)
         run: |
