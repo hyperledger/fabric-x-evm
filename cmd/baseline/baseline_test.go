@@ -142,6 +142,45 @@ func TestBaseline_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestSaveBaseline_WritesCharactersVerbatim pins the encoding: encoding/json
+// escapes <, > and & by default, which rewrites the many OZ test names holding
+// an arrow ("... => bytes24") into an unreadable "=\\u003e" and re-churns the
+// diff on every rewrite. Nothing here should come back escaped.
+func TestSaveBaseline_WritesCharactersVerbatim(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "known_failures.json")
+
+	entries := []Entry{{
+		ID:    "Packing pack pack bytes22 + bytes2 => bytes24",
+		Cause: "max-code-size",
+		Note:  "a & b, x < y, y > x — an em dash too",
+	}}
+	if err := SaveBaseline(path, entries); err != nil {
+		t.Fatalf("SaveBaseline: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if bytes.Contains(data, []byte(`\u`)) {
+		t.Fatalf("baseline contains escaped characters:\n%s", data)
+	}
+	for _, want := range []string{"=> bytes24", "a & b", "x < y", "y > x", "—"} {
+		if !bytes.Contains(data, []byte(want)) {
+			t.Fatalf("%q missing from written baseline:\n%s", want, data)
+		}
+	}
+
+	// Verbatim on disk still has to mean unchanged on the way back in.
+	got, err := LoadBaseline(path)
+	if err != nil {
+		t.Fatalf("LoadBaseline: %v", err)
+	}
+	if !reflect.DeepEqual(got, entries) {
+		t.Fatalf("got %+v, want %+v", got, entries)
+	}
+}
+
 func TestDiff(t *testing.T) {
 	results := []Result{
 		{ID: "regression", Status: StatusFail, Message: "new break"},

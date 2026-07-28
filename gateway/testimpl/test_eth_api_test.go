@@ -53,7 +53,7 @@ func TestTestEthAPI_Accounts(t *testing.T) {
 			// Create production API
 			prodAPI := api.NewEthAPI(nil)
 			// Wrap with test API
-			testAPI := NewTestEthAPI(prodAPI, nil, tt.testAccounts, nil)
+			testAPI := NewTestEthAPI(prodAPI, nil, tt.testAccounts, nil, &txFence{})
 
 			accounts, err := testAPI.Accounts(context.TODO())
 			if err != nil {
@@ -131,7 +131,7 @@ func TestTestEthAPI_SendTransaction_Validation(t *testing.T) {
 			// Create production API
 			prodAPI := api.NewEthAPI(mockBackend)
 			// Wrap with test API
-			testAPI := NewTestEthAPI(prodAPI, mockBackend, testAccountMgr.Addresses, testAccountMgr.PrivateKeys)
+			testAPI := NewTestEthAPI(prodAPI, mockBackend, testAccountMgr.Addresses, testAccountMgr.PrivateKeys, &txFence{})
 
 			_, err := testAPI.SendTransaction(context.TODO(), tt.args)
 

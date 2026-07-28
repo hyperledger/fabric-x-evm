@@ -34,16 +34,18 @@ type TestEthAPI struct {
 	backend         api.Backend
 	testAccounts    []common.Address
 	testAccountKeys map[common.Address]*ecdsa.PrivateKey
+	fence           *txFence
 }
 
 // NewTestEthAPI creates a test-enabled Ethereum API wrapper.
 // It embeds the production API and adds unsafe test-only methods.
-func NewTestEthAPI(prodAPI *api.EthAPI, backend api.Backend, accounts []common.Address, keys map[common.Address]*ecdsa.PrivateKey) *TestEthAPI {
+func NewTestEthAPI(prodAPI *api.EthAPI, backend api.Backend, accounts []common.Address, keys map[common.Address]*ecdsa.PrivateKey, fence *txFence) *TestEthAPI {
 	return &TestEthAPI{
 		EthAPI:          prodAPI,
 		backend:         backend,
 		testAccounts:    accounts,
 		testAccountKeys: keys,
+		fence:           fence,
 	}
 }
 
@@ -60,6 +62,13 @@ func (api *TestEthAPI) Accounts(ctx context.Context) ([]common.Address, error) {
 // which means the server has access to private keys. This is acceptable for
 // development/testing but is a critical security vulnerability in production.
 func (api *TestEthAPI) SendTransaction(ctx context.Context, args TransactionArgs) (common.Hash, error) {
+	// Held from the nonce read through to the commit, so a revert can't land in
+	// between and leave us signing against a nonce that no longer exists.
+	if !api.fence.TryRLock() {
+		return common.Hash{}, errFenced
+	}
+	defer api.fence.RUnlock()
+
 	// Validate from address
 	if args.From == nil {
 		return common.Hash{}, fmt.Errorf("missing 'from' field")
@@ -133,8 +142,9 @@ func (api *TestEthAPI) SendTransaction(ctx context.Context, args TransactionArgs
 		return common.Hash{}, fmt.Errorf("failed to marshal transaction: %w", err)
 	}
 
-	// Call our overridden SendRawTransaction which makes it synchronous
-	txHash, err := api.SendRawTransaction(ctx, hexutil.Bytes(txBytes))
+	// Send synchronously. The unexported form, because the fence is already held
+	// above and RWMutex read locks must not be taken recursively.
+	txHash, err := api.sendRawTransaction(ctx, hexutil.Bytes(txBytes))
 	if err != nil {
 		return common.Hash{}, err
 	}
@@ -145,6 +155,19 @@ func (api *TestEthAPI) SendTransaction(ctx context.Context, args TransactionArgs
 // SendRawTransaction overrides the base implementation to make it synchronous for Hardhat compatibility.
 // It sends the transaction and polls until it's committed to a block, mimicking Hardhat's auto-mining behavior.
 func (api *TestEthAPI) SendRawTransaction(ctx context.Context, input hexutil.Bytes) (common.Hash, error) {
+	// Held until the transaction has committed, so evm_snapshot/evm_revert can't
+	// move the ledger while it is still in flight - including when the client
+	// gives up on the request and the transaction commits anyway. See txFence.
+	if !api.fence.TryRLock() {
+		return common.Hash{}, errFenced
+	}
+	defer api.fence.RUnlock()
+
+	return api.sendRawTransaction(ctx, input)
+}
+
+// sendRawTransaction is SendRawTransaction without the fence, for callers that already hold it.
+func (api *TestEthAPI) sendRawTransaction(ctx context.Context, input hexutil.Bytes) (common.Hash, error) {
 	// Call the underlying SendRawTransaction
 	txHash, err := api.EthAPI.SendRawTransaction(ctx, input)
 	if err != nil {
@@ -161,8 +184,13 @@ func (api *TestEthAPI) SendRawTransaction(ctx context.Context, input hexutil.Byt
 			// Check if transaction is committed
 			tx, err := api.backend.TransactionByHash(ctx, txHash)
 			if err != nil {
-				// Transaction not found yet, continue polling
+				// Transaction not found yet, continue polling. Yield like the
+				// pending case below does: spinning flat out here starves the
+				// very gateway workers we're waiting on, which on a loaded
+				// two-core CI runner is the difference between committing in
+				// milliseconds and not committing at all.
 				hardhatLogger.Debugf("got error %w while polling TransactionByHash for hash %s", err, txHash)
+				runtime.Gosched()
 				continue
 			}
 
