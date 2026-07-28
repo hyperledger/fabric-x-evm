@@ -5,7 +5,6 @@ node_modules
 .gomodcache
 .vscode
 testdata/*
-!testdata/ethereum-tests
 !testdata/openzeppelin-contracts
 !testdata/hardhat.wrapper.config.js
 !testdata/mocha-spec-and-json-reporter.js
@@ -16,8 +15,7 @@ testdata/*
 !testdata/alloc_tether_replay.json
 !testdata/test_accounts.json
 !testdata/eth_tests.skip
-!testdata/execution_specs_tests.skip
-!testdata/execution_specs_tests.slow
+!testdata/eth_tests.slow
 !testdata/oz_known_failures.json
 !testdata/shared_config.yaml
 *.un~

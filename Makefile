@@ -228,25 +228,8 @@ fetch-execution-specs-tests:
 	@./scripts/fetch_execution_specs_tests.sh
 
 .PHONY: eth-tests
-eth-tests:
+eth-tests: fetch-execution-specs-tests
 	@go test -test.fullpath=true -timeout 2000s -run ^TestEthereumTests$$ github.com/hyperledger/fabric-x-evm/integration
-	# @VERBOSE=$(VERBOSE) ./scripts/run_eth_test.sh
-
-.PHONY: eth-tests-legacy
-eth-tests-legacy:
-	@go test -test.fullpath=true -timeout 2000s -run ^TestEthereumTests$$ github.com/hyperledger/fabric-x-evm/integration -legacy
-
-.PHONY: eth-tests-slow
-eth-tests-slow:
-	@go test -test.fullpath=true -timeout 10000s -run ^TestEthereumTests$$ github.com/hyperledger/fabric-x-evm/integration -very_slow
-
-.PHONY: eth-tests-slow-legacy
-eth-tests-slow-legacy:
-	@go test -test.fullpath=true -timeout 10000s -run ^TestEthereumTests$$ github.com/hyperledger/fabric-x-evm/integration -very_slow -legacy
-
-.PHONY: eth-tests-execution-specs
-eth-tests-execution-specs: fetch-execution-specs-tests
-	@go test -test.fullpath=true -timeout 2000s -run ^TestExecutionSpecStateTests$$ github.com/hyperledger/fabric-x-evm/integration
 
 # Single-file smoke test — CI runs hardhat-tests-full (below) instead.
 .PHONY: hardhat-tests
