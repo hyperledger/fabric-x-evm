@@ -14,9 +14,11 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+DEFAULT_PORT=8545
+
 usage() {
     cat <<EOF
-Usage: $(basename "$0") [--file <path>] [--grep <pattern>]
+Usage: $(basename "$0") [--file <path>] [--grep <pattern>] [--port <n>]
 
 With no arguments, runs the whole OpenZeppelin compatible set — one Hardhat
 invocation per top-level test/ directory — and diffs the result against
@@ -24,6 +26,8 @@ testdata/oz_known_failures.json. This is what CI runs.
 
   --file <path>     Narrow to one test file (or directory) instead of the full set.
   --grep <pattern>  Narrow to tests whose full title matches <pattern>.
+  --port <n>        Port for this run's testnode (default ${DEFAULT_PORT}). Use it to run
+                    a second suite without disturbing one already going.
   -h, --help        Show this message.
 
 A narrowed run skips the results/baseline step, since a partial run can't tell a
@@ -32,11 +36,13 @@ test that didn't fail from one that didn't run.
   $(basename "$0") --file test/token/ERC20/ERC20.test.js
   $(basename "$0") --file test/token/ERC20/ERC20.test.js --grep _approve
   $(basename "$0") --grep 'ERC20 _mint'
+  $(basename "$0") --port 8600
 EOF
 }
 
 TEST_FILE=""
 GREP_PATTERN=""
+PORT="${DEFAULT_PORT}"
 while [ $# -gt 0 ]; do
     case "$1" in
         --file)
@@ -45,6 +51,10 @@ while [ $# -gt 0 ]; do
         --grep)
             [ $# -ge 2 ] || { echo -e "${RED}Error: --grep needs a pattern${NC}" >&2; exit 2; }
             GREP_PATTERN="$2"; shift 2 ;;
+        --port)
+            [ $# -ge 2 ] || { echo -e "${RED}Error: --port needs a number${NC}" >&2; exit 2; }
+            case "$2" in *[!0-9]*|'') echo -e "${RED}Error: --port must be a number, got '$2'${NC}" >&2; exit 2 ;; esac
+            PORT="$2"; shift 2 ;;
         -h|--help)
             usage; exit 0 ;;
         *)
@@ -70,7 +80,7 @@ cleanup() {
         echo -e "\n${YELLOW}Stopping testnode (PID: ${TESTNODE_PID})${NC}"
         # Negative PID kills the whole process group. `go run` execs the compiled
         # program as a child, so killing only the parent leaves the server
-        # orphaned and still holding port 8545.
+        # orphaned and still holding the port.
         kill -- -"${TESTNODE_PID}" 2>/dev/null || true
         wait "${TESTNODE_PID}" 2>/dev/null || true
     fi
@@ -104,18 +114,20 @@ start_testnode() {
     echo -e "${YELLOW}Starting self-contained fxevm testnode...${NC}"
     cd "${PROJECT_ROOT}"
 
-    EXISTING_PID=$(lsof -ti :8545 || true)
+    # Refuse rather than kill: whatever is on the port may well be someone
+    # else's run, and taking it out from under them corrupts both.
+    EXISTING_PID=$(lsof -ti :"${PORT}" -sTCP:LISTEN 2>/dev/null || true)
     if [ -n "${EXISTING_PID}" ]; then
-        echo "Killing existing process on port 8545 (PID: ${EXISTING_PID})"
-        kill "${EXISTING_PID}" 2>/dev/null || true
-        sleep 2
+        echo -e "${RED}Error: port ${PORT} is already in use (PID: ${EXISTING_PID})${NC}" >&2
+        echo "Stop it, or run this suite elsewhere with --port (make hardhat-tests PORT=8600)." >&2
+        exit 1
     fi
 
-    echo "Starting testnode (logs: /tmp/testnode_$$.log)..."
+    echo "Starting testnode on port ${PORT} (logs: /tmp/testnode_$$.log)..."
     # Job control on, so the background job lands in its own process group and
     # cleanup can take down go run and the server it execs together.
     set -m
-    go run ./cmd/fxevm testnode > "/tmp/testnode_$$.log" 2>&1 &
+    go run ./cmd/fxevm testnode --listen ":${PORT}" > "/tmp/testnode_$$.log" 2>&1 &
     TESTNODE_PID=$!
     set +m
 
@@ -125,9 +137,9 @@ start_testnode() {
     while [ ${RETRY_COUNT} -lt ${MAX_RETRIES} ]; do
         if curl -s -X POST -H "Content-Type: application/json" \
             --data '{"jsonrpc":"2.0","method":"eth_accounts","params":[],"id":1}' \
-            http://127.0.0.1:8545 2>/dev/null | grep -q "result"; then
+            "http://127.0.0.1:${PORT}" 2>/dev/null | grep -q "result"; then
             echo -e "${GREEN}Testnode is ready!${NC}"
-            export FABRIC_EVM_URL="http://127.0.0.1:8545"
+            export FABRIC_EVM_URL="http://127.0.0.1:${PORT}"
             return 0
         fi
 
