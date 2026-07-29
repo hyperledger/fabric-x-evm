@@ -88,7 +88,11 @@ func TestFilterCriteriaToLogFilter_LatestToBlock(t *testing.T) {
 		t.Fatalf("unmarshal FilterCriteria: %v", err)
 	}
 
-	got := filterCriteriaToLogFilter(crit)
+	api := NewEthAPI(&stubBackend{blockNum: 7})
+	got, err := api.filterCriteriaToLogFilter(context.Background(), crit)
+	if err != nil {
+		t.Fatalf("filterCriteriaToLogFilter() error = %v", err)
+	}
 
 	if got.FromBlock == nil || *got.FromBlock != 1 {
 		t.Errorf("FromBlock = %v, want 1", got.FromBlock)
@@ -105,13 +109,18 @@ func TestFilterCriteriaToLogFilter_BlockBounds(t *testing.T) {
 		wantFrom *uint64
 		wantTo   *uint64
 	}{
-		{"omitted bounds", `{}`, nil, nil},
+		{"omitted bounds", `{}`, new(uint64(7)), nil},
 		{"explicit numbers", `{"fromBlock":"0x2","toBlock":"0x5"}`, new(uint64(2)), new(uint64(5))},
 		{"earliest from, literal 0x0 to", `{"fromBlock":"earliest","toBlock":"0x0"}`, new(uint64(0)), new(uint64(0))},
 		{"latest to", `{"fromBlock":"0x1","toBlock":"latest"}`, new(uint64(1)), nil},
-		{"pending to", `{"toBlock":"pending"}`, nil, nil},
-		{"latest from", `{"fromBlock":"latest"}`, nil, nil},
+		{"pending to", `{"toBlock":"pending"}`, new(uint64(7)), nil},
+		{"latest from", `{"fromBlock":"latest"}`, new(uint64(7)), nil},
+		{"pending from", `{"fromBlock":"pending"}`, new(uint64(7)), nil},
+		{"safe from", `{"fromBlock":"safe"}`, new(uint64(7)), nil},
+		{"finalized from", `{"fromBlock":"finalized"}`, new(uint64(7)), nil},
 	}
+
+	api := NewEthAPI(&stubBackend{blockNum: 7})
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -120,7 +129,10 @@ func TestFilterCriteriaToLogFilter_BlockBounds(t *testing.T) {
 				t.Fatalf("unmarshal FilterCriteria: %v", err)
 			}
 
-			got := filterCriteriaToLogFilter(crit)
+			got, err := api.filterCriteriaToLogFilter(context.Background(), crit)
+			if err != nil {
+				t.Fatalf("filterCriteriaToLogFilter() error = %v", err)
+			}
 
 			if (got.FromBlock == nil) != (tt.wantFrom == nil) || (got.FromBlock != nil && *got.FromBlock != *tt.wantFrom) {
 				t.Errorf("FromBlock = %v, want %v", got.FromBlock, tt.wantFrom)
