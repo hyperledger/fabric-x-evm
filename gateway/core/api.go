@@ -48,6 +48,11 @@ type TxQueueInterface interface {
 	// IsPending checks if a transaction is currently in the queue or being processed
 	IsPending(txHash common.Hash) *types.Transaction
 
+	// InFlight returns how many transactions are queued or being processed, i.e.
+	// how many IsPending would answer for. Zero means everything submitted so far
+	// has reached a block.
+	InFlight() int
+
 	// Complete removes a transaction from tracking. Safe to call for a hash
 	// that is not currently tracked.
 	Complete(txHash common.Hash)

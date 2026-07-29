@@ -67,6 +67,24 @@ func TestTxQueue_DequeueMovesTxToInProgressMap(t *testing.T) {
 	assert.Equal(t, tx.Hash(), inProgressTx.Hash())
 }
 
+// InFlight must count exactly what IsPending would find, across both stages.
+func TestTxQueue_InFlight_CountsQueuedAndInProgress(t *testing.T) {
+	q := NewTxQueue()
+	assert.Equal(t, 0, q.InFlight())
+
+	q.Enqueue(testTx(1))
+	q.Enqueue(testTx(2))
+	assert.Equal(t, 2, q.InFlight())
+
+	// Moving to in-progress keeps it in flight; only committing clears it.
+	tx, ok := q.Dequeue()
+	require.True(t, ok)
+	assert.Equal(t, 2, q.InFlight())
+
+	q.Complete(tx.Hash())
+	assert.Equal(t, 1, q.InFlight())
+}
+
 func TestTxQueue_IsPending_FindsInPendingQueue(t *testing.T) {
 	q := NewTxQueue()
 	tx := testTx(1)

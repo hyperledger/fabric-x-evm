@@ -11,12 +11,15 @@ package testimpl
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"math/big"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/hyperledger/fabric-x-evm/gateway/api"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 )
@@ -75,16 +78,10 @@ func TestTestEthAPI_Accounts(t *testing.T) {
 }
 
 func TestTestEthAPI_SendTransaction_Validation(t *testing.T) {
-	// Load test accounts from JSON file
-	testAccountMgr, err := LoadTestAccounts("../../testdata/test_accounts.json")
-	if err != nil {
-		t.Fatalf("Failed to load test accounts: %v", err)
-	}
-
-	// Use first account for testing
+	testAccountMgr := testSigner(t)
 	testAddr := testAccountMgr.Addresses[0]
 	unknownAddr := common.HexToAddress("0x0000000000000000000000000000000000000000")
-	toAddr := common.HexToAddress("0x1234567890123456789012345678901234567890")
+	toAddr := testToAddr
 
 	tests := []struct {
 		name    string
@@ -150,6 +147,29 @@ func TestTestEthAPI_SendTransaction_Validation(t *testing.T) {
 	}
 }
 
+// testAccountKey is Hardhat's first well-known dev account.
+const testAccountKey = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+
+// testSigner returns a single hardcoded account, so these tests carry their own
+// signing material rather than tracking test_accounts.json. The address is derived
+// from the key, so the two cannot drift apart.
+func testSigner(t *testing.T) *TestAccountManager {
+	t.Helper()
+	key, err := crypto.HexToECDSA(testAccountKey)
+	if err != nil {
+		t.Fatalf("HexToECDSA: %v", err)
+	}
+	addr := crypto.PubkeyToAddress(key.PublicKey)
+	return &TestAccountManager{
+		Addresses:   []common.Address{addr},
+		PrivateKeys: map[common.Address]*ecdsa.PrivateKey{addr: key},
+	}
+}
+
+// testToAddr is an arbitrary recipient, for transactions whose destination is
+// beside the point.
+var testToAddr = common.HexToAddress("0x1234567890123456789012345678901234567890")
+
 // mockBackend is a minimal Backend implementation for testing
 type mockBackend struct {
 	api.Backend
@@ -180,4 +200,34 @@ func (m *mockBackend) TransactionByHash(_ context.Context, hash common.Hash) (*d
 	return &domain.Transaction{
 		BlockNumber: 1,
 	}, nil
+}
+
+// A transaction the gateway worker fails is deleted from the in-progress map and
+// never stored, so TransactionByHash reports it as simply absent. That used to hit
+// a "should never happen" panic, which the RPC layer turned into -32603; it must
+// surface as an ordinary error rather than stalling until the deadline.
+func TestTestEthAPI_DroppedTransactionErrors(t *testing.T) {
+	testAccountMgr := testSigner(t)
+	from := testAccountMgr.Addresses[0]
+	to := testToAddr
+
+	// Neither pending nor stored: the worker failed it and dropped it.
+	backend := &mockBackend{
+		txByHashFunc: func(common.Hash) (*domain.Transaction, error) { return nil, nil },
+	}
+
+	pool := &fakePool{}
+	testAPI := NewTestEthAPI(api.NewEthAPI(backend), backend, testAccountMgr.Addresses, testAccountMgr.PrivateKeys, &txFence{pool: pool})
+
+	start := time.Now()
+	_, err := testAPI.SendTransaction(context.Background(), TransactionArgs{From: &from, To: &to})
+	if err == nil {
+		t.Fatal("SendTransaction returned nil for a dropped transaction")
+	}
+	if !strings.Contains(err.Error(), "dropped") {
+		t.Errorf("error = %q, want it to say the transaction was dropped", err)
+	}
+	if elapsed := time.Since(start); elapsed > commitTimeout/2 {
+		t.Errorf("took %s, want a prompt error rather than waiting out commitTimeout", elapsed)
+	}
 }

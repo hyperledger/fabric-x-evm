@@ -95,6 +95,24 @@ func TestNewTxQueueV2_Initialization(t *testing.T) {
 	assert.Equal(t, 0, q.invalid)
 }
 
+// InFlight must count exactly what IsPending would find, across both stages.
+func TestTxQueueV2_InFlight_CountsQueuedAndInProgress(t *testing.T) {
+	q := NewTxQueueV2()
+	assert.Equal(t, 0, q.InFlight())
+
+	q.Enqueue(testTxV2(1))
+	q.Enqueue(testTxV2(2))
+	assert.Equal(t, 2, q.InFlight())
+
+	// Moving to in-progress keeps it in flight; only committing clears it.
+	tx, ok := q.Dequeue()
+	require.True(t, ok)
+	assert.Equal(t, 2, q.InFlight())
+
+	q.Complete(tx.Hash())
+	assert.Equal(t, 1, q.InFlight())
+}
+
 func TestTxQueueV2_Enqueue_SingleTransaction(t *testing.T) {
 	q := NewTxQueueV2()
 	tx := testTxV2(1)

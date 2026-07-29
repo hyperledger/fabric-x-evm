@@ -122,6 +122,13 @@ func (q *TxQueue) IsPending(txHash common.Hash) *types.Transaction {
 	return nil
 }
 
+// InFlight returns how many transactions are queued or being processed.
+func (q *TxQueue) InFlight() int {
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+	return len(q.pendingQueue) + len(q.inProgressMap)
+}
+
 // Complete removes a transaction from the in-progress map after it has been committed.
 // This should be called by the Gateway's callback when a block containing the transaction
 // is committed to the ledger. This method is idempotent - safe to call multiple times.
