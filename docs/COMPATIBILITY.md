@@ -51,6 +51,13 @@ Alongside hand-written integration tests, the suite runs:
   fixtures' expected state-root check always runs, while verification of our own trie-store
   root is opt-in (`-verify_root`). Known divergences are documented under EVM execution
   differences below.
+- the official **ethereum/execution-specs** `transaction_tests` fixtures
+  (`TestTransactionTests`, same `make eth-tests` run and fork allowlist) — these exercise
+  the gateway's raw-transaction admission path (`UnmarshalBinary` + `core.ValidateTx`)
+  rather than the EVM. They are all negative cases, so we assert the reject/accept verdict,
+  not the exact EEST exception string (our gateway may reject at a coarser level, e.g. an
+  unsupported transaction type); this matches go-ethereum's own `transaction_test.go`.
+  Quarantined vectors live in `testdata/transaction_tests.skip`.
 - the **OpenZeppelin** contract test suites, run against a live network via Hardhat
   (`scripts/run_hardhat_test.sh`).
 
