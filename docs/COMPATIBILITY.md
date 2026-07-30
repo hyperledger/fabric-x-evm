@@ -57,7 +57,6 @@ Alongside hand-written integration tests, the suite runs:
   rather than the EVM. They are all negative cases, so we assert the reject/accept verdict,
   not the exact EEST exception string (our gateway may reject at a coarser level, e.g. an
   unsupported transaction type); this matches go-ethereum's own `transaction_test.go`.
-  Quarantined vectors live in `testdata/transaction_tests.skip`.
 - the **OpenZeppelin** contract test suites, run against a live network via Hardhat
   (`scripts/run_hardhat_test.sh`).
 

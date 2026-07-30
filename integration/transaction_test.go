@@ -62,18 +62,11 @@ func TestTransactionTests(t *testing.T) {
 		t.Skipf("execution-specs fixtures not found at %s; run `make fetch-execution-specs-tests`", testsDir)
 	}
 
-	skip, err := loadSkip(filepath.Join("..", "testdata", "transaction_tests.skip"))
-	if err != nil {
-		t.Fatalf("Failed to load skip list: %v", err)
-	}
-	t.Logf("Loaded skip list with %d entries", len(skip))
-
-	allFiles, err := findJSONFiles(testsDir)
+	testFiles, err := findJSONFiles(testsDir)
 	if err != nil {
 		t.Fatalf("Failed to find test files: %v", err)
 	}
-	testFiles := filterSkippedTests(allFiles, skip)
-	t.Logf("Running %d transaction_tests files after filtering", len(testFiles))
+	t.Logf("Running %d transaction_tests files", len(testFiles))
 
 	for _, testPath := range testFiles {
 		t.Run(filepath.Base(testPath), func(t *testing.T) {

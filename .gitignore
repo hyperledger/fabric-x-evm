@@ -16,7 +16,6 @@ testdata/*
 !testdata/test_accounts.json
 !testdata/eth_tests.skip
 !testdata/eth_tests.slow
-!testdata/transaction_tests.skip
 !testdata/oz_known_failures.json
 !testdata/shared_config.yaml
 *.un~

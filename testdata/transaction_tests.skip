@@ -1,3 +1,0 @@
-# execution-specs transaction_tests that are skipped in ALL modes.
-# One test-file path per line; blank lines and lines starting with '#' are ignored.
-# Empty for now — every allowlisted-fork transaction_tests fixture passes.
