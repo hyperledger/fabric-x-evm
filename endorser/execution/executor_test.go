@@ -7,6 +7,8 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package execution
 
 import (
+	"context"
+	"math/big"
 	"testing"
 
 	ethcommon "github.com/ethereum/go-ethereum/common"
@@ -115,5 +117,66 @@ func TestNewExecutor_BareStateDBWhenDebugDisabled(t *testing.T) {
 
 	if _, ok := ex.state.(*StateDB); !ok {
 		t.Fatalf("expected *StateDB, got %T", ex.state)
+	}
+}
+
+// TestNewSnapshotAt_NegativeBlockNumberResolvesToLatest guards against callers upstream
+// handing this engine a negative *big.Int carrying an unresolved go-ethereum block-tag
+// sentinel (e.g. "earliest" == -5 in the pinned go-ethereum version). blockNumber.Uint64()
+// on a negative big.Int silently returns the absolute value instead of erroring, so
+// "earliest" would resolve to block 5 instead of "latest" — returning real but wrong
+// state instead of failing loudly.
+func TestNewSnapshotAt_NegativeBlockNumberResolvesToLatest(t *testing.T) {
+	backend, err := state.NewWriteDB(Channel, "file:exec_negblock_snapshot?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	kvs := &testVersionedDBSnapshotter{db: backend}
+	cfg := EVMConfig{ChainConfig: common.BuildChainConfig(4011)}
+	eng := NewEVMEngine(Namespace, kvs, cfg, false)
+
+	wantLatest, err := backend.BlockNumber(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, reader, err := eng.newSnapshotAt(big.NewInt(-5))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+
+	got := reader.(*testVersionedDBReader).blockNumber
+	if got != wantLatest {
+		t.Errorf("newSnapshotAt(-5) resolved to block %d, want latest (%d)", got, wantLatest)
+	}
+}
+
+// TestNewExecutor_NegativeBlockNumberResolvesToLatest is the newExecutor counterpart of
+// TestNewSnapshotAt_NegativeBlockNumberResolvesToLatest; it backs eth_call/eth_estimateGas
+// rather than eth_getBalance/eth_getCode/eth_getStorageAt/eth_getTransactionCount.
+func TestNewExecutor_NegativeBlockNumberResolvesToLatest(t *testing.T) {
+	backend, err := state.NewWriteDB(Channel, "file:exec_negblock_executor?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	kvs := &testVersionedDBSnapshotter{db: backend}
+	cfg := EVMConfig{ChainConfig: common.BuildChainConfig(4011)}
+	eng := NewEVMEngine(Namespace, kvs, cfg, false)
+
+	wantLatest, err := backend.BlockNumber(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ex, err := eng.newExecutor(big.NewInt(-5))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ex.Close()
+
+	got := ex.reader.(*testVersionedDBReader).blockNumber
+	if got != wantLatest {
+		t.Errorf("newExecutor(-5) resolved to block %d, want latest (%d)", got, wantLatest)
 	}
 }

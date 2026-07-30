@@ -414,7 +414,11 @@ func (api *EthAPI) FeeHistory(ctx context.Context, blockCount hexutil.Uint, last
 // eth_getLogs
 func (api *EthAPI) GetLogs(ctx context.Context, crit filters.FilterCriteria) ([]*types.Log, error) {
 	logger.Debugf("EthAPI.GetLogs() called with criteria=%+v", crit)
-	query := filterCriteriaToLogFilter(crit)
+	query, err := api.filterCriteriaToLogFilter(ctx, crit)
+	if err != nil {
+		logger.Debugf("EthAPI.GetLogs() returning error: %v", err)
+		return nil, err
+	}
 
 	logs, err := api.b.GetLogs(ctx, query)
 	if err != nil {
@@ -432,21 +436,19 @@ func (api *EthAPI) GetLogs(ctx context.Context, crit filters.FilterCriteria) ([]
 	return result, nil
 }
 
-func filterCriteriaToLogFilter(crit filters.FilterCriteria) domain.LogFilter {
+func (api *EthAPI) filterCriteriaToLogFilter(ctx context.Context, crit filters.FilterCriteria) (domain.LogFilter, error) {
 	filter := domain.LogFilter{}
 
 	if crit.BlockHash != nil {
 		hash := crit.BlockHash.Bytes()
 		filter.BlockHash = &hash
 	} else {
-		if crit.FromBlock != nil {
-			from := crit.FromBlock.Uint64()
-			filter.FromBlock = &from
+		from, err := api.resolveLogFilterFromBlock(ctx, crit.FromBlock)
+		if err != nil {
+			return domain.LogFilter{}, err
 		}
-		if crit.ToBlock != nil {
-			to := crit.ToBlock.Uint64()
-			filter.ToBlock = &to
-		}
+		filter.FromBlock = from
+		filter.ToBlock = resolveLogFilterToBlock(crit.ToBlock)
 	}
 
 	if len(crit.Addresses) > 0 {
@@ -468,7 +470,7 @@ func filterCriteriaToLogFilter(crit filters.FilterCriteria) domain.LogFilter {
 		}
 	}
 
-	return filter
+	return filter, nil
 }
 
 func domainLogToTypesLog(l domain.Log) *types.Log {
@@ -584,9 +586,15 @@ func (api *EthAPI) blockNumberOrHashToBlockNumber(ctx context.Context, numOrHash
 	return new(big.Int).SetUint64(*num), nil
 }
 
-// rpcBlockNumberToBigInt converts rpc.BlockNumber to *big.Int
+// rpcBlockNumberToBigInt converts rpc.BlockNumber to *big.Int for state queries.
+// "earliest" resolves to block 0; every other negative sentinel (latest, pending, safe,
+// finalized, and any future one) resolves to nil/"latest" — every committed Fabric block
+// is final, so finalized == latest is semantically correct here too.
 func rpcBlockNumberToBigInt(num rpc.BlockNumber) *big.Int {
-	if num == rpc.PendingBlockNumber || num == rpc.LatestBlockNumber {
+	if num == rpc.EarliestBlockNumber {
+		return big.NewInt(0)
+	}
+	if num < 0 {
 		return nil
 	}
 	return big.NewInt(num.Int64())
@@ -603,4 +611,42 @@ func blockNumberToUint64(num rpc.BlockNumber) uint64 {
 		return math.MaxUint64
 	}
 	return uint64(num)
+}
+
+// resolveLogFilterFromBlock resolves the lower bound of an eth_getLogs range.
+// An omitted bound defaults to "latest" per the JSON-RPC spec, so it — like "latest",
+// "pending", "safe" and "finalized" — resolves to the head block; "earliest" is block 0.
+// Resolving to nil would mean genesis and return the whole chain's logs.
+func (api *EthAPI) resolveLogFilterFromBlock(ctx context.Context, n *big.Int) (*uint64, error) {
+	if n != nil && n.Sign() >= 0 {
+		v := n.Uint64()
+		return &v, nil
+	}
+	if n != nil && n.Cmp(big.NewInt(int64(rpc.EarliestBlockNumber))) == 0 {
+		zero := uint64(0)
+		return &zero, nil
+	}
+	head, err := api.b.BlockNumber(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &head, nil
+}
+
+// resolveLogFilterToBlock resolves the upper bound of an eth_getLogs range.
+// nil (omitted), "latest", "pending", "safe" and "finalized" all leave the bound
+// open, which the store reads as the head block; "earliest" resolves to block 0.
+func resolveLogFilterToBlock(n *big.Int) *uint64 {
+	if n == nil {
+		return nil
+	}
+	if n.Cmp(big.NewInt(int64(rpc.EarliestBlockNumber))) == 0 {
+		zero := uint64(0)
+		return &zero
+	}
+	if n.Sign() < 0 {
+		return nil
+	}
+	v := n.Uint64()
+	return &v
 }

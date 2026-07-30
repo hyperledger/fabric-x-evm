@@ -240,7 +240,22 @@ func (g *Gateway) GetBlockTxCountByHash(ctx context.Context, hash common.Hash) (
 
 // GetBlockTxCountByNumber counts the transactions in a specific block.
 func (g *Gateway) GetBlockTxCountByNumber(ctx context.Context, num uint64) (int64, error) {
+	num, err := g.resolveBlockNumber(ctx, num)
+	if err != nil {
+		return 0, err
+	}
 	return g.store.GetBlockTxCountByNumber(ctx, num)
+}
+
+// resolveBlockNumber resolves the math.MaxUint64 "latest" sentinel to the current block
+// number; every other value passes through unchanged. GetBlockByNumber has its own
+// dedicated LatestBlock store call instead of using this, since it can resolve "latest"
+// in a single query rather than two.
+func (g *Gateway) resolveBlockNumber(ctx context.Context, num uint64) (uint64, error) {
+	if num != math.MaxUint64 {
+		return num, nil
+	}
+	return g.store.BlockNumber(ctx)
 }
 
 // State
@@ -333,6 +348,10 @@ func (g *Gateway) GetTransactionByBlockHashAndIndex(ctx context.Context, hash co
 
 // GetTransactionByBlockNumberAndIndex retrieves a transaction based on block number in the transaction index in that block.
 func (g *Gateway) GetTransactionByBlockNumberAndIndex(ctx context.Context, num uint64, idx int64) (*domain.Transaction, error) {
+	num, err := g.resolveBlockNumber(ctx, num)
+	if err != nil {
+		return nil, err
+	}
 	return g.store.GetTransactionByBlockNumberAndIndex(ctx, num, idx)
 }
 
