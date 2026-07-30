@@ -240,7 +240,7 @@ func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg confi
 			for _, db := range dbs {
 				txHandlers = append(txHandlers, db.(common.TxHandler))
 			}
-			txHandlers = append(txHandlers, gw.TxQueue.(common.TxHandler))
+			txHandlers = append(txHandlers, gw)
 			if extraHandler != nil {
 				txHandlers = append(txHandlers, extraHandler)
 			}

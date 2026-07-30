@@ -14,8 +14,6 @@ import (
 	"maps"
 	"sync/atomic"
 
-	"github.com/hyperledger/fabric-x-common/api/committerpb"
-	"github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 )
@@ -362,7 +360,7 @@ func (kvs *LightKVS) Update(updates []KeyValueVersion) error {
 }
 
 // collectWrites is a private helper that extracts writes from namespace read-write sets
-// and appends them to the provided updates slice. This is the common logic used by both Handle and HandleTx.
+// and appends them to the provided updates slice.
 func collectWrites(updates *[]KeyValueVersion, nsrwsList []blocks.NsReadWriteSet, blockNum, txNum uint64, txID string, valid bool) {
 	if !valid {
 		// Skip invalid transactions
@@ -395,27 +393,6 @@ func (kvs *LightKVS) Handle(ctx context.Context, b blocks.Block) error {
 
 	for _, tx := range b.Transactions {
 		collectWrites(&allUpdates, tx.NsRWS, b.Number, uint64(tx.Number), tx.ID, tx.Valid)
-	}
-
-	// Apply all updates atomically in a single Update call
-	if len(allUpdates) > 0 {
-		return kvs.Update(allUpdates)
-	}
-
-	return nil
-}
-
-// HandleTx implements the core.TxHandler interface.
-// It processes a batch of transaction notifications by extracting writes and applying them.
-// This is called by the notification dispatcher when transactions are committed.
-func (kvs *LightKVS) HandleTx(ctx context.Context, notifs []common.TxNotification) error {
-	// Collect all writes from all notifications in the batch
-	var allUpdates []KeyValueVersion
-
-	for _, notif := range notifs {
-		// Status check: committerpb.Status_COMMITTED means success
-		valid := notif.Status == committerpb.Status_COMMITTED
-		collectWrites(&allUpdates, notif.NsRWS, notif.BlockNum, notif.TxNum, notif.FabricTxID, valid)
 	}
 
 	// Apply all updates atomically in a single Update call

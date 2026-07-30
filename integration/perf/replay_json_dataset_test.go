@@ -33,6 +33,7 @@ import (
 	gwcore "github.com/hyperledger/fabric-x-evm/gateway/core"
 	gwtestimpl "github.com/hyperledger/fabric-x-evm/gateway/testimpl"
 	"github.com/hyperledger/fabric-x-evm/integration"
+	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/grpclog"
 )
@@ -71,15 +72,34 @@ func (t *TxCompletionTracker) Stop() {
 	t.stopped = true
 }
 
-// HandleTx implements common.TxHandler. It receives notifications about completed transactions
-// and forwards them to the completion channel.
-func (t *TxCompletionTracker) HandleTx(ctx context.Context, notifs []fxcommon.TxNotification) error {
+// Handle implements common.TxHandler. It receives committed transactions and forwards
+// them to the completion channel, reconstructing the Ethereum tx hash from InputArgs.
+func (t *TxCompletionTracker) Handle(ctx context.Context, b blocks.Block) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.stopped {
 		return nil
 	}
-	for _, notif := range notifs {
+	for _, tx := range b.Transactions {
+		var ethTx types.Transaction
+		if len(tx.InputArgs) < 2 {
+			continue
+		}
+		if err := ethTx.UnmarshalBinary(tx.InputArgs[1]); err != nil {
+			continue
+		}
+		status := committerpb.Status_COMMITTED
+		if !tx.Valid {
+			status = committerpb.Status_ABORTED_MVCC_CONFLICT
+		}
+		notif := fxcommon.TxNotification{
+			BlockNum:   b.Number,
+			TxNum:      uint64(tx.Number),
+			FabricTxID: tx.ID,
+			Status:     status,
+			EthTxBytes: tx.InputArgs[1],
+			EthTxHash:  ethTx.Hash(),
+		}
 		select {
 		case t.completionCh <- notif:
 		default:
