@@ -78,9 +78,7 @@ func startGRPCServer(t *testing.T, svc eapi.Service, certs mtlsCerts) string {
 	serve.PreAllocateListener(t, &cfg.GRPC)
 	addr := cfg.GRPC.Endpoint.Address()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-
+	ctx := t.Context()
 	srv := eserver.New(svc)
 	go func() {
 		if err := srv.Serve(ctx, cfg); err != nil && ctx.Err() == nil {
@@ -271,14 +269,14 @@ func TestGRPCEndorsement_Parity(t *testing.T) {
 		t.Errorf("NonceAt parity: direct=(%v,%v) wire=(%v,%v)", directNonce, directErr, wireNonce, wireErr)
 	}
 
-	// Same two-step scenario (valid tx accepted, then a wrong-chain-ID tx
-	// rejected) driven independently through both paths; their Invocations
-	// differ (fresh TxID each), but the status/message outcome at each step
-	// must match.
-	directKey, directTx1 := newSignedTx(t)
-	directResp1, directErr := inProcess.Execute(ctx, newInvocation(t, directTx1), directTx1)
-	wireKey, wireTx1 := newSignedTx(t)
-	wireResp1, wireErr := c.Execute(ctx, newInvocation(t, wireTx1), wireTx1)
+	// The same transaction and invocation submitted to both paths must
+	// produce byte-identical endorsed payloads, not just matching status -
+	// multiple endorsers endorsing one transaction must agree byte-for-byte
+	// for an endorsement policy to be satisfiable.
+	directKey, tx1 := newSignedTx(t)
+	inv1 := newInvocation(t, tx1)
+	directResp1, directErr := inProcess.Execute(ctx, inv1, tx1)
+	wireResp1, wireErr := c.Execute(ctx, inv1, tx1)
 	if directErr != nil || wireErr != nil {
 		t.Fatalf("Execute (first) transport errors: direct=%v wire=%v", directErr, wireErr)
 	}
@@ -288,11 +286,15 @@ func TestGRPCEndorsement_Parity(t *testing.T) {
 			directResp1.GetResponse().GetStatus(), directResp1.GetResponse().GetMessage(),
 			wireResp1.GetResponse().GetStatus(), wireResp1.GetResponse().GetMessage())
 	}
+	if !bytes.Equal(directResp1.GetResponse().GetPayload(), wireResp1.GetResponse().GetPayload()) {
+		t.Errorf("Execute (first) payload parity: direct=%x wire=%x",
+			directResp1.GetResponse().GetPayload(), wireResp1.GetResponse().GetPayload())
+	}
 
-	directTx2 := signTxWrongChainID(t, directKey)
-	directResp2, directErr := inProcess.Execute(ctx, newInvocation(t, directTx2), directTx2)
-	wireTx2 := signTxWrongChainID(t, wireKey)
-	wireResp2, wireErr := c.Execute(ctx, newInvocation(t, wireTx2), wireTx2)
+	tx2 := signTxWrongChainID(t, directKey)
+	inv2 := newInvocation(t, tx2)
+	directResp2, directErr := inProcess.Execute(ctx, inv2, tx2)
+	wireResp2, wireErr := c.Execute(ctx, inv2, tx2)
 	if directErr != nil || wireErr != nil {
 		t.Fatalf("Execute (wrong chain ID) transport errors: direct=%v wire=%v", directErr, wireErr)
 	}
