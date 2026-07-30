@@ -197,8 +197,8 @@ func writeHeapProfile(filename string) {
 }
 
 // runReplayTest executes the replay test with configurable worker counts and returns metrics.
-// Returns: (overallThroughput, failedTransactionCount, totalTransactionCount)
-func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCount int, ordererSubmitterCount int, numOutstandingTx int, cfg replayConfig, gwConfig string) (float64, int64, int64) {
+// Returns: (goodput, failedTransactionCount, invalidatedTransactionCount, totalTransactionCount)
+func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCount int, ordererSubmitterCount int, numOutstandingTx int, cfg replayConfig, gwConfig string) (float64, int64, int64, int64) {
 	// Silence GRPC logging
 	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr))
 
@@ -342,7 +342,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 
 	// Replay transactions with parallel workers
 	// Atomic counters for thread-safe counting
-	var successCount, failCount, skippedCount int64
+	var successCount, invalidatedCount, failCount, skippedCount int64
 
 	// Latency tracking: map transaction hash to submission time (T1)
 	latencyMu := sync.Mutex{}
@@ -449,25 +449,26 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 				elapsed := now.Sub(lastTime).Seconds()
 
 				currentSuccess := atomic.LoadInt64(&successCount)
+				currentInvalidated := atomic.LoadInt64(&invalidatedCount)
 				currentFail := atomic.LoadInt64(&failCount)
 				currentSkipped := atomic.LoadInt64(&skippedCount)
-				currentTotal := currentSuccess + currentFail
+				currentTotal := currentSuccess + currentInvalidated + currentFail
 				currentOutstanding := atomic.LoadInt64(&outstandingTxCount)
 
 				txProcessed := currentTotal - lastLogCount
 				throughput := float64(txProcessed) / elapsed
 
 				totalElapsed := now.Sub(startTime).Seconds()
-				overallThroughput := float64(currentTotal) / totalElapsed
+				overallThroughput := float64(currentSuccess) / totalElapsed
 
 				progressTarget := int64(len(window))
 				if cfg.wrapAround {
 					progressTarget = cfg.totalDispatches
 				}
 
-				t.Logf("Progress: %d/%d transfers processed (%d successful, %d failed, %d skipped, %d outstanding) | Throughput: %.2f tx/s (recent), %.2f tx/s (overall)",
-					currentSuccess+currentFail+currentSkipped, progressTarget,
-					currentSuccess, currentFail, currentSkipped, currentOutstanding,
+				t.Logf("Progress: %d/%d transfers processed (%d committed, %d invalidated, %d failed, %d skipped, %d outstanding) | Throughput: %.2f tx/s (recent), %.2f tx/s (goodput)",
+					currentSuccess+currentInvalidated+currentFail+currentSkipped, progressTarget,
+					currentSuccess, currentInvalidated, currentFail, currentSkipped, currentOutstanding,
 					throughput, overallThroughput)
 
 				// Update metrics
@@ -627,18 +628,24 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 
 	// Final counts
 	finalSuccess := atomic.LoadInt64(&successCount)
+	finalInvalidated := atomic.LoadInt64(&invalidatedCount)
 	finalFail := atomic.LoadInt64(&failCount)
 	finalSkipped := atomic.LoadInt64(&skippedCount)
 
-	t.Logf("Replay complete: %d successful, %d failed, %d skipped out of %d total transfers",
-		finalSuccess, finalFail, finalSkipped, dispatched)
+	t.Logf("──────────────────────────────────────────────────────")
+	t.Logf("  RESULT: %d committed, %d invalidated, %d failed, %d skipped / %d dispatched",
+		finalSuccess, finalInvalidated, finalFail, finalSkipped, dispatched)
 
-	// Calculate overall throughput
 	totalElapsed := time.Since(startTime).Seconds()
-	overallThroughput := float64(finalSuccess+finalFail) / totalElapsed
+	goodput := float64(finalSuccess) / totalElapsed
+	submissionThroughput := float64(finalSuccess+finalInvalidated+finalFail) / totalElapsed
 
-	// Return metrics (throughput, failed count, total dispatched transfers)
-	return overallThroughput, finalFail, dispatched
+	t.Logf("  GOODPUT:    %.2f tx/s committed", goodput)
+	t.Logf("  SUBMITTED:  %.2f tx/s attempted", submissionThroughput)
+	t.Logf("──────────────────────────────────────────────────────")
+
+	// Return metrics (goodput, failed count, invalidated count, total dispatched transfers)
+	return goodput, finalFail, finalInvalidated, dispatched
 }
 
 // TestReplayJSONDataset loads the USDC_dataset.json.gz file with pre-generated transactions
@@ -656,16 +663,7 @@ func TestReplayJSONDataset(t *testing.T) {
 	ordererSubmitterCount := *orderers   // Number of goroutines submitting transactions TO the orderer (BatchSubmitter workers)
 	numOutstandingTx := *outstanding     // Maximum number of outstanding transactions
 
-	_, _, _ = runReplayTest(t, processingWorkerCount, submittingWorkerCount, ordererSubmitterCount, numOutstandingTx, replayConfig{windowSize: 1000000}, *gatewayConfig)
-}
-
-type performanceResult struct {
-	processingWorkers  int
-	submittingWorkers  int
-	throughput         float64
-	failedTransactions int64
-	totalTransactions  int64
-	failureRate        float64
+	_, _, _, _ = runReplayTest(t, processingWorkerCount, submittingWorkerCount, ordererSubmitterCount, numOutstandingTx, replayConfig{windowSize: 1000000}, *gatewayConfig)
 }
 
 // TestReplayJSONDatasetPerformance runs the replay test with varying worker counts
@@ -693,56 +691,119 @@ func TestReplayJSONDatasetPerformance(t *testing.T) {
 				t.Logf("\n=== Testing with processingWorkers=%d, submittingWorkers=%d, ordererSubmitters=%d ===",
 					processingWorkers, submittingWorkers, ordererSubmitters)
 
-				throughput, failedTxs, totalTxs := runReplayTest(t, processingWorkers, submittingWorkers, ordererSubmitters, 100, loadReplayConfigFromEnv(t), *gatewayConfig)
-				failureRate := float64(failedTxs) / float64(totalTxs)
+				goodput, failedTxs, invalidatedTxs, totalTxs := runReplayTest(t, processingWorkers, submittingWorkers, ordererSubmitters, 100, loadReplayConfigFromEnv(t), *gatewayConfig)
+				failureRate := float64(failedTxs+invalidatedTxs) / float64(totalTxs)
 
 				results = append(results, performanceResult{
-					processingWorkers:  processingWorkers,
-					submittingWorkers:  submittingWorkers,
-					throughput:         throughput,
-					failedTransactions: failedTxs,
-					totalTransactions:  totalTxs,
-					failureRate:        failureRate,
+					processingWorkers:       processingWorkers,
+					submittingWorkers:       submittingWorkers,
+					throughput:              goodput,
+					invalidatedTransactions: invalidatedTxs,
+					failedTransactions:      failedTxs,
+					totalTransactions:       totalTxs,
+					failureRate:             failureRate,
 				})
 
-				t.Logf("Result: Throughput=%.2f tx/s, Failed=%d/%d (%.2f%%)",
-					throughput, failedTxs, totalTxs, failureRate*100)
+				t.Logf("Result: Goodput=%.2f tx/s, Invalidated=%d, Failed=%d, Failure Rate=%.4f",
+					goodput, invalidatedTxs, failedTxs, failureRate)
 			}
 		}
 	}
 
-	// Write results to CSV file
-	csvPath := "performance_results.csv"
-	file, err := os.Create(csvPath)
-	assert.NoError(t, err)
+	// Print results table
+	t.Logf("\n\n")
+	t.Logf("████████████████████████████████████████████████████████████████████████████████")
+	t.Logf("█                        PERFORMANCE TEST RESULTS                              █")
+	t.Logf("████████████████████████████████████████████████████████████████████████████████")
+	t.Logf("%-20s | %-20s | %-20s | %-15s | %-15s | %-15s",
+		"Processing Workers", "Submitting Workers", "Goodput (tx/s)", "Invalidated", "Failed Txs", "Failure Rate")
+	t.Logf("----------------------------------------------------------------------------------------------------------")
+
+	for _, r := range results {
+		t.Logf("%-20d | %-20d | %-20.2f | %-15d | %-15d | %-15.4f",
+			r.processingWorkers, r.submittingWorkers, r.throughput, r.invalidatedTransactions, r.failedTransactions, r.failureRate)
+	}
+	t.Logf("████████████████████████████████████████████████████████████████████████████████")
+	t.Logf("\n\n")
+
+	// Find best configuration
+	var bestResult performanceResult
+	bestThroughput := 0.0
+	for _, r := range results {
+		if r.throughput > bestThroughput {
+			bestThroughput = r.throughput
+			bestResult = r
+		} else if r.throughput >= bestThroughput*0.95 {
+			bestInvalidationRate := float64(bestResult.invalidatedTransactions) / float64(bestResult.totalTransactions)
+			thisInvalidationRate := float64(r.invalidatedTransactions) / float64(r.totalTransactions)
+			if thisInvalidationRate < bestInvalidationRate {
+				bestResult = r
+			}
+		}
+	}
+
+	t.Logf("\nBest Configuration:")
+	t.Logf("  Processing Workers: %d", bestResult.processingWorkers)
+	t.Logf("  Submitting Workers: %d", bestResult.submittingWorkers)
+	t.Logf("  Goodput: %.2f tx/s", bestResult.throughput)
+	t.Logf("  Invalidated Transactions: %d", bestResult.invalidatedTransactions)
+	t.Logf("  Failed Transactions: %d", bestResult.failedTransactions)
+	t.Logf("  Failure Rate: %.4f", bestResult.failureRate)
+
+	// Export results to CSV for plotting
+	csvPath := "./performance_results.csv"
+	err := exportResultsToCSV(csvPath, results)
+	if err != nil {
+		t.Logf("Warning: Failed to export results to CSV: %v", err)
+	} else {
+		t.Logf("\nResults exported to: %s", csvPath)
+		t.Logf("Run 'python3 integration/perf/plot_performance.py' to generate 3D plots")
+	}
+}
+
+// performanceResult stores the results of a single performance test run
+type performanceResult struct {
+	processingWorkers       int
+	submittingWorkers       int
+	throughput              float64
+	invalidatedTransactions int64
+	failedTransactions      int64
+	totalTransactions       int64
+	failureRate             float64
+}
+
+// exportResultsToCSV writes the performance results to a CSV file
+func exportResultsToCSV(path string, results []performanceResult) error {
+	file, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("failed to create CSV file: %w", err)
+	}
 	defer file.Close()
 
 	writer := csv.NewWriter(file)
 	defer writer.Flush()
 
 	// Write header
-	err = writer.Write([]string{
-		"processing_workers",
-		"submitting_workers",
-		"throughput_tx_per_s",
-		"failed_transactions",
-		"total_transactions",
-		"failure_rate",
-	})
-	assert.NoError(t, err)
-
-	// Write data rows
-	for _, result := range results {
-		err = writer.Write([]string{
-			fmt.Sprintf("%d", result.processingWorkers),
-			fmt.Sprintf("%d", result.submittingWorkers),
-			fmt.Sprintf("%.2f", result.throughput),
-			fmt.Sprintf("%d", result.failedTransactions),
-			fmt.Sprintf("%d", result.totalTransactions),
-			fmt.Sprintf("%.4f", result.failureRate),
-		})
-		assert.NoError(t, err)
+	header := []string{"ProcessingWorkers", "SubmittingWorkers", "Goodput", "InvalidatedTransactions", "FailedTransactions", "TotalTransactions", "FailureRate"}
+	if err := writer.Write(header); err != nil {
+		return fmt.Errorf("failed to write CSV header: %w", err)
 	}
 
-	t.Logf("Performance results written to %s", csvPath)
+	// Write data rows
+	for _, r := range results {
+		row := []string{
+			fmt.Sprintf("%d", r.processingWorkers),
+			fmt.Sprintf("%d", r.submittingWorkers),
+			fmt.Sprintf("%.2f", r.throughput),
+			fmt.Sprintf("%d", r.invalidatedTransactions),
+			fmt.Sprintf("%d", r.failedTransactions),
+			fmt.Sprintf("%d", r.totalTransactions),
+			fmt.Sprintf("%.6f", r.failureRate),
+		}
+		if err := writer.Write(row); err != nil {
+			return fmt.Errorf("failed to write CSV row: %w", err)
+		}
+	}
+
+	return nil
 }
