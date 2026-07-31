@@ -1064,6 +1064,18 @@
     "cause": "hardhat_setBalance"
   },
   {
+    "id": "ERC20Pausable pausable token burn allows to burn when paused and then unpaused",
+    "cause": "snapshot not found"
+  },
+  {
+    "id": "ERC20Pausable pausable token mint allows to mint when paused and then unpaused",
+    "cause": "snapshot not found"
+  },
+  {
+    "id": "ERC20Pausable pausable token transfer allows to transfer when paused and then unpaused",
+    "cause": "snapshot not found"
+  },
+  {
     "id": "ERC20Permit permit accepts owner signature",
     "cause": "eth_signTypedData_v4"
   },
