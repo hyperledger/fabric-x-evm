@@ -2407,8 +2407,12 @@
     "cause": "insufficient-funds"
   },
   {
-    "id": "GovernorERC721 using $ERC721VotesTimestampMock \"before each\" hook for \"deployment check\"",
-    "cause": "insufficient-funds"
+    "id": "GovernorERC721 using $ERC721VotesTimestampMock deployment check",
+    "cause": "expected 0 to equal 1."
+  },
+  {
+    "id": "GovernorERC721 using $ERC721VotesTimestampMock voting with ERC721 token",
+    "cause": "execution reverted"
   },
   {
     "id": "GovernorNoncesKeyed on vote by signature \"before each\" hook for \"if signature does not match signer\""
