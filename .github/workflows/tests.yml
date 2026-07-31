@@ -44,7 +44,9 @@ jobs:
   oz-hardhat-compat:
     name: OZ Hardhat Compatibility
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Full compatible set has grown past 15m once more tests get past early
+    # failures (e.g. funded accounts). Keep headroom for CI runner variance.
+    timeout-minutes: 25
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
