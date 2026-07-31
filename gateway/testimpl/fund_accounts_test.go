@@ -166,7 +166,7 @@ func TestFundTestAccounts_SurvivesLaterUpdate(t *testing.T) {
 
 func TestFundTestAccounts_UnsupportedKVS(t *testing.T) {
 	// VersionedDBWrapper is not supported for in-place funding.
-	err := FundTestAccounts(nil, testNS, []common.Address{common.Address{1}}, DefaultTestAccountBalance)
+	err := FundTestAccounts(nil, testNS, []common.Address{{1}}, DefaultTestAccountBalance)
 	if err == nil {
 		t.Fatal("expected error for nil/unsupported KVS")
 	}
