@@ -16,8 +16,3 @@
 ../testdata/execution-specs-tests/fixtures/state_tests/for_cancun/paris/eip7610_create_collision/initcollision/init_collision_create_tx.json
 ../testdata/execution-specs-tests/fixtures/state_tests/for_osaka/paris/eip7610_create_collision/initcollision/init_collision_create_tx.json
 ../testdata/execution-specs-tests/fixtures/state_tests/for_prague/paris/eip7610_create_collision/initcollision/init_collision_create_tx.json
-#
-# --- nil-pointer panic in DualStateDB.Snapshot for a CREATE tx from a non-existent sender.
-../testdata/execution-specs-tests/fixtures/state_tests/for_cancun/ported_static/stTransactionTest/no_src_account_create1559/no_src_account_create1559.json
-../testdata/execution-specs-tests/fixtures/state_tests/for_osaka/ported_static/stTransactionTest/no_src_account_create1559/no_src_account_create1559.json
-../testdata/execution-specs-tests/fixtures/state_tests/for_prague/ported_static/stTransactionTest/no_src_account_create1559/no_src_account_create1559.json

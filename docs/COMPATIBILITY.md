@@ -234,8 +234,7 @@ cases. These divergences are deliberate consequences of the modern-only semantic
 regressions.
 
 These known-divergent cases are quarantined in `testdata/eth_tests.skip`: the EIP-7610
-create-collision fixtures above, and a `CREATE` transaction from a non-existent sender (currently a
-nil-pointer panic in `DualStateDB.Snapshot`). All other Osaka-forward state tests pass.
+create-collision fixtures above. All other Osaka-forward state tests pass.
 
 **Native ETH balances not funded**: balances are implemented but unused. Accounts have zero ETH 
 balance by default. Value transfers inside the EVM (`CALL` with value, `SELFDESTRUCT` beneficiary, 
