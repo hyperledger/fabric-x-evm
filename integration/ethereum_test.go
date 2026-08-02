@@ -480,10 +480,10 @@ func newEthereumTestHarness(t *testing.T, evmConfig execution.EVMConfig, pre typ
 
 // primeGenesisAlloc primes the state from ethereum genesis format and sets up ethStateDB for wrappers
 func (eth *ethereumTestHarness) primeGenesisAlloc(ctx context.Context, pre types.GenesisAlloc, wait bool) error {
-	if len(pre) == 0 {
-		return nil
-	}
-
+	// Even with an empty pre-state we must build and set an eth StateDB: the
+	// pre-validation nonceReader and the post-execution root commit both read it,
+	// and a fixture with no pre-accounts (e.g. a CREATE from a non-existent sender)
+	// would otherwise leave it nil and panic in GetNonce.
 	primer, err := eth.NewStatePrimer()
 	if err != nil {
 		return err
