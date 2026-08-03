@@ -34,26 +34,26 @@ type TxNotification struct {
 
 var notifLogger = flogging.MustGetLogger("evm.notification")
 
-// TxHandler defines the interface for handlers that process committed blocks delivered
-// via the AllTxStreamer path (an alternative to the block-synchronizer path).
-type TxHandler interface {
+// BlockHandler defines the interface for handlers that
+// process committed blocks delivered via the AllTxStreamer path
+type BlockHandler interface {
 	Handle(ctx context.Context, b blocks.Block) error
 }
 
 // AllTxBatchDispatcher implements notification.AllTxHandler. It bridges AllTxStreamer
-// (which delivers every committed transaction) to the internal TxHandler chain.
+// (which delivers every committed transaction) to the internal BlockHandler chain.
 //
 // For each committed block it:
 //  1. Filters out non-EVM transactions (those without Ethereum tx bytes in InputArgs).
 //  2. Assembles a blocks.Block from the remaining events.
-//  3. Dispatches the block to all registered TxHandlers.
+//  3. Dispatches the block to all registered BlockHandler.
 type AllTxBatchDispatcher struct {
-	handlers []TxHandler
+	handlers []BlockHandler
 }
 
 // NewAllTxBatchDispatcher creates a dispatcher that filters EVM transactions from
 // AllTxStreamer events and dispatches them as a blocks.Block to the handler chain.
-func NewAllTxBatchDispatcher(handlers ...TxHandler) *AllTxBatchDispatcher {
+func NewAllTxBatchDispatcher(handlers ...BlockHandler) *AllTxBatchDispatcher {
 	return &AllTxBatchDispatcher{handlers: handlers}
 }
 

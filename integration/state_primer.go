@@ -333,13 +333,18 @@ func (sp *StatePrimer) commitAndWait(end sdk.Endorsement, tx *types.Transaction,
 		}
 	}
 
-	// TODO: the ethclient created here leaks when wait=false; fix by closing it on the no-wait path too.
-	ec, err := NewNativeEthClient(sp.gw)
-	if err != nil {
-		return err
-	}
-
+	// Only create the in-proc RPC client when we wait; the no-wait path leaked it.
 	if wait {
+		ec, err := NewNativeEthClient(sp.gw)
+		if err != nil {
+			return err
+		}
+		defer ec.Close()
+		// we ignore the return value of `waitForCommit` for now because
+		// the synchronisation-on-startup architecture might leave the wait
+		// for commit loop unworkable. As soon as
+		// https://github.com/hyperledger/fabric-x-evm/issues/221
+		// is complete we will add the return again
 		waitForCommit(context.Background(), ec, tx)
 	}
 
