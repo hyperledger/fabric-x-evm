@@ -24,6 +24,7 @@ import (
 
 	eapi "github.com/hyperledger/fabric-x-evm/endorser/api"
 	eapp "github.com/hyperledger/fabric-x-evm/endorser/app"
+	eclient "github.com/hyperledger/fabric-x-evm/endorser/client"
 	estorage "github.com/hyperledger/fabric-x-evm/endorser/storage"
 	"github.com/hyperledger/fabric-x-evm/gateway/api"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
@@ -38,6 +39,7 @@ var appLogger = flogging.MustGetLogger("gateway.app")
 type App struct {
 	cfg           config.Config
 	endorserSyncs []*network.Synchronizer
+	endorserConns []*eclient.Client // set only in split deployment; closed on Shutdown
 	gwSync        *network.Synchronizer
 	gateway       *core.Gateway
 	chain         *core.Chain
@@ -82,18 +84,23 @@ func NewTestNodeWithConfig(ctx context.Context, cfg config.Config, testAccountsP
 func newApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, enableTestRPC bool, testAccountsPath string) (*App, error) {
 	logger := sdk.NewStdLogger("gateway")
 
+	if len(cfg.Gateway.Endorsers) > 0 {
+		if enableTestRPC {
+			return nil, fmt.Errorf("test RPC is not supported with split deployment (gateway.endorsers configured)")
+		}
+		return newSplitApp(ctx, cfg, gwSigner, logger, enableTestRPC, testAccountsPath)
+	}
+
 	// Create endorsers and their synchronizers.
 	endorsers := make([]eapi.Service, 0, len(cfg.Endorsers))
 	endorserSyncs := make([]*network.Synchronizer, 0, len(cfg.Endorsers))
 	var firstKVS estorage.KVS // Keep first endorser's KVS for test server
 	for i, ecfg := range cfg.Endorsers {
-		// Set history size: always 128 for test RPC (snapshot/revert), else default to 2 if not set
 		if enableTestRPC {
 			ecfg.Database.HistorySize = 128
 		} else if ecfg.Database.HistorySize == 0 {
 			ecfg.Database.HistorySize = 2
 		}
-		// load the identity to connect to the peer for synchronizing, and for signing the endorsement.
 		eSigner, err := identity.SignerFromMSP(ecfg.Identity.MSPDir, ecfg.Identity.MspID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create signer: %w", err)
@@ -111,6 +118,39 @@ func newApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, enableT
 	}
 
 	return buildApp(ctx, cfg, gwSigner, logger, endorsers, endorserSyncs, firstKVS, enableTestRPC, testAccountsPath)
+}
+
+// newSplitApp builds the gateway in split-deployment mode: every endorsers is
+// dialed over gRPC (co-located ones on localhost, remote ones on their configured address)
+// instead of built in-process
+func newSplitApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, enableTestRPC bool, testAccountsPath string) (*App, error) {
+	conns := make([]*eclient.Client, 0, len(cfg.Gateway.Endorsers))
+	closeAll := func() {
+		for _, c := range conns {
+			_ = c.Close()
+		}
+	}
+	for i, ecfg := range cfg.Gateway.Endorsers {
+		cl, err := eclient.Dial(ecfg)
+		if err != nil {
+			closeAll()
+			return nil, fmt.Errorf("dial endorsers %d: %w", i, err)
+		}
+		conns = append(conns, cl)
+	}
+
+	endorsers := make([]eapi.Service, len(conns))
+	for i, c := range conns {
+		endorsers[i] = c
+	}
+
+	app, err := buildApp(ctx, cfg, gwSigner, logger, endorsers, nil, nil, enableTestRPC, testAccountsPath)
+	if err != nil {
+		closeAll()
+		return nil, err
+	}
+	app.endorserConns = conns
+	return app, nil
 }
 
 // buildApp wires up the gateway from pre-built endorsers.
@@ -259,6 +299,13 @@ func (a *App) Shutdown() error {
 		appLogger.Warnf("chain close error: %v", err)
 	} else {
 		appLogger.Debug("chain closed")
+	}
+
+	// Close dialed endorser connections (split deployment only)
+	for _, c := range a.endorserConns {
+		if err := c.Close(); err != nil {
+			appLogger.Warnf("endorser connection close error: %v", err)
+		}
 	}
 
 	appLogger.Debug("graceful shutdown complete")

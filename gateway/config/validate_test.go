@@ -99,6 +99,14 @@ func TestConfigValidate(t *testing.T) {
 			c.Endorsers[0].Database.ConnString = ""
 			c.Endorsers[0].Database.Database = ""
 		}, "database"},
+		{"split mode: gateway.endorsers set, empty top-level endorsers is fine", func(c *config.Config) {
+			c.Gateway.Endorsers = []common.ClientConfig{c.Gateway.Committer}
+			c.Endorsers = nil
+		}, ""},
+		{"split mode: invalid gateway.endorsers entry reported", func(c *config.Config) {
+			c.Gateway.Endorsers = []common.ClientConfig{{}}
+			c.Endorsers = nil
+		}, "gateway.endorsers[0]"},
 	}
 
 	for _, tt := range tests {
