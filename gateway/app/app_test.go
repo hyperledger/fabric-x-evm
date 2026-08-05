@@ -8,6 +8,7 @@ package app
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -101,5 +102,40 @@ func TestNewSplitApp_ClosesEarlierConnsOnLaterFailure(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "dial endorser 1") {
 		t.Errorf("error = %q, want it to mention the second (failing) endorser", err.Error())
+	}
+}
+
+// The wiring underneath buildApp (orderer/committer/peer clients) dials
+// lazily, the same way endorser/client.Dial does - none of it requires a
+// reachable server to construct successfully. So a full split-deployment App
+// can be built and torn down with nothing but local disk (the chain DB) and
+// syntactically valid addresses.
+func TestNewSplitApp_Success(t *testing.T) {
+	dbPath := "file:" + filepath.Join(t.TempDir(), "gw.db")
+	endpoint := func(port int) common.ClientConfig {
+		return common.ClientConfig{Endpoint: &common.Endpoint{Host: "127.0.0.1", Port: port}}
+	}
+	cfg := config.Config{
+		Network: common.Network{Protocol: "fabric-x", Channel: "mychannel", Namespace: "basic", NsVersion: "1.0", ChainID: 4011},
+		Gateway: config.Gateway{
+			Database:       config.DB{ConnString: dbPath},
+			Orderers:       []common.ClientConfig{endpoint(1)},
+			Committer:      endpoint(2),
+			Endorsers:      []common.ClientConfig{endpoint(3)},
+			SubmitterCount: 1,
+		},
+	}
+	logger := sdk.NewStdLogger("gateway")
+
+	app, err := newSplitApp(context.Background(), cfg, nil, logger, false, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(app.endorserConns) != 1 {
+		t.Errorf("endorserConns = %d, want 1", len(app.endorserConns))
+	}
+
+	if err := app.Shutdown(); err != nil {
+		t.Errorf("Shutdown: unexpected error: %v", err)
 	}
 }
