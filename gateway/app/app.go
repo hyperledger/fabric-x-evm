@@ -134,7 +134,7 @@ func newSplitApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, lo
 		cl, err := eclient.Dial(ecfg)
 		if err != nil {
 			closeAll()
-			return nil, fmt.Errorf("dial endorsers %d: %w", i, err)
+			return nil, fmt.Errorf("dial endorser %d: %w", i, err)
 		}
 		conns = append(conns, cl)
 	}
