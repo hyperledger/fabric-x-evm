@@ -229,7 +229,7 @@ fetch-execution-specs-tests:
 
 .PHONY: eth-tests
 eth-tests: fetch-execution-specs-tests
-	@go test -test.fullpath=true -timeout 2000s -run ^TestEthereumTests$$ github.com/hyperledger/fabric-x-evm/integration
+	@go test -test.fullpath=true -timeout 2000s -run '^(TestEthereumTests|TestTransactionTests)$$' github.com/hyperledger/fabric-x-evm/integration
 
 # Single-file smoke test — CI runs hardhat-tests-full (below) instead.
 .PHONY: hardhat-tests

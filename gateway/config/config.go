@@ -41,28 +41,30 @@ type Logging struct {
 	Spec string `mapstructure:"spec" yaml:"spec"`
 }
 
-// Gateway contains configuration for the gateway component.
-type Gateway struct {
-	Listen string `mapstructure:"listen" yaml:"listen"` // HTTP listen address for the Ethereum JSON-RPC API
-
-	Identity common.IdentityConfig `mapstructure:"identity" yaml:"identity"`
-
-	Database DB `mapstructure:"database" yaml:"database"`
-
-	Orderers  []common.ClientConfig `mapstructure:"orderers"  yaml:"orderers"`
-	Committer common.ClientConfig   `mapstructure:"committer" yaml:"committer"`
-
-	SyncTimeout time.Duration `mapstructure:"sync-timeout" yaml:"sync-timeout"`
-
-	WorkerCount         int `mapstructure:"worker-count"          yaml:"worker-count"`          // number of worker goroutines; defaults to 1 if not set
-	SubmitterCount      int `mapstructure:"submitter-count"       yaml:"submitter-count"`       // number of batch submitter worker goroutines; defaults to 16 if not set
-	EndorsementChanSize int `mapstructure:"endorsement-chan-size" yaml:"endorsement-chan-size"` // capacity of the endorsement channel; defaults to 1000 if not set
-}
-
 // DB holds the database paths for the gateway.
 type DB struct {
 	ConnString string `mapstructure:"connection-string" yaml:"connection-string"` // SQLite connection string for blocks, transactions, and logs
 	TriePath   string `mapstructure:"trie-path"         yaml:"trie-path"`         // PebbleDB directory for state root trie; empty = in-memory
+}
+
+// Gateway contains configuration for the gateway component.
+type Gateway struct {
+	Listen   string                `mapstructure:"listen" yaml:"listen"`
+	Identity common.IdentityConfig `mapstructure:"identity" yaml:"identity"`
+	Database DB                    `mapstructure:"database" yaml:"database"`
+
+	Orderers  []common.ClientConfig `mapstructure:"orderers" yaml:"orderers"`
+	Committer common.ClientConfig   `mapstructure:"committer" yaml:"committer"`
+
+	// Endorsers, when set, switches to split deployment: the gateway dials each
+	// entry over gRPC (co-located endorsers included, addressed on localhost)
+	// instead of building embedded endorsers from the top-level Endorsers list.
+	Endorsers   []common.ClientConfig `mapstructure:"endorsers" yaml:"endorsers"`
+	SyncTimeout time.Duration         `mapstructure:"sync-timeout" yaml:"sync-timeout"`
+
+	WorkerCount         int `mapstructure:"worker-count"  yaml:"worker-count"`
+	SubmitterCount      int `mapstructure:"submitter-count" yaml:"submitter-count"`
+	EndorsementChanSize int `mapstructure:"endorsement-chan-size"  yaml:"endorsement-chan-size"`
 }
 
 // Validate checks that required fields are set and values are within acceptable ranges.
@@ -101,18 +103,27 @@ func (cfg Config) Validate() error {
 			errs = append(errs, fmt.Errorf("gateway.orderers[%d]: %w", i, err))
 		}
 	}
-	if len(cfg.Endorsers) == 0 {
-		errs = append(errs, errors.New("endorsers must have at least one entry"))
-	}
-	for i := range cfg.Endorsers {
-		errs = append(errs, cfg.Endorsers[i].Validate())
-		// Checked here rather than in Endorser.Validate because the backend and
-		// the protocol it has to agree with live at different config levels.
-		// Skipped when the protocol itself is already invalid, so one bad
-		// protocol value is not also reported once per endorser.
-		if protocolErr == nil {
-			if err := endorser.ValidateDatabaseProtocol(cfg.Endorsers[i].Database.Database, cfg.Network.Protocol); err != nil {
-				errs = append(errs, fmt.Errorf("endorsers[%d]: %w", i, err))
+
+	if len(cfg.Gateway.Endorsers) == 0 {
+		if len(cfg.Endorsers) == 0 {
+			errs = append(errs, errors.New("endorsers must have at least one entry"))
+		}
+		for i := range cfg.Endorsers {
+			errs = append(errs, cfg.Endorsers[i].Validate())
+
+      // Checked here rather than in Endorser.Validate because the backend and
+		  // the protocol it has to agree with live at different config levels.
+		  // Skipped when the protocol itself is already invalid, so one bad
+		  // protocol value is not also reported once per endorser.
+		  if protocolErr == nil {
+			  if err := endorser.ValidateDatabaseProtocol(cfg.Endorsers[i].Database.Database, cfg.Network.Protocol); err != nil {
+				  errs = append(errs, fmt.Errorf("endorsers[%d]: %w", i, err))
+		    }
+      }
+	} else {
+		for i, e := range cfg.Gateway.Endorsers {
+			if err := e.Validate(); err != nil {
+				errs = append(errs, fmt.Errorf("gateway.endorsers[%d]: %w", i, err))
 			}
 		}
 	}

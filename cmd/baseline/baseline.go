@@ -7,6 +7,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -151,18 +152,33 @@ func LoadBaseline(path string) ([]Entry, error) {
 	return entries, nil
 }
 
-// SaveBaseline writes a baseline file, sorted by ID for stable, reviewable diffs.
-func SaveBaseline(path string, entries []Entry) error {
+// encodeJSON renders v as indented JSON with encoding/json's HTML escaping turned off.
+func encodeJSON(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(v); err != nil { // Encode already ends the output with a newline
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// renderBaseline is the canonical on-disk form of a baseline: sorted by ID for
+// stable, reviewable diffs, and encoded the one way this tool encodes.
+func renderBaseline(entries []Entry) ([]byte, error) {
 	sorted := make([]Entry, len(entries))
 	copy(sorted, entries)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })
+	return encodeJSON(sorted)
+}
 
-	data, err := json.MarshalIndent(sorted, "", "  ")
+// SaveBaseline writes a baseline file in canonical form (see renderBaseline).
+func SaveBaseline(path string, entries []Entry) error {
+	data, err := renderBaseline(entries)
 	if err != nil {
 		return fmt.Errorf("marshal baseline: %w", err)
 	}
-	data = append(data, '\n')
-
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return fmt.Errorf("write baseline %s: %w", path, err)
 	}

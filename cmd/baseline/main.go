@@ -8,7 +8,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -183,12 +182,12 @@ func runCheck(args []string) int {
 	diff := Diff(results, baseline)
 
 	if f.jsonOutput {
-		data, err := json.MarshalIndent(BuildSummary(f.suite, results, diff), "", "  ")
+		data, err := encodeJSON(BuildSummary(f.suite, results, diff))
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 2
 		}
-		fmt.Println(string(data))
+		fmt.Print(string(data))
 	} else {
 		var buf bytes.Buffer
 		WriteReport(&buf, f.suite, results, diff)
