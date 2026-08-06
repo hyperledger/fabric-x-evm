@@ -75,8 +75,9 @@ func (cfg Config) Validate() error {
 	if cfg.Network.Namespace == "" {
 		errs = append(errs, errors.New("network.namespace is required"))
 	}
-	if p := cfg.Network.Protocol; p != "" && p != "fabric" && p != "fabric-x" {
-		errs = append(errs, errors.New("network.protocol must be 'fabric' or 'fabric-x'"))
+	_, protocolErr := common.NormalizeProtocol(cfg.Network.Protocol)
+	if protocolErr != nil {
+		errs = append(errs, protocolErr)
 	}
 	if cfg.Gateway.Listen == "" {
 		errs = append(errs, errors.New("gateway.listen is required"))
@@ -105,6 +106,15 @@ func (cfg Config) Validate() error {
 	}
 	for i := range cfg.Endorsers {
 		errs = append(errs, cfg.Endorsers[i].Validate())
+		// Checked here rather than in Endorser.Validate because the backend and
+		// the protocol it has to agree with live at different config levels.
+		// Skipped when the protocol itself is already invalid, so one bad
+		// protocol value is not also reported once per endorser.
+		if protocolErr == nil {
+			if err := endorser.ValidateDatabaseProtocol(cfg.Endorsers[i].Database.Database, cfg.Network.Protocol); err != nil {
+				errs = append(errs, fmt.Errorf("endorsers[%d]: %w", i, err))
+			}
+		}
 	}
 
 	return errors.Join(errs...)

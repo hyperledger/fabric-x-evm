@@ -17,6 +17,31 @@ import (
 	"github.com/hyperledger/fabric-x-sdk/network"
 )
 
+// Supported values for Network.Protocol.
+const (
+	// ProtocolFabric is classic Hyperledger Fabric.
+	ProtocolFabric = "fabric"
+	// ProtocolFabricX is Fabric-X, the default when Network.Protocol is unset.
+	ProtocolFabricX = "fabric-x"
+)
+
+// NormalizeProtocol resolves an optionally-empty protocol string to a concrete
+// protocol, defaulting to fabric-x, and rejects unrecognized values. Components
+// should normalize once and switch on the result rather than treating "" as a
+// fallthrough case: the two spellings of the default used to diverge between the
+// gateway wiring and the endorser factory, which silently paired a fabric-x
+// synchronizer with a fabric endorsement builder.
+func NormalizeProtocol(protocol string) (string, error) {
+	switch protocol {
+	case "":
+		return ProtocolFabricX, nil
+	case ProtocolFabric, ProtocolFabricX:
+		return protocol, nil
+	default:
+		return "", fmt.Errorf("network.protocol must be %q or %q, got %q", ProtocolFabric, ProtocolFabricX, protocol)
+	}
+}
+
 // Network contains network details shared across components
 // and network participants.
 type Network struct {

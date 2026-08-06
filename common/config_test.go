@@ -122,3 +122,27 @@ func TestClientConfigValidate(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizeProtocol(t *testing.T) {
+	tests := []struct {
+		name     string
+		protocol string
+		want     string
+		wantErr  string
+	}{
+		{"empty defaults to fabric-x", "", ProtocolFabricX, ""},
+		{"fabric passes through", ProtocolFabric, ProtocolFabric, ""},
+		{"fabric-x passes through", ProtocolFabricX, ProtocolFabricX, ""},
+		{"bogus errors", "bogus", "", "network.protocol must be"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := NormalizeProtocol(tt.protocol)
+			checkErr(t, err, tt.wantErr)
+			if tt.wantErr == "" && got != tt.want {
+				t.Errorf("NormalizeProtocol(%q) = %q, want %q", tt.protocol, got, tt.want)
+			}
+		})
+	}
+}

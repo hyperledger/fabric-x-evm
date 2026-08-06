@@ -37,38 +37,55 @@ func NewEndorserCore(
 	evmConfig execution.EVMConfig,
 	testImpl bool,
 ) (*core.Endorser, storage.KVS, endorsement.Builder, error) {
+	// Reject backend/protocol combinations that cannot work before opening any
+	// files. gateway config validation catches this earlier for a real
+	// deployment; this covers callers that build an endorser directly (testnode,
+	// the in-process test harness).
+	if err := config.ValidateDatabaseProtocol(dbCfg.Database, protocol); err != nil {
+		return nil, nil, nil, err
+	}
+
+	// An unset protocol means fabric-x, matching the documented default
+	// (common.Network.Protocol) and the gateway wiring (NewNetworkSubmitters,
+	// NewGatewaySynchronizer). Normalize once so the KVS and builder choices
+	// below cannot disagree about what "" means.
+	protocol, err := common.NormalizeProtocol(protocol)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
 	var kvs storage.KVS
 	switch dbCfg.Database {
-	case "sqlite":
+	case config.DBSQLite:
 		writeDB, err := state.NewWriteDB(channel, dbCfg.ConnString)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("failed to initialize store: %w", err)
 		}
 		kvs = storage.NewVersionedDBWrapper(writeDB)
-	case "memory":
+	case config.DBMemory:
 		baseLightKVS := storage.NewLightKVS(dbCfg.HistorySize)
 		if testImpl {
 			kvs = storage.NewRevertibleLightKVS(baseLightKVS)
 		} else {
 			kvs = baseLightKVS
 		}
-	case "pebble":
+	case config.DBPebble:
 		pebbleKVS, err := storage.NewPebbleKVS(dbCfg.ConnString, dbCfg.HistorySize)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("failed to initialize store: %w", err)
 		}
 		kvs = pebbleKVS
 	default:
-		return nil, nil, nil, fmt.Errorf("invalid endorser database type %s, must be sqlite, memory, or pebble", dbCfg.Database)
+		return nil, nil, nil, fmt.Errorf("invalid endorser database type %q, must be one of %q, %q, %q", dbCfg.Database, config.DBSQLite, config.DBMemory, config.DBPebble)
 	}
 
 	var builder endorsement.Builder
 	var monotonicVersions bool
 	switch protocol {
-	case "fabric-x":
+	case common.ProtocolFabricX:
 		builder = efabx.NewEndorsementBuilder(signer)
 		monotonicVersions = true
-	default: // "fabric" or ""
+	default: // "fabric"
 		builder = efab.NewEndorsementBuilder(signer)
 	}
 
@@ -107,10 +124,10 @@ func NewEndorser(
 
 	var sync *sdknet.Synchronizer
 	switch network.Protocol {
-	case "fabric-x":
-		sync, err = nfabx.NewSynchronizer(kvs, network.Channel, cfg.Committer.ToPeerConf(), signer, logger, kvs)
-	default: // "fabric" or ""
+	case common.ProtocolFabric:
 		sync, err = nfab.NewSynchronizer(kvs, network.Channel, cfg.Committer.ToPeerConf(), signer, logger, kvs)
+	default: // "fabric-x" or "" (the default)
+		sync, err = nfabx.NewSynchronizer(kvs, network.Channel, cfg.Committer.ToPeerConf(), signer, logger, kvs)
 	}
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to create synchronizer: %w", err)

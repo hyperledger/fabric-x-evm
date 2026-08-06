@@ -111,3 +111,57 @@ func TestConfigValidate(t *testing.T) {
 		})
 	}
 }
+
+func TestConfigValidateProtocolEndorserCompatibility(t *testing.T) {
+	t.Run("pebble with fabric protocol fails", func(t *testing.T) {
+		cfg := validConfig(t)
+		cfg.Network.Protocol = common.ProtocolFabric
+		cfg.Endorsers[0].Database.Database = endorsercfg.DBPebble
+		cfg.Endorsers[0].Database.ConnString = t.TempDir()
+
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for pebble with fabric protocol, got nil")
+		}
+		errStr := err.Error()
+		if !strings.Contains(errStr, "pebble") {
+			t.Errorf("error should mention 'pebble', got: %v", err)
+		}
+		if !strings.Contains(errStr, "endorsers[0]") {
+			t.Errorf("error should mention 'endorsers[0]', got: %v", err)
+		}
+	})
+
+	t.Run("pebble with fabric-x protocol passes", func(t *testing.T) {
+		cfg := validConfig(t)
+		cfg.Network.Protocol = common.ProtocolFabricX
+		cfg.Endorsers[0].Database.Database = endorsercfg.DBPebble
+		cfg.Endorsers[0].Database.ConnString = t.TempDir()
+
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("unexpected error for pebble with fabric-x: %v", err)
+		}
+	})
+
+	t.Run("invalid protocol reported once with multiple pebble endorsers", func(t *testing.T) {
+		cfg := validConfig(t)
+		cfg.Network.Protocol = "bogus"
+		// Add a second pebble endorser.
+		cfg.Endorsers = append(cfg.Endorsers, cfg.Endorsers[0])
+		cfg.Endorsers[0].Database.Database = endorsercfg.DBPebble
+		cfg.Endorsers[0].Database.ConnString = t.TempDir()
+		cfg.Endorsers[1].Database.Database = endorsercfg.DBPebble
+		cfg.Endorsers[1].Database.ConnString = t.TempDir()
+
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for invalid protocol, got nil")
+		}
+
+		errStr := err.Error()
+		count := strings.Count(errStr, "network.protocol")
+		if count != 1 {
+			t.Errorf("expected 'network.protocol' to appear exactly once, got %d times in: %v", count, err)
+		}
+	})
+}

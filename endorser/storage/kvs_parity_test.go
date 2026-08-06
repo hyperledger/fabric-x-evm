@@ -9,6 +9,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/hyperledger/fabric-x-common/api/committerpb"
@@ -525,5 +526,300 @@ func TestPebbleHandleTxMultiBlock(t *testing.T) {
 		t.Fatalf("Get as of block 1: %v", err)
 	} else if rec == nil || string(rec.Value) != "block1" {
 		t.Errorf("as of block 1 expected \"block1\", got %+v", rec)
+	}
+}
+
+// TestPebbleReplayIdempotency verifies that replaying an already-applied block
+// is a no-op: the second Handle of the same block number does not modify state.
+func TestPebbleReplayIdempotency(t *testing.T) {
+	ctx := context.Background()
+	kvs, err := NewPebbleKVS(t.TempDir(), 8)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer kvs.Close()
+
+	// Handle block 1 writing "v1".
+	if err := kvs.Handle(ctx, mkBlock(1, 0, "tx1", true, "ns1",
+		blocks.KVWrite{Key: "k", Value: []byte("v1")})); err != nil {
+		t.Fatalf("Handle block 1: %v", err)
+	}
+
+	rec, err := kvs.Get("ns1", "k", 0)
+	if err != nil {
+		t.Fatalf("Get after first apply: %v", err)
+	}
+	if rec == nil || string(rec.Value) != "v1" || rec.Version != 0 {
+		t.Fatalf("expected v1 version 0, got %+v", rec)
+	}
+
+	// Replay block 1 with different content ("v2"). It should be skipped.
+	if err := kvs.Handle(ctx, mkBlock(1, 0, "tx1-replay", true, "ns1",
+		blocks.KVWrite{Key: "k", Value: []byte("v2")})); err != nil {
+		t.Fatalf("Handle block 1 replay: %v", err)
+	}
+
+	rec, err = kvs.Get("ns1", "k", 0)
+	if err != nil {
+		t.Fatalf("Get after replay: %v", err)
+	}
+	if rec == nil || string(rec.Value) != "v1" || rec.Version != 0 {
+		t.Errorf("replay changed state: expected v1 version 0, got %+v", rec)
+	}
+
+	// Block 2 should apply normally.
+	if err := kvs.Handle(ctx, mkBlock(2, 0, "tx2", true, "ns1",
+		blocks.KVWrite{Key: "k", Value: []byte("v3")})); err != nil {
+		t.Fatalf("Handle block 2: %v", err)
+	}
+
+	rec, err = kvs.Get("ns1", "k", 0)
+	if err != nil {
+		t.Fatalf("Get after block 2: %v", err)
+	}
+	if rec == nil || string(rec.Value) != "v3" || rec.Version != 1 {
+		t.Errorf("expected v3 version 1, got %+v", rec)
+	}
+}
+
+// TestPebbleReplayAcrossReopen verifies replay idempotency survives a close/reopen.
+func TestPebbleReplayAcrossReopen(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	kvs, err := NewPebbleKVS(dir, 8)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	// Handle blocks 1 and 2.
+	if err := kvs.Handle(ctx, mkBlock(1, 0, "tx1", true, "ns1",
+		blocks.KVWrite{Key: "k", Value: []byte("v1")})); err != nil {
+		t.Fatalf("Handle block 1: %v", err)
+	}
+	if err := kvs.Handle(ctx, mkBlock(2, 0, "tx2", true, "ns1",
+		blocks.KVWrite{Key: "k", Value: []byte("v2")})); err != nil {
+		t.Fatalf("Handle block 2: %v", err)
+	}
+	if err := kvs.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	// Reopen and replay block 2 with different content.
+	kvs2, err := NewPebbleKVS(dir, 8)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer kvs2.Close()
+
+	if err := kvs2.Handle(ctx, mkBlock(2, 0, "tx2-replay", true, "ns1",
+		blocks.KVWrite{Key: "k", Value: []byte("v2-changed")})); err != nil {
+		t.Fatalf("Handle block 2 replay: %v", err)
+	}
+
+	// Version should not have advanced.
+	rec, err := kvs2.Get("ns1", "k", 0)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if rec == nil || string(rec.Value) != "v2" || rec.Version != 1 {
+		t.Errorf("replay changed state: expected v2 version 1, got %+v", rec)
+	}
+
+	n, err := kvs2.BlockNumber(ctx)
+	if err != nil {
+		t.Fatalf("BlockNumber: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("expected block 2, got %d", n)
+	}
+
+	// Block 3 should apply.
+	if err := kvs2.Handle(ctx, mkBlock(3, 0, "tx3", true, "ns1",
+		blocks.KVWrite{Key: "k", Value: []byte("v3")})); err != nil {
+		t.Fatalf("Handle block 3: %v", err)
+	}
+
+	rec, err = kvs2.Get("ns1", "k", 0)
+	if err != nil {
+		t.Fatalf("Get after block 3: %v", err)
+	}
+	if rec == nil || string(rec.Value) != "v3" || rec.Version != 2 {
+		t.Errorf("expected v3 version 2, got %+v", rec)
+	}
+}
+
+// TestPebbleUpdateRejectsMultiBlockBatch verifies that Update errors when given
+// a batch spanning multiple block numbers.
+func TestPebbleUpdateRejectsMultiBlockBatch(t *testing.T) {
+	kvs, err := NewPebbleKVS(t.TempDir(), 8)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer kvs.Close()
+
+	updates := []KeyValueVersion{
+		{Key: "ns1:a", BlockNum: 1, TxNum: 0, Value: []byte("a")},
+		{Key: "ns1:b", BlockNum: 2, TxNum: 0, Value: []byte("b")},
+	}
+
+	err = kvs.Update(updates)
+	if err == nil {
+		t.Fatal("expected error for multi-block batch, got nil")
+	}
+	if !strings.Contains(err.Error(), "spans multiple blocks") {
+		t.Errorf("error should mention 'spans multiple blocks', got: %v", err)
+	}
+
+	// Nothing should have been committed.
+	ctx := context.Background()
+	n, err := kvs.BlockNumber(ctx)
+	if err != nil {
+		t.Fatalf("BlockNumber: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("expected block 0 (nothing committed), got %d", n)
+	}
+}
+
+// TestPebbleEmptyBlockAdvancesCheckpoint verifies that a block with no writes
+// still advances the persisted checkpoint.
+func TestPebbleEmptyBlockAdvancesCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	kvs, err := NewPebbleKVS(dir, 8)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	// Block 1 with a write.
+	if err := kvs.Handle(ctx, mkBlock(1, 0, "tx1", true, "ns1",
+		blocks.KVWrite{Key: "k", Value: []byte("v1")})); err != nil {
+		t.Fatalf("Handle block 1: %v", err)
+	}
+
+	// Block 2 with no transactions.
+	emptyBlock := blocks.Block{Number: 2, Transactions: nil}
+	if err := kvs.Handle(ctx, emptyBlock); err != nil {
+		t.Fatalf("Handle empty block 2: %v", err)
+	}
+
+	n, err := kvs.BlockNumber(ctx)
+	if err != nil {
+		t.Fatalf("BlockNumber: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("expected block 2 after empty block, got %d", n)
+	}
+
+	// The write from block 1 should still be readable.
+	rec, err := kvs.Get("ns1", "k", 0)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if rec == nil || string(rec.Value) != "v1" {
+		t.Errorf("expected v1 still readable, got %+v", rec)
+	}
+
+	if err := kvs.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	// Reopen and verify checkpoint survived.
+	kvs2, err := NewPebbleKVS(dir, 8)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer kvs2.Close()
+
+	n, err = kvs2.BlockNumber(ctx)
+	if err != nil {
+		t.Fatalf("BlockNumber after reopen: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("expected block 2 after reopen, got %d", n)
+	}
+}
+
+// TestPebbleInvalidTxBlockAdvancesCheckpoint verifies that a block whose only
+// transaction is invalid still advances the checkpoint.
+func TestPebbleInvalidTxBlockAdvancesCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	kvs, err := NewPebbleKVS(t.TempDir(), 8)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer kvs.Close()
+
+	// Block 1 with a valid write.
+	if err := kvs.Handle(ctx, mkBlock(1, 0, "tx1", true, "ns1",
+		blocks.KVWrite{Key: "k", Value: []byte("v1")})); err != nil {
+		t.Fatalf("Handle block 1: %v", err)
+	}
+
+	// Block 2 with only an invalid transaction.
+	if err := kvs.Handle(ctx, mkBlock(2, 0, "tx2", false, "ns1",
+		blocks.KVWrite{Key: "k2", Value: []byte("invalid")})); err != nil {
+		t.Fatalf("Handle block 2: %v", err)
+	}
+
+	n, err := kvs.BlockNumber(ctx)
+	if err != nil {
+		t.Fatalf("BlockNumber: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("expected block 2, got %d", n)
+	}
+
+	// The invalid write should not be applied.
+	rec, err := kvs.Get("ns1", "k2", 0)
+	if err != nil {
+		t.Fatalf("Get invalid key: %v", err)
+	}
+	if !absent(rec) {
+		t.Errorf("invalid tx write should not be visible, got %+v", rec)
+	}
+
+	// The valid write from block 1 should still be readable.
+	rec, err = kvs.Get("ns1", "k", 0)
+	if err != nil {
+		t.Fatalf("Get valid key: %v", err)
+	}
+	if rec == nil || string(rec.Value) != "v1" {
+		t.Errorf("expected v1, got %+v", rec)
+	}
+}
+
+// TestPebbleBlock0OnFreshStore verifies that block 0 on a fresh store is applied,
+// not mistaken for "already applied".
+func TestPebbleBlock0OnFreshStore(t *testing.T) {
+	ctx := context.Background()
+	kvs, err := NewPebbleKVS(t.TempDir(), 8)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer kvs.Close()
+
+	// Handle block 0 with a write.
+	if err := kvs.Handle(ctx, mkBlock(0, 0, "tx0", true, "ns1",
+		blocks.KVWrite{Key: "k", Value: []byte("block0")})); err != nil {
+		t.Fatalf("Handle block 0: %v", err)
+	}
+
+	rec, err := kvs.Get("ns1", "k", 0)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if rec == nil || string(rec.Value) != "block0" {
+		t.Errorf("expected block0 value, got %+v", rec)
+	}
+
+	n, err := kvs.BlockNumber(ctx)
+	if err != nil {
+		t.Fatalf("BlockNumber: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("expected block 0, got %d", n)
 	}
 }
