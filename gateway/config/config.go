@@ -110,16 +110,16 @@ func (cfg Config) Validate() error {
 		}
 		for i := range cfg.Endorsers {
 			errs = append(errs, cfg.Endorsers[i].Validate())
-
-      // Checked here rather than in Endorser.Validate because the backend and
-		  // the protocol it has to agree with live at different config levels.
-		  // Skipped when the protocol itself is already invalid, so one bad
-		  // protocol value is not also reported once per endorser.
-		  if protocolErr == nil {
-			  if err := endorser.ValidateDatabaseProtocol(cfg.Endorsers[i].Database.Database, cfg.Network.Protocol); err != nil {
-				  errs = append(errs, fmt.Errorf("endorsers[%d]: %w", i, err))
-		    }
-      }
+			// Checked here rather than in Endorser.Validate because the backend and
+			// the protocol it has to agree with live at different config levels.
+			// Skipped when the protocol itself is already invalid, so one bad
+			// protocol value is not also reported once per endorser.
+			if protocolErr == nil {
+				if err := endorser.ValidateDatabaseProtocol(cfg.Endorsers[i].Database.Database, cfg.Network.Protocol); err != nil {
+					errs = append(errs, fmt.Errorf("endorsers[%d]: %w", i, err))
+				}
+			}
+		}
 	} else {
 		for i, e := range cfg.Gateway.Endorsers {
 			if err := e.Validate(); err != nil {
