@@ -2279,1062 +2279,1062 @@
   {
     "id": "Packing extract / replace extract bytes1 from bytes10",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes1 from bytes12",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes1 from bytes16",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes1 from bytes2",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes1 from bytes20",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes1 from bytes22",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes1 from bytes24",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes1 from bytes28",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes1 from bytes32",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes1 from bytes4",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes1 from bytes6",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes1 from bytes8",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes10 from bytes12",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes10 from bytes16",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes10 from bytes20",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes10 from bytes22",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes10 from bytes24",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes10 from bytes28",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes10 from bytes32",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes12 from bytes16",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes12 from bytes20",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes12 from bytes22",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes12 from bytes24",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes12 from bytes28",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes12 from bytes32",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes16 from bytes20",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes16 from bytes22",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes16 from bytes24",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes16 from bytes28",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes16 from bytes32",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes2 from bytes10",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes2 from bytes12",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes2 from bytes16",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes2 from bytes20",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes2 from bytes22",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes2 from bytes24",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes2 from bytes28",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes2 from bytes32",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes2 from bytes4",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes2 from bytes6",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes2 from bytes8",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes20 from bytes22",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes20 from bytes24",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes20 from bytes28",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes20 from bytes32",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes22 from bytes24",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes22 from bytes28",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes22 from bytes32",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes24 from bytes28",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes24 from bytes32",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes28 from bytes32",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes4 from bytes10",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes4 from bytes12",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes4 from bytes16",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes4 from bytes20",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes4 from bytes22",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes4 from bytes24",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes4 from bytes28",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes4 from bytes32",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes4 from bytes6",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes4 from bytes8",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes6 from bytes10",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes6 from bytes12",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes6 from bytes16",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes6 from bytes20",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes6 from bytes22",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes6 from bytes24",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes6 from bytes28",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes6 from bytes32",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes6 from bytes8",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes8 from bytes10",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes8 from bytes12",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes8 from bytes16",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes8 from bytes20",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes8 from bytes22",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes8 from bytes24",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes8 from bytes28",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace extract bytes8 from bytes32",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes1 from bytes10",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes1 from bytes12",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes1 from bytes16",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes1 from bytes2",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes1 from bytes20",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes1 from bytes22",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes1 from bytes24",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes1 from bytes28",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes1 from bytes32",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes1 from bytes4",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes1 from bytes6",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes1 from bytes8",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes10 from bytes12",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes10 from bytes16",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes10 from bytes20",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes10 from bytes22",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes10 from bytes24",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes10 from bytes28",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes10 from bytes32",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes12 from bytes16",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes12 from bytes20",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes12 from bytes22",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes12 from bytes24",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes12 from bytes28",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes12 from bytes32",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes16 from bytes20",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes16 from bytes22",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes16 from bytes24",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes16 from bytes28",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes16 from bytes32",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes2 from bytes10",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes2 from bytes12",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes2 from bytes16",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes2 from bytes20",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes2 from bytes22",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes2 from bytes24",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes2 from bytes28",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes2 from bytes32",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes2 from bytes4",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes2 from bytes6",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes2 from bytes8",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes20 from bytes22",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes20 from bytes24",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes20 from bytes28",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes20 from bytes32",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes22 from bytes24",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes22 from bytes28",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes22 from bytes32",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes24 from bytes28",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes24 from bytes32",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes28 from bytes32",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes4 from bytes10",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes4 from bytes12",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes4 from bytes16",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes4 from bytes20",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes4 from bytes22",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes4 from bytes24",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes4 from bytes28",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes4 from bytes32",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes4 from bytes6",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes4 from bytes8",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes6 from bytes10",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes6 from bytes12",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes6 from bytes16",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes6 from bytes20",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes6 from bytes22",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes6 from bytes24",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes6 from bytes28",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes6 from bytes32",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes6 from bytes8",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes8 from bytes10",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes8 from bytes12",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes8 from bytes16",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes8 from bytes20",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes8 from bytes22",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes8 from bytes24",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes8 from bytes28",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing extract / replace replace bytes8 from bytes32",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes1 + bytes1 => bytes2",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes10 + bytes10 => bytes20",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes10 + bytes12 => bytes22",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes10 + bytes2 => bytes12",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes10 + bytes22 => bytes32",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes10 + bytes6 => bytes16",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes12 + bytes10 => bytes22",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes12 + bytes12 => bytes24",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes12 + bytes16 => bytes28",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes12 + bytes20 => bytes32",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes12 + bytes4 => bytes16",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes12 + bytes8 => bytes20",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes16 + bytes12 => bytes28",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes16 + bytes16 => bytes32",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes16 + bytes4 => bytes20",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes16 + bytes6 => bytes22",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes16 + bytes8 => bytes24",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes2 + bytes10 => bytes12",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes2 + bytes2 => bytes4",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes2 + bytes20 => bytes22",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes2 + bytes22 => bytes24",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes2 + bytes4 => bytes6",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes2 + bytes6 => bytes8",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes2 + bytes8 => bytes10",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes20 + bytes12 => bytes32",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes20 + bytes2 => bytes22",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes20 + bytes4 => bytes24",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes20 + bytes8 => bytes28",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes22 + bytes10 => bytes32",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes22 + bytes2 => bytes24",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes22 + bytes6 => bytes28",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes24 + bytes4 => bytes28",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes24 + bytes8 => bytes32",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes28 + bytes4 => bytes32",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes4 + bytes12 => bytes16",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes4 + bytes16 => bytes20",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes4 + bytes2 => bytes6",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes4 + bytes20 => bytes24",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes4 + bytes24 => bytes28",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes4 + bytes28 => bytes32",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes4 + bytes4 => bytes8",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes4 + bytes6 => bytes10",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes4 + bytes8 => bytes12",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes6 + bytes10 => bytes16",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes6 + bytes16 => bytes22",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes6 + bytes2 => bytes8",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes6 + bytes22 => bytes28",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes6 + bytes4 => bytes10",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes6 + bytes6 => bytes12",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes8 + bytes12 => bytes20",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes8 + bytes16 => bytes24",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes8 + bytes2 => bytes10",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes8 + bytes20 => bytes28",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes8 + bytes24 => bytes32",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes8 + bytes4 => bytes12",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "Packing pack pack bytes8 + bytes8 => bytes16",
     "cause": "max-code-size",
-    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) — not directly confirmed via a deploy-time error"
+    "note": "symptom is 'could not decode result data' (empty call return); consistent with the $Packing mock never deploying because it's oversized (EIP-170) \u2014 not directly confirmed via a deploy-time error"
   },
   {
     "id": "RateLimiter RefillingBucket with some capacity consume consume one key does not affect another key"

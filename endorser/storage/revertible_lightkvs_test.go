@@ -60,7 +60,7 @@ func TestRevertibleLightKVS_RevertToBlock(t *testing.T) {
 		t.Errorf("expected block number 1 after revert, got %d", blockNum)
 	}
 
-	reader, err := kvs.NewSnapshot(0)
+	reader, err := kvs.NewSnapshot(nil)
 	if err != nil {
 		t.Fatalf("NewSnapshot failed: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestRevertibleLightKVS_RevertThenContinue(t *testing.T) {
 		t.Fatalf("Update after revert failed: %v", err)
 	}
 
-	reader, err := kvs.NewSnapshot(0)
+	reader, err := kvs.NewSnapshot(nil)
 	if err != nil {
 		t.Fatalf("NewSnapshot failed: %v", err)
 	}
@@ -174,9 +174,9 @@ func TestRevertibleLightKVS_NewSnapshot_SkipsEmptyBlocks(t *testing.T) {
 	}
 
 	// Read as-of block 3: no entry for 3, but state is still v1 from block 1.
-	reader, err := kvs.NewSnapshot(3)
+	reader, err := kvs.NewSnapshot(BlockAt(3))
 	if err != nil {
-		t.Fatalf("NewSnapshot(3): %v", err)
+		t.Fatalf("NewSnapshot(BlockAt(3)): %v", err)
 	}
 	defer reader.Close()
 
@@ -189,9 +189,9 @@ func TestRevertibleLightKVS_NewSnapshot_SkipsEmptyBlocks(t *testing.T) {
 	}
 
 	// Exact match at block 1 still works.
-	r1, err := kvs.NewSnapshot(1)
+	r1, err := kvs.NewSnapshot(BlockAt(1))
 	if err != nil {
-		t.Fatalf("NewSnapshot(1): %v", err)
+		t.Fatalf("NewSnapshot(BlockAt(1)): %v", err)
 	}
 	defer r1.Close()
 	rec1, err := r1.Get("ns1", "key1")
@@ -203,9 +203,9 @@ func TestRevertibleLightKVS_NewSnapshot_SkipsEmptyBlocks(t *testing.T) {
 	}
 
 	// At or past current returns latest (v5).
-	rLatest, err := kvs.NewSnapshot(5)
+	rLatest, err := kvs.NewSnapshot(BlockAt(5))
 	if err != nil {
-		t.Fatalf("NewSnapshot(5): %v", err)
+		t.Fatalf("NewSnapshot(BlockAt(5)): %v", err)
 	}
 	defer rLatest.Close()
 	recLatest, err := rLatest.Get("ns1", "key1")
@@ -233,7 +233,7 @@ func TestRevertibleLightKVS_NewSnapshot_NotFound(t *testing.T) {
 	// older than current remains.
 	kvs.History[0].Store(nil)
 
-	if _, err := kvs.NewSnapshot(3); err == nil {
+	if _, err := kvs.NewSnapshot(BlockAt(3)); err == nil {
 		t.Fatal("expected error when no history exists at or before block 3")
 	}
 }

@@ -47,7 +47,7 @@ func FundTestAccounts(ctx context.Context, kvs estorage.KVS, namespace string, a
 	}
 
 	// Latest snapshot (block 0 means latest on current KVS APIs).
-	reader, err := kvs.NewSnapshot(0)
+	reader, err := kvs.NewSnapshot(nil)
 	if err != nil {
 		return fmt.Errorf("fund test accounts: snapshot: %w", err)
 	}

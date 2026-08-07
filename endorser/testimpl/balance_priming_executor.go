@@ -60,7 +60,7 @@ func NewBalancePrimingExecutor(
 	blockContext *vm.BlockContext,
 ) (*BalancePrimingExecutor, error) {
 	// Begin a new reader to get snapshot isolation
-	reader, err := kvs.NewSnapshot(0)
+	reader, err := kvs.NewSnapshot(nil)
 	if err != nil {
 		return nil, err
 	}

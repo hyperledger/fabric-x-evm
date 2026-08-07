@@ -37,7 +37,7 @@ func NewExecutorWrapper(
 	blockContext *vm.BlockContext,
 ) (*ExecutorWrapper, error) {
 	// Begin a new reader to get snapshot isolation
-	reader, err := kvs.NewSnapshot(0)
+	reader, err := kvs.NewSnapshot(nil)
 	if err != nil {
 		return nil, err
 	}

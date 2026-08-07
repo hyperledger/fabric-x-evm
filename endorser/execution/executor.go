@@ -37,8 +37,12 @@ type EVMConfig struct {
 
 // KVSSnapshotter is the port execution uses to obtain a versioned read snapshot
 // of the world state. storage.LightKVS and storage.VersionedDBWrapper implement it.
+//
+// NewSnapshot takes an optional block height: nil means latest committed state;
+// a non-nil value means that exact height (including 0 for genesis / earliest).
+// Callers must not use 0 as a "latest" sentinel.
 type KVSSnapshotter interface {
-	NewSnapshot(blockNumber uint64) (ReadStore, error)
+	NewSnapshot(blockNumber *uint64) (ReadStore, error)
 }
 
 // EVMEngine manages EVM execution and state reads for an endorser.
@@ -154,30 +158,41 @@ func (e *EVMEngine) NonceAt(_ context.Context, account common.Address, blockNumb
 	return snap.GetNonce(account), nil
 }
 
-// resolveStateBlockNumber converts a state-query block number to the KVSSnapshotter
-// convention (0 = latest). nil and any negative value (an unresolved go-ethereum block-tag
-// sentinel) resolve to 0/latest rather than corrupting via *big.Int.Uint64()'s absolute-value
-// conversion.
-func resolveStateBlockNumber(blockNumber *big.Int) uint64 {
+// resolveStateBlockRef converts a state-query block number to the KVSSnapshotter
+// argument form. nil and any negative value (an unresolved go-ethereum block-tag
+// sentinel) resolve to nil/latest rather than corrupting via *big.Int.Uint64()'s
+// absolute-value conversion. A non-negative value (including 0 for earliest) is
+// passed through as an explicit height pointer.
+func resolveStateBlockRef(blockNumber *big.Int) *uint64 {
 	if blockNumber == nil || blockNumber.Sign() < 0 {
+		return nil
+	}
+	n := blockNumber.Uint64()
+	return &n
+}
+
+// stateDBBlockNum is the uint64 passed into NewStateDB for journal metadata.
+// Latest (nil) uses 0; an explicit height uses that height.
+func stateDBBlockNum(ref *uint64) uint64 {
+	if ref == nil {
 		return 0
 	}
-	return blockNumber.Uint64()
+	return *ref
 }
 
 // newExecutor creates a fresh executor with an isolated StateDB.
 // blockNumber selects the Fabric block height for the state snapshot (nil = latest).
 func (e *EVMEngine) newExecutor(blockNumber *big.Int) (*Executor, error) {
-	stateBlockNum := resolveStateBlockNumber(blockNumber)
+	ref := resolveStateBlockRef(blockNumber)
 
 	// Begin a new reader to get snapshot isolation
-	reader, err := e.kvs.NewSnapshot(stateBlockNum)
+	reader, err := e.kvs.NewSnapshot(ref)
 	if err != nil {
 		return nil, err
 	}
 
 	// Create StateDB with the reader
-	stateDB, err := NewStateDB(context.TODO(), reader, e.namespace, stateBlockNum, e.monotonicVersions)
+	stateDB, err := NewStateDB(context.TODO(), reader, e.namespace, stateDBBlockNum(ref), e.monotonicVersions)
 	if err != nil {
 		reader.Close()
 		return nil, err
@@ -195,19 +210,20 @@ func (e *EVMEngine) newExecutor(blockNumber *big.Int) (*Executor, error) {
 	return ex, nil
 }
 
-// newSnapshotAt returns an ExtendedStateDB over the state at the given Fabric block height (0 = latest).
+// newSnapshotAt returns an ExtendedStateDB over the state at the given Fabric block height.
+// nil blockNumber means latest; a non-negative value (including 0) is that exact height.
 // The caller must close the returned reader when done.
 func (e *EVMEngine) newSnapshotAt(blockNumber *big.Int) (ExtendedStateDB, ReadStore, error) {
-	blockNum := resolveStateBlockNumber(blockNumber)
+	ref := resolveStateBlockRef(blockNumber)
 
 	// Begin a new reader to get snapshot isolation
-	reader, err := e.kvs.NewSnapshot(blockNum)
+	reader, err := e.kvs.NewSnapshot(ref)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	// Create StateDB with the reader
-	stateDB, err := NewStateDB(context.TODO(), reader, e.namespace, blockNum, e.monotonicVersions)
+	stateDB, err := NewStateDB(context.TODO(), reader, e.namespace, stateDBBlockNum(ref), e.monotonicVersions)
 	if err != nil {
 		reader.Close()
 		return nil, nil, err

@@ -318,9 +318,9 @@ func TestParityTimeTravelReads(t *testing.T) {
 		}
 
 		// A snapshot pins its block: writes after it are invisible.
-		snap, err := kvs.NewSnapshot(2)
+		snap, err := kvs.NewSnapshot(BlockAt(2))
 		if err != nil {
-			t.Fatalf("NewSnapshot(2): %v", err)
+			t.Fatalf("NewSnapshot(BlockAt(2)): %v", err)
 		}
 		defer snap.Close()
 		rec, err := snap.Get("ns1", "k")

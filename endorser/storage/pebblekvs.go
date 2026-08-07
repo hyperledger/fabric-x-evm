@@ -298,26 +298,29 @@ func (p *PebbleKVS) latestVersion(fullKey string) (int64, error) {
 	return -1, it.Error()
 }
 
-// NewSnapshot returns a read view of the store as of blockNumber. A blockNumber
-// of 0 resolves to the latest committed block at call time, pinning the view so
-// later commits (higher block numbers) are naturally excluded. Any historical
-// block is serviceable; unlike LightKVS this never errors for an "evicted"
-// block.
-func (p *PebbleKVS) NewSnapshot(blockNumber uint64) (execution.ReadStore, error) {
-	if blockNumber == 0 {
-		blockNumber = p.currentBlock.Load()
+// NewSnapshot returns a read view of the store as of blockNumber. nil means the
+// latest committed block at call time, pinning the view so later commits
+// (higher block numbers) are naturally excluded. A non-nil value is that exact
+// height (including 0 for genesis). Any historical block is serviceable; unlike
+// LightKVS this never errors for an "evicted" block.
+func (p *PebbleKVS) NewSnapshot(blockNumber *uint64) (execution.ReadStore, error) {
+	var bn uint64
+	if blockNumber == nil {
+		bn = p.currentBlock.Load()
+	} else {
+		bn = *blockNumber
 	}
 	return &pebbleSnapshot{
 		db:        p.db,
-		lastBlock: blockNumber,
+		lastBlock: bn,
 	}, nil
 }
 
 // Get returns the record for (namespace, key) as of lastBlock, or nil if no
 // such record exists at or before that block. A lastBlock of 0 resolves to the
-// latest committed block.
+// latest committed block (legacy Get convention).
 func (p *PebbleKVS) Get(namespace, key string, lastBlock uint64) (*blocks.WriteRecord, error) {
-	r, err := p.NewSnapshot(lastBlock)
+	r, err := p.NewSnapshot(blockRefFromLastBlock(lastBlock))
 	if err != nil {
 		return nil, err
 	}

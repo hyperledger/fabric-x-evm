@@ -33,18 +33,22 @@ func NewVersionedDBWrapper(db *state.VersionedDB) *VersionedDBWrapper {
 
 // NewSnapshot creates a new snapshot of the state at the specified block number.
 // It returns a VersionedDBSnapshot that will use this block number for all Get operations,
-// providing snapshot isolation. If blockNumber is 0 it resolves to the latest committed block.
-func (w *VersionedDBWrapper) NewSnapshot(blockNumber uint64) (execution.ReadStore, error) {
-	if blockNumber == 0 {
+// providing snapshot isolation. nil means latest; a non-nil value is that exact height
+// (including 0 for genesis).
+func (w *VersionedDBWrapper) NewSnapshot(blockNumber *uint64) (execution.ReadStore, error) {
+	var bn uint64
+	if blockNumber == nil {
 		latest, err := w.db.BlockNumber(context.Background())
 		if err != nil {
 			return nil, err
 		}
-		blockNumber = latest
+		bn = latest
+	} else {
+		bn = *blockNumber
 	}
 	return &VersionedDBSnapshot{
 		db:          w.db,
-		blockNumber: blockNumber,
+		blockNumber: bn,
 	}, nil
 }
 

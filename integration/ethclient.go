@@ -108,13 +108,12 @@ func (e *EthClient) txForDeploy(ctx context.Context, nonceProvider NonceProvider
 	}
 
 	callData := append(e.bytecode, constructorInput...)
-	bn, bt := GetCtxForSigner()
 
 	// Determine the from address to get the nonce
 	from := crypto.PubkeyToAddress(e.priv.PublicKey)
 
-	// Get the nonce from the provider
-	nonce, err := nonceProvider.NonceAt(ctx, from, bn)
+	// Nonce from latest state (nil block number).
+	nonce, err := nonceProvider.NonceAt(ctx, from, nil)
 	if err != nil {
 		return nil, common.Address{}, err
 	}
@@ -128,7 +127,7 @@ func (e *EthClient) txForDeploy(ctx context.Context, nonceProvider NonceProvider
 		// GasPrice: gasPrice,
 	})
 
-	ethSigner := types.MakeSigner(e.ethChainConfig, bn, bt)
+	ethSigner := types.NewEIP155Signer(e.ethChainConfig.ChainID)
 
 	signedTx, err := types.SignTx(tx, ethSigner, e.priv)
 	if err != nil {
@@ -165,13 +164,11 @@ func (e *EthClient) TxForCall(ctx context.Context, nonceProvider NonceProvider, 
 		return nil, err
 	}
 
-	bn, bt := GetCtxForSigner()
-
 	// Determine the from address to get the nonce
 	from := crypto.PubkeyToAddress(e.priv.PublicKey)
 
-	// Get the nonce from the provider
-	nonce, err := nonceProvider.NonceAt(ctx, from, bn)
+	// Nonce from latest state (nil block number).
+	nonce, err := nonceProvider.NonceAt(ctx, from, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -185,7 +182,7 @@ func (e *EthClient) TxForCall(ctx context.Context, nonceProvider NonceProvider, 
 		// GasPrice: gasPrice,
 	})
 
-	ethSigner := types.MakeSigner(e.ethChainConfig, bn, bt)
+	ethSigner := types.NewEIP155Signer(e.ethChainConfig.ChainID)
 
 	signedTx, err := types.SignTx(tx, ethSigner, e.priv)
 	if err != nil {
@@ -193,10 +190,4 @@ func (e *EthClient) TxForCall(ctx context.Context, nonceProvider NonceProvider, 
 	}
 
 	return signedTx, nil
-}
-
-// GetCtxForSigner returns a non-nil block number so types.MakeSigner picks an
-// EIP-155 signer; otherwise the gateway rejects the tx as unprotected.
-func GetCtxForSigner() (blockNumber *big.Int, blockTime uint64) {
-	return big.NewInt(0), 0
 }

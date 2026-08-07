@@ -35,10 +35,53 @@ func TestNewLightKVS(t *testing.T) {
 	}
 }
 
+// TestNewSnapshot_ExplicitZeroIsNotLatest pins issue #293: asking for block 0
+// must not silently resolve to the tip after the chain has moved on.
+func TestNewSnapshot_ExplicitZeroIsNotLatest(t *testing.T) {
+	kvs := NewLightKVS(4)
+	ns := "basic"
+	key := "acc:0x1:bal"
+
+	// Genesis empty, then write at block 1 so tip != genesis.
+	if err := kvs.Update([]KeyValueVersion{{
+		Key: ns + ":" + key, Value: []byte{0x2a}, BlockNum: 1, TxNum: 0, TxID: "tx1",
+	}}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	// Latest must see the write.
+	latest, err := kvs.NewSnapshot(nil)
+	if err != nil {
+		t.Fatalf("latest: %v", err)
+	}
+	rec, err := latest.Get(ns, key)
+	latest.Close()
+	if err != nil {
+		t.Fatalf("latest Get: %v", err)
+	}
+	if rec == nil || len(rec.Value) == 0 || rec.Value[0] != 0x2a {
+		t.Fatalf("latest value = %v, want 0x2a", rec)
+	}
+
+	// Explicit 0 must return the genesis snapshot (empty for this key).
+	gen, err := kvs.NewSnapshot(BlockAt(0))
+	if err != nil {
+		t.Fatalf("block 0: %v", err)
+	}
+	rec0, err := gen.Get(ns, key)
+	gen.Close()
+	if err != nil {
+		t.Fatalf("block 0 Get: %v", err)
+	}
+	if rec0 != nil {
+		t.Fatalf("block 0 still has key (value=%v); earliest must not equal latest", rec0.Value)
+	}
+}
+
 // TestNewSnapshot tests creating a new snapshot reader
 func TestNewSnapshot(t *testing.T) {
 	kvs := NewLightKVS(1)
-	reader, err := kvs.NewSnapshot(0)
+	reader, err := kvs.NewSnapshot(nil)
 	if err != nil {
 		t.Fatalf("NewSnapshot failed: %v", err)
 	}
@@ -88,7 +131,7 @@ func TestReaderGet(t *testing.T) {
 	}
 
 	// Create reader and test Get
-	reader, err := kvs.NewSnapshot(1)
+	reader, err := kvs.NewSnapshot(BlockAt(1))
 	if err != nil {
 		t.Fatalf("NewSnapshot failed: %v", err)
 	}
@@ -154,7 +197,7 @@ func TestReaderGetNilValue(t *testing.T) {
 		t.Fatalf("Update failed: %v", err)
 	}
 
-	reader, err := kvs.NewSnapshot(1)
+	reader, err := kvs.NewSnapshot(BlockAt(1))
 	if err != nil {
 		t.Fatalf("NewSnapshot failed: %v", err)
 	}
@@ -175,7 +218,7 @@ func TestReaderGetNilValue(t *testing.T) {
 // TestReaderClose tests closing a reader
 func TestReaderClose(t *testing.T) {
 	kvs := NewLightKVS(1)
-	reader, err := kvs.NewSnapshot(0)
+	reader, err := kvs.NewSnapshot(nil)
 	if err != nil {
 		t.Fatalf("NewSnapshot failed: %v", err)
 	}
@@ -412,7 +455,7 @@ func TestSnapshotIsolation(t *testing.T) {
 	}
 
 	// Create reader before update
-	reader1, err := kvs.NewSnapshot(1)
+	reader1, err := kvs.NewSnapshot(BlockAt(1))
 	if err != nil {
 		t.Fatalf("NewSnapshot failed: %v", err)
 	}
@@ -435,7 +478,7 @@ func TestSnapshotIsolation(t *testing.T) {
 	}
 
 	// Create reader after update
-	reader2, err := kvs.NewSnapshot(2)
+	reader2, err := kvs.NewSnapshot(BlockAt(2))
 	if err != nil {
 		t.Fatalf("NewSnapshot failed: %v", err)
 	}
@@ -488,7 +531,7 @@ func TestConcurrentReaders(t *testing.T) {
 	for i := 0; i < numReaders; i++ {
 		go func() {
 			defer wg.Done()
-			reader, err := kvs.NewSnapshot(1)
+			reader, err := kvs.NewSnapshot(BlockAt(1))
 			if err != nil {
 				t.Errorf("NewSnapshot failed: %v", err)
 				return
@@ -574,7 +617,7 @@ func TestHandle(t *testing.T) {
 	}
 
 	// Verify data was stored
-	reader, err := kvs.NewSnapshot(1)
+	reader, err := kvs.NewSnapshot(BlockAt(1))
 	if err != nil {
 		t.Fatalf("NewSnapshot failed: %v", err)
 	}
@@ -674,7 +717,7 @@ func TestHandleInvalidTransactions(t *testing.T) {
 		t.Fatalf("Handle failed: %v", err)
 	}
 
-	reader, err := kvs.NewSnapshot(1)
+	reader, err := kvs.NewSnapshot(BlockAt(1))
 	if err != nil {
 		t.Fatalf("NewSnapshot failed: %v", err)
 	}
@@ -739,7 +782,7 @@ func TestHandleDeletes(t *testing.T) {
 	}
 
 	// Verify key exists
-	reader1, err := kvs.NewSnapshot(1)
+	reader1, err := kvs.NewSnapshot(BlockAt(1))
 	if err != nil {
 		t.Fatalf("NewSnapshot failed: %v", err)
 	}
@@ -783,7 +826,7 @@ func TestHandleDeletes(t *testing.T) {
 	}
 
 	// Verify key is deleted
-	reader2, err := kvs.NewSnapshot(2)
+	reader2, err := kvs.NewSnapshot(BlockAt(2))
 	if err != nil {
 		t.Fatalf("NewSnapshot failed: %v", err)
 	}
@@ -1015,7 +1058,7 @@ func TestMultipleNamespaces(t *testing.T) {
 		t.Fatalf("Update failed: %v", err)
 	}
 
-	reader, err := kvs.NewSnapshot(1)
+	reader, err := kvs.NewSnapshot(BlockAt(1))
 	if err != nil {
 		t.Fatalf("NewSnapshot failed: %v", err)
 	}
@@ -1142,7 +1185,7 @@ func TestConcurrentReadersWithUpdates(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			// Request block 0 (current snapshot) to get whatever state exists at this moment
-			reader, err := kvs.NewSnapshot(0)
+			reader, err := kvs.NewSnapshot(nil)
 			if err != nil {
 				t.Errorf("NewSnapshot failed: %v", err)
 				return
@@ -1225,9 +1268,9 @@ func TestSnapshotByBlockNumber(t *testing.T) {
 	}
 
 	// Test getting current snapshot (block 0 means current)
-	readerCurrent, err := kvs.NewSnapshot(0)
+	readerCurrent, err := kvs.NewSnapshot(nil)
 	if err != nil {
-		t.Fatalf("NewSnapshot(0) failed: %v", err)
+		t.Fatalf("NewSnapshot(nil) failed: %v", err)
 	}
 	defer readerCurrent.Close()
 
@@ -1240,9 +1283,9 @@ func TestSnapshotByBlockNumber(t *testing.T) {
 	}
 
 	// Test getting snapshot by specific block number (current block)
-	reader2, err := kvs.NewSnapshot(2)
+	reader2, err := kvs.NewSnapshot(BlockAt(2))
 	if err != nil {
-		t.Fatalf("NewSnapshot(2) failed: %v", err)
+		t.Fatalf("NewSnapshot(BlockAt(2)) failed: %v", err)
 	}
 	defer reader2.Close()
 
@@ -1255,9 +1298,9 @@ func TestSnapshotByBlockNumber(t *testing.T) {
 	}
 
 	// Test getting snapshot from history (block 1 should still be in history)
-	reader1, err := kvs.NewSnapshot(1)
+	reader1, err := kvs.NewSnapshot(BlockAt(1))
 	if err != nil {
-		t.Fatalf("NewSnapshot(1) failed: %v", err)
+		t.Fatalf("NewSnapshot(BlockAt(1)) failed: %v", err)
 	}
 	defer reader1.Close()
 
@@ -1294,9 +1337,9 @@ func TestSnapshotHistoryEviction(t *testing.T) {
 	}
 
 	// Current snapshot should be block 4
-	readerCurrent, err := kvs.NewSnapshot(4)
+	readerCurrent, err := kvs.NewSnapshot(BlockAt(4))
 	if err != nil {
-		t.Fatalf("NewSnapshot(4) failed: %v", err)
+		t.Fatalf("NewSnapshot(BlockAt(4)) failed: %v", err)
 	}
 	defer readerCurrent.Close()
 
@@ -1309,9 +1352,9 @@ func TestSnapshotHistoryEviction(t *testing.T) {
 	}
 
 	// Block 3 should be in history (most recent old snapshot)
-	reader3, err := kvs.NewSnapshot(3)
+	reader3, err := kvs.NewSnapshot(BlockAt(3))
 	if err != nil {
-		t.Fatalf("NewSnapshot(3) failed: %v", err)
+		t.Fatalf("NewSnapshot(BlockAt(3)) failed: %v", err)
 	}
 	defer reader3.Close()
 
@@ -1324,9 +1367,9 @@ func TestSnapshotHistoryEviction(t *testing.T) {
 	}
 
 	// Block 2 should be in history (second most recent old snapshot)
-	reader2, err := kvs.NewSnapshot(2)
+	reader2, err := kvs.NewSnapshot(BlockAt(2))
 	if err != nil {
-		t.Fatalf("NewSnapshot(2) failed: %v", err)
+		t.Fatalf("NewSnapshot(BlockAt(2)) failed: %v", err)
 	}
 	defer reader2.Close()
 
@@ -1339,7 +1382,7 @@ func TestSnapshotHistoryEviction(t *testing.T) {
 	}
 
 	// Block 1 should have been evicted (history only keeps 2 snapshots)
-	_, err = kvs.NewSnapshot(1)
+	_, err = kvs.NewSnapshot(BlockAt(1))
 	if err == nil {
 		t.Error("Expected error when requesting evicted block 1, got nil")
 	}
@@ -1370,9 +1413,9 @@ func TestSnapshotNonExistentBlock(t *testing.T) {
 	}
 
 	// Try to get snapshot for block 99 (higher than current, should return current)
-	reader99, err := kvs.NewSnapshot(99)
+	reader99, err := kvs.NewSnapshot(BlockAt(99))
 	if err != nil {
-		t.Fatalf("NewSnapshot(99) should not fail when requesting future block: %v", err)
+		t.Fatalf("NewSnapshot(BlockAt(99)) should not fail when requesting future block: %v", err)
 	}
 	defer reader99.Close()
 
@@ -1386,9 +1429,9 @@ func TestSnapshotNonExistentBlock(t *testing.T) {
 	}
 
 	// Block 0 (current) should always work
-	reader, err := kvs.NewSnapshot(0)
+	reader, err := kvs.NewSnapshot(nil)
 	if err != nil {
-		t.Fatalf("NewSnapshot(0) should not fail: %v", err)
+		t.Fatalf("NewSnapshot(nil) should not fail: %v", err)
 	}
 	defer reader.Close()
 }
@@ -1414,9 +1457,9 @@ func TestSnapshotIsolationAcrossBlocks(t *testing.T) {
 	}
 
 	// Get snapshot for block 1
-	reader1, err := kvs.NewSnapshot(1)
+	reader1, err := kvs.NewSnapshot(BlockAt(1))
 	if err != nil {
-		t.Fatalf("NewSnapshot(1) failed: %v", err)
+		t.Fatalf("NewSnapshot(BlockAt(1)) failed: %v", err)
 	}
 	defer reader1.Close()
 
@@ -1437,9 +1480,9 @@ func TestSnapshotIsolationAcrossBlocks(t *testing.T) {
 	}
 
 	// Get snapshot for block 2
-	reader2, err := kvs.NewSnapshot(2)
+	reader2, err := kvs.NewSnapshot(BlockAt(2))
 	if err != nil {
-		t.Fatalf("NewSnapshot(2) failed: %v", err)
+		t.Fatalf("NewSnapshot(BlockAt(2)) failed: %v", err)
 	}
 	defer reader2.Close()
 

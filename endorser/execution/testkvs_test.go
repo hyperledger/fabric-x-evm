@@ -21,15 +21,18 @@ type testVersionedDBSnapshotter struct {
 	db *state.VersionedDB
 }
 
-func (w *testVersionedDBSnapshotter) NewSnapshot(blockNumber uint64) (ReadStore, error) {
-	if blockNumber == 0 {
+func (w *testVersionedDBSnapshotter) NewSnapshot(blockNumber *uint64) (ReadStore, error) {
+	var bn uint64
+	if blockNumber == nil {
 		latest, err := w.db.BlockNumber(context.Background())
 		if err != nil {
 			return nil, err
 		}
-		blockNumber = latest
+		bn = latest
+	} else {
+		bn = *blockNumber
 	}
-	return &testVersionedDBReader{db: w.db, blockNumber: blockNumber}, nil
+	return &testVersionedDBReader{db: w.db, blockNumber: bn}, nil
 }
 
 type testVersionedDBReader struct {

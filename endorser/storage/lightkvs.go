@@ -152,35 +152,35 @@ func NewLightKVS(historySize int) *LightKVS {
 
 // NewSnapshot starts a new read transaction and returns a Reader for the specified block number.
 // The Reader will see a consistent snapshot of the store at the requested block number.
-// If blockNumber is 0, it returns the current snapshot (latest state).
-// Otherwise, it first checks the current snapshot, then searches the history for a matching block number.
+// nil means latest; a non-nil value is that exact height (including 0 for genesis).
 // If no matching snapshot is found, it returns an error.
 //
 // Readers must call Close() when done to allow garbage collection of old snapshots.
-func (kvs *LightKVS) NewSnapshot(blockNumber uint64) (execution.ReadStore, error) {
-	// Load the current snapshot
+func (kvs *LightKVS) NewSnapshot(blockNumber *uint64) (execution.ReadStore, error) {
 	current := kvs.Current.Load()
 
-	// If blockNumber is 0, return the current snapshot (latest state)
-	if blockNumber == 0 {
+	// Latest tip.
+	if blockNumber == nil {
 		return &Reader{
 			Snapshot: current,
 			Kvs:      kvs,
 		}, nil
 	}
 
-	// Check if requested snapshot matches or is greater than the current block number
-	if blockNumber >= current.BlockNumber {
+	bn := *blockNumber
+
+	// At or past the tip: serve current (covers current height and "future" asks).
+	if bn >= current.BlockNumber {
 		return &Reader{
 			Snapshot: current,
 			Kvs:      kvs,
 		}, nil
 	}
 
-	// Search through history snapshots for the requested block number
+	// Historical: exact match only.
 	for i := range kvs.History {
 		snapshot := kvs.History[i].Load()
-		if snapshot != nil && snapshot.BlockNumber == blockNumber {
+		if snapshot != nil && snapshot.BlockNumber == bn {
 			return &Reader{
 				Snapshot: snapshot,
 				Kvs:      kvs,
@@ -188,18 +188,32 @@ func (kvs *LightKVS) NewSnapshot(blockNumber uint64) (execution.ReadStore, error
 		}
 	}
 
-	// No matching snapshot found
-	return nil, fmt.Errorf("snapshot not found for block number %d", blockNumber)
+	return nil, fmt.Errorf("snapshot not found for block number %d", bn)
 }
 
 func (kvs *LightKVS) Get(namespace, key string, lastBlock uint64) (*blocks.WriteRecord, error) {
-	r, err := kvs.NewSnapshot(lastBlock)
+	// lastBlock 0 keeps the historical Get convention of "latest".
+	r, err := kvs.NewSnapshot(blockRefFromLastBlock(lastBlock))
 	if err != nil {
 		return nil, err
 	}
 	defer r.Close()
 
 	return r.Get(namespace, key)
+}
+
+// blockRefFromLastBlock maps the older Get lastBlock convention (0 = latest)
+// onto NewSnapshot's pointer form.
+func blockRefFromLastBlock(lastBlock uint64) *uint64 {
+	if lastBlock == 0 {
+		return nil
+	}
+	return &lastBlock
+}
+
+// BlockAt returns a *uint64 for an explicit NewSnapshot height (including 0).
+func BlockAt(n uint64) *uint64 {
+	return &n
 }
 
 // Get retrieves the value and version for a key from the reader's snapshot.

@@ -120,6 +120,53 @@ func TestNewExecutor_BareStateDBWhenDebugDisabled(t *testing.T) {
 	}
 }
 
+// TestResolveStateBlockRef maps big.Int heights onto NewSnapshot args.
+func TestResolveStateBlockRef(t *testing.T) {
+	if got := resolveStateBlockRef(nil); got != nil {
+		t.Fatalf("nil -> %v, want nil (latest)", got)
+	}
+	if got := resolveStateBlockRef(big.NewInt(-5)); got != nil {
+		t.Fatalf("negative -> %v, want nil (latest)", got)
+	}
+	got0 := resolveStateBlockRef(big.NewInt(0))
+	if got0 == nil || *got0 != 0 {
+		t.Fatalf("0 -> %v, want pointer to 0 (earliest)", got0)
+	}
+	got7 := resolveStateBlockRef(big.NewInt(7))
+	if got7 == nil || *got7 != 7 {
+		t.Fatalf("7 -> %v, want pointer to 7", got7)
+	}
+	if stateDBBlockNum(nil) != 0 {
+		t.Fatalf("stateDBBlockNum(nil) want 0")
+	}
+	if stateDBBlockNum(got7) != 7 {
+		t.Fatalf("stateDBBlockNum(7) want 7")
+	}
+}
+
+// TestNewSnapshotAt_ZeroIsExplicitGenesis ensures earliest (block 0) is not remapped
+// to the tip after the chain has advanced (issue #293).
+func TestNewSnapshotAt_ZeroIsExplicitGenesis(t *testing.T) {
+	backend, err := state.NewWriteDB(Channel, "file:exec_zero_snapshot?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	kvs := &testVersionedDBSnapshotter{db: backend}
+	cfg := EVMConfig{ChainConfig: common.BuildChainConfig(4011)}
+	eng := NewEVMEngine(Namespace, kvs, cfg, false)
+
+	_, reader, err := eng.newSnapshotAt(big.NewInt(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+
+	got := reader.(*testVersionedDBReader).blockNumber
+	if got != 0 {
+		t.Errorf("newSnapshotAt(0) resolved to block %d, want 0", got)
+	}
+}
+
 // TestNewSnapshotAt_NegativeBlockNumberResolvesToLatest guards against callers upstream
 // handing this engine a negative *big.Int carrying an unresolved go-ethereum block-tag
 // sentinel (e.g. "earliest" == -5 in the pinned go-ethereum version). blockNumber.Uint64()

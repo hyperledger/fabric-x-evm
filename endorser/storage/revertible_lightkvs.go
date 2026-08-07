@@ -47,21 +47,30 @@ func NewRevertibleLightKVS(lightKVS *LightKVS) *RevertibleLightKVS {
 }
 
 // NewSnapshot starts a new read transaction and returns a Reader for the specified block number.
-// The Reader will see a consistent snapshot of the store at the requested block number.
-// If blockNumber is 0, it returns the current snapshot (latest state).
+// nil means latest; a non-nil value is that exact height (including 0 for genesis).
 //
 // Historical lookups search history by block number (exact match, else the latest
 // preserved snapshot at or before the request). Hop-by-distance is wrong when
 // empty blocks leave no Update entry: Fabric block numbers then skip, and a
 // distance-based index misses snapshots that are still in the ring.
 // Readers must call Close() when done to allow garbage collection of old snapshots.
-func (kvs *RevertibleLightKVS) NewSnapshot(blockNumber uint64) (execution.ReadStore, error) {
+func (kvs *RevertibleLightKVS) NewSnapshot(blockNumber *uint64) (execution.ReadStore, error) {
 	current := kvs.Current.Load()
 	count := int(kvs.NextIndex.Load())
 
-	if blockNumber == 0 || blockNumber >= current.BlockNumber {
+	if blockNumber == nil {
+		revertLogger.Debugf("RevertibleLightKVS.NewSnapshot() returning current snapshot: requested=latest returned=%d historyCount=%d",
+			current.BlockNumber, count)
+		return &Reader{
+			Snapshot: current,
+			Kvs:      kvs.LightKVS,
+		}, nil
+	}
+
+	bn := *blockNumber
+	if bn >= current.BlockNumber {
 		revertLogger.Debugf("RevertibleLightKVS.NewSnapshot() returning current snapshot: requested=%d returned=%d historyCount=%d",
-			blockNumber, current.BlockNumber, count)
+			bn, current.BlockNumber, count)
 		return &Reader{
 			Snapshot: current,
 			Kvs:      kvs.LightKVS,
@@ -76,29 +85,29 @@ func (kvs *RevertibleLightKVS) NewSnapshot(blockNumber uint64) (execution.ReadSt
 		if snap == nil {
 			continue
 		}
-		if snap.BlockNumber == blockNumber {
-			revertLogger.Debugf("RevertibleLightKVS.NewSnapshot() exact history hit: requested=%d", blockNumber)
+		if snap.BlockNumber == bn {
+			revertLogger.Debugf("RevertibleLightKVS.NewSnapshot() exact history hit: requested=%d", bn)
 			return &Reader{
 				Snapshot: snap,
 				Kvs:      kvs.LightKVS,
 			}, nil
 		}
-		if snap.BlockNumber < blockNumber && (best == nil || snap.BlockNumber > best.BlockNumber) {
+		if snap.BlockNumber < bn && (best == nil || snap.BlockNumber > best.BlockNumber) {
 			best = snap
 		}
 	}
 	if best != nil {
 		revertLogger.Debugf("RevertibleLightKVS.NewSnapshot() nearest history hit: requested=%d returned=%d",
-			blockNumber, best.BlockNumber)
+			bn, best.BlockNumber)
 		return &Reader{
 			Snapshot: best,
 			Kvs:      kvs.LightKVS,
 		}, nil
 	}
 
-	err := fmt.Errorf("snapshot not found for block number %d", blockNumber)
+	err := fmt.Errorf("snapshot not found for block number %d", bn)
 	revertLogger.Debugf("RevertibleLightKVS.NewSnapshot() returning error: requested=%d current=%d historyCount=%d err=%v",
-		blockNumber, current.BlockNumber, count, err)
+		bn, current.BlockNumber, count, err)
 	return nil, err
 }
 

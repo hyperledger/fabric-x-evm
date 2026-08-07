@@ -30,7 +30,7 @@ import (
 )
 
 type KVSSnapshotter interface {
-	NewSnapshot(blockNumber uint64) (execution.ReadStore, error)
+	NewSnapshot(blockNumber *uint64) (execution.ReadStore, error)
 }
 
 // StatePrimer provides a builder pattern for priming ledger state.
@@ -67,7 +67,7 @@ func NewStatePrimer(
 	monotonicVersions bool,
 ) (*StatePrimer, error) {
 	// Create a DualStateDB with both Fabric and Ethereum state tracking
-	store, err := db.NewSnapshot(0)
+	store, err := db.NewSnapshot(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -267,7 +267,7 @@ func (sp *StatePrimer) Writes() blocks.ReadWriteSet {
 // Reset creates a new DualStateDB, discarding all uncommitted changes.
 func (sp *StatePrimer) Reset() (*StatePrimer, error) {
 	sp.reader.Close() // just in case
-	reader, err := sp.kvs.NewSnapshot(0)
+	reader, err := sp.kvs.NewSnapshot(nil)
 	if err != nil {
 		return nil, err
 	}
