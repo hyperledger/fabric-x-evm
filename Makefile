@@ -69,11 +69,17 @@ ORDERER_IMAGE        ?= ghcr.io/hyperledger/fabric-x-orderer:1.0.0
 TEST_COMMITTER_IMAGE ?= docker.io/hyperledger/fabric-x-committer-test-node:1.0.3
 
 # Namespace init defaults
-NS      ?= basic
-NS1     ?= real
-NS2     ?= synthetic
-POLICY  ?= AND('Org1MSP.member')
-NETWORK ?= fabric-x
+NS          ?= basic
+NS1         ?= real
+NS2         ?= synthetic
+POLICY      ?= AND('Org1MSP.member')
+NETWORK     ?= fabric-x
+
+# Second namespace with a 2-of-2 policy, for the endorsement-policy integration
+# test (issue #302). Separate from NS/POLICY so the stricter policy here
+# doesn't affect the existing single-org test-x cases.
+NS_2OF2     ?= basic2of2
+POLICY_2OF2 ?= AND('Org1MSP.member','Org2MSP.member')
 
 .PHONY: init-x
 init-x:
@@ -140,6 +146,26 @@ start-x:
 		sleep 3; \
 	done; \
 	[ "$$ok" = 1 ] || { echo "Error: namespace setup failed after 5 attempts"; exit 1; }
+	@echo "Creating 2-of-2 namespace (retrying until the committer is ready)..."
+	@ok=0; for attempt in 1 2 3 4 5; do \
+		if $(DOCKER) run --rm --network $(NETWORK) \
+			--user "$(UID):$(GID)" \
+			--env "FX_NS=$(NS_2OF2)" \
+			--env "FX_POLICY=$(POLICY_2OF2)" \
+			-v "$(PWD)/testdata/fxconfig.yaml:/config/fxconfig.yaml:ro,Z" \
+			-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/peers/fxconfig.org1.example.com/tls:/tls:ro,Z" \
+			-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/users/channel_admin@org1.example.com/msp:/msp:ro,Z" \
+			-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/msp/tlscacerts/tlsca.org1.example.com-cert.pem:/org-tls-ca.pem:ro,Z" \
+			-v "$(PWD)/testdata/crypto/ordererOrganizations/orderer-org-1/msp/tlscacerts/tlsca.orderer-org-1-cert.pem:/orderer-tls-ca.pem:ro,Z" \
+			$(TOOLS_IMAGE) \
+			sh -c 'fxconfig namespace list --config=/config/fxconfig.yaml 2>/dev/null | grep -q ") $$FX_NS:" || \
+			fxconfig namespace create "$$FX_NS" --policy="$$FX_POLICY" --endorse --submit --wait --config=/config/fxconfig.yaml'; then \
+			ok=1; break; \
+		fi; \
+		echo "namespace setup attempt $$attempt failed; retrying in 3s..."; \
+		sleep 3; \
+	done; \
+	[ "$$ok" = 1 ] || { echo "Error: 2-of-2 namespace setup failed after 5 attempts"; exit 1; }
 
 .PHONY: test-x
 test-x:

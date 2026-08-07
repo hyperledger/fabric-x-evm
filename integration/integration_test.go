@@ -174,6 +174,40 @@ func TestFabricX(t *testing.T) {
 			tc.fn(t, th)
 		})
 	}
+
+	// Separate namespace/policy (fabx-2of2.yaml, issue #302): committing here
+	// requires signatures from both org1 and org2, so a successful commit is
+	// itself the proof the real backend accepted a 2-of-2 endorsement.
+	t.Run("two_of_two_endorsement_policy", func(t *testing.T) {
+		th, err := newFileConfigHarness(t, TestLogger{T: t}, evmConfig(""), "", "fabx-2of2.yaml", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { th.Stop() })
+		testTwoOfTwoEndorsement(t, th)
+	})
+}
+
+// testTwoOfTwoEndorsement drives a transaction through a harness whose
+// namespace policy requires both org1 and org2 to endorse. The real
+// committer only accepts the transaction if both endorsements are present,
+// so a successful, visible state change proves the real backend accepted a
+// 2-of-2 endorsement, not just that our gRPC plumbing works (already proven
+// in #245).
+func testTwoOfTwoEndorsement(t *testing.T, th *TestHarness) {
+	gw := th.Gateways[0]
+
+	ethClient, err := NewEthClient(contracts.HelloMetaData, th.ethChainConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	addr := deploySmartContract(t, gw, ethClient)
+
+	greeting := "Hello from a 2-of-2 endorsed transaction"
+	callSmartContract(t, ethClient, addr, gw, "setGreeting", greeting)
+
+	querySmartContractExpect(t, ethClient, addr, th, greeting, "greet")
 }
 
 // evmConfig returns an empty EVMConfig, or, if the name of an ethereum fork

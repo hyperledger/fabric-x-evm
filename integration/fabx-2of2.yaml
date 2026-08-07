@@ -1,0 +1,81 @@
+# Test configuration for the 2-of-2 endorsement policy integration test
+# (issue #302). Paths are relative to the integration/ package directory
+# (where go test runs). Uses a separate namespace from fabx.yaml so the
+# stricter policy here doesn't affect the existing single-org test cases.
+
+network:
+  protocol: fabric-x
+  channel: mychannel
+  namespace: basic2of2
+  ns-version: "1.0"
+  chain-id: 4011
+
+logging:
+  spec: info
+
+gateway:
+  listen: "0.0.0.0:8546"
+
+  identity:
+    msp-id: Org1MSP
+    msp-dir: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/msp
+
+  database:
+    connection-string: "file:gateway-2of2.db?mode=memory&cache=shared"
+
+  orderers:
+    - endpoint:
+        host: 127.0.0.1
+        port: 7050
+      tls:
+        mode: mtls
+        cert-path: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.crt
+        key-path: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.key
+        ca-cert-paths:
+          - ../testdata/crypto/ordererOrganizations/orderer-org-1/tlsca/tlsca.orderer-org-1-cert.pem
+
+  committer:
+    endpoint:
+      host: 127.0.0.1
+      port: 4001
+    tls:
+      mode: mtls
+      cert-path: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.crt
+      key-path: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.key
+      ca-cert-paths:
+        - ../testdata/crypto/peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem
+
+endorsers:
+  - name: org1
+    identity:
+      msp-id: Org1MSP
+      msp-dir: ../testdata/crypto/peerOrganizations/org1.example.com/peers/endorser.org1.example.com/msp
+    committer:
+      endpoint:
+        host: 127.0.0.1
+        port: 4001
+      tls:
+        mode: mtls
+        cert-path: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.crt
+        key-path: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.key
+        ca-cert-paths:
+          - ../testdata/crypto/peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem
+    database:
+      database: memory
+
+  - name: org2
+    identity:
+      msp-id: Org2MSP
+      msp-dir: ../testdata/crypto/peerOrganizations/org2.example.com/peers/endorser.org2.example.com/msp
+    committer:
+      endpoint:
+        host: 127.0.0.1
+        port: 4001
+      tls:
+        mode: mtls
+        cert-path: ../testdata/crypto/peerOrganizations/org2.example.com/users/User1@org2.example.com/tls/client.crt
+        key-path: ../testdata/crypto/peerOrganizations/org2.example.com/users/User1@org2.example.com/tls/client.key
+        ca-cert-paths:
+          - ../testdata/crypto/peerOrganizations/org2.example.com/tlsca/tlsca.org2.example.com-cert.pem
+    database:
+      database: memory
