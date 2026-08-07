@@ -16,7 +16,7 @@ jobs:
   quick-tests:
     name: Quick Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 35
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -45,7 +45,7 @@ jobs:
     name: OZ Hardhat Compatibility
     runs-on: ubuntu-latest
     # Full suite needs headroom once more tests get past early failures.
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -90,7 +90,9 @@ jobs:
 
       - name: Record PR number for report comment
         if: always() && github.event_name == 'pull_request'
-        run: echo "${{ github.event.pull_request.number }}" > oz-baseline-artifact/pr_number.txt
+        run: |
+          mkdir -p oz-baseline-artifact
+          echo "${{ github.event.pull_request.number }}" > oz-baseline-artifact/pr_number.txt
 
       - name: Upload OZ baseline report artifact
         if: always()
