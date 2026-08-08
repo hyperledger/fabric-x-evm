@@ -23,6 +23,7 @@ import (
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/tests"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
+	"github.com/hyperledger/fabric-x-evm/gateway/core"
 	"github.com/hyperledger/fabric-x-evm/integration/contracts"
 	"google.golang.org/grpc/grpclog"
 	_ "modernc.org/sqlite"
@@ -175,29 +176,29 @@ func TestFabricX(t *testing.T) {
 		})
 	}
 
-	// Separate namespace/policy (fabx-2of2.yaml, issue #302): committing here
-	// requires signatures from both org1 and org2, so a successful commit is
-	// itself the proof the real backend accepted a 2-of-2 endorsement.
+	// A successful commit here needs signatures from both org1 and org2.
 	t.Run("two_of_two_endorsement_policy", func(t *testing.T) {
-		th, err := newFileConfigHarness(t, TestLogger{T: t}, evmConfig(""), "", "fabx-2of2.yaml", nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { th.Stop() })
-		testTwoOfTwoEndorsement(t, th)
+		testTwoOfTwoEndorsementGRPC(t)
 	})
 }
 
-// testTwoOfTwoEndorsement drives a transaction through a harness whose
-// namespace policy requires both org1 and org2 to endorse. The real
-// committer only accepts the transaction if both endorsements are present,
-// so a successful, visible state change proves the real backend accepted a
-// 2-of-2 endorsement, not just that our gRPC plumbing works (already proven
-// in #245).
-func testTwoOfTwoEndorsement(t *testing.T, th *TestHarness) {
-	gw := th.Gateways[0]
+// testTwoOfTwoEndorsementGRPC runs org1's and org2's endorsers as separate,
+// real processes reached over gRPC, and points a split-deployment gateway at
+// both.
+func testTwoOfTwoEndorsementGRPC(t *testing.T) {
+	org1Addr := startEndorserGRPCServer(t, "fabx-2of2-org1.yaml", []string{
+		"../testdata/crypto/peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem",
+		"../testdata/crypto/peerOrganizations/org2.example.com/tlsca/tlsca.org2.example.com-cert.pem",
+	})
+	org2Addr := startEndorserGRPCServer(t, "fabx-2of2-org2.yaml", []string{
+		"../testdata/crypto/peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem",
+		"../testdata/crypto/peerOrganizations/org2.example.com/tlsca/tlsca.org2.example.com-cert.pem",
+	})
 
-	ethClient, err := NewEthClient(contracts.HelloMetaData, th.ethChainConfig)
+	application, chainConfig := buildSplitGatewayApp(t, "fabx-2of2.yaml", org1Addr, org2Addr)
+	gw := application.Gateway()
+
+	ethClient, err := NewEthClient(contracts.HelloMetaData, chainConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +208,7 @@ func testTwoOfTwoEndorsement(t *testing.T, th *TestHarness) {
 	greeting := "Hello from a 2-of-2 endorsed transaction"
 	callSmartContract(t, ethClient, addr, gw, "setGreeting", greeting)
 
-	querySmartContractExpect(t, ethClient, addr, th, greeting, "greet")
+	querySmartContractExpect(t, ethClient, addr, &TestHarness{Gateways: []*core.Gateway{gw}}, greeting, "greet")
 }
 
 // evmConfig returns an empty EVMConfig, or, if the name of an ethereum fork

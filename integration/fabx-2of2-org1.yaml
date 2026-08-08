@@ -1,0 +1,31 @@
+# Standalone org1 endorser config. Paths are relative to the integration/
+# package directory (where go test runs). No gateway section: this process
+# is dialed as a remote endorser over gRPC, not run as a combined app.
+
+network:
+  protocol: fabric-x
+  channel: mychannel
+  namespace: basic2of2
+  ns-version: "1.0"
+  chain-id: 4011
+
+logging:
+  spec: info
+
+endorsers:
+  - name: org1
+    identity:
+      msp-id: Org1MSP
+      msp-dir: ../testdata/crypto/peerOrganizations/org1.example.com/peers/endorser.org1.example.com/msp
+    committer:
+      endpoint:
+        host: 127.0.0.1
+        port: 4001
+      tls:
+        mode: mtls
+        cert-path: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.crt
+        key-path: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.key
+        ca-cert-paths:
+          - ../testdata/crypto/peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem
+    database:
+      database: memory

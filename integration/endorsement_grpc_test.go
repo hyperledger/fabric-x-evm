@@ -290,6 +290,18 @@ func TestGRPCEndorsement_Parity(t *testing.T) {
 		t.Errorf("Execute (first) payload parity: direct=%x wire=%x",
 			directResp1.GetResponse().GetPayload(), wireResp1.GetResponse().GetPayload())
 	}
+	// The signed endorsed result, which the tx packager assembles the committed
+	// transaction from. It is a separate field from Response.Payload above, and
+	// an empty one still unmarshals cleanly - losing it yields a transaction
+	// that is ordered and then silently rejected, so assert it is both carried
+	// and identical.
+	if len(directResp1.GetPayload()) == 0 {
+		t.Error("Execute (first): in-process endorsed payload is empty")
+	}
+	if !bytes.Equal(directResp1.GetPayload(), wireResp1.GetPayload()) {
+		t.Errorf("Execute (first) endorsed payload parity: direct=%d bytes wire=%d bytes",
+			len(directResp1.GetPayload()), len(wireResp1.GetPayload()))
+	}
 
 	tx2 := signTxWrongChainID(t, directKey)
 	inv2 := newInvocation(t, tx2)

@@ -124,8 +124,12 @@ func callMsg(req *endorsementpb.CallRequest) *ethereum.CallMsg {
 }
 
 // executeResponse maps the endorser's ProposalResponse onto the wire response.
+//
+// ReadWriteSet carries the endorsed result the endorser signed over, which the
+// tx packager needs byte-exact to assemble a committable transaction. It is a
+// different field from Response.Payload, which carries the EVM return data.
 func executeResponse(pr *peer.ProposalResponse) *endorsementpb.ExecuteResponse {
-	out := &endorsementpb.ExecuteResponse{}
+	out := &endorsementpb.ExecuteResponse{ReadWriteSet: pr.GetPayload()}
 	if r := pr.GetResponse(); r != nil {
 		out.Status = r.Status
 		out.Message = r.Message

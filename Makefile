@@ -75,9 +75,8 @@ NS2         ?= synthetic
 POLICY      ?= AND('Org1MSP.member')
 NETWORK     ?= fabric-x
 
-# Second namespace with a 2-of-2 policy, for the endorsement-policy integration
-# test (issue #302). Separate from NS/POLICY so the stricter policy here
-# doesn't affect the existing single-org test-x cases.
+# Second namespace with a 2-of-2 policy. Separate from NS/POLICY so the
+# stricter policy here doesn't affect the existing single-org test-x cases.
 NS_2OF2     ?= basic2of2
 POLICY_2OF2 ?= AND('Org1MSP.member','Org2MSP.member')
 

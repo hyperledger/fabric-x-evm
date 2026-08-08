@@ -115,9 +115,11 @@ func invocationMsg(inv endorsement.Invocation) *endorsementpb.Invocation {
 }
 
 // proposalResponse maps the wire response onto the ProposalResponse the gateway
-// packages.
+// packages. The top-level Payload is the signed endorsed result the tx packager
+// assembles the transaction from; Response.Payload is the EVM return data.
 func proposalResponse(resp *endorsementpb.ExecuteResponse) *peer.ProposalResponse {
 	return &peer.ProposalResponse{
+		Payload:     resp.GetReadWriteSet(),
 		Response:    &peer.Response{Status: resp.GetStatus(), Message: resp.GetMessage(), Payload: resp.GetPayload()},
 		Endorsement: &peer.Endorsement{Endorser: resp.GetEndorserId(), Signature: resp.GetSignature()},
 	}
