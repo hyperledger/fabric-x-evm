@@ -84,12 +84,11 @@ func (c *Chain) Handle(ctx context.Context, b blocks.Block) error {
 	} else {
 		ebl.StateRoot = types.EmptyRootHash[:]
 	}
-	c.prevHash = common.BytesToHash(ebl.BlockHash)
-
 	if err := c.Store.InsertBlock(ctx, ebl); err != nil {
 		return err
 	}
 
+	c.prevHash = common.BytesToHash(ebl.BlockHash)
 	return nil
 }
 

@@ -129,3 +129,54 @@ func TestHandle_ReprocessingSameBlockKeepsIndexesAndTrieStable(t *testing.T) {
 	require.Len(t, logEntries, 1)
 	require.Equal(t, ethTx.Hash().Bytes(), logEntries[0].TxHash)
 }
+
+// TestHandle_PrevHashNotAdvancedOnInsertFailure is the regression test for #304.
+// Before the fix, Handle advanced c.prevHash before the SQL commit, so a failed
+// InsertBlock left the in-memory tip pointing at a never-persisted block.
+func TestHandle_PrevHashNotAdvancedOnInsertFailure(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "gateway.db")
+
+	chain, err := NewChain(dbPath, "", false)
+	require.NoError(t, err)
+	defer chain.Close()
+
+	key, err := crypto.GenerateKey()
+	require.NoError(t, err)
+	to := common.HexToAddress("0x2222222222222222222222222222222222222222")
+
+	// Seed the chain with a valid block 1.
+	ethTx := createTestEthTx(t, key, to, big.NewInt(1))
+	txBytes, err := ethTx.MarshalBinary()
+	require.NoError(t, err)
+
+	block1 := blocks.Block{
+		Number:     1,
+		Hash:       resilienceHash(0x01),
+		ParentHash: resilienceHash(0x00),
+		Timestamp:  1000,
+		Transactions: []blocks.Transaction{{
+			ID:        "fabric-tx-1",
+			Number:    0,
+			Valid:     true,
+			InputArgs: [][]byte{{byte(fc.ProposalTypeEVMTx)}, txBytes},
+		}},
+	}
+	require.NoError(t, chain.Handle(t.Context(), block1))
+	prevHashAfterBlock1 := chain.prevHash
+
+	// Close the DB so the next Handle call fails inside InsertBlock.
+	require.NoError(t, chain.db.Close())
+
+	block2 := blocks.Block{
+		Number:     2,
+		Hash:       resilienceHash(0x02),
+		ParentHash: resilienceHash(0x01),
+		Timestamp:  2000,
+	}
+	err = chain.Handle(t.Context(), block2)
+	require.Error(t, err, "Handle must fail when DB is closed")
+
+	// Key assertion: prevHash must still point at block 1.
+	require.Equal(t, prevHashAfterBlock1, chain.prevHash,
+		"prevHash must not advance when InsertBlock fails")
+}
