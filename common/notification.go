@@ -7,10 +7,10 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package common
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 
-	"github.com/ethereum/go-ethereum/common"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-common/api/applicationpb"
@@ -19,18 +19,6 @@ import (
 	"github.com/hyperledger/fabric-x-sdk/notification"
 	"google.golang.org/protobuf/proto"
 )
-
-// TxNotification contains data about a committed Ethereum transaction, reconstructed
-// from a blocks.Transaction for use by components that need EVM-specific fields
-// (e.g. EthTxHash, EthTxBytes) beyond what blocks.Transaction provides.
-type TxNotification struct {
-	BlockNum   uint64
-	TxNum      uint64
-	FabricTxID string
-	Status     committerpb.Status
-	EthTxBytes []byte
-	EthTxHash  common.Hash
-}
 
 var notifLogger = flogging.MustGetLogger("evm.notification")
 
@@ -71,6 +59,11 @@ func (d *AllTxBatchDispatcher) HandleBatch(ctx context.Context, batch notificati
 		var input peer.ChaincodeInput
 		if err := proto.Unmarshal(event.Metadata[0], &input); err != nil || len(input.Args) < 2 {
 			notifLogger.Debugf("Skipping tx %s: cannot extract eth tx from metadata", event.TxID)
+			continue
+		}
+
+		if !bytes.Equal(input.Args[0], []byte{byte(ProposalTypeEVMTx)}) {
+			notifLogger.Debugf("Skipping tx %s: not an EVM transaction", event.TxID)
 			continue
 		}
 
