@@ -7,11 +7,10 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package common
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-common/api/applicationpb"
@@ -21,47 +20,28 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// TxNotification contains all data needed to process a transaction notification.
-// EthTxBytes and EthTxHash come from the cache; NsRWS and Events come from the AllTxStreamer event.
-type TxNotification struct {
-	// From notification service
-	BlockNum   uint64
-	TxNum      uint64
-	FabricTxID string
-	Status     committerpb.Status
-
-	// From cache
-	EthTxBytes []byte
-	EthTxHash  common.Hash // pre-computed; handlers that only need the hash skip UnmarshalBinary
-
-	// From AllTxStreamer (IncludeReadWriteSets must be true)
-	NsRWS  []blocks.NsReadWriteSet
-	Events []byte
-}
-
 var notifLogger = flogging.MustGetLogger("evm.notification")
 
-// TxHandler defines the interface for handlers that process transaction notifications in batches.
-// Both gateway and endorser components implement this to receive committed-transaction
-// notifications over the AllTxStreamer path (an alternative to the block-synchronizer path).
-type TxHandler interface {
-	HandleTx(ctx context.Context, notifs []TxNotification) error
+// BlockHandler defines the interface for handlers that
+// process committed blocks delivered via the AllTxStreamer path
+type BlockHandler interface {
+	Handle(ctx context.Context, b blocks.Block) error
 }
 
 // AllTxBatchDispatcher implements notification.AllTxHandler. It bridges AllTxStreamer
-// (which delivers every committed transaction) to the internal TxHandler chain.
+// (which delivers every committed transaction) to the internal BlockHandler chain.
 //
-// For each committed transaction event it:
-//  1. Extracts the Ethereum transaction bytes from the event metadata.
-//  2. Converts the event's Namespaces to NsRWS + Events.
-//  3. Builds a TxNotification and dispatches it to all registered TxHandlers.
+// For each committed block it:
+//  1. Filters out non-EVM transactions (those without Ethereum tx bytes in InputArgs).
+//  2. Assembles a blocks.Block from the remaining events.
+//  3. Dispatches the block to all registered BlockHandler.
 type AllTxBatchDispatcher struct {
-	handlers []TxHandler
+	handlers []BlockHandler
 }
 
-// NewAllTxBatchDispatcher creates a dispatcher that extracts EthTxBytes from event metadata
-// and dispatches them as TxNotifications to the handler chain.
-func NewAllTxBatchDispatcher(handlers ...TxHandler) *AllTxBatchDispatcher {
+// NewAllTxBatchDispatcher creates a dispatcher that filters EVM transactions from
+// AllTxStreamer events and dispatches them as a blocks.Block to the handler chain.
+func NewAllTxBatchDispatcher(handlers ...BlockHandler) *AllTxBatchDispatcher {
 	return &AllTxBatchDispatcher{handlers: handlers}
 }
 
@@ -69,66 +49,55 @@ func NewAllTxBatchDispatcher(handlers ...TxHandler) *AllTxBatchDispatcher {
 func (d *AllTxBatchDispatcher) HandleBatch(ctx context.Context, batch notification.AllTxBatch) error {
 	notifLogger.Debugf("[BLOCK] block=%d total_events=%d", batch.BlockNumber, len(batch.Events))
 
-	notifs := make([]TxNotification, 0, len(batch.Events))
+	txs := make([]blocks.Transaction, 0, len(batch.Events))
 	for _, event := range batch.Events {
-		// Extract Ethereum transaction from metadata
-		ethTxBytes, err := extractEthTxFromMetadata(event.Metadata)
-		if err != nil {
-			notifLogger.Debugf("Skipping tx %s: %v", event.TxID, err)
+		if len(event.Metadata) == 0 {
+			notifLogger.Debugf("Skipping tx %s: no metadata", event.TxID)
 			continue
 		}
 
-		var ethTx types.Transaction
-		if err := ethTx.UnmarshalBinary(ethTxBytes); err != nil {
-			return fmt.Errorf("unmarshal eth tx for %s: %w", event.TxID, err)
+		var input peer.ChaincodeInput
+		if err := proto.Unmarshal(event.Metadata[0], &input); err != nil || len(input.Args) < 2 {
+			notifLogger.Debugf("Skipping tx %s: cannot extract eth tx from metadata", event.TxID)
+			continue
+		}
+
+		if !bytes.Equal(input.Args[0], []byte{byte(ProposalTypeEVMTx)}) {
+			notifLogger.Debugf("Skipping tx %s: not an EVM transaction", event.TxID)
+			continue
 		}
 
 		nsrws, events := namespacesToNsRWS(event.Namespaces)
 
-		notifs = append(notifs, TxNotification{
-			BlockNum:   event.BlockNum,
-			TxNum:      uint64(event.TxNum),
-			FabricTxID: event.TxID,
-			Status:     event.Status,
-			EthTxBytes: ethTxBytes,
-			EthTxHash:  ethTx.Hash(),
-			NsRWS:      nsrws,
-			Events:     events,
+		txs = append(txs, blocks.Transaction{
+			ID:        event.TxID,
+			Number:    int64(event.TxNum),
+			InputArgs: input.Args,
+			Valid:     event.Status == committerpb.Status_COMMITTED,
+			Status:    int(event.Status),
+			Events:    events,
+			NsRWS:     nsrws,
 		})
 	}
 
-	if len(notifs) == 0 {
+	if len(txs) == 0 {
 		return nil
 	}
 
-	notifLogger.Debugf("[NOTIFY] block=%d dispatching=%d/%d txs", batch.BlockNumber, len(notifs), len(batch.Events))
+	notifLogger.Debugf("[NOTIFY] block=%d dispatching=%d/%d txs", batch.BlockNumber, len(txs), len(batch.Events))
+
+	b := blocks.Block{
+		Number:       batch.BlockNumber,
+		Transactions: txs,
+	}
 
 	for _, h := range d.handlers {
-		if err := h.HandleTx(ctx, notifs); err != nil {
+		if err := h.Handle(ctx, b); err != nil {
 			panic(fmt.Errorf("handler failed: %w", err))
 		}
 	}
 
 	return nil
-}
-
-// extractEthTxFromMetadata extracts the Ethereum transaction bytes from the event metadata.
-// Metadata[0] contains the marshaled ChaincodeInput, which has Args[1] = eth tx bytes.
-func extractEthTxFromMetadata(metadata [][]byte) ([]byte, error) {
-	if len(metadata) == 0 {
-		return nil, fmt.Errorf("no metadata")
-	}
-
-	var input peer.ChaincodeInput
-	if err := proto.Unmarshal(metadata[0], &input); err != nil {
-		return nil, fmt.Errorf("unmarshal input: %w", err)
-	}
-
-	if len(input.Args) < 2 {
-		return nil, fmt.Errorf("insufficient args: %d", len(input.Args))
-	}
-
-	return input.Args[1], nil
 }
 
 // namespacesToNsRWS converts applicationpb.TxNamespace slices (as delivered by

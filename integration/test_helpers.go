@@ -128,7 +128,7 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 
 // buildTestHarnessWithExtraHandler is like buildTestHarness but accepts an optional extra TxHandler
 // that will be inserted into the notification handler chain right before the cleanup handler.
-func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg config.Config, evmConfig execution.EVMConfig, primeDBPath string, bypass bool, endorsers []EndorserComponents, txQueue core.TxQueueInterface, useNotifications bool, extraHandler common.TxHandler) (*TestHarness, *network.Synchronizer, error) {
+func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg config.Config, evmConfig execution.EVMConfig, primeDBPath string, bypass bool, endorsers []EndorserComponents, txQueue core.TxQueueInterface, useNotifications bool, extraHandler common.BlockHandler) (*TestHarness, *network.Synchronizer, error) {
 	dbs := make([]storage.KVS, len(endorsers))
 	builders := make([]endorsement.Builder, len(endorsers))
 	ends := make([]eapi.Service, len(endorsers))
@@ -236,11 +236,11 @@ func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg confi
 			logger.Infof("Synchronizer stopped cleanly")
 
 			// Set up AllTxStreamer notification system
-			txHandlers := make([]common.TxHandler, 0, len(dbs)+2)
+			txHandlers := make([]common.BlockHandler, 0, len(dbs)+2)
 			for _, db := range dbs {
-				txHandlers = append(txHandlers, db.(common.TxHandler))
+				txHandlers = append(txHandlers, db.(common.BlockHandler))
 			}
-			txHandlers = append(txHandlers, gw.TxQueue.(common.TxHandler))
+			txHandlers = append(txHandlers, gw)
 			if extraHandler != nil {
 				txHandlers = append(txHandlers, extraHandler)
 			}
@@ -487,7 +487,7 @@ func newFileConfigHarness(t *testing.T, logger sdk.Logger, evmConfig execution.E
 // transaction completion tracking instead of block-based synchronization.
 // Uses MemoryStore and NotificationDispatcher for better performance in replay scenarios.
 // If extraHandler is non-nil, it will be inserted into the handler chain right before the cleanup handler.
-func NewFabricXTestHarnessWithNotifications(t *testing.T, logger sdk.Logger, evmConfig execution.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory, txQueue core.TxQueueInterface, extraHandler common.TxHandler, confFile string) (*TestHarness, error) {
+func NewFabricXTestHarnessWithNotifications(t *testing.T, logger sdk.Logger, evmConfig execution.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory, txQueue core.TxQueueInterface, extraHandler common.BlockHandler, confFile string) (*TestHarness, error) {
 	if primeDbPath != "" && !filepath.IsAbs(primeDbPath) {
 		if abs, err := filepath.Abs(primeDbPath); err == nil {
 			primeDbPath = abs

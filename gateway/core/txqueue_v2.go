@@ -15,8 +15,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
-	"github.com/hyperledger/fabric-x-common/api/committerpb"
-	cmn "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 )
 
@@ -412,49 +410,6 @@ func (q *TxQueueV2) Handle(ctx context.Context, block *domain.Block) error {
 
 		totalPromoted += q.completeUnlocked(txHash)
 	}
-
-	// Signal workers based on how many transactions were promoted
-	if totalPromoted == 1 {
-		// Only one transaction promoted - wake up one worker
-		q.cond.Signal()
-	} else if totalPromoted > 1 {
-		// Multiple transactions promoted - wake up all workers
-		q.cond.Broadcast()
-	}
-
-	return nil
-}
-
-// Stats returns statistics about processed transactions.
-// Returns (total transactions processed, invalid transactions).
-// HandleTx processes transaction notifications and marks transactions as complete.
-// This method implements the TxHandler interface for use with the notification system.
-func (q *TxQueueV2) HandleTx(ctx context.Context, notifs []cmn.TxNotification) error {
-	// Pre-extract transaction hashes and statuses outside the lock
-	numNotifs := len(notifs)
-	txHashes := make([]common.Hash, numNotifs)
-	statuses := make([]committerpb.Status, numNotifs)
-	for i, notif := range notifs {
-		txHashes[i] = notif.EthTxHash
-		statuses[i] = notif.Status
-	}
-
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	totalPromoted := 0
-
-	// Mark all transactions in the batch as complete
-	for i := 0; i < numNotifs; i++ {
-		q.total++
-		if statuses[i] != committerpb.Status_COMMITTED {
-			q.invalid++
-		}
-		totalPromoted += q.completeUnlocked(txHashes[i])
-	}
-
-	loggerV2.Debugf("[QUEUE] HandleTx: notifs=%d promoted=%d ready=%d waiting=%d pending=%d",
-		numNotifs, totalPromoted, q.readyList.Len(), q.waitingList.Len(), len(q.pendingMap))
 
 	// Signal workers based on how many transactions were promoted
 	if totalPromoted == 1 {

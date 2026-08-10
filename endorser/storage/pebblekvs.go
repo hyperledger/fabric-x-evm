@@ -17,8 +17,6 @@ import (
 	"github.com/cockroachdb/pebble"
 	gethpebble "github.com/ethereum/go-ethereum/ethdb/pebble"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
-	"github.com/hyperledger/fabric-x-common/api/committerpb"
-	"github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 )
@@ -347,47 +345,6 @@ func (p *PebbleKVS) Handle(ctx context.Context, b blocks.Block) error {
 	return p.commitBlock(b.Number, updates)
 }
 
-// HandleTx implements the notification write path: it extracts writes from a
-// batch of committed transaction notifications and applies them. Notifications
-// may span multiple blocks, so writes are grouped by block and each block is
-// committed atomically.
-//
-// Each call must carry all of a block's notifications. AllTxBatchDispatcher
-// satisfies this — the SDK delivers one AllTxBatch per block and the dispatcher
-// forwards each batch as one call — and the replay guard in commitBlock depends
-// on it: a block arriving in two calls would have its second half skipped as
-// already applied rather than merged.
-func (p *PebbleKVS) HandleTx(ctx context.Context, notifs []common.TxNotification) error {
-	if len(notifs) == 0 {
-		return nil
-	}
-
-	// Group by block so each block commits as one atomic batch, then apply
-	// blocks in ascending order.
-	byBlock := make(map[uint64][]KeyValueVersion)
-	var order []uint64
-	for _, notif := range notifs {
-		valid := notif.Status == committerpb.Status_COMMITTED
-		before := len(byBlock[notif.BlockNum])
-		updates := byBlock[notif.BlockNum]
-		collectWrites(&updates, notif.NsRWS, notif.BlockNum, notif.TxNum, notif.FabricTxID, valid)
-		if before == 0 && len(updates) > 0 {
-			order = append(order, notif.BlockNum)
-		}
-		byBlock[notif.BlockNum] = updates
-	}
-
-	// Apply in ascending block order so the persisted checkpoint advances
-	// monotonically.
-	sortUint64(order)
-	for _, blockNum := range order {
-		if err := p.Update(byBlock[blockNum]); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // BlockNumber returns the last committed block number.
 func (p *PebbleKVS) BlockNumber(ctx context.Context) (uint64, error) {
 	return p.currentBlock.Load(), nil
@@ -582,14 +539,4 @@ func decodeRecord(raw []byte) (*blocks.WriteRecord, error) {
 		IsDelete: flags&flagIsDelete != 0,
 		TxID:     txID,
 	}, nil
-}
-
-// sortUint64 sorts a small slice of block numbers ascending (insertion sort;
-// notification batches span very few distinct blocks).
-func sortUint64(s []uint64) {
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && s[j-1] > s[j]; j-- {
-			s[j-1], s[j] = s[j], s[j-1]
-		}
-	}
 }

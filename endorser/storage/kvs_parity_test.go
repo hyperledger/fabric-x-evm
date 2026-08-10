@@ -12,8 +12,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hyperledger/fabric-x-common/api/committerpb"
-	"github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 )
 
@@ -483,11 +481,10 @@ func TestPebbleVersionSemanticsMatchVersionedDB(t *testing.T) {
 	})
 }
 
-// TestPebbleHandleTxMultiBlock exercises the HandleTx notification path with
-// writes spanning two blocks delivered out of block order, covering PebbleKVS's
-// group-by-block + ascending-commit logic (LightKVS instead collapses a batch
-// into one snapshot, so this is a PebbleKVS-specific contract).
-func TestPebbleHandleTxMultiBlock(t *testing.T) {
+// TestPebbleHandleMultiBlock exercises the Handle path with writes spanning two
+// consecutive blocks, verifying that the checkpoint advances to 2 and that
+// time-travel reads resolve to each block's respective write.
+func TestPebbleHandleMultiBlock(t *testing.T) {
 	ctx := context.Background()
 	kvs, err := NewPebbleKVS(t.TempDir(), 8)
 	if err != nil {
@@ -495,22 +492,13 @@ func TestPebbleHandleTxMultiBlock(t *testing.T) {
 	}
 	defer kvs.Close()
 
-	mkNotif := func(block, tx uint64, id, val string) common.TxNotification {
-		return common.TxNotification{
-			BlockNum: block, TxNum: tx, FabricTxID: id,
-			Status: committerpb.Status_COMMITTED,
-			NsRWS: []blocks.NsReadWriteSet{{Namespace: "ns1", RWS: blocks.ReadWriteSet{
-				Writes: []blocks.KVWrite{{Key: "k", Value: []byte(val)}},
-			}}},
-		}
+	if err := kvs.Handle(ctx, mkBlock(1, 0, "b1", true, "ns1",
+		blocks.KVWrite{Key: "k", Value: []byte("block1")})); err != nil {
+		t.Fatalf("Handle block 1: %v", err)
 	}
-	// Deliver block 2 before block 1 to prove the store commits in ascending
-	// block order (the checkpoint must advance monotonically to 2).
-	if err := kvs.HandleTx(ctx, []common.TxNotification{
-		mkNotif(2, 0, "b2", "block2"),
-		mkNotif(1, 0, "b1", "block1"),
-	}); err != nil {
-		t.Fatalf("HandleTx: %v", err)
+	if err := kvs.Handle(ctx, mkBlock(2, 0, "b2", true, "ns1",
+		blocks.KVWrite{Key: "k", Value: []byte("block2")})); err != nil {
+		t.Fatalf("Handle block 2: %v", err)
 	}
 
 	if n, err := kvs.BlockNumber(ctx); err != nil || n != 2 {

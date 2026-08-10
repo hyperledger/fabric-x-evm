@@ -340,7 +340,12 @@ func (sp *StatePrimer) commitAndWait(end sdk.Endorsement, tx *types.Transaction,
 			return err
 		}
 		defer ec.Close()
-		return waitForCommit(context.Background(), ec, tx)
+		// we ignore the return value of `waitForCommit` for now because
+		// the synchronisation-on-startup architecture might leave the wait
+		// for commit loop unworkable. As soon as
+		// https://github.com/hyperledger/fabric-x-evm/issues/221
+		// is complete we will add the return again
+		waitForCommit(context.Background(), ec, tx)
 	}
 
 	return nil

@@ -26,13 +26,13 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/hyperledger/fabric-x-common/api/committerpb"
-	fxcommon "github.com/hyperledger/fabric-x-evm/common"
 	econf "github.com/hyperledger/fabric-x-evm/endorser/config"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
 	"github.com/hyperledger/fabric-x-evm/endorser/testimpl"
 	gwcore "github.com/hyperledger/fabric-x-evm/gateway/core"
 	gwtestimpl "github.com/hyperledger/fabric-x-evm/gateway/testimpl"
 	"github.com/hyperledger/fabric-x-evm/integration"
+	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/grpclog"
 )
@@ -48,16 +48,23 @@ var submitters = flag.Int("submitters", 4, "number of goroutines submitting tran
 var orderers = flag.Int("orderers", 8, "number of goroutines submitting transactions to the orderer (BatchSubmitter workers)")
 var outstanding = flag.Int("outstanding", 1000, "maximum number of outstanding transactions")
 
+// txCompletion carries the fields needed by the refill loop after a transaction commits.
+type txCompletion struct {
+	EthTxHash common.Hash
+	Valid     bool
+	Status    committerpb.Status
+}
+
 // TxCompletionTracker forwards all transaction completion notifications to a single channel.
-// It implements common.TxHandler to receive notifications from the notification system.
+// It implements common.BlockHandler to receive notifications from the notification system.
 type TxCompletionTracker struct {
 	mu           sync.Mutex
-	completionCh chan fxcommon.TxNotification
+	completionCh chan txCompletion
 	stopped      bool
 }
 
 // NewTxCompletionTracker creates a new tracker with a completion channel.
-func NewTxCompletionTracker(completionCh chan fxcommon.TxNotification) *TxCompletionTracker {
+func NewTxCompletionTracker(completionCh chan txCompletion) *TxCompletionTracker {
 	return &TxCompletionTracker{
 		completionCh: completionCh,
 	}
@@ -71,15 +78,27 @@ func (t *TxCompletionTracker) Stop() {
 	t.stopped = true
 }
 
-// HandleTx implements common.TxHandler. It receives notifications about completed transactions
-// and forwards them to the completion channel.
-func (t *TxCompletionTracker) HandleTx(ctx context.Context, notifs []fxcommon.TxNotification) error {
+// Handle implements common.BlockHandler. It receives committed transactions and forwards
+// them to the completion channel, reconstructing the Ethereum tx hash from InputArgs.
+func (t *TxCompletionTracker) Handle(ctx context.Context, b blocks.Block) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.stopped {
 		return nil
 	}
-	for _, notif := range notifs {
+	for _, tx := range b.Transactions {
+		var ethTx types.Transaction
+		if len(tx.InputArgs) < 2 {
+			continue
+		}
+		if err := ethTx.UnmarshalBinary(tx.InputArgs[1]); err != nil {
+			continue
+		}
+		notif := txCompletion{
+			EthTxHash: ethTx.Hash(),
+			Valid:     tx.Valid,
+			Status:    committerpb.Status(tx.Status),
+		}
 		select {
 		case t.completionCh <- notif:
 		default:
@@ -234,7 +253,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	factory := balancePrimingEndorserFactory(balancePriming)
 
 	// Create completion channel for transaction notifications
-	completionCh := make(chan fxcommon.TxNotification, numOutstandingTx*2)
+	completionCh := make(chan txCompletion, numOutstandingTx*2)
 
 	// Create completion tracker for async transaction monitoring
 	tracker := NewTxCompletionTracker(completionCh)
@@ -555,7 +574,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 			}
 
 			// Update success/fail counts
-			if notif.Status == committerpb.Status_COMMITTED {
+			if notif.Valid {
 				atomic.AddInt64(&successCount, 1)
 				if metrics != nil {
 					metrics.RecordTransactionCommitted()
