@@ -8,13 +8,16 @@ package api
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"math"
 	"math/big"
+	"strings"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	gethmath "github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/eth/filters"
 	"github.com/ethereum/go-ethereum/rpc"
@@ -196,9 +199,33 @@ func (api *EthAPI) GetCode(ctx context.Context, addr common.Address, block rpc.B
 	return result, nil
 }
 
+// decodeStorageKey left-pads a quantity-encoded storage slot to 32 bytes, as geth does.
+func decodeStorageKey(s string) (common.Hash, error) {
+	key := s
+	if strings.HasPrefix(key, "0x") || strings.HasPrefix(key, "0X") {
+		key = key[2:]
+	}
+	if len(key)%2 != 0 {
+		key = "0" + key
+	}
+	if len(key) > 2*common.HashLength {
+		return common.Hash{}, rpcerr.InvalidParams("storage key too long (want at most 32 bytes): %q", s)
+	}
+	b, err := hex.DecodeString(key)
+	if err != nil {
+		return common.Hash{}, rpcerr.InvalidParams("invalid hex in storage key: %q", s)
+	}
+	return common.BytesToHash(b), nil
+}
+
 // eth_getStorageAt
-func (api *EthAPI) GetStorageAt(ctx context.Context, addr common.Address, slot common.Hash, block rpc.BlockNumberOrHash) (hexutil.Bytes, error) {
-	logger.Debugf("EthAPI.GetStorageAt() called with addr=%s, slot=%s", addr.Hex(), slot.Hex())
+func (api *EthAPI) GetStorageAt(ctx context.Context, addr common.Address, hexSlot string, block rpc.BlockNumberOrHash) (hexutil.Bytes, error) {
+	logger.Debugf("EthAPI.GetStorageAt() called with addr=%s, slot=%s", addr.Hex(), hexSlot)
+	slot, err := decodeStorageKey(hexSlot)
+	if err != nil {
+		logger.Debugf("EthAPI.GetStorageAt() returning error: %v", err)
+		return nil, err
+	}
 	blockNum, err := api.blockNumberOrHashToBlockNumber(ctx, block)
 	if err != nil {
 		logger.Debugf("EthAPI.GetStorageAt() returning error: %v", err)
@@ -378,9 +405,18 @@ func (api *EthAPI) MaxPriorityFeePerGas(ctx context.Context) (*hexutil.Big, erro
 	return result, nil
 }
 
+// maxFeeHistory bounds eth_feeHistory's response, matching geth's default. Without it an
+// arbitrarily large blockCount would size the slices below straight into an OOM.
+const maxFeeHistory = 1024
+
 // eth_feeHistory
-func (api *EthAPI) FeeHistory(ctx context.Context, blockCount hexutil.Uint, lastBlock rpc.BlockNumber, rewardPercentiles []float64) (*FeeHistoryResult, error) {
+// blockCount is math.HexOrDecimal64, as in geth, so a decimal or unquoted count is accepted too.
+func (api *EthAPI) FeeHistory(ctx context.Context, blockCount gethmath.HexOrDecimal64, lastBlock rpc.BlockNumber, rewardPercentiles []float64) (*FeeHistoryResult, error) {
 	logger.Debugf("EthAPI.FeeHistory() called with blockCount=%d, lastBlock=%v", blockCount, lastBlock)
+	if blockCount > maxFeeHistory {
+		logger.Debugf("EthAPI.FeeHistory() truncating blockCount %d to %d", blockCount, maxFeeHistory)
+		blockCount = maxFeeHistory
+	}
 	zero := (*hexutil.Big)(big.NewInt(0))
 
 	baseFee := make([]*hexutil.Big, blockCount+1)
@@ -492,42 +528,89 @@ func domainLogToTypesLog(l domain.Log) *types.Log {
 	}
 }
 
+// hexArg type-asserts a call argument, so a non-string (say a JSON number) is invalid params rather than a panic.
+func hexArg(field string, v any) (string, error) {
+	s, ok := v.(string)
+	if !ok {
+		return "", rpcerr.InvalidParams("invalid %s: expected a hex string, got %T", field, v)
+	}
+	return s, nil
+}
+
+// quantityArg decodes an optional quantity-encoded call argument, absent and null alike yielding nil.
+func quantityArg(args map[string]any, field string) (*big.Int, error) {
+	v, ok := args[field]
+	if !ok || v == nil {
+		return nil, nil
+	}
+	s, err := hexArg(field, v)
+	if err != nil {
+		return nil, err
+	}
+	n, err := hexutil.DecodeBig(s)
+	if err != nil {
+		return nil, rpcerr.InvalidParams("invalid %s: %v", field, err)
+	}
+	return n, nil
+}
+
+// addressArg decodes an address strictly, as geth does: common.HexToAddress never fails, silently
+// zero-padding a short address and truncating a long one to a different address entirely.
+func addressArg(field string, v any) (common.Address, error) {
+	s, err := hexArg(field, v)
+	if err != nil {
+		return common.Address{}, err
+	}
+	var addr common.Address
+	if err := addr.UnmarshalText([]byte(s)); err != nil {
+		return common.Address{}, rpcerr.InvalidParams("invalid %s: %v", field, err)
+	}
+	return addr, nil
+}
+
 func argsToCallMsg(args map[string]any) (ethereum.CallMsg, error) {
 	var msg ethereum.CallMsg
 
 	if v, ok := args["from"]; ok && v != nil {
-		msg.From = common.HexToAddress(v.(string))
+		from, err := addressArg("from", v)
+		if err != nil {
+			return msg, err
+		}
+		msg.From = from
 	}
 
 	// "to" may be explicitly null for contract-creation calls.
 	if v, ok := args["to"]; ok && v != nil {
-		addr := common.HexToAddress(v.(string))
-		msg.To = &addr
+		to, err := addressArg("to", v)
+		if err != nil {
+			return msg, err
+		}
+		msg.To = &to
 	}
 
 	if v, ok := args["gas"]; ok && v != nil {
-		gas, err := hexutil.DecodeUint64(v.(string))
+		s, err := hexArg("gas", v)
+		if err != nil {
+			return msg, err
+		}
+		gas, err := hexutil.DecodeUint64(s)
 		if err != nil {
 			return msg, rpcerr.InvalidParams("invalid gas: %v", err)
 		}
 		msg.Gas = gas
 	}
 
-	if v, ok := args["gasPrice"]; ok && v != nil {
-		gp, err := hexutil.DecodeBig(v.(string))
-		if err != nil {
-			return msg, rpcerr.InvalidParams("invalid gasPrice: %v", err)
-		}
-		msg.GasPrice = gp
+	gasPrice, err := quantityArg(args, "gasPrice")
+	if err != nil {
+		return msg, err
 	}
+	msg.GasPrice = gasPrice
 
-	if v, ok := args["value"]; ok && v != nil {
-		val, err := hexutil.DecodeBig(v.(string))
-		if err != nil {
-			return msg, rpcerr.InvalidParams("invalid value: %v", err)
-		}
-		msg.Value = val
+	value, err := quantityArg(args, "value")
+	if err != nil {
+		return msg, err
 	}
+	msg.Value = value
 
 	// "input" is the canonical field; "data" is the legacy alias (used by some clients)
 	inputKey := "input"
@@ -537,7 +620,11 @@ func argsToCallMsg(args map[string]any) (ethereum.CallMsg, error) {
 		}
 	}
 	if v, ok := args[inputKey]; ok && v != nil {
-		data, err := hexutil.Decode(v.(string))
+		s, err := hexArg(inputKey, v)
+		if err != nil {
+			return msg, err
+		}
+		data, err := hexutil.Decode(s)
 		if err != nil {
 			return msg, rpcerr.InvalidParams("invalid %s: %v", inputKey, err)
 		}
@@ -545,20 +632,11 @@ func argsToCallMsg(args map[string]any) (ethereum.CallMsg, error) {
 	}
 
 	// EIP-1559 (optional, ignore safely if absent)
-	if v, ok := args["maxFeePerGas"]; ok && v != nil {
-		fee, err := hexutil.DecodeBig(v.(string))
-		if err != nil {
-			return msg, rpcerr.InvalidParams("invalid maxFeePerGas: %v", err)
-		}
-		msg.GasFeeCap = fee
+	if msg.GasFeeCap, err = quantityArg(args, "maxFeePerGas"); err != nil {
+		return msg, err
 	}
-
-	if v, ok := args["maxPriorityFeePerGas"]; ok && v != nil {
-		tip, err := hexutil.DecodeBig(v.(string))
-		if err != nil {
-			return msg, rpcerr.InvalidParams("invalid maxPriorityFeePerGas: %v", err)
-		}
-		msg.GasTipCap = tip
+	if msg.GasTipCap, err = quantityArg(args, "maxPriorityFeePerGas"); err != nil {
+		return msg, err
 	}
 
 	return msg, nil

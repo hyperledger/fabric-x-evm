@@ -355,6 +355,7 @@ type stubBackend struct {
 	balanceErr error
 	storage    []byte
 	storageErr error
+	lastKey    common.Hash // captured on StorageAt for assertion
 	code       []byte
 	codeErr    error
 	nonce      uint64
@@ -446,6 +447,7 @@ func (s *stubBackend) BalanceAt(ctx context.Context, account common.Address, blo
 	return big.NewInt(0), nil
 }
 func (s *stubBackend) StorageAt(ctx context.Context, account common.Address, key common.Hash, blockNumber *big.Int) ([]byte, error) {
+	s.lastKey = key
 	return s.storage, s.storageErr
 }
 func (s *stubBackend) CodeAt(ctx context.Context, account common.Address, blockNumber *big.Int) ([]byte, error) {
