@@ -30,7 +30,15 @@ func Dial(cfg common.ClientConfig) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build transport credentials: %w", err)
 	}
-	conn, err := grpc.NewClient(cfg.Endpoint.Address(), grpc.WithTransportCredentials(creds))
+	opts := []grpc.DialOption{grpc.WithTransportCredentials(creds)}
+	// Verify the endorser's certificate against its configured name rather than
+	// the dial address. Endorser certs are normally issued for a hostname, so
+	// without this any deployment reached by IP fails the handshake.
+	if cfg.TLS.ServerName != "" {
+		opts = append(opts, grpc.WithAuthority(cfg.TLS.ServerName))
+	}
+
+	conn, err := grpc.NewClient(cfg.Endpoint.Address(), opts...)
 	if err != nil {
 		return nil, fmt.Errorf("dial %s: %w", cfg.Endpoint.Address(), err)
 	}

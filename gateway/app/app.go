@@ -91,35 +91,30 @@ func newApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, enableT
 		return newSplitApp(ctx, cfg, gwSigner, logger, enableTestRPC, testAccountsPath)
 	}
 
-	// Create endorsers and their synchronizers.
-	endorsers := make([]eapi.Service, 0, len(cfg.Endorsers))
-	endorserSyncs := make([]*network.Synchronizer, 0, len(cfg.Endorsers))
-	var firstKVS estorage.KVS // Keep first endorser's KVS for test server
-	for i, ecfg := range cfg.Endorsers {
-		// Test RPC needs a large sequential history window (see testnode); production
-		// only needs a couple of snapshots for the synchronizer.
-		if enableTestRPC {
-			ecfg.Database.HistorySize = 16384
-		} else if ecfg.Database.HistorySize == 0 {
-			ecfg.Database.HistorySize = 2
-		}
-		eSigner, err := identity.SignerFromMSP(ecfg.Identity.MSPDir, ecfg.Identity.MspID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create signer: %w", err)
-		}
-
-		end, sync, kvs, err := eapp.NewEndorser(ecfg, cfg.Network, eSigner, logger, enableTestRPC)
-		if err != nil {
-			return nil, fmt.Errorf("endorser %d (%s): %w", i, ecfg.Name, err)
-		}
-		endorsers = append(endorsers, end)
-		endorserSyncs = append(endorserSyncs, sync)
-		if i == 0 {
-			firstKVS = kvs
-		}
+	if cfg.Endorser == nil {
+		return nil, fmt.Errorf("one of endorser or gateway.endorsers is required")
 	}
 
-	return buildApp(ctx, cfg, gwSigner, logger, endorsers, endorserSyncs, firstKVS, enableTestRPC, testAccountsPath)
+	// Create this process's own endorser and its synchronizer.
+	ecfg := *cfg.Endorser
+	// Test RPC needs a large sequential history window (see testnode); production
+	// only needs a couple of snapshots for the synchronizer.
+	if enableTestRPC {
+		ecfg.Database.HistorySize = 16384
+	} else if ecfg.Database.HistorySize == 0 {
+		ecfg.Database.HistorySize = 2
+	}
+	eSigner, err := identity.SignerFromMSP(ecfg.Identity.MSPDir, ecfg.Identity.MspID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create signer: %w", err)
+	}
+
+	end, sync, kvs, err := eapp.NewEndorser(ecfg, cfg.Network, eSigner, logger, enableTestRPC)
+	if err != nil {
+		return nil, fmt.Errorf("endorser (%s): %w", ecfg.Name, err)
+	}
+
+	return buildApp(ctx, cfg, gwSigner, logger, []eapi.Service{end}, []*network.Synchronizer{sync}, kvs, enableTestRPC, testAccountsPath)
 }
 
 // newSplitApp builds the gateway in split-deployment mode: every endorsers is

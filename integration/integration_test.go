@@ -137,7 +137,16 @@ func TestLocalX(t *testing.T) {
 	}
 }
 
-// TestFablo requires a Fablo network to be running.
+// fabloPeerCAs are the CAs each Fablo endorser accepts callers from, so that
+// the gateway can reach either org's endorser.
+var fabloPeerCAs = []string{
+	"../testdata/fablo/fablo-target/fabric-config/crypto-config/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt",
+	"../testdata/fablo/fablo-target/fabric-config/crypto-config/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/tls/ca.crt",
+}
+
+// TestFablo requires a Fablo network to be running. org1 and org2 each run as
+// a standalone endorser reached over gRPC, and the chaincode is committed with
+// AND('Org1MSP.member','Org2MSP.member'), so both must endorse.
 func TestFablo(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping Fablo test in short mode")
@@ -145,9 +154,11 @@ func TestFablo(t *testing.T) {
 	// silence GRPC logging
 	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr))
 
+	endorserConfigs := []string{"fablo-org1.yaml", "fablo-org2.yaml"}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			th, err := newFileConfigHarness(t, TestLogger{T: t}, evmConfig(tc.fork), tc.primeDbPath, "fablo.yaml", tc.overrides)
+			th, err := newSplitFileConfigHarness(t, TestLogger{T: t}, evmConfig(tc.fork), tc.primeDbPath,
+				"fablo.yaml", endorserConfigs, fabloPeerCAs, tc.overrides)
 			if err != nil {
 				t.Fatal(err)
 			}

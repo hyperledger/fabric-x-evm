@@ -59,13 +59,11 @@ func validConfig(t *testing.T) config.Config {
 			Committer: client,
 			Orderers:  []common.ClientConfig{client},
 		},
-		Endorsers: []endorsercfg.Endorser{
-			{
-				Name:      "org1",
-				Identity:  identity,
-				Committer: client,
-				Database:  endorsercfg.DB{Database: "sqlite", ConnString: "file:e.db"},
-			},
+		Endorser: &endorsercfg.Endorser{
+			Name:      "org1",
+			Identity:  identity,
+			Committer: client,
+			Database:  endorsercfg.DB{Database: "sqlite", ConnString: "file:e.db"},
 		},
 	}
 }
@@ -92,21 +90,24 @@ func TestConfigValidate(t *testing.T) {
 		{"no orderers", func(c *config.Config) { c.Gateway.Orderers = nil }, "gateway.orderers"},
 		{"orderer nil endpoint", func(c *config.Config) { c.Gateway.Orderers[0].Endpoint = nil }, "endpoint"},
 		{"orderer missing ca cert", func(c *config.Config) { c.Gateway.Orderers[0].TLS.CACertPaths = []string{"/no/ca"} }, "tls.ca-cert-paths"},
-		{"no endorsers", func(c *config.Config) { c.Endorsers = nil }, "endorsers"},
-		{"endorser missing name", func(c *config.Config) { c.Endorsers[0].Name = "" }, "name"},
-		{"endorser missing msp-dir", func(c *config.Config) { c.Endorsers[0].Identity.MSPDir = "" }, "msp-dir"},
+		{"neither endorser nor gateway.endorsers", func(c *config.Config) { c.Endorser = nil }, "one of endorser or gateway.endorsers"},
+		{"endorser missing name", func(c *config.Config) { c.Endorser.Name = "" }, "name"},
+		{"endorser missing msp-dir", func(c *config.Config) { c.Endorser.Identity.MSPDir = "" }, "msp-dir"},
 		{"endorser missing db", func(c *config.Config) {
-			c.Endorsers[0].Database.ConnString = ""
-			c.Endorsers[0].Database.Database = ""
+			c.Endorser.Database.ConnString = ""
+			c.Endorser.Database.Database = ""
 		}, "database"},
-		{"split mode: gateway.endorsers set, empty top-level endorsers is fine", func(c *config.Config) {
+		{"split mode: gateway.endorsers set, no embedded endorser is fine", func(c *config.Config) {
 			c.Gateway.Endorsers = []common.ClientConfig{c.Gateway.Committer}
-			c.Endorsers = nil
+			c.Endorser = nil
 		}, ""},
 		{"split mode: invalid gateway.endorsers entry reported", func(c *config.Config) {
 			c.Gateway.Endorsers = []common.ClientConfig{{}}
-			c.Endorsers = nil
+			c.Endorser = nil
 		}, "gateway.endorsers[0]"},
+		{"both endorser and gateway.endorsers set", func(c *config.Config) {
+			c.Gateway.Endorsers = []common.ClientConfig{c.Gateway.Committer}
+		}, "mutually exclusive"},
 	}
 
 	for _, tt := range tests {
@@ -124,8 +125,8 @@ func TestConfigValidateProtocolEndorserCompatibility(t *testing.T) {
 	t.Run("pebble with fabric protocol fails", func(t *testing.T) {
 		cfg := validConfig(t)
 		cfg.Network.Protocol = common.ProtocolFabric
-		cfg.Endorsers[0].Database.Database = endorsercfg.DBPebble
-		cfg.Endorsers[0].Database.ConnString = t.TempDir()
+		cfg.Endorser.Database.Database = endorsercfg.DBPebble
+		cfg.Endorser.Database.ConnString = t.TempDir()
 
 		err := cfg.Validate()
 		if err == nil {
@@ -135,31 +136,27 @@ func TestConfigValidateProtocolEndorserCompatibility(t *testing.T) {
 		if !strings.Contains(errStr, "pebble") {
 			t.Errorf("error should mention 'pebble', got: %v", err)
 		}
-		if !strings.Contains(errStr, "endorsers[0]") {
-			t.Errorf("error should mention 'endorsers[0]', got: %v", err)
+		if !strings.Contains(errStr, "endorser:") {
+			t.Errorf("error should mention 'endorser:', got: %v", err)
 		}
 	})
 
 	t.Run("pebble with fabric-x protocol passes", func(t *testing.T) {
 		cfg := validConfig(t)
 		cfg.Network.Protocol = common.ProtocolFabricX
-		cfg.Endorsers[0].Database.Database = endorsercfg.DBPebble
-		cfg.Endorsers[0].Database.ConnString = t.TempDir()
+		cfg.Endorser.Database.Database = endorsercfg.DBPebble
+		cfg.Endorser.Database.ConnString = t.TempDir()
 
 		if err := cfg.Validate(); err != nil {
 			t.Errorf("unexpected error for pebble with fabric-x: %v", err)
 		}
 	})
 
-	t.Run("invalid protocol reported once with multiple pebble endorsers", func(t *testing.T) {
+	t.Run("invalid protocol reported once", func(t *testing.T) {
 		cfg := validConfig(t)
 		cfg.Network.Protocol = "bogus"
-		// Add a second pebble endorser.
-		cfg.Endorsers = append(cfg.Endorsers, cfg.Endorsers[0])
-		cfg.Endorsers[0].Database.Database = endorsercfg.DBPebble
-		cfg.Endorsers[0].Database.ConnString = t.TempDir()
-		cfg.Endorsers[1].Database.Database = endorsercfg.DBPebble
-		cfg.Endorsers[1].Database.ConnString = t.TempDir()
+		cfg.Endorser.Database.Database = endorsercfg.DBPebble
+		cfg.Endorser.Database.ConnString = t.TempDir()
 
 		err := cfg.Validate()
 		if err == nil {

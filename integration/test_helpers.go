@@ -347,18 +347,21 @@ type EndorserComponents struct {
 // Service is the eapi.Service interface which both *ecore.Endorser and *testimpl.EndorserWrapper implement.
 type EndorserFactory func(t *testing.T, ecfg econf.Endorser, channel, namespace string, evmConfig execution.EVMConfig, protocol string) EndorserComponents
 
-// buildEndorsers creates endorsers using the provided factory function.
+// buildEndorsers creates the embedded endorser using the provided factory
+// function. Split-deployment configs have no embedded endorser and yield none.
 func buildEndorsers(t *testing.T, cfg config.Config, evmConfig execution.EVMConfig, factory EndorserFactory) []EndorserComponents {
-	endorsers := make([]EndorserComponents, len(cfg.Endorsers))
-	for i, ecfg := range cfg.Endorsers {
-		// LightKVS needs at least one history slot to record the pre-write snapshot on
-		// every Update; config files (fablo.yaml, fabx.yaml) don't set history_size.
-		if ecfg.Database.HistorySize == 0 {
-			ecfg.Database.HistorySize = 1
-		}
-		endorsers[i] = factory(t, ecfg, cfg.Network.Channel, cfg.Network.Namespace, evmConfig, cfg.Network.Protocol)
+	if cfg.Endorser == nil {
+		return nil
 	}
-	return endorsers
+	ecfg := *cfg.Endorser
+	// LightKVS needs at least one history slot to record the pre-write snapshot on
+	// every Update; config files (fablo.yaml, fabx.yaml) don't set history_size.
+	if ecfg.Database.HistorySize == 0 {
+		ecfg.Database.HistorySize = 1
+	}
+	return []EndorserComponents{
+		factory(t, ecfg, cfg.Network.Channel, cfg.Network.Namespace, evmConfig, cfg.Network.Protocol),
+	}
 }
 
 // defaultEndorserFactory creates regular endorsers without wrapping.
@@ -422,15 +425,13 @@ func NewLocalTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig e
 				Endpoint: peer,
 			},
 		},
-		Endorsers: []econf.Endorser{
-			{
-				Committer: common.ClientConfig{Endpoint: peer},
-				Name:      "endorser1",
-				Database: econf.DB{
-					Database:    "memory",
-					ConnString:  filepath.Join(dir, "endorser1.db"),
-					HistorySize: 1,
-				},
+		Endorser: &econf.Endorser{
+			Committer: common.ClientConfig{Endpoint: peer},
+			Name:      "endorser1",
+			Database: econf.DB{
+				Database:    "memory",
+				ConnString:  filepath.Join(dir, "endorser1.db"),
+				HistorySize: 1,
 			},
 		},
 	}
@@ -469,6 +470,50 @@ func newFileConfigHarness(t *testing.T, logger sdk.Logger, evmConfig execution.E
 	endorsers, err := prepareHarnessConfig(t, &cfg, &evmConfig, configOverrides, defaultEndorserFactory)
 	if err != nil {
 		return nil, err
+	}
+
+	th, sync, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false, endorsers, nil, false)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := app.WaitUntilSynced(t.Context(), sync, 10*time.Second); err != nil {
+		t.Fatal(err)
+	}
+
+	return th, nil
+}
+
+// newSplitFileConfigHarness is newFileConfigHarness for a split-deployment
+// gateway config: each endorser is built from its own config file, served over
+// mTLS gRPC, and reached by the gateway through a gRPC client rather than
+// directly.
+//
+// The endorsers still run in this process, so the harness keeps their KVS and
+// builder: the KVS is registered as a block handler like any embedded endorser
+// (which is what keeps their state current), and the builder is what the state
+// primer signs with. Only the gateway's own path to them is remote, which is
+// the part these tests exist to exercise.
+func newSplitFileConfigHarness(t *testing.T, logger sdk.Logger, evmConfig execution.EVMConfig, primeDbPath, gatewayConfigFile string, endorserConfigFiles []string, trustedCAs []string, configOverrides map[string]any) (*TestHarness, error) {
+	cfg, err := config.Load(gatewayConfigFile)
+	if err != nil {
+		return nil, fmt.Errorf("load config: %w", err)
+	}
+	if err := applyConfigOverrides(&cfg, configOverrides); err != nil {
+		return nil, err
+	}
+	if evmConfig.ChainConfig == nil {
+		evmConfig.ChainConfig = common.BuildChainConfig(cfg.Network.ChainID)
+	}
+	if len(cfg.Gateway.Endorsers) != len(endorserConfigFiles) {
+		return nil, fmt.Errorf("%s: %d gateway.endorsers entries but %d endorser config files",
+			gatewayConfigFile, len(cfg.Gateway.Endorsers), len(endorserConfigFiles))
+	}
+
+	endorsers := make([]EndorserComponents, len(endorserConfigFiles))
+	for i, ecfgFile := range endorserConfigFiles {
+		db, builder, client := startServedEndorser(t, ecfgFile, evmConfig, trustedCAs, &cfg.Gateway.Endorsers[i])
+		endorsers[i] = EndorserComponents{KVS: db, Builder: builder, Service: client}
 	}
 
 	th, sync, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false, endorsers, nil, false)

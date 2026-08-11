@@ -15,12 +15,19 @@ import (
 	endorser "github.com/hyperledger/fabric-x-evm/endorser/config"
 )
 
-// Config is the top-level configuration for the combined (embedded-endorsers) deployment.
+// Config is the top-level configuration for a gateway deployment.
+//
+// Exactly one of Endorser and Gateway.Endorsers is set: Endorser runs this
+// process's own endorser embedded, Gateway.Endorsers dials other processes'
+// endorsers over gRPC. Setting both is rejected.
 type Config struct {
-	Logging   Logging             `mapstructure:"logging"   yaml:"logging"`
-	Network   common.Network      `mapstructure:"network"   yaml:"network"`
-	Gateway   Gateway             `mapstructure:"gateway"   yaml:"gateway"`
-	Endorsers []endorser.Endorser `mapstructure:"endorsers" yaml:"endorsers"`
+	Logging Logging        `mapstructure:"logging"   yaml:"logging"`
+	Network common.Network `mapstructure:"network"   yaml:"network"`
+	Gateway Gateway        `mapstructure:"gateway"   yaml:"gateway"`
+
+	// Endorser configures this process's own, embedded endorser. A real
+	// deployment never embeds more than one.
+	Endorser *endorser.Endorser `mapstructure:"endorser" yaml:"endorser"`
 }
 
 // Logging is the config for the Fabric Logger
@@ -58,7 +65,7 @@ type Gateway struct {
 
 	// Endorsers, when set, switches to split deployment: the gateway dials each
 	// entry over gRPC (co-located endorsers included, addressed on localhost)
-	// instead of building embedded endorsers from the top-level Endorsers list.
+	// instead of embedding one from the top-level Endorser config.
 	Endorsers   []common.ClientConfig `mapstructure:"endorsers" yaml:"endorsers"`
 	SyncTimeout time.Duration         `mapstructure:"sync-timeout" yaml:"sync-timeout"`
 
@@ -104,24 +111,30 @@ func (cfg Config) Validate() error {
 		}
 	}
 
-	if len(cfg.Gateway.Endorsers) == 0 {
-		if len(cfg.Endorsers) == 0 {
-			errs = append(errs, errors.New("endorsers must have at least one entry"))
-		}
-		for i := range cfg.Endorsers {
-			errs = append(errs, cfg.Endorsers[i].Validate())
+	// The two deployment modes are mutually exclusive. Mixing an embedded
+	// endorser with remote ones is not supported, so say so rather than
+	// silently honouring one and ignoring the other.
+	switch {
+	case cfg.Endorser != nil && len(cfg.Gateway.Endorsers) > 0:
+		errs = append(errs, errors.New("endorser and gateway.endorsers are mutually exclusive: set endorser to embed this process's own endorser, or gateway.endorsers to dial remote ones"))
 
-			// Checked here rather than in Endorser.Validate because the backend and
-			// the protocol it has to agree with live at different config levels.
-			// Skipped when the protocol itself is already invalid, so one bad
-			// protocol value is not also reported once per endorser.
-			if protocolErr == nil {
-				if err := endorser.ValidateDatabaseProtocol(cfg.Endorsers[i].Database.Database, cfg.Network.Protocol); err != nil {
-					errs = append(errs, fmt.Errorf("endorsers[%d]: %w", i, err))
-				}
+	case cfg.Endorser == nil && len(cfg.Gateway.Endorsers) == 0:
+		errs = append(errs, errors.New("one of endorser or gateway.endorsers is required"))
+
+	case cfg.Endorser != nil:
+		errs = append(errs, cfg.Endorser.Validate())
+
+		// Checked here rather than in Endorser.Validate because the backend and
+		// the protocol it has to agree with live at different config levels.
+		// Skipped when the protocol itself is already invalid, so one bad
+		// protocol value is not also reported once per endorser.
+		if protocolErr == nil {
+			if err := endorser.ValidateDatabaseProtocol(cfg.Endorser.Database.Database, cfg.Network.Protocol); err != nil {
+				errs = append(errs, fmt.Errorf("endorser: %w", err))
 			}
 		}
-	} else {
+
+	default:
 		for i, e := range cfg.Gateway.Endorsers {
 			if err := e.Validate(); err != nil {
 				errs = append(errs, fmt.Errorf("gateway.endorsers[%d]: %w", i, err))

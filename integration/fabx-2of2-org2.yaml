@@ -12,24 +12,24 @@ network:
 logging:
   spec: info
 
-endorsers:
-  - name: org2
-    identity:
-      msp-id: Org2MSP
-      msp-dir: ../testdata/crypto/peerOrganizations/org2.example.com/peers/endorser.org2.example.com/msp
-    # Block sync runs against the single committer this test network provides,
-    # org1's, which is issued by and trusts only org1's TLS CA - hence org1
-    # material here. This is transport auth only; the endorsement identity
-    # the policy is evaluated against is Org2MSP above.
-    committer:
-      endpoint:
-        host: 127.0.0.1
-        port: 4001
-      tls:
-        mode: mtls
-        cert-path: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.crt
-        key-path: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.key
-        ca-cert-paths:
-          - ../testdata/crypto/peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem
-    database:
-      database: memory
+endorser:
+  name: org2
+  identity:
+    msp-id: Org2MSP
+    msp-dir: ../testdata/crypto/peerOrganizations/org2.example.com/peers/endorser.org2.example.com/msp
+  # Block sync runs against the single committer this test network provides,
+  # org1's, which is issued by and trusts only org1's TLS CA - hence org1
+  # material here. This is transport auth only; the endorsement identity
+  # the policy is evaluated against is Org2MSP above.
+  committer:
+    endpoint:
+      host: 127.0.0.1
+      port: 4001
+    tls:
+      mode: mtls
+      cert-path: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.crt
+      key-path: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.key
+      ca-cert-paths:
+        - ../testdata/crypto/peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem
+  database:
+    database: memory
