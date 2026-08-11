@@ -50,8 +50,6 @@ import (
 	"github.com/hyperledger/fabric-x-sdk/local"
 	"github.com/hyperledger/fabric-x-sdk/network"
 	nfab "github.com/hyperledger/fabric-x-sdk/network/fabric"
-	nfabx "github.com/hyperledger/fabric-x-sdk/network/fabricx"
-	"github.com/hyperledger/fabric-x-sdk/notification"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -117,18 +115,10 @@ func (th *TestHarness) PrimeStateFromJSON(ctx context.Context, jsonFilePath stri
 //   - cfg.Gateway.SignerMSPDir set → MSP-based signer; empty → local mock
 //   - cfg.Endorsers[0].MspDir set → FabricDeserializer; empty → local mock
 //
-// Sync goroutines are started in the background using ctx. The returned synchronizers
+// Sync goroutines are started in the background using ctx. The returned synchronizer
 // can be used by callers that need to wait for the initial sync to complete.
-//
-// If useNotifications is true, uses NotificationDispatcher + MemoryStore instead of
-// Synchronizer + Chain. This is intended for fabric-x performance testing.
-func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmConfig execution.EVMConfig, primeDBPath string, bypass bool, endorsers []EndorserComponents, txQueue core.TxQueueInterface, useNotifications bool) (*TestHarness, *network.Synchronizer, error) {
-	return buildTestHarnessWithExtraHandler(t, logger, cfg, evmConfig, primeDBPath, bypass, endorsers, txQueue, useNotifications, nil)
-}
-
-// buildTestHarnessWithExtraHandler is like buildTestHarness but accepts an optional extra TxHandler
-// that will be inserted into the notification handler chain right before the cleanup handler.
-func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg config.Config, evmConfig execution.EVMConfig, primeDBPath string, bypass bool, endorsers []EndorserComponents, txQueue core.TxQueueInterface, useNotifications bool, extraHandler common.BlockHandler) (*TestHarness, *network.Synchronizer, error) {
+// extraHandlers are appended to the handler chain after the gateway.
+func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmConfig execution.EVMConfig, primeDBPath string, bypass bool, endorsers []EndorserComponents, txQueue core.TxQueueInterface, extraHandlers ...blocks.BlockHandler) (*TestHarness, app.Synchronizer, error) {
 	dbs := make([]storage.KVS, len(endorsers))
 	builders := make([]endorsement.Builder, len(endorsers))
 	ends := make([]eapi.Service, len(endorsers))
@@ -152,9 +142,7 @@ func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg confi
 	if err != nil {
 		return nil, nil, err
 	}
-	if !useNotifications {
-		t.Cleanup(func() { chain.Close() })
-	}
+	t.Cleanup(func() { chain.Close() })
 
 	// Build submitters (one per worker for parallel submission)
 	orderers := make([]network.OrdererConf, len(cfg.Gateway.Orderers))
@@ -168,7 +156,7 @@ func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg confi
 	}
 
 	var submitters []core.Submitter
-	var sync *network.Synchronizer
+	var sync app.Synchronizer
 
 	if bypass {
 		// Use local submitters for bypass mode (no network communication)
@@ -196,80 +184,40 @@ func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg confi
 		return nil, nil, err
 	}
 
-	// Create synchronizer with handlers (endorsers, chain, and gateway) - only for non-bypass mode
+	// Create synchronizer with handlers — only for non-bypass mode (bypass uses a local
+	// in-process submitter and has no network peer to synchronize with).
+	//
+	// Handler order matters: each handler is called in sequence for every committed block.
+	//
+	//   1. Endorser KVS (dbs): update the read/write-set store used by the endorser for
+	//      MVCC validation. Must run first so that by the time chain and gateway see the
+	//      block the endorser's state already reflects it — this gives read-your-writes
+	//      semantics for the test RPC's synchronous eth_sendRawTransaction.
+	//
+	//   2. Chain: persist the block and its Ethereum transactions to the SQLite store and
+	//      update the state-root trie. Must run before the gateway so that eth_getBlockBy*
+	//      and eth_getTransactionReceipt are answerable the moment the gateway marks a
+	//      transaction complete.
+	//
+	//   3. Gateway: call TxQueue.Handle to mark any pending Ethereum transactions whose
+	//      Fabric tx-ID appears in this block as complete, unblocking waiting callers.
+	//
+	//   4. Extra handlers (e.g. TxCompletionTracker in perf tests): any caller-supplied
+	//      handlers that observe committed blocks for their own purposes.
 	if !bypass {
-		handlers := make([]blocks.BlockHandler, 0, len(dbs)+2)
+		handlers := make([]blocks.BlockHandler, 0, len(dbs)+2+len(extraHandlers))
 		for _, db := range dbs {
 			handlers = append(handlers, db)
 		}
-		// Add chain before gateway to ensure blocks are persisted before marking transactions complete
-		handlers = append(handlers, chain)
-		if !useNotifications {
-			handlers = append(handlers, gw)
-		}
+		handlers = append(handlers, chain, gw)
+		handlers = append(handlers, extraHandlers...)
 
-		sync, err = app.NewGatewaySynchronizer(cfg.Network.Protocol, chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, handlers...)
+		sync, err = app.NewGatewaySynchronizer(cfg.Network.Protocol, chain, cfg.Network.Channel, cfg.Network.Namespace, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, handlers...)
 		if err != nil {
 			return nil, nil, err
 		}
 
-		if useNotifications {
-			// HYBRID MODE: Use synchronizer to catch up, then switch to notifications
-			syncCtx, syncCancel := context.WithCancel(t.Context())
-			syncDone := make(chan struct{})
-			go func() {
-				defer close(syncDone)
-				if err := sync.Start(syncCtx); err != nil && syncCtx.Err() == nil {
-					logger.Errorf("synchronizer error during catchup: %v", err)
-				}
-			}()
-
-			logger.Infof("Waiting for synchronizer to catch up...")
-			if err := app.WaitUntilSynced(t.Context(), sync, 60*time.Second); err != nil {
-				t.Fatal(err)
-			}
-			logger.Infof("Synchronizer caught up - stopping and switching to notifications")
-
-			syncCancel()
-			<-syncDone
-			chain.Close()
-			logger.Infof("Synchronizer stopped cleanly")
-
-			// Set up AllTxStreamer notification system
-			txHandlers := make([]common.BlockHandler, 0, len(dbs)+2)
-			for _, db := range dbs {
-				txHandlers = append(txHandlers, db.(common.BlockHandler))
-			}
-			txHandlers = append(txHandlers, gw)
-			if extraHandler != nil {
-				txHandlers = append(txHandlers, extraHandler)
-			}
-
-			dispatcher := common.NewAllTxBatchDispatcher(txHandlers...)
-
-			if cfg.Network.Protocol == "fabric-x" || cfg.Network.Protocol == "" {
-				peer, err := nfabx.NewPeer(cfg.Gateway.Committer.ToPeerConf(), cfg.Network.Channel, gwSigner)
-				if err != nil {
-					return nil, nil, fmt.Errorf("create notification peer: %w", err)
-				}
-				streamer := notification.NewAllTxStreamer(peer, []notification.AllTxHandler{dispatcher}, logger)
-				go func() {
-					req := &notification.StreamAllRequest{
-						FilterNamespaces:     []string{cfg.Network.Namespace},
-						IncludeReadWriteSets: true,
-						IncludeMetadata:      true,
-					}
-					if err := streamer.Stream(t.Context(), req); err != nil && t.Context().Err() == nil {
-						logger.Errorf("AllTxStreamer error: %v", err)
-					}
-				}()
-				logger.Infof("AllTxStreamer active")
-			}
-
-			sync = nil
-		} else {
-			go func() error { return sync.Start(t.Context()) }()
-		}
+		go func() { _ = sync.Start(t.Context()) }()
 	}
 
 	// Start gateway worker pool
@@ -284,6 +232,7 @@ func buildTestHarnessWithExtraHandler(t *testing.T, logger sdk.Logger, cfg confi
 
 	th := &TestHarness{
 		Gateways:       []*core.Gateway{gw},
+		Chain:          chain,
 		endorsers:      ends,
 		ethChainConfig: evmConfig.ChainConfig,
 		Primer:         primer,
@@ -449,7 +398,7 @@ func NewLocalTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig e
 		peer.Port = nw.PeerPort
 	}
 
-	th, _, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, bypass, endorsers, nil, false)
+	th, _, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, bypass, endorsers, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -471,7 +420,7 @@ func newFileConfigHarness(t *testing.T, logger sdk.Logger, evmConfig execution.E
 		return nil, err
 	}
 
-	th, sync, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false, endorsers, nil, false)
+	th, sync, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false, endorsers, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -483,10 +432,16 @@ func newFileConfigHarness(t *testing.T, logger sdk.Logger, evmConfig execution.E
 	return th, nil
 }
 
-// NewFabricXTestHarnessWithNotifications creates a fabric-x test harness with notification-based
-// transaction completion tracking instead of block-based synchronization.
-// Uses MemoryStore and NotificationDispatcher for better performance in replay scenarios.
-// If extraHandler is non-nil, it will be inserted into the handler chain right before the cleanup handler.
+// NewFabricXTestHarnessWithNotifications creates a fabric-x test harness backed by
+// the hybrid synchronizer (delivery catch-up + notification live feed).
+//
+// It blocks until the synchronizer has fully caught up with the network before
+// returning, so callers can rely on the node being in sync from the first call.
+//
+// extraHandler is an optional handler (e.g. a TxCompletionTracker in perf tests)
+// that is added to the live chain *after* catch-up completes, so it only observes
+// transactions committed during the live notification phase and is never called
+// for historical catch-up blocks.  Pass nil to omit it.
 func NewFabricXTestHarnessWithNotifications(t *testing.T, logger sdk.Logger, evmConfig execution.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory, txQueue core.TxQueueInterface, extraHandler common.BlockHandler, confFile string) (*TestHarness, error) {
 	if primeDbPath != "" && !filepath.IsAbs(primeDbPath) {
 		if abs, err := filepath.Abs(primeDbPath); err == nil {
@@ -507,10 +462,28 @@ func NewFabricXTestHarnessWithNotifications(t *testing.T, logger sdk.Logger, evm
 		return nil, err
 	}
 
-	// Use buildTestHarness with useNotifications=true and extraHandler
-	th, _, err := buildTestHarnessWithExtraHandler(t, logger, cfg, evmConfig, primeDbPath, false, endorsers, txQueue, true, extraHandler)
+	// Build without extraHandler: it will be added after catch-up completes.
+	th, sync, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false, endorsers, txQueue)
 	if err != nil {
 		return nil, err
+	}
+
+	// Wait for the hybrid synchronizer to finish delivery catch-up.
+	if err := app.WaitUntilSynced(t.Context(), sync, 60*time.Second); err != nil {
+		return nil, fmt.Errorf("timed out waiting for sync: %w", err)
+	}
+
+	// Now that catch-up is complete, reconfigure the live handler chain:
+	// remove the chain store (block persistence is not needed for live perf
+	// testing and would just add latency) and add the extra handler.
+	if hs, ok := sync.(interface {
+		AddHandler(blocks.BlockHandler)
+		RemoveHandler(blocks.BlockHandler)
+	}); ok {
+		if extraHandler != nil {
+			hs.RemoveHandler(th.Chain)
+			hs.AddHandler(extraHandler)
+		}
 	}
 
 	return th, nil
@@ -546,6 +519,7 @@ func NewEndorser(t *testing.T, cfg econf.Endorser, channel, namespace string, ev
 type TestHarness struct {
 	DBs            []storage.KVS
 	Gateways       []*core.Gateway
+	Chain          *core.Chain
 	endorsers      []eapi.Service
 	ethChainConfig *params.ChainConfig
 	Primer         *StatePrimer
