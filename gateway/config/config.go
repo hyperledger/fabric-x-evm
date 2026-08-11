@@ -112,8 +112,7 @@ func (cfg Config) Validate() error {
 	}
 
 	// The two deployment modes are mutually exclusive. Mixing an embedded
-	// endorser with remote ones is not supported, so say so rather than
-	// silently honouring one and ignoring the other.
+	// endorser with remote ones is not supported yet.
 	switch {
 	case cfg.Endorser != nil && len(cfg.Gateway.Endorsers) > 0:
 		errs = append(errs, errors.New("endorser and gateway.endorsers are mutually exclusive: set endorser to embed this process's own endorser, or gateway.endorsers to dial remote ones"))
