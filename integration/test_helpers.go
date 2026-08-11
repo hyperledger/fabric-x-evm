@@ -573,7 +573,7 @@ func processCommon(t *testing.T, gw *core.Gateway, commit bool, tx *types.Transa
 	}
 
 	if commit {
-		if err := gw.SubmitFabricTx(t.Context(), env); err != nil {
+		if err := gw.SubmitFabricTx(t.Context(), tx.Hash(), env); err != nil {
 			t.Fatal(err)
 		}
 
@@ -709,17 +709,17 @@ func querySmartContractExpect(t *testing.T, client *EthClient, addr ethcommon.Ad
 func submit(t *testing.T, gw *core.Gateway, end sdk.Endorsement) {
 	t.Helper()
 
-	if err := gw.SubmitFabricTx(t.Context(), end); err != nil {
-		t.Error(err)
-	}
-
-	ec, err := NewNativeEthClient(gw)
+	// Extract the Ethereum transaction from the proposal
+	tx, err := extractEthTxFromProposal(end.Proposal)
 	if err != nil {
 		t.Error(err)
 	}
 
-	// Extract the Ethereum transaction from the proposal
-	tx, err := extractEthTxFromProposal(end.Proposal)
+	if err := gw.SubmitFabricTx(t.Context(), tx.Hash(), end); err != nil {
+		t.Error(err)
+	}
+
+	ec, err := NewNativeEthClient(gw)
 	if err != nil {
 		t.Error(err)
 	}

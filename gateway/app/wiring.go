@@ -91,8 +91,13 @@ func BuildGateway(ctx context.Context, endorsers []eapi.Service, gwSigner sdk.Si
 	if endorsementChanSize <= 0 {
 		endorsementChanSize = 1000
 	}
-	endorsementChan := make(chan sdk.Endorsement, endorsementChanSize)
-	batchSubmitter := core.NewBatchSubmitter(submitters, endorsementChan, submitterCount, txPerSec)
+	if txQueue == nil {
+		txQueue = core.NewTxQueue()
+	}
+	endorsementChan := make(chan core.EndorsedTx, endorsementChanSize)
+	// txQueue as Completer: a submission failure means the tx will never reach a block, so
+	// it must be completed here instead of leaking forever waiting for a commit that won't come.
+	batchSubmitter := core.NewBatchSubmitter(submitters, endorsementChan, submitterCount, txPerSec, txQueue)
 	batchSubmitter.Start(ctx)
 
 	gw, err := core.New(ec, batchSubmitter, chain, netCfg.ChainID, workerCount, txQueue, endorsementChan)

@@ -84,7 +84,7 @@ type Gateway struct {
 	workerCount     int
 	wg              sync.WaitGroup
 	stopOnce        sync.Once
-	endorsementChan chan sdk.Endorsement // Channel to send endorsements to BatchSubmitter
+	endorsementChan chan EndorsedTx // Channel to send endorsements to BatchSubmitter
 }
 
 type Store interface {
@@ -106,7 +106,7 @@ type Store interface {
 // If txQueue is nil, NewTxQueue() will be used as the default.
 // batchSubmitter handles all endorsement submissions and is owned by the Gateway.
 // endorsementChan is the channel to send endorsements to the BatchSubmitter.
-func New(ec *EndorsementClient, batchSubmitter *BatchSubmitter, store Store, chainID int64, workerCount int, txQueue TxQueueInterface, endorsementChan chan sdk.Endorsement) (*Gateway, error) {
+func New(ec *EndorsementClient, batchSubmitter *BatchSubmitter, store Store, chainID int64, workerCount int, txQueue TxQueueInterface, endorsementChan chan EndorsedTx) (*Gateway, error) {
 	if workerCount <= 0 {
 		workerCount = 1
 	}
@@ -164,7 +164,7 @@ func (g *Gateway) processTx(ctx context.Context, tx *types.Transaction) error {
 	if err != nil {
 		return err
 	}
-	if err := g.SubmitFabricTx(ctx, end); err != nil {
+	if err := g.SubmitFabricTx(ctx, tx.Hash(), end); err != nil {
 		return err
 	}
 
@@ -196,11 +196,13 @@ func (g *Gateway) ExecuteEthTx(ctx context.Context, tx *types.Transaction) (sdk.
 	return g.endorsers.ExecuteTransaction(ctx, tx)
 }
 
-// SubmitFabricTx submits a Fabric envelope via the BatchSubmitter.
-func (g *Gateway) SubmitFabricTx(ctx context.Context, end sdk.Endorsement) error {
+// SubmitFabricTx submits a Fabric envelope via the BatchSubmitter. hash is the originating
+// Ethereum transaction's hash, used to complete it in TxQueue if the submission fails
+// (meaning it will never reach a block and commit-based completion will never see it).
+func (g *Gateway) SubmitFabricTx(ctx context.Context, hash common.Hash, end sdk.Endorsement) error {
 	// Send endorsement to BatchSubmitter via channel
 	select {
-	case g.endorsementChan <- end:
+	case g.endorsementChan <- EndorsedTx{Hash: hash, End: end}:
 		return nil
 	case <-ctx.Done():
 		return fmt.Errorf("context canceled while sending endorsement: %w", ctx.Err())
