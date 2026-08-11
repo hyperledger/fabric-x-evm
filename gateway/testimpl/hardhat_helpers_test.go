@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/hyperledger/fabric-x-evm/gateway/api"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
@@ -121,24 +122,28 @@ func (m *mockRevertibleStore) RevertToBlock(context.Context, uint64) error { ret
 // first and the transaction commits into the state the next test believes it
 // just reset.
 func TestEvmAPI_RevertWaitsForInFlightTransaction(t *testing.T) {
-	testAccountMgr, err := LoadTestAccounts("../../testdata/test_accounts.json")
-	if err != nil {
-		t.Fatalf("LoadTestAccounts: %v", err)
-	}
+	testAccountMgr := testSigner(t)
 	from := testAccountMgr.Addresses[0]
-	to := common.HexToAddress("0x1234567890123456789012345678901234567890")
+	to := testToAddr
 
-	// The transaction stays pending until commit is closed, standing in for a
-	// tx sitting in the gateway's queue.
+	// The transaction sits in the queue until commit is closed, standing in for a
+	// tx the gateway has taken but not yet put in a block.
+	pool := &fakePool{}
 	commit := make(chan struct{})
 	polled := make(chan struct{})
 	var polledOnce sync.Once
+	var committedOnce sync.Once
 
 	backend := &mockBackend{
+		sendTxFunc: func(*types.Transaction) error {
+			pool.enqueue()
+			return nil
+		},
 		txByHashFunc: func(common.Hash) (*domain.Transaction, error) {
 			polledOnce.Do(func() { close(polled) })
 			select {
 			case <-commit:
+				committedOnce.Do(pool.commit)
 				return &domain.Transaction{BlockNumber: 1}, nil
 			default:
 				time.Sleep(time.Millisecond) // keep the poll loop off a hot spin
@@ -155,7 +160,7 @@ func TestEvmAPI_RevertWaitsForInFlightTransaction(t *testing.T) {
 		events = append(events, what)
 	}
 
-	fence := &txFence{}
+	fence := &txFence{pool: pool}
 	kvs := &mockRevertibleKVS{onRevert: func(uint64) { record("revert") }}
 	testAPI := NewTestEthAPI(api.NewEthAPI(backend), backend, testAccountMgr.Addresses, testAccountMgr.PrivateKeys, fence)
 	evmAPI := NewEvmAPI(kvs, &mockRevertibleStore{}, fence)

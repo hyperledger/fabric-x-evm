@@ -356,6 +356,15 @@ func (q *TxQueueV2) completeUnlocked(hash common.Hash) int {
 	return numPromoted
 }
 
+// InFlight returns how many transactions are queued or being processed. hashMap
+// holds every entry from Enqueue until Complete, including the ones Dequeue moved
+// into pendingMap, so it alone is the count.
+func (q *TxQueueV2) InFlight() int {
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+	return len(q.hashMap)
+}
+
 // IsPending checks if a transaction is in the queue (ready, waiting, or being processed).
 // Returns the transaction if found in any location, nil otherwise.
 func (q *TxQueueV2) IsPending(txHash common.Hash) *types.Transaction {

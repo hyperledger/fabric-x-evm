@@ -16,7 +16,7 @@ import (
 	"crypto/ecdsa"
 	"fmt"
 	"math/big"
-	"runtime"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -62,13 +62,23 @@ func (api *TestEthAPI) Accounts(ctx context.Context) ([]common.Address, error) {
 // which means the server has access to private keys. This is acceptable for
 // development/testing but is a critical security vulnerability in production.
 func (api *TestEthAPI) SendTransaction(ctx context.Context, args TransactionArgs) (common.Hash, error) {
-	// Held from the nonce read through to the commit, so a revert can't land in
-	// between and leave us signing against a nonce that no longer exists.
-	if !api.fence.TryRLock() {
-		return common.Hash{}, errFenced
+	txHash, err := api.signAndEnqueue(ctx, args)
+	if err != nil {
+		return common.Hash{}, err
 	}
-	defer api.fence.RUnlock()
+	return txHash, api.awaitCommit(ctx, txHash)
+}
 
+// signAndEnqueue signs args and hands the transaction to the gateway. The fence
+// spans the nonce read as well, so a rewind can't land in between and leave us
+// signing against a nonce that no longer exists.
+func (api *TestEthAPI) signAndEnqueue(ctx context.Context, args TransactionArgs) (common.Hash, error) {
+	return api.fence.submit(func() (common.Hash, error) {
+		return api.signAndEnqueueLocked(ctx, args)
+	})
+}
+
+func (api *TestEthAPI) signAndEnqueueLocked(ctx context.Context, args TransactionArgs) (common.Hash, error) {
 	// Validate from address
 	if args.From == nil {
 		return common.Hash{}, fmt.Errorf("missing 'from' field")
@@ -142,73 +152,60 @@ func (api *TestEthAPI) SendTransaction(ctx context.Context, args TransactionArgs
 		return common.Hash{}, fmt.Errorf("failed to marshal transaction: %w", err)
 	}
 
-	// Send synchronously. The unexported form, because the fence is already held
-	// above and RWMutex read locks must not be taken recursively.
-	txHash, err := api.sendRawTransaction(ctx, hexutil.Bytes(txBytes))
-	if err != nil {
-		return common.Hash{}, err
-	}
-
-	return txHash, nil
+	// Enqueue only: the caller waits for the commit outside the fence.
+	return api.EthAPI.SendRawTransaction(ctx, hexutil.Bytes(txBytes))
 }
 
 // SendRawTransaction overrides the base implementation to make it synchronous for Hardhat compatibility.
 // It sends the transaction and polls until it's committed to a block, mimicking Hardhat's auto-mining behavior.
 func (api *TestEthAPI) SendRawTransaction(ctx context.Context, input hexutil.Bytes) (common.Hash, error) {
-	// Held until the transaction has committed, so evm_snapshot/evm_revert can't
-	// move the ledger while it is still in flight - including when the client
-	// gives up on the request and the transaction commits anyway. See txFence.
-	if !api.fence.TryRLock() {
-		return common.Hash{}, errFenced
-	}
-	defer api.fence.RUnlock()
-
-	return api.sendRawTransaction(ctx, input)
-}
-
-// sendRawTransaction is SendRawTransaction without the fence, for callers that already hold it.
-func (api *TestEthAPI) sendRawTransaction(ctx context.Context, input hexutil.Bytes) (common.Hash, error) {
-	// Call the underlying SendRawTransaction
-	txHash, err := api.EthAPI.SendRawTransaction(ctx, input)
+	txHash, err := api.fence.submit(func() (common.Hash, error) {
+		return api.EthAPI.SendRawTransaction(ctx, input)
+	})
 	if err != nil {
 		return common.Hash{}, err
 	}
+	return txHash, api.awaitCommit(ctx, txHash)
+}
 
-	// Poll until the transaction is committed (has a block number > 0)
-	// This mimics Hardhat's auto-mining behavior where transactions are mined immediately
+// commitPollInterval paces the wait below; sleeping rather than spinning keeps a
+// hot loop from starving the gateway workers we are waiting on.
+const commitPollInterval = time.Millisecond
+
+// commitTimeout bounds the wait for a single transaction. The fence is already
+// released by now, so a transaction that never commits delays only its own caller.
+const commitTimeout = 30 * time.Second
+
+// awaitCommit blocks until the transaction reaches a block, mimicking Hardhat's
+// auto-mining. Deliberately outside the fence; see txFence.
+func (api *TestEthAPI) awaitCommit(ctx context.Context, txHash common.Hash) error {
+	deadline := time.NewTimer(commitTimeout)
+	defer deadline.Stop()
+	poll := time.NewTicker(commitPollInterval)
+	defer poll.Stop()
+
 	for {
+		tx, err := api.backend.TransactionByHash(ctx, txHash)
+		switch {
+		case err != nil:
+			// Not visible yet; keep waiting.
+			hardhatLogger.Debugf("polling TransactionByHash for %s: %v", txHash, err)
+		case tx == nil:
+			// Gone from both the queue and the store: the gateway worker failed it and
+			// dropped it (gateway/core.Gateway.worker), so no block will ever carry it.
+			// TODO: delete once a worker-failed transaction gets a terminal state of its
+			// own in gateway/core, rather than becoming indistinguishable from unknown.
+			return fmt.Errorf("transaction %s was dropped before it committed", txHash)
+		case tx.BlockNumber > 0:
+			return nil
+		}
+
 		select {
 		case <-ctx.Done():
-			return common.Hash{}, ctx.Err()
-		default:
-			// Check if transaction is committed
-			tx, err := api.backend.TransactionByHash(ctx, txHash)
-			if err != nil {
-				// Transaction not found yet, continue polling. Yield like the
-				// pending case below does: spinning flat out here starves the
-				// very gateway workers we're waiting on, which on a loaded
-				// two-core CI runner is the difference between committing in
-				// milliseconds and not committing at all.
-				hardhatLogger.Debugf("got error %w while polling TransactionByHash for hash %s", err, txHash)
-				runtime.Gosched()
-				continue
-			}
-
-			// this should never happen: `api.EthAPI.SendRawTransaction` synchronously enqueues the transaction
-			// and so `api.backend.TransactionByHash` must for sure find it in the pending queue or inprogress map
-			if tx == nil {
-				panic("programming error - synchronously enqueued transaction was not found")
-			}
-
-			// Check if transaction has been included in a block
-			// BlockNumber is 0 for pending transactions, > 0 for committed
-			if tx.BlockNumber > 0 {
-				// Transaction is committed
-				return txHash, nil
-			}
-
-			// Transaction is still pending, continue polling
-			runtime.Gosched()
+			return ctx.Err()
+		case <-deadline.C:
+			return fmt.Errorf("transaction %s did not commit within %s", txHash, commitTimeout)
+		case <-poll.C:
 		}
 	}
 }

@@ -209,7 +209,7 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 		// Wrap the chain's store with SnapshotStore for snapshot/revert functionality
 		snapshotStore := storage.NewSnapshotStore(chain.Store)
 
-		rpcServer, err = testimpl.NewTestServer(gateway, testAccountMgr.Addresses, testAccountMgr.PrivateKeys, revertibleKVS, snapshotStore)
+		rpcServer, err = testimpl.NewTestServer(gateway, testAccountMgr.Addresses, testAccountMgr.PrivateKeys, revertibleKVS, snapshotStore, gateway.TxQueue)
 		if err != nil {
 			return nil, err
 		}

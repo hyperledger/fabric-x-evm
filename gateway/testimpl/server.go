@@ -12,8 +12,6 @@ package testimpl
 import (
 	"context"
 	"crypto/ecdsa"
-	"errors"
-	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/rpc"
@@ -21,26 +19,6 @@ import (
 	"github.com/hyperledger/fabric-x-evm/gateway/api"
 	"github.com/hyperledger/fabric-x-evm/gateway/storage"
 )
-
-// txFence keeps evm_snapshot/evm_revert from moving the ledger out from under
-// transactions the test RPC has accepted but not yet seen committed.
-//
-// Submissions hold it shared for their whole accept-to-commit window; snapshot
-// and revert take it exclusively, which both waits out what is already in
-// flight and holds off anything new for the duration.
-//
-// Test-only, only for evm_snapshot/evm_revert. The production gateway has no
-// revert and must never wait for the queue to drain on the submit path.
-type txFence struct {
-	sync.RWMutex
-}
-
-// errFenced rejects a submission that arrives while a snapshot or revert holds
-// the fence. Queueing it instead would just admit it the instant the rewind
-// finished, recreating the contamination one step later. A real test never hits
-// this - loadFixture awaits evm_revert before sending - only requests it
-// abandoned, whose results nobody reads.
-var errFenced = errors.New("transaction rejected: a snapshot or revert is in progress")
 
 // NewTestServer creates an RPC server with test-only methods enabled.
 // This wraps the production server and adds eth_accounts and eth_sendTransaction
@@ -51,11 +29,11 @@ var errFenced = errors.New("transaction rejected: a snapshot or revert is in pro
 // SECURITY WARNING: This server performs server-side transaction signing,
 // which is inherently insecure. Use ONLY for development and testing.
 // NEVER use in production environments.
-func NewTestServer(b api.Backend, testAccounts []common.Address, testAccountKeys map[common.Address]*ecdsa.PrivateKey, lightKVS estorage.Revertible, store storage.Revertible) (*rpc.Server, error) {
+func NewTestServer(b api.Backend, testAccounts []common.Address, testAccountKeys map[common.Address]*ecdsa.PrivateKey, lightKVS estorage.Revertible, store storage.Revertible, pool TxPool) (*rpc.Server, error) {
 	srv := rpc.NewServer()
 
 	// Shared by the submit path and the snapshot/revert path; see txFence.
-	fence := &txFence{}
+	fence := &txFence{pool: pool}
 
 	// Create production API
 	prodAPI := api.NewEthAPI(b)
