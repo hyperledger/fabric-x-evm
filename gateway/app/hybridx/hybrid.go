@@ -22,15 +22,11 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // HybridSynchronizer satisfies the app.Synchronizer interface (Start + Ready)
 // and plugs directly into NewGatewaySynchronizer as the fabric-x implementation.
-//
-// After Start is called and Ready returns nil, callers may use AddHandler and
-// RemoveHandler to adjust the live handler chain without restarting.
 package hybridx
 
 import (
 	"context"
 	"fmt"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -53,16 +49,10 @@ type deliverySyncer interface {
 
 // HybridSynchronizer implements the two-phase startup strategy described in
 // the package doc.  It satisfies the app.Synchronizer interface.
-//
-// AddHandler and RemoveHandler may be called at any time after New; changes
-// take effect on the next committed block in whichever phase is active.
 type HybridSynchronizer struct {
 	namespace string
 	logger    sdk.Logger
-
-	// mu protects handlers; held briefly on each block in the hot path.
-	mu       sync.RWMutex
-	handlers []blocks.BlockHandler
+	handlers  []blocks.BlockHandler
 
 	delivery  deliverySyncer
 	notifPeer notification.AllTxPeer
@@ -85,9 +75,6 @@ func New(
 		handlers:  append([]blocks.BlockHandler(nil), handlers...),
 	}
 
-	// The delivery synchronizer uses a shim that reads from h.handlers under
-	// the mutex on every block, so that AddHandler/RemoveHandler take effect
-	// immediately for the delivery phase too.
 	delivery, err := nfabx.NewSynchronizer(db, channel, conf, signer, logger, &deliveryShim{h: h})
 	if err != nil {
 		return nil, fmt.Errorf("hybridx: create delivery synchronizer: %w", err)
@@ -126,33 +113,10 @@ func newWithDeps(
 	}
 }
 
-// AddHandler appends h to the live handler chain.  Safe to call concurrently.
-func (h *HybridSynchronizer) AddHandler(handler blocks.BlockHandler) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.handlers = append(h.handlers, handler)
-}
-
-// RemoveHandler removes the first handler in the chain that is pointer-equal
-// to handler.  Safe to call concurrently.
-func (h *HybridSynchronizer) RemoveHandler(handler blocks.BlockHandler) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	for i, bh := range h.handlers {
-		if bh == handler {
-			h.handlers = append(h.handlers[:i], h.handlers[i+1:]...)
-			return
-		}
-	}
-}
-
-// dispatch calls Handle on every handler in the current chain.
+// dispatch calls Handle on every handler in the chain.
 // Called by both the deliveryShim and the notifGate.
 func (h *HybridSynchronizer) dispatch(ctx context.Context, b blocks.Block) error {
-	h.mu.RLock()
-	handlers := h.handlers
-	h.mu.RUnlock()
-	for _, bh := range handlers {
+	for _, bh := range h.handlers {
 		if err := bh.Handle(ctx, b); err != nil {
 			return err
 		}

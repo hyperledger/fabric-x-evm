@@ -108,6 +108,80 @@ func (th *TestHarness) PrimeStateFromJSON(ctx context.Context, jsonFilePath stri
 	return primer.Commit(ctx, wait)
 }
 
+// HandlerChainFactory builds the gateway and the complete synchronizer handler
+// chain for a test harness.  It receives the pre-built endorser services, gateway
+// signer, submitters, and txQueue so it can call app.BuildGateway internally and
+// assemble whatever handler list is appropriate.
+//
+// It returns:
+//   - gw: the constructed gateway (also started by buildTestHarness after this call)
+//   - handlers: the full, ordered []blocks.BlockHandler for the synchronizer
+//   - heightReader: the network.BlockHeightReader the synchronizer uses for catch-up
+//
+// The factory is responsible for allocating any store it needs and registering
+// teardown via t.Cleanup.  Passing nil to buildTestHarness selects
+// defaultHandlerChain.
+//
+// Conventional handler order:
+//
+//	[endorser KVS…, chain store, gateway, …any extra observers]
+type HandlerChainFactory func(
+	t *testing.T,
+	ctx context.Context,
+	cfg config.Config,
+	ends []eapi.Service,
+	gwSigner sdk.Signer,
+	submitters []core.Submitter,
+	txQueue core.TxQueueInterface,
+	dbs []storage.KVS,
+) (gw *core.Gateway, handlers []blocks.BlockHandler, heightReader network.BlockHeightReader)
+
+// defaultHandlerChain is the HandlerChainFactory used by every test that does
+// not need a custom chain store.  It opens the SQLite-backed core.Chain,
+// registers chain.Close on t, builds the gateway, and returns the standard
+// handler order.
+//
+// Handler order matters: each handler is called in sequence for every committed block.
+//
+//  1. Endorser KVS (dbs): update the read/write-set store used by the endorser for
+//     MVCC validation. Must run first so that by the time chain and gateway see the
+//     block the endorser's state already reflects it — this gives read-your-writes
+//     semantics for the test RPC's synchronous eth_sendRawTransaction.
+//
+//  2. Chain: persist the block and its Ethereum transactions to the SQLite store and
+//     update the state-root trie. Must run before the gateway so that eth_getBlockBy*
+//     and eth_getTransactionReceipt are answerable the moment the gateway marks a
+//     transaction complete.
+//
+//  3. Gateway: call TxQueue.Handle to mark any pending Ethereum transactions whose
+//     Fabric tx-ID appears in this block as complete, unblocking waiting callers.
+//
+//  4. Extra handlers (e.g. TxCompletionTracker in perf tests): any caller-supplied
+//     handlers that observe committed blocks for their own purposes.
+func defaultHandlerChain(t *testing.T, ctx context.Context, cfg config.Config, ends []eapi.Service, gwSigner sdk.Signer, submitters []core.Submitter, txQueue core.TxQueueInterface, dbs []storage.KVS) (*core.Gateway, []blocks.BlockHandler, network.BlockHeightReader) {
+	chain, err := core.NewChain(cfg.Gateway.Database.ConnString, cfg.Gateway.Database.TriePath, false)
+	if err != nil {
+		t.Fatalf("open chain: %v", err)
+	}
+	t.Cleanup(func() { chain.Close() })
+
+	txPerSec := 0
+	if cfg.Network.Namespace == "synthetic" {
+		txPerSec = 10000
+	}
+	gw, err := app.BuildGateway(ctx, ends, gwSigner, cfg.Network, chain, submitters, cfg.Gateway.SubmitterCount, cfg.Gateway.WorkerCount, txQueue, cfg.Gateway.EndorsementChanSize, txPerSec)
+	if err != nil {
+		t.Fatalf("build gateway: %v", err)
+	}
+
+	handlers := make([]blocks.BlockHandler, 0, len(dbs)+2)
+	for _, db := range dbs {
+		handlers = append(handlers, db)
+	}
+	handlers = append(handlers, chain, gw)
+	return gw, handlers, chain
+}
+
 // buildTestHarness is the shared implementation for all test harness constructors.
 // It builds endorsers, a gateway, and primes state.
 //
@@ -117,8 +191,10 @@ func (th *TestHarness) PrimeStateFromJSON(ctx context.Context, jsonFilePath stri
 //
 // Sync goroutines are started in the background using ctx. The returned synchronizer
 // can be used by callers that need to wait for the initial sync to complete.
-// extraHandlers are appended to the handler chain after the gateway.
-func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmConfig execution.EVMConfig, primeDBPath string, bypass bool, endorsers []EndorserComponents, txQueue core.TxQueueInterface, extraHandlers ...blocks.BlockHandler) (*TestHarness, app.Synchronizer, error) {
+//
+// chainFactory controls which chain store and handler chain are wired into the
+// synchronizer. Pass nil to use defaultHandlerChain.
+func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmConfig execution.EVMConfig, primeDBPath string, bypass bool, endorsers []EndorserComponents, txQueue core.TxQueueInterface, chainFactory HandlerChainFactory) (*TestHarness, app.Synchronizer, error) {
 	dbs := make([]storage.KVS, len(endorsers))
 	builders := make([]endorsement.Builder, len(endorsers))
 	ends := make([]eapi.Service, len(endorsers))
@@ -138,16 +214,10 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 		gwSigner = localSigner{}
 	}
 
-	chain, err := core.NewChain(cfg.Gateway.Database.ConnString, cfg.Gateway.Database.TriePath, false)
-	if err != nil {
-		return nil, nil, err
-	}
-	t.Cleanup(func() { chain.Close() })
-
-	// Build submitters (one per worker for parallel submission)
-	orderers := make([]network.OrdererConf, len(cfg.Gateway.Orderers))
+	// Build submitters (one per worker for parallel submission).
+	ordererConfs := make([]network.OrdererConf, len(cfg.Gateway.Orderers))
 	for i, o := range cfg.Gateway.Orderers {
-		orderers[i] = o.ToOrdererConf()
+		ordererConfs[i] = o.ToOrdererConf()
 	}
 
 	submitterCount := cfg.Gateway.SubmitterCount
@@ -155,8 +225,11 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 		submitterCount = core.DefaultNumWorkers
 	}
 
-	var submitters []core.Submitter
-	var sync app.Synchronizer
+	var (
+		submitters []core.Submitter
+		sync       app.Synchronizer
+		err        error
+	)
 
 	if bypass {
 		// Use local submitters for bypass mode (no network communication)
@@ -166,53 +239,25 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 		}
 	} else {
 		// Create network submitters
-		submitters, err = app.NewNetworkSubmitters(t.Context(), cfg.Network.Protocol, orderers, gwSigner, submitterCount, logger)
+		submitters, err = app.NewNetworkSubmitters(t.Context(), cfg.Network.Protocol, ordererConfs, gwSigner, submitterCount, logger)
 		if err != nil {
 			return nil, nil, err
 		}
 	}
 
-	// Create gateway before synchronizer so we can register it as a handler
-	// Gateway owns the BatchSubmitter and will handle its lifecycle
-	// Enable rate limiting only for "synthetic" namespace (10 000 tx/s)
-	txPerSec := 0
-	if cfg.Network.Namespace == "synthetic" {
-		txPerSec = 10000
+	if chainFactory == nil {
+		chainFactory = defaultHandlerChain
 	}
-	gw, err := app.BuildGateway(t.Context(), ends, gwSigner, cfg.Network, chain, submitters, cfg.Gateway.SubmitterCount, cfg.Gateway.WorkerCount, txQueue, cfg.Gateway.EndorsementChanSize, txPerSec)
-	if err != nil {
-		return nil, nil, err
-	}
+	gw, handlers, heightReader := chainFactory(t, t.Context(), cfg, ends, gwSigner, submitters, txQueue, dbs)
 
 	// Create synchronizer with handlers — only for non-bypass mode (bypass uses a local
 	// in-process submitter and has no network peer to synchronize with).
 	//
 	// Handler order matters: each handler is called in sequence for every committed block.
-	//
-	//   1. Endorser KVS (dbs): update the read/write-set store used by the endorser for
-	//      MVCC validation. Must run first so that by the time chain and gateway see the
-	//      block the endorser's state already reflects it — this gives read-your-writes
-	//      semantics for the test RPC's synchronous eth_sendRawTransaction.
-	//
-	//   2. Chain: persist the block and its Ethereum transactions to the SQLite store and
-	//      update the state-root trie. Must run before the gateway so that eth_getBlockBy*
-	//      and eth_getTransactionReceipt are answerable the moment the gateway marks a
-	//      transaction complete.
-	//
-	//   3. Gateway: call TxQueue.Handle to mark any pending Ethereum transactions whose
-	//      Fabric tx-ID appears in this block as complete, unblocking waiting callers.
-	//
-	//   4. Extra handlers (e.g. TxCompletionTracker in perf tests): any caller-supplied
-	//      handlers that observe committed blocks for their own purposes.
+	// The ordering is the responsibility of the chainFactory; see defaultHandlerChain for
+	// the conventional ordering (endorser KVS…, chain store, gateway, extra observers…).
 	if !bypass {
-		handlers := make([]blocks.BlockHandler, 0, len(dbs)+2+len(extraHandlers))
-		for _, db := range dbs {
-			handlers = append(handlers, db)
-		}
-		handlers = append(handlers, chain, gw)
-		handlers = append(handlers, extraHandlers...)
-
-		sync, err = app.NewGatewaySynchronizer(cfg.Network.Protocol, chain, cfg.Network.Channel, cfg.Network.Namespace, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, handlers...)
+		sync, err = app.NewGatewaySynchronizer(cfg.Network.Protocol, heightReader, cfg.Network.Channel, cfg.Network.Namespace, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, handlers...)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -232,7 +277,6 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 
 	th := &TestHarness{
 		Gateways:       []*core.Gateway{gw},
-		Chain:          chain,
 		endorsers:      ends,
 		ethChainConfig: evmConfig.ChainConfig,
 		Primer:         primer,
@@ -398,7 +442,7 @@ func NewLocalTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig e
 		peer.Port = nw.PeerPort
 	}
 
-	th, _, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, bypass, endorsers, nil)
+	th, _, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, bypass, endorsers, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -420,7 +464,7 @@ func newFileConfigHarness(t *testing.T, logger sdk.Logger, evmConfig execution.E
 		return nil, err
 	}
 
-	th, sync, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false, endorsers, nil)
+	th, sync, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false, endorsers, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -438,11 +482,11 @@ func newFileConfigHarness(t *testing.T, logger sdk.Logger, evmConfig execution.E
 // It blocks until the synchronizer has fully caught up with the network before
 // returning, so callers can rely on the node being in sync from the first call.
 //
-// extraHandler is an optional handler (e.g. a TxCompletionTracker in perf tests)
-// that is added to the live chain *after* catch-up completes, so it only observes
-// transactions committed during the live notification phase and is never called
-// for historical catch-up blocks.  Pass nil to omit it.
-func NewFabricXTestHarnessWithNotifications(t *testing.T, logger sdk.Logger, evmConfig execution.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory, txQueue core.TxQueueInterface, extraHandler common.BlockHandler, confFile string) (*TestHarness, error) {
+// chainFactory controls the chain store and handler chain wired into the
+// synchronizer. Pass nil to use defaultHandlerChain (SQLite-backed core.Chain).
+// Perf tests supply their own factory to use a lightweight in-memory height
+// tracker and attach a TxCompletionTracker as a tail handler.
+func NewFabricXTestHarnessWithNotifications(t *testing.T, logger sdk.Logger, evmConfig execution.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory, txQueue core.TxQueueInterface, chainFactory HandlerChainFactory, confFile string) (*TestHarness, error) {
 	if primeDbPath != "" && !filepath.IsAbs(primeDbPath) {
 		if abs, err := filepath.Abs(primeDbPath); err == nil {
 			primeDbPath = abs
@@ -462,8 +506,7 @@ func NewFabricXTestHarnessWithNotifications(t *testing.T, logger sdk.Logger, evm
 		return nil, err
 	}
 
-	// Build without extraHandler: it will be added after catch-up completes.
-	th, sync, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false, endorsers, txQueue)
+	th, sync, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false, endorsers, txQueue, chainFactory)
 	if err != nil {
 		return nil, err
 	}
@@ -471,19 +514,6 @@ func NewFabricXTestHarnessWithNotifications(t *testing.T, logger sdk.Logger, evm
 	// Wait for the hybrid synchronizer to finish delivery catch-up.
 	if err := app.WaitUntilSynced(t.Context(), sync, 60*time.Second); err != nil {
 		return nil, fmt.Errorf("timed out waiting for sync: %w", err)
-	}
-
-	// Now that catch-up is complete, reconfigure the live handler chain:
-	// remove the chain store (block persistence is not needed for live perf
-	// testing and would just add latency) and add the extra handler.
-	if hs, ok := sync.(interface {
-		AddHandler(blocks.BlockHandler)
-		RemoveHandler(blocks.BlockHandler)
-	}); ok {
-		if extraHandler != nil {
-			hs.RemoveHandler(th.Chain)
-			hs.AddHandler(extraHandler)
-		}
 	}
 
 	return th, nil
@@ -519,7 +549,6 @@ func NewEndorser(t *testing.T, cfg econf.Endorser, channel, namespace string, ev
 type TestHarness struct {
 	DBs            []storage.KVS
 	Gateways       []*core.Gateway
-	Chain          *core.Chain
 	endorsers      []eapi.Service
 	ethChainConfig *params.ChainConfig
 	Primer         *StatePrimer

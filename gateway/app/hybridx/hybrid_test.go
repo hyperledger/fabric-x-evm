@@ -292,26 +292,6 @@ func TestStart_DeliveryErrorIsLogged(t *testing.T) {
 	})
 }
 
-// TestAddRemoveHandler verifies dynamic handler manipulation.
-func TestAddRemoveHandler(t *testing.T) {
-	delivery := newFakeDelivery()
-	peer := newFakeNotifPeer()
-	r1 := &recordingHandler{}
-	r2 := &recordingHandler{}
-	h := newHybrid(t, delivery, peer, r1)
-
-	h.AddHandler(r2)
-	require.Len(t, h.handlers, 2)
-
-	h.RemoveHandler(r1)
-	require.Len(t, h.handlers, 1)
-	assert.Equal(t, r2, h.handlers[0])
-
-	// RemoveHandler on unknown handler is a no-op.
-	h.RemoveHandler(r1)
-	require.Len(t, h.handlers, 1)
-}
-
 // ── helper types ─────────────────────────────────────────────────────────────
 
 // errDeliverySyncer returns an error from Start immediately, simulating a
