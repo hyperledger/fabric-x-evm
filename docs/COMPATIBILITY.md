@@ -220,21 +220,31 @@ when a call or test targets an older fork.
 Implementation note: clearing storage slots requires enumerating all keys for the address
 (non-trivial) and may produce an impractically large RWSet for contracts with many storage entries.
 
-**`GetStorageRoot` is a stub**: it returns the zero hash. geth uses an account's storage root for
-the EIP-7610 collision guard — a `CREATE`/`CREATE2` must fail if the target address already holds
-storage. With the stub that guard is effectively disabled: a contract can be deployed onto an
-address that has storage (but no code or nonce). Collisions detected via code or nonce still apply.
+**`GetStorageRoot` is a stub**: it returns the zero hash. This is a state-introspection gap that
+affects storage-root queries and proofs (tracked in #85); it does **not** affect EVM execution or
+the EIP-7610 collision guard, which never reads it (see below).
+
+**EIP-7610 create-collision divergence (inherited from go-ethereum)**: per EIP-7610 a
+`CREATE`/`CREATE2` onto an address that already holds storage (but no code or nonce) must fail. We
+run go-ethereum v1.17.3's EVM create path unchanged, and geth v1.17.3 implements EIP-7610 not as a
+general storage check but as a hardcoded allowlist of 28 historical mainnet addresses — the
+collision guard checks nonce + code + that static set, never the storage root. The execution-specs
+`eip7610_create_collision` fixtures use synthetic addresses that hold storage but are not in geth's
+list, so geth's guard — and therefore ours — does not treat them as collisions. This divergence is
+inherited from go-ethereum and affects any geth-based client; it is not a fabric-x-evm bug and is
+unrelated to the `GetStorageRoot` stub. Tracked as a known divergence in #276.
 
 **How these surface in equivalence tests**: the conformance harness runs the EVM against our
 StateDB while mirroring every write to a reference go-ethereum StateDB, then compares the state
-root against each fixture's expected root. Because the EVM reads account state (existence,
-`HasSelfDestructed`, storage root) from *our* StateDB, the two deviations above make a small, known
-set of vectors diverge on the final root — SELFDESTRUCT and CREATE/CREATE2-collision / empty-account
-cases. These divergences are deliberate consequences of the modern-only semantics above, not
-regressions.
+root against each fixture's expected root. The only fixtures that diverge on the final root are the
+EIP-7610 create-collision cases above — and that divergence comes from go-ethereum's create path,
+not from our StateDB (the always-on EIP-6780 SELFDESTRUCT semantics differ in behavior but do not
+currently cause any fixture to diverge). This is deliberate and inherited from upstream, not a
+regression.
 
 These known-divergent cases are quarantined in `testdata/eth_tests.skip`: the EIP-7610
-create-collision fixtures above. All other Osaka-forward state tests pass.
+create-collision fixtures above (an inherited go-ethereum divergence, see #276). All other
+Osaka-forward state tests pass.
 
 **Native ETH balances not funded**: balances are implemented but unused. Accounts have zero ETH 
 balance by default. Value transfers inside the EVM (`CALL` with value, `SELFDESTRUCT` beneficiary, 
