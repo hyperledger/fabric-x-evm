@@ -21,8 +21,8 @@ Schema: [`api/endorsementpb/endorsement.proto`](../api/endorsementpb/endorsement
 
 ## Architecture
 
-The gateway holds one client per endorser it collects endorsements from, and
-reaches every one of them over gRPC:
+The gateway holds one client per endorser it collects endorsements from. In a
+split deployment it reaches each of them over gRPC:
 
 ```mermaid
 flowchart LR
@@ -124,18 +124,21 @@ the result carries the outcome. Status codes are defined in
 | `460` | Valid transaction whose EVM execution failed (out of gas, invalid opcode) |
 | `500` | Server-side fault, such as a signing failure |
 
-**Transport faults** travel as gRPC status errors, and only these ever surface
+**Everything else** travels as a gRPC status error, and only these ever surface
 as a Go error:
 
 | gRPC code | Meaning | Retryable |
 |---|---|---|
+| `INVALID_ARGUMENT` | Malformed request, such as a transaction that fails to decode | no |
 | `UNAVAILABLE` | Endorser unreachable | yes |
 | `DEADLINE_EXCEEDED` | Call timed out | yes |
 | `INTERNAL` | Transport fault | no |
+| `RESOURCE_EXHAUSTED` | Server overloaded (rate limit or concurrent-stream limit) | yes |
 
 The separation matters because a revert is a successful RPC carrying a
 committed outcome, while an unreachable endorser is not an endorsement outcome
-at all. Application statuses are never retried; only transport faults are.
+at all. Application statuses are never retried; only the codes marked
+retryable are.
 
 The gateway maps these onto the Ethereum JSON-RPC surface it exposes, which is
 unchanged by the endorsement API. See [JSON_RPC_ERRORS.md](JSON_RPC_ERRORS.md).
@@ -166,7 +169,8 @@ endorsement policy is evaluated against.
 - **Deadlines** are the caller's: the RPC honors the incoming context deadline.
 - **Retries** live with the caller. The endorser is stateless, with no
   server-side retry or idempotency keys.
-- **Connections** are long-lived and pooled, rather than dialed per call.
+- **Connections** are long-lived and reused across calls, rather than dialed
+  per call.
 - **Backpressure** is bounded in-flight requests and max concurrent streams,
   surfacing overload as `RESOURCE_EXHAUSTED`.
 
@@ -174,7 +178,8 @@ endorsement policy is evaluated against.
 
 ### Endorser
 
-An endorser that serves gRPC needs an endpoint and TLS material:
+An endorser is configured with its identity (which it signs endorsements
+with), its committer connection, and its database:
 
 ```yaml
 endorsers:
@@ -197,8 +202,8 @@ endorsers:
 ```
 
 The gRPC server itself is configured with an endpoint, mTLS, keep-alive,
-max-concurrent-streams and rate limiting. Its bootstrap - listen, TLS,
-interceptors, health - comes from the `serve` package in fabric-x-committer;
+max-concurrent-streams and rate limiting. Its bootstrap (listen, TLS,
+interceptors, health) comes from the `serve` package in fabric-x-committer;
 it moves to fabric-x-common once published there.
 
 The endorser's `committer` connection is how it stays in sync with committed
@@ -242,7 +247,7 @@ endpoint handling, validation and TLS wiring are shared.
 | Suite | What it covers |
 |---|---|
 | [`endorser/server`](../endorser/server) | Each RPC forwards to the in-process endorser and preserves status codes |
-| [`endorser/client`](../endorser/client) | Request marshaling, response and error translation, and dialing including TLS verification |
+| [`endorser/client`](../endorser/client) | Request marshaling, response and error translation, and dial-time TLS credential handling |
 | [`integration/endorsement_grpc_test.go`](../integration/endorsement_grpc_test.go) | Parity between the in-process and gRPC paths, over real mTLS, plus rejection of untrusted and missing client certificates, and the unavailable and deadline paths |
 
 The parity suite is the one that keeps the boundary honest: it runs the same
