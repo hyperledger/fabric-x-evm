@@ -19,8 +19,17 @@ import (
 
 	"github.com/hyperledger/fabric-x-evm/common"
 	eapi "github.com/hyperledger/fabric-x-evm/endorser/api"
+	"github.com/hyperledger/fabric-x-evm/gateway/app/hybridx"
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
 )
+
+// Synchronizer is the interface required by the gateway application from any
+// synchronizer implementation. Both *network.Synchronizer (delivery) and
+// *hybridx.HybridSynchronizer satisfy it.
+type Synchronizer interface {
+	Start(ctx context.Context) error
+	Ready() error
+}
 
 // NewNetworkSubmitters creates one network submitter per parallel-submission worker for
 // the given protocol. count <= 0 defaults to core.DefaultNumWorkers. This is the wiring
@@ -54,12 +63,14 @@ func NewNetworkSubmitters(ctx context.Context, protocol string, orderers []netwo
 // in-process test backend with per-endorser-embedded synchronization instead registers
 // [endorser DBs..., chain, gateway] on a single synchronizer so that endorser state is
 // applied before the gateway marks a transaction complete.
-func NewGatewaySynchronizer(protocol string, db network.BlockHeightReader, channel string, committer network.PeerConf, gwSigner sdk.Signer, logger sdk.Logger, handlers ...blocks.BlockHandler) (*network.Synchronizer, error) {
+//
+// namespace is used by the fabric-x hybrid synchronizer to filter the notification stream.
+func NewGatewaySynchronizer(protocol string, db network.BlockHeightReader, channel, namespace string, committer network.PeerConf, gwSigner sdk.Signer, logger sdk.Logger, handlers ...blocks.BlockHandler) (Synchronizer, error) {
 	switch protocol {
 	case "fabric":
 		return nfab.NewSynchronizer(db, channel, committer, gwSigner, logger, handlers...)
 	case "fabric-x", "":
-		return nfabx.NewSynchronizer(db, channel, committer, gwSigner, logger, handlers...)
+		return hybridx.New(db, channel, namespace, committer, gwSigner, logger, handlers...)
 	default:
 		return nil, fmt.Errorf("unsupported protocol: %q", protocol)
 	}

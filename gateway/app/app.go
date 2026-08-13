@@ -38,9 +38,9 @@ var appLogger = flogging.MustGetLogger("gateway.app")
 // App represents the gateway application with all its components.
 type App struct {
 	cfg           config.Config
-	endorserSyncs []*network.Synchronizer
+	endorserSyncs []Synchronizer
 	endorserConns []*eclient.Client // set only in split deployment; closed on Shutdown
-	gwSync        *network.Synchronizer
+	gwSync        Synchronizer
 	gateway       *core.Gateway
 	chain         *core.Chain
 	rpcServer     *rpc.Server
@@ -93,7 +93,7 @@ func newApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, enableT
 
 	// Create endorsers and their synchronizers.
 	endorsers := make([]eapi.Service, 0, len(cfg.Endorsers))
-	endorserSyncs := make([]*network.Synchronizer, 0, len(cfg.Endorsers))
+	endorserSyncs := make([]Synchronizer, 0, len(cfg.Endorsers))
 	var firstKVS estorage.KVS // Keep first endorser's KVS for test server
 	for i, ecfg := range cfg.Endorsers {
 		// Test RPC needs a large sequential history window (see testnode); production
@@ -157,7 +157,7 @@ func newSplitApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, lo
 
 // buildApp wires up the gateway from pre-built endorsers.
 // extraHandlers are prepended to the synchronizer handler list, ahead of chain/gateway.
-func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorsers []eapi.Service, endorserSyncs []*network.Synchronizer, lightKVS estorage.KVS, enableTestRPC bool, testAccountsPath string, extraHandlers ...blocks.BlockHandler) (*App, error) {
+func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorsers []eapi.Service, endorserSyncs []Synchronizer, lightKVS estorage.KVS, enableTestRPC bool, testAccountsPath string, extraHandlers ...blocks.BlockHandler) (*App, error) {
 	orderers := make([]network.OrdererConf, len(cfg.Gateway.Orderers))
 	for i, o := range cfg.Gateway.Orderers {
 		orderers[i] = o.ToOrdererConf()
@@ -182,7 +182,7 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 
 	// Chain must be called before gateway, to persist blocks before marking transactions complete.
 	handlers := append(extraHandlers, chain, gateway)
-	gwSync, err := NewGatewaySynchronizer(cfg.Network.Protocol, chain, cfg.Network.Channel, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, handlers...)
+	gwSync, err := NewGatewaySynchronizer(cfg.Network.Protocol, chain, cfg.Network.Channel, cfg.Network.Namespace, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, handlers...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gateway synchronizer: %w", err)
 	}
@@ -322,7 +322,7 @@ func (a *App) Shutdown() error {
 }
 
 // WaitUntilSynced blocks until sync reports Ready or timeout elapses, polling every 100ms.
-func WaitUntilSynced(ctx context.Context, sync *network.Synchronizer, timeout time.Duration) error {
+func WaitUntilSynced(ctx context.Context, sync Synchronizer, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
