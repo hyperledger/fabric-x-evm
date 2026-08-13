@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"math/big"
+	"strings"
 	"testing"
 
 	"github.com/ethereum/go-ethereum"
@@ -246,5 +247,49 @@ func TestExecuteTransaction_RejectedStatusErrors(t *testing.T) {
 
 	if _, err := c.ExecuteTransaction(context.Background(), tx); err == nil {
 		t.Fatal("expected error for rejected status")
+	}
+}
+
+// blockingEndorser rejects the transaction only once released, and reports
+// whatever the context says if it is cancelled first. It stands in for a remote
+// endorser whose in-flight call is interruptible, which an in-process one is not.
+type blockingEndorser struct {
+	stubEndorser
+	release <-chan struct{}
+}
+
+func (b *blockingEndorser) Execute(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction) (*peer.ProposalResponse, error) {
+	select {
+	case <-b.release:
+		return b.execResp, b.execErr
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// With several endorsers the first rejection cancels the others, so their calls
+// come back cancelled. The caller must still be told why the transaction was
+// rejected rather than that something was cancelled.
+func TestExecuteTransaction_RejectionSurvivesCancellationOfOtherEndorsers(t *testing.T) {
+	rejected := &peer.ProposalResponse{Response: &peer.Response{Status: common.StatusTxRejected, Message: "nonce too low"}}
+
+	// Never released, so this one only ever returns the cancellation. It sits at
+	// index 0, ahead of the endorser that produces the real error.
+	blocked := &blockingEndorser{release: make(chan struct{})}
+	c := &EndorsementClient{
+		endorsers: []api.Service{blocked, &stubEndorser{execResp: rejected}},
+		signer:    stubSigner{},
+		channel:   "ch",
+		namespace: "ns",
+		nsVersion: "1.0",
+	}
+
+	tx := types.NewTx(&types.LegacyTx{Gas: 21000, GasPrice: big.NewInt(0)})
+	_, err := c.ExecuteTransaction(context.Background(), tx)
+	if err == nil {
+		t.Fatal("expected an error for a rejected transaction")
+	}
+	if !strings.Contains(err.Error(), "nonce too low") {
+		t.Errorf("error = %q, want the rejection reason", err.Error())
 	}
 }

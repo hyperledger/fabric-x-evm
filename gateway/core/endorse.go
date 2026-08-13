@@ -105,7 +105,16 @@ func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Tra
 
 	wg.Wait()
 
-	// Return first error in slice order — stable and deterministic
+	// Return the first error in slice order, stable and deterministic, but skip
+	// cancellations on the first pass: the endorser that reports one was most
+	// likely aborted by the cancel above, and returning that would hide the
+	// endorsement error which caused it. A genuinely cancelled caller has
+	// nothing but cancellations, and the second pass returns one of those.
+	for _, err := range errs {
+		if err != nil && !errors.Is(err, context.Canceled) {
+			return sdk.Endorsement{}, err
+		}
+	}
 	for _, err := range errs {
 		if err != nil {
 			return sdk.Endorsement{}, err
