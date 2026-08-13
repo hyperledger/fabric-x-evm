@@ -223,6 +223,7 @@ gateway:
         port: 9001
       tls:
         mode: mtls
+        server-name: endorser.org1.example.com
         cert-path: /crypto/.../client.crt
         key-path: /crypto/.../client.key
         ca-cert-paths:
@@ -232,6 +233,7 @@ gateway:
         port: 9001
       tls:
         mode: mtls
+        server-name: endorser.org2.example.com
         cert-path: /crypto/.../client.crt
         key-path: /crypto/.../client.key
         ca-cert-paths:
@@ -239,7 +241,9 @@ gateway:
 ```
 
 Each entry presents the gateway's own client certificate, and trusts the CA of
-the endorser it dials.
+the endorser it dials. Set `server-name` when the endorser is reached at an
+address its certificate is not issued for, such as an IP: the certificate is
+then verified against that name rather than the address.
 
 This is the same `common.ClientConfig` used for orderers and the committer, so
 endpoint handling, validation and TLS wiring are shared.
