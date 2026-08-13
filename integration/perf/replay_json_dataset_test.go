@@ -26,16 +26,114 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/hyperledger/fabric-x-common/api/committerpb"
+	eapi "github.com/hyperledger/fabric-x-evm/endorser/api"
 	econf "github.com/hyperledger/fabric-x-evm/endorser/config"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
+	estorage "github.com/hyperledger/fabric-x-evm/endorser/storage"
 	"github.com/hyperledger/fabric-x-evm/endorser/testimpl"
+	"github.com/hyperledger/fabric-x-evm/gateway/app"
+	gwconfig "github.com/hyperledger/fabric-x-evm/gateway/config"
 	gwcore "github.com/hyperledger/fabric-x-evm/gateway/core"
+	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	gwtestimpl "github.com/hyperledger/fabric-x-evm/gateway/testimpl"
 	"github.com/hyperledger/fabric-x-evm/integration"
+	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
+	"github.com/hyperledger/fabric-x-sdk/network"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/grpclog"
 )
+
+// memHeightTracker is a minimal blocks.BlockHandler, network.BlockHeightReader,
+// and core.Store that tracks only the latest committed block number in memory.
+// It is used by perf tests as a lightweight replacement for the SQLite-backed
+// core.Chain: it carries no block data and imposes no I/O overhead.
+//
+// The core.Store query methods (GetBlockByNumber, GetTransactionByHash, etc.) are
+// no-ops that return nil — perf tests never issue RPC queries against the chain.
+type memHeightTracker struct {
+	height atomic.Uint64
+}
+
+// Handle implements blocks.BlockHandler — records the block number of every
+// committed block so the synchronizer knows how far delivery has progressed.
+func (m *memHeightTracker) Handle(_ context.Context, b blocks.Block) error {
+	m.height.Store(b.Number)
+	return nil
+}
+
+// BlockNumber implements network.BlockHeightReader and core.Store — returns 0
+// until the first block is committed.
+func (m *memHeightTracker) BlockNumber(_ context.Context) (uint64, error) {
+	return m.height.Load(), nil
+}
+
+// The remaining methods implement core.Store. Perf tests never issue chain
+// queries via RPC, so these are intentional no-ops.
+
+func (m *memHeightTracker) BlockNumberByHash(_ context.Context, _ []byte) (*uint64, error) {
+	return nil, nil
+}
+func (m *memHeightTracker) LatestBlock(_ context.Context, _ bool) (*domain.Block, error) {
+	return nil, nil
+}
+func (m *memHeightTracker) GetBlockByNumber(_ context.Context, _ uint64, _ bool) (*domain.Block, error) {
+	return nil, nil
+}
+func (m *memHeightTracker) GetBlockByHash(_ context.Context, _ []byte, _ bool) (*domain.Block, error) {
+	return nil, nil
+}
+func (m *memHeightTracker) GetBlockTxCountByHash(_ context.Context, _ []byte) (int64, error) {
+	return 0, nil
+}
+func (m *memHeightTracker) GetBlockTxCountByNumber(_ context.Context, _ uint64) (int64, error) {
+	return 0, nil
+}
+func (m *memHeightTracker) GetTransactionByHash(_ context.Context, _ []byte) (*domain.Transaction, error) {
+	return nil, nil
+}
+func (m *memHeightTracker) GetTransactionByBlockHashAndIndex(_ context.Context, _ []byte, _ int64) (*domain.Transaction, error) {
+	return nil, nil
+}
+func (m *memHeightTracker) GetTransactionByBlockNumberAndIndex(_ context.Context, _ uint64, _ int64) (*domain.Transaction, error) {
+	return nil, nil
+}
+func (m *memHeightTracker) GetLogs(_ context.Context, _ domain.LogFilter) ([]domain.Log, error) {
+	return nil, nil
+}
+func (m *memHeightTracker) GetLogsByTxHash(_ context.Context, _ []byte) ([]domain.Log, error) {
+	return nil, nil
+}
+
+// perfHandlerChain is an integration.HandlerChainFactory for perf tests.
+// It wires a memHeightTracker instead of core.Chain (no persistence, no I/O),
+// and appends completionTracker as the last handler so the perf test can observe
+// every committed transaction.
+//
+// Handler order:
+//
+//	[endorser KVS…, memHeightTracker, gateway, completionTracker]
+func perfHandlerChain(completionTracker *TxCompletionTracker) integration.HandlerChainFactory {
+	return func(t *testing.T, ctx context.Context, cfg gwconfig.Config, ends []eapi.Service, gwSigner sdk.Signer, submitters []gwcore.Submitter, txQueue gwcore.TxQueueInterface, dbs []estorage.KVS) (*gwcore.Gateway, []blocks.BlockHandler, network.BlockHeightReader) {
+		tracker := new(memHeightTracker)
+
+		txPerSec := 0
+		if cfg.Network.Namespace == "synthetic" {
+			txPerSec = 10000
+		}
+		gw, err := app.BuildGateway(ctx, ends, gwSigner, cfg.Network, tracker, submitters, cfg.Gateway.SubmitterCount, cfg.Gateway.WorkerCount, txQueue, cfg.Gateway.EndorsementChanSize, txPerSec)
+		if err != nil {
+			t.Fatalf("build gateway: %v", err)
+		}
+
+		handlers := make([]blocks.BlockHandler, 0, len(dbs)+3)
+		for _, db := range dbs {
+			handlers = append(handlers, db)
+		}
+		handlers = append(handlers, tracker, gw, completionTracker)
+		return gw, handlers, tracker
+	}
+}
 
 var gatewayConfig = flag.String("gateway-config", "fabx.yaml", "gateway config file for the Fabric-X network")
 var metricsAddr = flag.String("metrics-addr", "0.0.0.0:2112", "address for Prometheus metrics endpoint")
@@ -60,14 +158,26 @@ type txCompletion struct {
 type TxCompletionTracker struct {
 	mu           sync.Mutex
 	completionCh chan txCompletion
+	started      bool
 	stopped      bool
 }
 
 // NewTxCompletionTracker creates a new tracker with a completion channel.
+// The tracker is dormant until Start is called: blocks committed before Start
+// (e.g. during catch-up or state priming) are silently ignored.
 func NewTxCompletionTracker(completionCh chan txCompletion) *TxCompletionTracker {
 	return &TxCompletionTracker{
 		completionCh: completionCh,
 	}
+}
+
+// Start opens the tracker for business. Call this once the test is ready to
+// receive completions (i.e. just before dispatching the first transaction).
+// Completions that arrive before Start is called are silently dropped.
+func (t *TxCompletionTracker) Start() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.started = true
 }
 
 // Stop prevents any further sends to the completion channel. Must be called before
@@ -83,7 +193,7 @@ func (t *TxCompletionTracker) Stop() {
 func (t *TxCompletionTracker) Handle(ctx context.Context, b blocks.Block) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.stopped {
+	if !t.started || t.stopped {
 		return nil
 	}
 	for _, tx := range b.Transactions {
@@ -283,7 +393,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 		},
 		factory,
 		queue,
-		tracker,
+		perfHandlerChain(tracker),
 		gwConfig)
 	// th, err = integration.NewFabricTestHarnessWithFactoryAndTxQueue(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", map[string]any{"Gateway.WorkerCount": processingWorkerCount, "Gateway.SubmitterCount": ordererSubmitterCount, "Network.Namespace": *namespace}, factory, gwcore.NewTxQueueV2())
 	assert.NoError(t, err)
@@ -380,6 +490,10 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	}()
 
 	runtime.GC()
+
+	// Open the tracker now that we are about to dispatch real transactions.
+	// Any completions that arrived during catch-up or state priming are discarded.
+	tracker.Start()
 
 	// Track throughput
 	startTime := time.Now()

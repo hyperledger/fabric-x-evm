@@ -322,7 +322,7 @@ func (sp *StatePrimer) fakeEthTx() (*types.Transaction, []byte, error) {
 func (sp *StatePrimer) commitAndWait(end sdk.Endorsement, tx *types.Transaction, wait bool) error {
 	if wait {
 		// submit through the gateway (asynchronous)
-		if err := sp.gw.SubmitFabricTx(context.Background(), end); err != nil {
+		if err := sp.gw.SubmitFabricTx(context.Background(), tx.Hash(), end); err != nil {
 			return err
 		}
 	} else {

@@ -229,6 +229,75 @@ func TestDiff_NothingWrong(t *testing.T) {
 	}
 }
 
+// TestDiff_Quarantined verifies a Flaky entry never lands in Regressions,
+// Stale, or Expected, and never trips Regressed(), regardless of whether it
+// failed, passed, or didn't run at all this time.
+func TestDiff_Quarantined(t *testing.T) {
+	results := []Result{
+		{ID: "flaky-failing", Status: StatusFail, Message: "arithmetic underflow or overflow"},
+		{ID: "flaky-passing", Status: StatusPass},
+		// flaky-absent deliberately has no Result at all this run.
+		{ID: "real-regression", Status: StatusFail, Message: "genuinely new"},
+	}
+	baseline := []Entry{
+		{ID: "flaky-failing", Flaky: true, Note: "races on concurrent tx"},
+		{ID: "flaky-passing", Flaky: true, Note: "races on concurrent tx"},
+		{ID: "flaky-absent", Flaky: true, Note: "races on concurrent tx"},
+	}
+
+	diff := Diff(results, baseline)
+
+	if len(diff.Regressions) != 1 || diff.Regressions[0].ID != "real-regression" {
+		t.Fatalf("regressions = %+v", diff.Regressions)
+	}
+	if len(diff.Stale) != 0 {
+		t.Fatalf("expected no stale entries (flaky ones must not count), got %+v", diff.Stale)
+	}
+	if len(diff.Expected) != 0 {
+		t.Fatalf("expected flaky-failing to land in Quarantined, not Expected, got %+v", diff.Expected)
+	}
+	byID := make(map[string]QuarantinedResult, len(diff.Quarantined))
+	for _, q := range diff.Quarantined {
+		byID[q.Entry.ID] = q
+	}
+	if len(diff.Quarantined) != 3 {
+		t.Fatalf("quarantined = %+v", diff.Quarantined)
+	}
+	if byID["flaky-failing"].Result.Status != StatusFail {
+		t.Errorf("flaky-failing: got status %q", byID["flaky-failing"].Result.Status)
+	}
+	if byID["flaky-passing"].Result.Status != StatusPass {
+		t.Errorf("flaky-passing: got status %q", byID["flaky-passing"].Result.Status)
+	}
+	if byID["flaky-absent"].Result.Status != "" {
+		t.Errorf("flaky-absent: expected zero-value Result (didn't run), got %+v", byID["flaky-absent"].Result)
+	}
+
+	// A real regression is still real: Regressed() is driven by it alone, not
+	// by any of the three flaky outcomes above.
+	if !diff.Regressed() {
+		t.Fatal("expected Regressed() true from the one real regression")
+	}
+}
+
+// TestDiff_QuarantinedOnlyMeansClean confirms that when every anomaly is
+// Flaky and there's no independent real regression, Regressed() is false —
+// this is the entire point of the mechanism.
+func TestDiff_QuarantinedOnlyMeansClean(t *testing.T) {
+	results := []Result{
+		{ID: "flaky-failing", Status: StatusFail, Message: "arithmetic underflow or overflow"},
+	}
+	baseline := []Entry{
+		{ID: "flaky-failing", Flaky: true},
+		{ID: "flaky-absent", Flaky: true},
+	}
+
+	diff := Diff(results, baseline)
+	if diff.Regressed() {
+		t.Fatalf("expected Regressed() false, got regressions=%+v stale=%+v", diff.Regressions, diff.Stale)
+	}
+}
+
 func TestBuildSummary(t *testing.T) {
 	results := []Result{
 		{ID: "regression", Status: StatusFail, Message: "new break", File: "test/token/ERC20.test.js"},
@@ -264,6 +333,26 @@ func TestBuildSummary(t *testing.T) {
 	}
 }
 
+func TestBuildSummary_Quarantined(t *testing.T) {
+	results := []Result{
+		{ID: "flaky-failing", Status: StatusFail, Message: "arithmetic underflow or overflow"},
+	}
+	baseline := []Entry{
+		{ID: "flaky-failing", Flaky: true, Note: "races on concurrent tx"},
+	}
+
+	diff := Diff(results, baseline)
+	summary := BuildSummary("oz-hardhat", results, diff)
+
+	if len(summary.Stale) != 0 {
+		t.Fatalf("expected no stale entries, got %+v", summary.Stale)
+	}
+	want := Quarantined{ID: "flaky-failing", Status: StatusFail, Note: "races on concurrent tx"}
+	if len(summary.Quarantined) != 1 || summary.Quarantined[0] != want {
+		t.Fatalf("quarantined = %+v, want [%+v]", summary.Quarantined, want)
+	}
+}
+
 func TestBuildSummary_EmptySlicesMarshalAsEmptyArraysNotNull(t *testing.T) {
 	results := []Result{{ID: "unlisted-pass", Status: StatusPass}}
 	summary := BuildSummary("oz-hardhat", results, Diff(results, nil))
@@ -277,7 +366,7 @@ func TestBuildSummary_EmptySlicesMarshalAsEmptyArraysNotNull(t *testing.T) {
 	// this JSON should never need to guard against a missing/null key. bySuite
 	// isn't asserted here: a single result always yields exactly one suiteStats
 	// bucket (grouped under suiteOf("") == ""), never zero — see TestSuiteOf.
-	for _, field := range []string{`"regressions":[]`, `"stale":[]`, `"causes":[]`} {
+	for _, field := range []string{`"regressions":[]`, `"stale":[]`, `"quarantined":[]`, `"causes":[]`} {
 		if !bytes.Contains(data, []byte(field)) {
 			t.Fatalf("expected %s in JSON, got %s", field, data)
 		}
@@ -348,5 +437,24 @@ func TestReconcile(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v, want %+v", got, want)
+	}
+}
+
+// TestReconcile_LeavesFlakyEntriesUntouched: a Flaky entry lands in
+// Quarantined, not Stale, regardless of outcome — so update must never drop
+// it, whether it passed, failed, or didn't run this time. Graduating a Flaky
+// entry back to normal is a deliberate human edit, not something update does.
+func TestReconcile_LeavesFlakyEntriesUntouched(t *testing.T) {
+	baseline := []Entry{
+		{ID: "flaky-passing", Flaky: true, Note: "races on concurrent tx"},
+	}
+	results := []Result{
+		{ID: "flaky-passing", Status: StatusPass},
+	}
+
+	got := Reconcile(baseline, Diff(results, baseline))
+
+	if !reflect.DeepEqual(got, baseline) {
+		t.Fatalf("got %+v, want unchanged %+v", got, baseline)
 	}
 }
