@@ -221,7 +221,7 @@ Implementation note: clearing storage slots requires enumerating all keys for th
 (non-trivial) and may produce an impractically large RWSet for contracts with many storage entries.
 
 **`GetStorageRoot` is a stub**: it returns the zero hash. This is a state-introspection gap that
-affects storage-root queries and proofs (tracked in #85); it does **not** affect EVM execution or
+affects storage-root queries and proofs; it does **not** affect EVM execution or
 the EIP-7610 collision guard, which never reads it (see below).
 
 **EIP-7610 create-collision divergence (inherited from go-ethereum)**: per EIP-7610 a
@@ -232,7 +232,7 @@ collision guard checks nonce + code + that static set, never the storage root. T
 `eip7610_create_collision` fixtures use synthetic addresses that hold storage but are not in geth's
 list, so geth's guard — and therefore ours — does not treat them as collisions. This divergence is
 inherited from go-ethereum and affects any geth-based client; it is not a fabric-x-evm bug and is
-unrelated to the `GetStorageRoot` stub. Tracked as a known divergence in #276.
+unrelated to the `GetStorageRoot` stub.
 
 **How these surface in equivalence tests**: the conformance harness runs the EVM against our
 StateDB while mirroring every write to a reference go-ethereum StateDB, then compares the state
@@ -243,7 +243,7 @@ currently cause any fixture to diverge). This is deliberate and inherited from u
 regression.
 
 These known-divergent cases are quarantined in `testdata/eth_tests.skip`: the EIP-7610
-create-collision fixtures above (an inherited go-ethereum divergence, see #276). All other
+create-collision fixtures above (an inherited go-ethereum divergence). All other
 Osaka-forward state tests pass.
 
 **Native ETH balances not funded**: balances are implemented but unused. Accounts have zero ETH 
