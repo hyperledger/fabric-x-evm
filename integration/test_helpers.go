@@ -509,7 +509,7 @@ func newSplitFileConfigHarness(t *testing.T, logger sdk.Logger, evmConfig execut
 		endorsers[i] = EndorserComponents{KVS: db, Builder: builder, Service: client}
 	}
 
-	th, sync, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false, endorsers, nil, false)
+	th, sync, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false, endorsers, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -521,11 +521,6 @@ func newSplitFileConfigHarness(t *testing.T, logger sdk.Logger, evmConfig execut
 	return th, nil
 }
 
-// NewFabricXTestHarnessWithNotifications creates a fabric-x test harness with notification-based
-// transaction completion tracking instead of block-based synchronization.
-// Uses MemoryStore and NotificationDispatcher for better performance in replay scenarios.
-// If extraHandler is non-nil, it will be inserted into the handler chain right before the cleanup handler.
-func NewFabricXTestHarnessWithNotifications(t *testing.T, logger sdk.Logger, evmConfig execution.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory, txQueue core.TxQueueInterface, extraHandler common.BlockHandler, confFile string) (*TestHarness, error) {
 // NewFabricXTestHarnessWithNotifications creates a fabric-x test harness backed by
 // the hybrid synchronizer (delivery catch-up + notification live feed).
 //
