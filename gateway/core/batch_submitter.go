@@ -32,6 +32,20 @@ var SubmissionTimestampsMu sync.Mutex
 // If non-nil, it will be called to report the current queue size.
 var SetBatchSubmitterQueueSizeMetric func(size int)
 
+// EndorsedTx pairs an endorsement with the Ethereum transaction hash it originated from.
+// The hash is needed because a submission failure means the transaction will never reach
+// a block, so it must be reported back to a Completer instead of leaking in whatever is
+// tracking the transaction's lifecycle.
+type EndorsedTx struct {
+	Hash common.Hash
+	End  sdk.Endorsement
+}
+
+// Completer marks a transaction hash as finished. TxQueueInterface satisfies this.
+type Completer interface {
+	Complete(hash common.Hash)
+}
+
 // BatchSubmitter reads endorsements from a channel, optionally records them in the
 // pending-tx cache (when cache != nil), then submits each one to the orderer.
 // The cache is used by AllTxBatchDispatcher to correlate commit events with the
@@ -42,11 +56,12 @@ var SetBatchSubmitterQueueSizeMetric func(size int)
 // does not exceed the configured limit.
 type BatchSubmitter struct {
 	submitters  []Submitter // One submitter per worker for parallel submission
-	inputChan   chan sdk.Endorsement
+	inputChan   chan EndorsedTx
 	stopChan    chan struct{}
 	doneChan    chan struct{}
 	numWorkers  int
 	rateLimiter *rate.Limiter // Shared rate limiter across all workers (nil if disabled)
+	completer   Completer     // Notified when a submission fails permanently (nil = no-op)
 }
 
 const DefaultNumWorkers = 16
@@ -55,12 +70,14 @@ const DefaultNumWorkers = 16
 // numWorkers specifies the number of parallel submission goroutines (default: 16).
 // Creates one submitter instance per worker for optimal parallel performance.
 // txPerSec sets the aggregate submission rate limit across all workers; when zero,
-// rate limiting is disabled.
+// rate limiting is disabled. completer is notified of a hash when its submission fails
+// permanently; nil is fine if the caller doesn't need that (e.g. tests).
 func NewBatchSubmitter(
 	submitters []Submitter,
-	inputChan chan sdk.Endorsement,
+	inputChan chan EndorsedTx,
 	numWorkers int,
 	txPerSec int,
+	completer Completer,
 ) *BatchSubmitter {
 	if numWorkers <= 0 {
 		numWorkers = DefaultNumWorkers
@@ -84,6 +101,7 @@ func NewBatchSubmitter(
 		doneChan:    make(chan struct{}),
 		numWorkers:  numWorkers,
 		rateLimiter: rateLimiter,
+		completer:   completer,
 	}
 }
 
@@ -147,8 +165,11 @@ func (bs *BatchSubmitter) worker(ctx context.Context, workerID int, wg *sync.Wai
 			if !ok {
 				return
 			}
-			if err := bs.submitOne(ctx, workerID, end); err != nil {
+			if err := bs.submitOne(ctx, workerID, end.End); err != nil {
 				batchLogger.Errorf("Worker %d: submit failed: %v", workerID, err)
+				if bs.completer != nil {
+					bs.completer.Complete(end.Hash)
+				}
 			}
 		}
 	}

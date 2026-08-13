@@ -40,11 +40,14 @@ type Result struct {
 
 // Entry is one checked-in baseline record: a test expected to fail today.
 // Cause and Note are optional human annotations, filled in opportunistically —
-// never required for an entry to be valid.
+// never required for an entry to be valid. Flaky marks a test whose pass/fail
+// outcome is not deterministic (e.g. a race condition, not a clean incompatibility);
+// see Diff and Quarantined for how that changes gating.
 type Entry struct {
 	ID    string `json:"id"`
 	Cause string `json:"cause,omitempty"`
 	Note  string `json:"note,omitempty"`
+	Flaky bool   `json:"flaky,omitempty"`
 }
 
 // ExpectedFailure pairs a currently-failing result with the baseline entry that
@@ -54,16 +57,27 @@ type ExpectedFailure struct {
 	Entry  Entry
 }
 
+// QuarantinedResult pairs a Flaky baseline entry with whatever it actually did
+// this run. Result is the zero value (Status "") if the test didn't run at all —
+// which, for a flaky entry, is itself an unreliable signal, not evidence the
+// test was removed.
+type QuarantinedResult struct {
+	Result Result
+	Entry  Entry
+}
+
 // DiffResult is the outcome of comparing current results against a baseline.
 type DiffResult struct {
-	Regressions []Result          // failing, not in the baseline
-	Stale       []Entry           // in the baseline, but not failing (or missing) now
-	Expected    []ExpectedFailure // failing, in the baseline — the normal case
+	Regressions []Result            // failing, not in the baseline
+	Stale       []Entry             // in the baseline (and not Flaky), but not failing (or missing) now
+	Expected    []ExpectedFailure   // failing, in the baseline, not Flaky — the normal case
+	Quarantined []QuarantinedResult // Flaky baseline entries, whatever they did this run — never gates
 }
 
 // Regressed reports whether the diff should fail CI: any regression, or any stale
 // entry (a listed test that no longer fails is exactly as much "baseline doesn't
-// match reality" as a new failure).
+// match reality" as a new failure). Quarantined (Flaky) entries never contribute
+// here, by design.
 func (d DiffResult) Regressed() bool {
 	return len(d.Regressions) > 0 || len(d.Stale) > 0
 }
@@ -189,7 +203,9 @@ func SaveBaseline(path string, entries []Entry) error {
 // expected (the normal case), failing-and-unlisted is a regression, and
 // listed-but-not-failing (including a listed ID that no longer appears in
 // results at all — renamed or removed upstream) is stale and should be
-// removed from the baseline.
+// removed from the baseline. A Flaky entry is carved out of all three of
+// those into Quarantined instead, regardless of what it did this run — its
+// outcome isn't reliable enough to gate on, by definition.
 func Diff(results []Result, baseline []Entry) DiffResult {
 	byID := make(map[string]Entry, len(baseline))
 	for _, e := range baseline {
@@ -203,6 +219,8 @@ func Diff(results []Result, baseline []Entry) DiffResult {
 		entry, listed := byID[r.ID]
 
 		switch {
+		case listed && entry.Flaky:
+			out.Quarantined = append(out.Quarantined, QuarantinedResult{Result: r, Entry: entry})
 		case r.Status == StatusFail && listed:
 			out.Expected = append(out.Expected, ExpectedFailure{Result: r, Entry: entry})
 		case r.Status == StatusFail && !listed:
@@ -213,11 +231,18 @@ func Diff(results []Result, baseline []Entry) DiffResult {
 	}
 
 	// Baseline entries whose ID never appeared in this run at all (upstream
-	// renamed/removed the test) are safe to remove, same as a passing test.
+	// renamed/removed the test) are safe to remove, same as a passing test —
+	// unless Flaky, in which case "didn't run" is just as unreliable a signal
+	// as any other outcome, so it goes to Quarantined instead.
 	for _, e := range baseline {
-		if !seen[e.ID] {
-			out.Stale = append(out.Stale, e)
+		if seen[e.ID] {
+			continue
 		}
+		if e.Flaky {
+			out.Quarantined = append(out.Quarantined, QuarantinedResult{Entry: e})
+			continue
+		}
+		out.Stale = append(out.Stale, e)
 	}
 
 	return out
@@ -350,8 +375,9 @@ func bySuite(results []Result) []suiteStats {
 
 // WriteReport prints a human-readable summary: headline counts and pass rate, a
 // per-suite breakdown (to see where compatibility is improving), regressions,
-// stale entries, and a cause histogram of expected failures (grouped by the
-// entry's Cause tag, falling back to the raw failure message when blank).
+// stale entries, quarantined (Flaky) entries, and a cause histogram of expected
+// failures (grouped by the entry's Cause tag, falling back to the raw failure
+// message when blank).
 func WriteReport(w io.Writer, suite string, results []Result, diff DiffResult) {
 	var pass, fail, skip int
 	for _, r := range results {
@@ -389,6 +415,22 @@ func WriteReport(w io.Writer, suite string, results []Result, diff DiffResult) {
 		fmt.Fprintf(w, "## Stale baseline entries (%d) — remove these\n\n", len(diff.Stale))
 		for _, e := range diff.Stale {
 			fmt.Fprintf(w, "- `%s`\n", e.ID)
+		}
+		fmt.Fprintln(w)
+	}
+
+	if len(diff.Quarantined) > 0 {
+		fmt.Fprintf(w, "## Quarantined (flaky) (%d) — for visibility only, never gates\n\n", len(diff.Quarantined))
+		for _, q := range diff.Quarantined {
+			status := "did not run"
+			if q.Result.Status != "" {
+				status = string(q.Result.Status)
+			}
+			note := q.Entry.Note
+			if note == "" {
+				note = "(no note)"
+			}
+			fmt.Fprintf(w, "- `%s`: %s — %s\n", q.Entry.ID, status, note)
 		}
 		fmt.Fprintln(w)
 	}
@@ -448,6 +490,7 @@ type Summary struct {
 	BySuite     []SuiteSummary `json:"bySuite"`
 	Regressions []Regression   `json:"regressions"`
 	Stale       []string       `json:"stale"`
+	Quarantined []Quarantined  `json:"quarantined"`
 	Causes      []CauseCount   `json:"causes"`
 }
 
@@ -466,6 +509,14 @@ type Regression struct {
 type CauseCount struct {
 	Cause string `json:"cause"`
 	Count int    `json:"count"`
+}
+
+// Quarantined is a Flaky entry's outcome this run, for the JSON summary.
+// Status is "" if the test didn't run at all this suite.
+type Quarantined struct {
+	ID     string `json:"id"`
+	Status Status `json:"status"`
+	Note   string `json:"note,omitempty"`
 }
 
 // BuildSummary computes Summary from the same inputs WriteReport renders from,
@@ -505,6 +556,11 @@ func BuildSummary(suite string, results []Result, diff DiffResult) Summary {
 		stale = append(stale, e.ID)
 	}
 
+	quarantined := []Quarantined{}
+	for _, q := range diff.Quarantined {
+		quarantined = append(quarantined, Quarantined{ID: q.Entry.ID, Status: q.Result.Status, Note: q.Entry.Note})
+	}
+
 	causes := []CauseCount{}
 	for _, group := range groupExpected(diff.Expected) {
 		causes = append(causes, CauseCount{Cause: group.key, Count: len(group.items)})
@@ -522,6 +578,7 @@ func BuildSummary(suite string, results []Result, diff DiffResult) Summary {
 		BySuite:     bySuiteList,
 		Regressions: regressions,
 		Stale:       stale,
+		Quarantined: quarantined,
 		Causes:      causes,
 	}
 }

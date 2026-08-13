@@ -233,20 +233,18 @@ func runUpdate(args []string) int {
 	return 0
 }
 
-// tagMatching sets Cause (and Note, if given) on every baseline entry that is
-// still failing (present in messageByID) and whose ID or current message
-// contains match. Returns how many entries changed. A human decision, made in
-// bulk instead of one JSON edit at a time.
+// tagMatching sets Cause and/or Flaky (and Note, if given) on every baseline
+// entry that is still failing (present in messageByID) and whose ID or current
+// message contains match. Returns how many entries changed. A human decision,
+// made in bulk instead of one JSON edit at a time.
 //
-// An entry that already has a Cause is left untouched unless force is true —
-// a broad ID match (e.g. a whole describe block) can otherwise silently
-// clobber a more specific tag an earlier pass already got right.
-func tagMatching(baseline []Entry, messageByID map[string]string, match, cause, note string, force bool) int {
+// Cause and Flaky are each left untouched on an entry that already has that
+// annotation, unless force is true — a broad match (e.g. a whole describe
+// block) can otherwise silently clobber a more specific tag an earlier pass
+// already got right.
+func tagMatching(baseline []Entry, messageByID map[string]string, match, cause, note string, flaky, force bool) int {
 	n := 0
 	for i, e := range baseline {
-		if e.Cause != "" && !force {
-			continue
-		}
 		msg, stillFailing := messageByID[e.ID]
 		if !stillFailing {
 			continue
@@ -254,11 +252,22 @@ func tagMatching(baseline []Entry, messageByID map[string]string, match, cause, 
 		if !strings.Contains(e.ID, match) && !strings.Contains(msg, match) {
 			continue
 		}
-		baseline[i].Cause = cause
-		if note != "" {
-			baseline[i].Note = note
+		changed := false
+		if cause != "" && (e.Cause == "" || force) {
+			baseline[i].Cause = cause
+			changed = true
 		}
-		n++
+		if flaky && (!e.Flaky || force) {
+			baseline[i].Flaky = true
+			changed = true
+		}
+		if note != "" && (e.Note == "" || force) {
+			baseline[i].Note = note
+			changed = true
+		}
+		if changed {
+			n++
+		}
 	}
 	return n
 }
@@ -271,15 +280,16 @@ func runTag(args []string) int {
 	format := fs.String("format", "mocha-json", "raw results format (mocha-json)")
 	match := fs.String("match", "", "substring to match against each entry's ID or current failure message")
 	cause := fs.String("cause", "", "cause to assign to every matching entry")
-	note := fs.String("note", "", "optional note to assign alongside cause")
-	force := fs.Bool("force", false, "overwrite entries that already have a cause (default: leave them untouched)")
+	note := fs.String("note", "", "optional note to assign alongside cause/flaky")
+	flaky := fs.Bool("flaky", false, "mark every matching entry Flaky (nondeterministic outcome; never gates check, see Diff)")
+	force := fs.Bool("force", false, "overwrite entries that already have a cause or are already Flaky (default: leave them untouched)")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
 	applySuiteDefaults(*suite, baselinePath, resultsGlob)
-	if *baselinePath == "" || *resultsGlob == "" || *match == "" || *cause == "" {
-		fmt.Fprintln(os.Stderr, "usage: baseline tag --suite <name> --match <substring> --cause <name> [--baseline <path>] [--results <glob>] [--note <text>] [--force]")
+	if *baselinePath == "" || *resultsGlob == "" || *match == "" || (*cause == "" && !*flaky) {
+		fmt.Fprintln(os.Stderr, "usage: baseline tag --suite <name> --match <substring> (--cause <name> | --flaky) [--baseline <path>] [--results <glob>] [--note <text>] [--force]")
 		return 2
 	}
 
@@ -294,17 +304,21 @@ func runTag(args []string) int {
 		return 2
 	}
 
-	diff := Diff(results, baseline)
-	messageByID := make(map[string]string, len(diff.Expected))
-	for _, exp := range diff.Expected {
-		messageByID[exp.Entry.ID] = exp.Result.Message
+	// Built from raw results, not Diff's Expected bucket: an entry already
+	// Flaky lives in Quarantined instead, and must still be retaggable (e.g.
+	// to update its note) as long as it's still failing this run.
+	messageByID := make(map[string]string, len(results))
+	for _, r := range results {
+		if r.Status == StatusFail {
+			messageByID[r.ID] = r.Message
+		}
 	}
 
-	n := tagMatching(baseline, messageByID, *match, *cause, *note, *force)
+	n := tagMatching(baseline, messageByID, *match, *cause, *note, *flaky, *force)
 	if err := SaveBaseline(*baselinePath, baseline); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
-	fmt.Printf("%s: tagged %d entries matching %q with cause %q\n", *baselinePath, n, *match, *cause)
+	fmt.Printf("%s: tagged %d entries matching %q\n", *baselinePath, n, *match)
 	return 0
 }

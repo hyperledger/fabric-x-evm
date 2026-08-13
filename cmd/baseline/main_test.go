@@ -95,7 +95,7 @@ func TestTagMatching(t *testing.T) {
 		"unrelated test":   "something else entirely",
 	}
 
-	n := tagMatching(baseline, messageByID, "Packing", "max-code-size", "", false)
+	n := tagMatching(baseline, messageByID, "Packing", "max-code-size", "", false, false)
 
 	if n != 2 {
 		t.Fatalf("expected 2 tagged, got %d", n)
@@ -115,7 +115,7 @@ func TestTagMatching_MatchesOnMessageToo(t *testing.T) {
 	baseline := []Entry{{ID: "some test"}}
 	messageByID := map[string]string{"some test": "max code size exceeded: code size 25144 limit 24576"}
 
-	n := tagMatching(baseline, messageByID, "max code size exceeded", "max-code-size", "confirmed via logs", false)
+	n := tagMatching(baseline, messageByID, "max code size exceeded", "max-code-size", "confirmed via logs", false, false)
 
 	if n != 1 || baseline[0].Cause != "max-code-size" || baseline[0].Note != "confirmed via logs" {
 		t.Fatalf("got %+v", baseline)
@@ -130,13 +130,39 @@ func TestTagMatching_SkipsAlreadyTaggedUnlessForced(t *testing.T) {
 		"AccessControlDefaultAdminRules ERC165 uses less than 30k gas": "expected 10000000 to be at most 30000.",
 	}
 
-	n := tagMatching(baseline, messageByID, "AccessControlDefaultAdminRules", "fixed-block-context", "", false)
+	n := tagMatching(baseline, messageByID, "AccessControlDefaultAdminRules", "fixed-block-context", "", false, false)
 	if n != 0 || baseline[0].Cause != "gas-stub" {
 		t.Fatalf("expected the existing tag to survive untouched, got %+v", baseline)
 	}
 
-	n = tagMatching(baseline, messageByID, "AccessControlDefaultAdminRules", "fixed-block-context", "", true)
+	n = tagMatching(baseline, messageByID, "AccessControlDefaultAdminRules", "fixed-block-context", "", false, true)
 	if n != 1 || baseline[0].Cause != "fixed-block-context" {
 		t.Fatalf("expected --force to overwrite, got %+v", baseline)
+	}
+}
+
+func TestTagMatching_Flaky(t *testing.T) {
+	baseline := []Entry{{ID: "Governor before each hook"}}
+	messageByID := map[string]string{"Governor before each hook": "arithmetic underflow or overflow"}
+
+	n := tagMatching(baseline, messageByID, "Governor", "", "races on concurrent delegate+transfer", true, false)
+
+	if n != 1 || !baseline[0].Flaky || baseline[0].Cause != "" || baseline[0].Note != "races on concurrent delegate+transfer" {
+		t.Fatalf("got %+v", baseline)
+	}
+}
+
+func TestTagMatching_FlakySkipsAlreadyFlakyUnlessForced(t *testing.T) {
+	baseline := []Entry{{ID: "Governor before each hook", Flaky: true, Note: "original note"}}
+	messageByID := map[string]string{"Governor before each hook": "arithmetic underflow or overflow"}
+
+	n := tagMatching(baseline, messageByID, "Governor", "", "new note", true, false)
+	if n != 0 || baseline[0].Note != "original note" {
+		t.Fatalf("expected the existing flaky tag and note to survive untouched, got %+v", baseline)
+	}
+
+	n = tagMatching(baseline, messageByID, "Governor", "", "new note", true, true)
+	if n != 1 || baseline[0].Note != "new note" {
+		t.Fatalf("expected --force to overwrite the note, got %+v", baseline)
 	}
 }
