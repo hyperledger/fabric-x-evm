@@ -145,9 +145,11 @@ unchanged by the endorsement API. See [JSON_RPC_ERRORS.md](JSON_RPC_ERRORS.md).
 
 ## Security
 
-**mTLS is required.** Both sides present certificates: the gateway
-authenticates the endorser, and the endorser authenticates the gateway. There is
-no plaintext or server-only-TLS fallback.
+**Use mTLS.** The transport supports `none`, `tls` and `mtls`, and an unset
+`mode` defaults to `none`, so nothing stops a deployment from running the
+boundary in the clear. Only `mtls` authenticates the caller, which is what the
+next paragraph relies on, so it is the mode to run in anywhere the endorser is
+reachable by anyone else.
 
 The client identity is the mTLS peer certificate. An endorser accepts only
 connections whose certificate chains to one of its trusted organization CAs,
@@ -182,23 +184,23 @@ An endorser is configured with its identity (which it signs endorsements
 with), its committer connection, and its database:
 
 ```yaml
-endorsers:
-  - name: org1
-    identity:
-      msp-id: Org1MSP
-      msp-dir: /crypto/peerOrganizations/org1.example.com/peers/endorser.org1.example.com/msp
-    committer:
-      endpoint:
-        host: committer.org1.example.com
-        port: 4001
-      tls:
-        mode: mtls
-        cert-path: /crypto/.../client.crt
-        key-path: /crypto/.../client.key
-        ca-cert-paths:
-          - /crypto/.../tlsca.org1.example.com-cert.pem
-    database:
-      database: memory
+endorser:
+  name: org1
+  identity:
+    msp-id: Org1MSP
+    msp-dir: /crypto/peerOrganizations/org1.example.com/peers/endorser.org1.example.com/msp
+  committer:
+    endpoint:
+      host: committer.org1.example.com
+      port: 4001
+    tls:
+      mode: mtls
+      cert-path: /crypto/.../client.crt
+      key-path: /crypto/.../client.key
+      ca-cert-paths:
+        - /crypto/.../tlsca.org1.example.com-cert.pem
+  database:
+    database: memory
 ```
 
 The gRPC server itself is configured with an endpoint, mTLS, keep-alive,
