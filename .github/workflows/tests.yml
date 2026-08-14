@@ -41,6 +41,75 @@ jobs:
           files: ./coverage.out
           fail_ci_if_error: false
 
+  perf-smoke:
+    name: Perf Smoke Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: quick-tests
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Start Fabric-X network
+        run: make clean-x init-x start-x
+
+      - name: Run perf smoke test
+        run: make perf-smoke 2>&1 | tee /tmp/perf-smoke.log
+
+      - name: Stop and clean Fabric-X network
+        if: always()
+        run: make stop-x clean-x
+
+      - name: Publish perf results
+        if: always()
+        run: |
+          # Extract the PERF RESULT line logged by TestReplayJSONDataset.
+          # Example: "PERF RESULT throughput=123.45 invalid_rate=0.000000 conflict_rate=0.000000 total=10000 failed=0"
+          RESULT_LINE=$(grep 'PERF RESULT' /tmp/perf-smoke.log | tail -1)
+          if [ -z "$RESULT_LINE" ]; then
+            echo "## ⚠️ Perf smoke — no result line found" >> "$GITHUB_STEP_SUMMARY"
+            echo "NO_RESULT" > /tmp/perf-smoke-result.txt
+            exit 0
+          fi
+          echo "$RESULT_LINE" > /tmp/perf-smoke-result.txt
+
+          THROUGHPUT=$(echo "$RESULT_LINE"   | grep -oP 'throughput=\K[0-9.]+')
+          INVALID_RATE=$(echo "$RESULT_LINE"  | grep -oP 'invalid_rate=\K[0-9.]+')
+          CONFLICT_RATE=$(echo "$RESULT_LINE" | grep -oP 'conflict_rate=\K[0-9.]+')
+
+          {
+            echo "## **Perf Smoke — CI baseline (lower-bound against test committer)**"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|--------|-------|"
+            echo "| Throughput | ${THROUGHPUT} tx/s |"
+            echo "| Invalid rate | ${INVALID_RATE} |"
+            echo "| Conflict rate | ${CONFLICT_RATE} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record PR number for perf comment
+        if: always() && github.event_name == 'pull_request'
+        run: echo "${{ github.event.pull_request.number }}" > /tmp/perf-smoke-pr_number.txt
+
+      - name: Upload perf smoke artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-smoke-report
+          path: |
+            /tmp/perf-smoke-result.txt
+            /tmp/perf-smoke-pr_number.txt
+          retention-days: 1
+          if-no-files-found: warn
+
   oz-hardhat-compat:
     name: OZ Hardhat Compatibility
     runs-on: ubuntu-latest

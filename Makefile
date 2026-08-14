@@ -145,6 +145,15 @@ start-x:
 test-x:
 	@go test -timeout 30s -v -run ^TestFabricX$$ ./integration
 
+.PHONY: perf-smoke
+perf-smoke:
+	@go test -timeout 600s -tags=perf -run ^TestReplayJSONDataset$$ -v -count=1 \
+		./integration/perf/... \
+		-outstanding 500 \
+		-dataset integration/perf/testdata/USDC_dataset_10k.json.gz \
+		-oldqueue \
+		-namespace basic
+
 .PHONY: stop-x
 stop-x:
 	@$(COMPOSE) -f compose.fabric-x.yml down
