@@ -1,9 +1,14 @@
-# execution-specs state_tests that are skipped in ALL modes.
-# Each entry is a genuine fabric-x-evm bug (filed separately), quarantined here so the
-# conformance suite stays green in CI. Full failure evidence is in the PR description.
+# execution-specs state_tests that are skipped in ALL modes, quarantined here so the
+# conformance suite stays green in CI.
 #
-# --- EIP-7610 create-collision divergence (Cancun+): CREATE/CREATE2 into an account that
-#     already has storage/code produces a wrong post-state root. Known StateDB gap (cf. #193).
+# --- EIP-7610 create-collision divergence (Cancun+), inherited from go-ethereum:
+#     CREATE/CREATE2 onto an address that already holds storage should fail per EIP-7610,
+#     but go-ethereum v1.17.3 implements the check as a hardcoded 28-address mainnet
+#     allowlist (guard = nonce + code + that static set, never the storage root), not a
+#     general storage check. These fixtures use synthetic addresses that hold storage but
+#     are not in geth's list, so geth's guard — and therefore ours, since we run geth's EVM
+#     create path unchanged — does not treat them as collisions. Not a fabric-x-evm bug and
+#     unrelated to the GetStorageRoot stub; affects any geth-based client.
 ../testdata/execution-specs-tests/fixtures/state_tests/for_cancun/paris/eip7610_create_collision/revert_in_create/collision_with_create2_revert_in_initcode.json
 ../testdata/execution-specs-tests/fixtures/state_tests/for_osaka/paris/eip7610_create_collision/revert_in_create/collision_with_create2_revert_in_initcode.json
 ../testdata/execution-specs-tests/fixtures/state_tests/for_prague/paris/eip7610_create_collision/revert_in_create/collision_with_create2_revert_in_initcode.json
