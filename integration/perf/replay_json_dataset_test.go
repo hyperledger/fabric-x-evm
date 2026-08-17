@@ -326,8 +326,10 @@ func writeHeapProfile(filename string) {
 }
 
 // runReplayTest executes the replay test with configurable worker counts and returns metrics.
-// Returns: (overallThroughput, failedTransactionCount, totalTransactionCount)
-func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCount int, ordererSubmitterCount int, numOutstandingTx int, cfg replayConfig, gwConfig string) (float64, int64, int64) {
+// Returns: (overallThroughput, failedTransactionCount, totalTransactionCount, invalidRate, conflictRate)
+// invalidRate  = fraction of committed transactions that were invalid (MVCC / signature failures).
+// conflictRate = fraction of enqueued transactions that were rejected due to conflicts.
+func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCount int, ordererSubmitterCount int, numOutstandingTx int, cfg replayConfig, gwConfig string) (float64, int64, int64, float64, float64) {
 	// Silence GRPC logging
 	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr))
 
@@ -770,8 +772,18 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	totalElapsed := time.Since(startTime).Seconds()
 	overallThroughput := float64(finalSuccess+finalFail) / totalElapsed
 
-	// Return metrics (throughput, failed count, total dispatched transfers)
-	return overallThroughput, finalFail, dispatched
+	// Read queue stats before t.Cleanup fires and calls gw.Stop().
+	total, invalid, totalEnq, conflictEnq := th.Gateways[0].TxQueue.Stats()
+	var invalidRate, conflictRate float64
+	if total > 0 {
+		invalidRate = float64(invalid) / float64(total)
+	}
+	if totalEnq > 0 {
+		conflictRate = float64(conflictEnq) / float64(totalEnq)
+	}
+
+	// Return metrics (throughput, failed count, total dispatched transfers, invalidRate, conflictRate)
+	return overallThroughput, finalFail, dispatched, invalidRate, conflictRate
 }
 
 // TestReplayJSONDataset loads the USDC_dataset.json.gz file with pre-generated transactions
@@ -789,7 +801,12 @@ func TestReplayJSONDataset(t *testing.T) {
 	ordererSubmitterCount := *orderers   // Number of goroutines submitting transactions TO the orderer (BatchSubmitter workers)
 	numOutstandingTx := *outstanding     // Maximum number of outstanding transactions
 
-	_, _, _ = runReplayTest(t, processingWorkerCount, submittingWorkerCount, ordererSubmitterCount, numOutstandingTx, replayConfig{windowSize: 1000000}, *gatewayConfig)
+	throughput, failedTxs, totalTxs, invalidRate, conflictRate := runReplayTest(t, processingWorkerCount, submittingWorkerCount, ordererSubmitterCount, numOutstandingTx, replayConfig{windowSize: 1000000}, *gatewayConfig)
+
+	// Machine-readable summary parsed by CI to post on the PR.
+	// Format: PERF RESULT throughput=<tx/s> invalid_rate=<0.NNN> conflict_rate=<0.NNN>
+	t.Logf("PERF RESULT throughput=%.2f invalid_rate=%.6f conflict_rate=%.6f total=%d failed=%d",
+		throughput, invalidRate, conflictRate, totalTxs, failedTxs)
 }
 
 type performanceResult struct {
@@ -826,7 +843,7 @@ func TestReplayJSONDatasetPerformance(t *testing.T) {
 				t.Logf("\n=== Testing with processingWorkers=%d, submittingWorkers=%d, ordererSubmitters=%d ===",
 					processingWorkers, submittingWorkers, ordererSubmitters)
 
-				throughput, failedTxs, totalTxs := runReplayTest(t, processingWorkers, submittingWorkers, ordererSubmitters, 100, loadReplayConfigFromEnv(t), *gatewayConfig)
+				throughput, failedTxs, totalTxs, _, _ := runReplayTest(t, processingWorkers, submittingWorkers, ordererSubmitters, 100, loadReplayConfigFromEnv(t), *gatewayConfig)
 				failureRate := float64(failedTxs) / float64(totalTxs)
 
 				results = append(results, performanceResult{
