@@ -27,7 +27,10 @@ testdata/oz_known_failures.json. This is what CI runs.
   --file <path>     Narrow to one test file (or directory) instead of the full set.
   --grep <pattern>  Narrow to tests whose full title matches <pattern>.
   --port <n>        Port for this run's testnode (default ${DEFAULT_PORT}). Use it to run
-                    a second suite without disturbing one already going.
+                    a second suite without disturbing one already going; a full
+                    run on a non-default port keeps its results (and its baseline
+                    diff) in testdata/oz-hardhat-results-<port>/ so the two don't
+                    overwrite each other.
   -h, --help        Show this message.
 
 A narrowed run skips the results/baseline step, since a partial run can't tell a
@@ -74,6 +77,12 @@ COMPAT_DIRS=(access crosschain finance governance metatx proxy token utils)
 # it's there — e.g. `grep '"fullTitle": "..."' -A2 testdata/oz-hardhat-results/*.json`
 # to find which file a failing test lives in, without any code needing to track it.
 RESULTS_DIR="${PROJECT_ROOT}/testdata/oz-hardhat-results"
+# A full run wipes and rewrites that directory, so a run on a non-default port
+# gets its own: otherwise two concurrent full runs clobber each other's results
+# and the baseline check reads a mix of the two. The default port keeps the
+# canonical path, which is what CI's separate gate step and
+# `baseline check --suite oz-hardhat` both expect to find.
+[ "${PORT}" = "${DEFAULT_PORT}" ] || RESULTS_DIR="${RESULTS_DIR}-${PORT}"
 
 cleanup() {
     if [ -n "${TESTNODE_PID}" ] && kill -0 "${TESTNODE_PID}" 2>/dev/null; then
@@ -234,7 +243,11 @@ run_full_suite() {
     # suite ran at all, not to the baseline diff. Regressions failing the build
     # is what CI's own gate step is for; a local run shouldn't error out just
     # because a known failure is still known to fail.
-    go run ./cmd/baseline check --suite oz-hardhat || true
+    #
+    # --results explicitly, so a non-default port diffs the results it just
+    # wrote rather than whatever is in the canonical directory. Quoted: the glob
+    # is for filepath.Glob, not the shell.
+    go run ./cmd/baseline check --suite oz-hardhat --results "${RESULTS_DIR}/*.json" || true
 }
 
 main() {
