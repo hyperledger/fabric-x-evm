@@ -9,22 +9,11 @@ package storage
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
-	"sync"
-	"sync/atomic"
 
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 )
 
 var storeLogger = flogging.MustGetLogger("gateway.storage.snapshot_store")
-
-const snapshotRingBufferSize = 128
-
-type snapshot struct {
-	BlockNumber uint64
-	DbPath      string // path to the snapshot database file
-}
 
 // Revertible is implemented by stores that support interactive snapshot/rollback —
 // e.g. the Hardhat evm_snapshot/evm_revert RPCs on a single-node testnode. The
@@ -35,241 +24,70 @@ type Revertible interface {
 	RevertToBlock(ctx context.Context, blockNumber uint64) error
 }
 
-// SnapshotStore extends Store with snapshot and revert capabilities
+// SnapshotStore adds snapshot/revert to a Store by treating a revert as a
+// truncation of the block history.
+//
+// Blocks, transactions and logs are append-only: nothing below the chain tip is
+// ever rewritten. So the state at height N is fully described by "the rows at or
+// below N", and returning to N means deleting everything above it. There is
+// nothing to copy and nothing to keep.
+//
+// That matches evm_revert's own contract, which invalidates every snapshot taken
+// after the target — history only ever moves backwards, never forwards again.
 type SnapshotStore struct {
 	*Store
-	SnapshotsMu   sync.RWMutex
-	Snapshots     [snapshotRingBufferSize]*snapshot
-	AttachCounter atomic.Uint64 // counter for unique ATTACH DATABASE aliases
 }
 
 // NewSnapshotStore creates a new SnapshotStore that wraps a Store
 func NewSnapshotStore(store *Store) *SnapshotStore {
-	return &SnapshotStore{
-		Store: store,
-	}
+	return &SnapshotStore{Store: store}
 }
 
-// Snapshot creates a backup of the current database state at the current block number.
-// The snapshot is stored in a ring buffer indexed by block number modulo 128.
-// Uses ATTACH DATABASE to create a separate database file for the snapshot.
+// Snapshot names the current chain tip so a later RevertToBlock can come back to it.
 func (s *SnapshotStore) Snapshot(ctx context.Context) (uint64, error) {
-	currentBlockNumber := s.CachedBlockNumber.Load()
-	storeLogger.Debugf("Starting snapshot for block %d", currentBlockNumber)
-
-	// Use a unique ID for this snapshot to avoid conflicts
-	attachID := s.AttachCounter.Add(1)
-
-	// Create a temporary file for the snapshot with a unique name
-	// This ensures multiple snapshots at the same block number don't overwrite each other
-	tmpDir := os.TempDir()
-	snapshotPath := filepath.Join(tmpDir, fmt.Sprintf("fabric-evm-snapshot-blk%d-id%d.db", currentBlockNumber, attachID))
-	storeLogger.Debugf("Snapshot path: %s (attachID=%d)", snapshotPath, attachID)
-
-	// Remove the file if it exists (shouldn't happen with unique IDs, but just in case)
-	os.Remove(snapshotPath)
-
-	snapshotAlias := fmt.Sprintf("snap_%d", attachID)
-	storeLogger.Debugf("Using alias: %s", snapshotAlias)
-
-	// Get a dedicated connection for this operation
-	conn, err := s.DB.Conn(ctx)
-	if err != nil {
-		storeLogger.Debugf("Failed to get connection: %v", err)
-		return 0, fmt.Errorf("failed to get database connection: %w", err)
-	}
-	defer conn.Close()
-
-	// Use ATTACH DATABASE and copy all tables to the snapshot
-	// This works reliably with shared memory databases
-	attachSQL := fmt.Sprintf("ATTACH DATABASE '%s' AS %s", snapshotPath, snapshotAlias)
-	storeLogger.Debugf("Executing: %s", attachSQL)
-	if _, err := conn.ExecContext(ctx, attachSQL); err != nil {
-		storeLogger.Debugf("ATTACH failed: %v", err)
-		return 0, fmt.Errorf("failed to attach snapshot database: %w", err)
-	}
-
-	// Copy schema and data to snapshot database
-	// Execute each statement separately to ensure they all complete
-	statements := []string{
-		fmt.Sprintf("CREATE TABLE \"%s\".blocks AS SELECT * FROM main.blocks", snapshotAlias),
-		fmt.Sprintf("CREATE TABLE \"%s\".transactions AS SELECT * FROM main.transactions", snapshotAlias),
-		fmt.Sprintf("CREATE TABLE \"%s\".logs AS SELECT * FROM main.logs", snapshotAlias),
-		fmt.Sprintf("CREATE INDEX \"%s\".idx_blocks_number ON blocks(block_number)", snapshotAlias),
-		fmt.Sprintf("CREATE INDEX \"%s\".idx_blocks_hash ON blocks(block_hash)", snapshotAlias),
-		fmt.Sprintf("CREATE INDEX \"%s\".idx_transactions_hash ON transactions(tx_hash)", snapshotAlias),
-		fmt.Sprintf("CREATE INDEX \"%s\".idx_transactions_block_hash ON transactions(block_hash)", snapshotAlias),
-		fmt.Sprintf("CREATE INDEX \"%s\".idx_transactions_block_number ON transactions(block_number)", snapshotAlias),
-		fmt.Sprintf("CREATE INDEX \"%s\".idx_logs_block_number ON logs(block_number)", snapshotAlias),
-		fmt.Sprintf("CREATE INDEX \"%s\".idx_logs_tx_hash ON logs(tx_hash)", snapshotAlias),
-		fmt.Sprintf("CREATE INDEX \"%s\".idx_logs_address ON logs(address)", snapshotAlias),
-		fmt.Sprintf("CREATE INDEX \"%s\".idx_logs_topic0 ON logs(topic0)", snapshotAlias),
-	}
-
-	for i, stmt := range statements {
-		storeLogger.Debugf("Executing statement %d: %s", i+1, stmt)
-		if _, err := conn.ExecContext(ctx, stmt); err != nil {
-			storeLogger.Debugf("Statement %d failed: %v", i+1, err)
-			// Detach before returning on error
-			detachSQL := fmt.Sprintf("DETACH DATABASE %s", snapshotAlias)
-			conn.ExecContext(ctx, detachSQL)
-			os.Remove(snapshotPath)
-			return 0, fmt.Errorf("failed to execute snapshot statement: %w", err)
-		}
-	}
-
-	storeLogger.Debugf("All statements executed successfully")
-
-	// Explicitly detach the database now that we're done
-	detachSQL := fmt.Sprintf("DETACH DATABASE %s", snapshotAlias)
-	storeLogger.Debugf("Executing: %s", detachSQL)
-	if _, err := conn.ExecContext(ctx, detachSQL); err != nil {
-		storeLogger.Debugf("DETACH failed (non-fatal): %v", err)
-	}
-
-	// Close the connection to ensure the detach takes effect
-	storeLogger.Debugf("Closing connection")
-	conn.Close()
-
-	// Store snapshot in ring buffer
-	s.SnapshotsMu.Lock()
-	index := currentBlockNumber % snapshotRingBufferSize
-	// Clean up old snapshot if it exists
-	if s.Snapshots[index] != nil {
-		storeLogger.Debugf("Cleaning up old snapshot at index %d: %s", index, s.Snapshots[index].DbPath)
-		os.Remove(s.Snapshots[index].DbPath)
-	}
-	s.Snapshots[index] = &snapshot{
-		BlockNumber: currentBlockNumber,
-		DbPath:      snapshotPath,
-	}
-	storeLogger.Debugf("Stored snapshot at index %d for block %d", index, currentBlockNumber)
-	s.SnapshotsMu.Unlock()
-
-	storeLogger.Debugf("Snapshot complete for block %d", currentBlockNumber)
-	return currentBlockNumber, nil
+	blockNumber := s.CachedBlockNumber.Load()
+	storeLogger.Debugf("Snapshot at block %d", blockNumber)
+	return blockNumber, nil
 }
 
-// RevertToBlock restores the database to a previously saved snapshot at the given block number.
-// It also restores the cached block number.
-// Uses ATTACH DATABASE and SQL to restore data, which works reliably with shared memory databases.
+// RevertToBlock drops every block above blockNumber, along with its transactions
+// and logs, and moves the cached tip back.
 func (s *SnapshotStore) RevertToBlock(ctx context.Context, blockNumber uint64) error {
-	storeLogger.Debugf("Starting restore to block %d", blockNumber)
+	current := s.CachedBlockNumber.Load()
+	storeLogger.Debugf("Reverting to block %d (current %d)", blockNumber, current)
 
-	// Find the snapshot
-	s.SnapshotsMu.RLock()
-	index := blockNumber % snapshotRingBufferSize
-	snap := s.Snapshots[index]
-	s.SnapshotsMu.RUnlock()
-
-	if snap == nil || snap.BlockNumber != blockNumber {
-		storeLogger.Debugf("Snapshot not found: snap=%v, index=%d", snap, index)
-		return fmt.Errorf("snapshot for block %d not found", blockNumber)
+	if blockNumber > current {
+		return fmt.Errorf("cannot revert to block %d: chain tip is %d", blockNumber, current)
+	}
+	if blockNumber == current {
+		return nil
 	}
 
-	storeLogger.Debugf("Found snapshot: path=%s, blockNumber=%d", snap.DbPath, snap.BlockNumber)
-
-	// Check if snapshot file exists
-	if _, err := os.Stat(snap.DbPath); err != nil {
-		storeLogger.Debugf("Snapshot file does not exist: %v", err)
-		return fmt.Errorf("snapshot file does not exist: %w", err)
-	}
-
-	// Use a unique alias for this restore to avoid conflicts
-	attachID := s.AttachCounter.Add(1)
-	restoreAlias := fmt.Sprintf("restore_%d", attachID)
-	storeLogger.Debugf("Using alias: %s (attachID=%d)", restoreAlias, attachID)
-
-	// Use a transaction to ensure atomicity
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
-		storeLogger.Debugf("Failed to begin transaction: %v", err)
-		return fmt.Errorf("failed to begin transaction: %w", err)
+		return fmt.Errorf("failed to begin revert transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // no-op once committed
 
-	// Attach the snapshot database
-	attachSQL := fmt.Sprintf("ATTACH DATABASE '%s' AS %s", snap.DbPath, restoreAlias)
-	storeLogger.Debugf("Executing: %s", attachSQL)
-	if _, err := tx.ExecContext(ctx, attachSQL); err != nil {
-		storeLogger.Debugf("ATTACH failed: %v", err)
-		return fmt.Errorf("failed to attach snapshot database: %w", err)
-	}
-
-	// Check what tables exist in the attached database
-	checkSQL := fmt.Sprintf("SELECT name FROM \"%s\".sqlite_master WHERE type='table'", restoreAlias)
-	storeLogger.Debugf("Checking tables: %s", checkSQL)
-	rows, err := tx.QueryContext(ctx, checkSQL)
-	if err != nil {
-		storeLogger.Debugf("Failed to query tables: %v", err)
-	} else {
-		storeLogger.Debugf("Tables in snapshot:")
-		for rows.Next() {
-			var tableName string
-			rows.Scan(&tableName)
-			storeLogger.Debugf("  - %s", tableName)
+	// Children first: transactions and logs both reference blocks(block_number)
+	// and the connection runs with foreign_keys=ON.
+	for _, stmt := range []string{
+		"DELETE FROM logs WHERE block_number > ?",
+		"DELETE FROM transactions WHERE block_number > ?",
+		"DELETE FROM blocks WHERE block_number > ?",
+	} {
+		if _, err := tx.ExecContext(ctx, stmt, blockNumber); err != nil {
+			return fmt.Errorf("failed to revert to block %d (%q): %w", blockNumber, stmt, err)
 		}
-		rows.Close()
 	}
 
-	// Delete all data from main database tables
-	storeLogger.Debugf("Deleting data from main.logs")
-	if _, err := tx.ExecContext(ctx, "DELETE FROM main.logs"); err != nil {
-		storeLogger.Debugf("Failed to delete logs: %v", err)
-		return fmt.Errorf("failed to delete logs: %w", err)
-	}
-	storeLogger.Debugf("Deleting data from main.transactions")
-	if _, err := tx.ExecContext(ctx, "DELETE FROM main.transactions"); err != nil {
-		storeLogger.Debugf("Failed to delete transactions: %v", err)
-		return fmt.Errorf("failed to delete transactions: %w", err)
-	}
-	storeLogger.Debugf("Deleting data from main.blocks")
-	if _, err := tx.ExecContext(ctx, "DELETE FROM main.blocks"); err != nil {
-		storeLogger.Debugf("Failed to delete blocks: %v", err)
-		return fmt.Errorf("failed to delete blocks: %w", err)
-	}
-
-	// Copy data from snapshot to main database
-	// Note: Use quotes around the alias to handle it as an identifier
-	insertBlocksSQL := fmt.Sprintf("INSERT INTO main.blocks SELECT * FROM \"%s\".blocks", restoreAlias)
-	storeLogger.Debugf("Executing: %s", insertBlocksSQL)
-	if _, err := tx.ExecContext(ctx, insertBlocksSQL); err != nil {
-		storeLogger.Debugf("Failed to restore blocks: %v", err)
-		return fmt.Errorf("failed to restore blocks: %w", err)
-	}
-
-	insertTxSQL := fmt.Sprintf("INSERT INTO main.transactions SELECT * FROM \"%s\".transactions", restoreAlias)
-	storeLogger.Debugf("Executing: %s", insertTxSQL)
-	if _, err := tx.ExecContext(ctx, insertTxSQL); err != nil {
-		storeLogger.Debugf("Failed to restore transactions: %v", err)
-		return fmt.Errorf("failed to restore transactions: %w", err)
-	}
-
-	insertLogsSQL := fmt.Sprintf("INSERT INTO main.logs SELECT * FROM \"%s\".logs", restoreAlias)
-	storeLogger.Debugf("Executing: %s", insertLogsSQL)
-	if _, err := tx.ExecContext(ctx, insertLogsSQL); err != nil {
-		storeLogger.Debugf("Failed to restore logs: %v", err)
-		return fmt.Errorf("failed to restore logs: %w", err)
-	}
-
-	// Commit the transaction first (must commit before detaching)
-	storeLogger.Debugf("Committing transaction")
 	if err := tx.Commit(); err != nil {
-		storeLogger.Debugf("Failed to commit: %v", err)
-		return fmt.Errorf("failed to commit restore transaction: %w", err)
+		return fmt.Errorf("failed to commit revert to block %d: %w", blockNumber, err)
 	}
 
-	// Now detach the database after the transaction is committed
-	// Use the main db connection, not the transaction
-	detachSQL := fmt.Sprintf("DETACH DATABASE %s", restoreAlias)
-	storeLogger.Debugf("Executing: %s", detachSQL)
-	if _, err := s.DB.ExecContext(ctx, detachSQL); err != nil {
-		storeLogger.Debugf("DETACH failed (non-fatal): %v", err)
-	}
-
-	// Restore the cached block number
+	// Only after the delete commits, so a failed revert leaves the cached tip
+	// agreeing with what is still in the database.
 	s.CachedBlockNumber.Store(blockNumber)
-	storeLogger.Debugf("Restore complete to block %d", blockNumber)
-
+	storeLogger.Debugf("Reverted to block %d", blockNumber)
 	return nil
 }

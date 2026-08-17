@@ -787,10 +787,13 @@
     "id": "Address functionCall with valid contract receiver reverts when the called function runs out of gas"
   },
   {
-    "id": "Arrays \"before each\" hook for \"sort reversed array\""
+    "id": "Arrays address sort [skip-on-coverage] address[] of length 384 \"after each\" hook for \"sort array for identical elements\""
   },
   {
-    "id": "Arrays address sort [skip-on-coverage] address[] of length 384 \"after each\" hook for \"sort array for identical elements\""
+    "id": "Arrays bytes32 sort [skip-on-coverage] bytes32[] of length 384 \"after each\" hook for \"sort array for identical elements\""
+  },
+  {
+    "id": "Arrays uint256 sort [skip-on-coverage] uint256[] of length 384 \"after each\" hook for \"sort array for identical elements\""
   },
   {
     "id": "BeaconProxy bad beacon is not accepted non-compliant beacon"
