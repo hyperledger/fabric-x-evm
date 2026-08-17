@@ -146,3 +146,90 @@ func TestNormalizeProtocol(t *testing.T) {
 		})
 	}
 }
+
+// ---- Endpoint.Address ----
+
+func TestEndpointAddress(t *testing.T) {
+	tests := []struct {
+		name string
+		ep   *Endpoint
+		want string
+	}{
+		// localhost hits the special-case avoiding net.JoinHostPort's
+		// ipv6 default for the "localhost" hostname.
+		{"localhost stays literal", &Endpoint{Host: "localhost", Port: 8080}, "localhost:8080"},
+		{"ipv4 host", &Endpoint{Host: "127.0.0.1", Port: 4001}, "127.0.0.1:4001"},
+		{"ipv6 host bracketed", &Endpoint{Host: "::1", Port: 4001}, "[::1]:4001"},
+		{"hostname", &Endpoint{Host: "endorser.example.com", Port: 443}, "endorser.example.com:443"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.ep.Address(); got != tt.want {
+				t.Errorf("Address() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// ---- ClientConfig.ToPeerConf / ToOrdererConf ----
+
+func fullClientConfig() ClientConfig {
+	return ClientConfig{
+		Endpoint: &Endpoint{Host: "127.0.0.1", Port: 4001},
+		TLS: TLSConfig{
+			Mode:        "mutual",
+			CertPath:    "/tls/cert.pem",
+			KeyPath:     "/tls/key.pem",
+			CACertPaths: []string{"/tls/ca1.pem", "/tls/ca2.pem"},
+			ServerName:  "endorser.example.com",
+		},
+	}
+}
+
+func TestClientConfig_ToPeerConf(t *testing.T) {
+	c := fullClientConfig()
+	got := c.ToPeerConf()
+
+	if got.Address != "127.0.0.1:4001" {
+		t.Errorf("Address = %q", got.Address)
+	}
+	if got.TLS.Mode != "mutual" {
+		t.Errorf("TLS.Mode = %q", got.TLS.Mode)
+	}
+	if got.TLS.CertPath != "/tls/cert.pem" {
+		t.Errorf("TLS.CertPath = %q", got.TLS.CertPath)
+	}
+	if got.TLS.KeyPath != "/tls/key.pem" {
+		t.Errorf("TLS.KeyPath = %q", got.TLS.KeyPath)
+	}
+	if len(got.TLS.CACertPaths) != 2 {
+		t.Errorf("TLS.CACertPaths len = %d, want 2", len(got.TLS.CACertPaths))
+	}
+	if got.TLS.ServerName != "endorser.example.com" {
+		t.Errorf("TLS.ServerName = %q", got.TLS.ServerName)
+	}
+}
+
+func TestClientConfig_ToOrdererConf(t *testing.T) {
+	c := fullClientConfig()
+	got := c.ToOrdererConf()
+
+	if got.Address != "127.0.0.1:4001" {
+		t.Errorf("Address = %q", got.Address)
+	}
+	if got.TLS.Mode != "mutual" {
+		t.Errorf("TLS.Mode = %q", got.TLS.Mode)
+	}
+	if got.TLS.CertPath != "/tls/cert.pem" {
+		t.Errorf("TLS.CertPath = %q", got.TLS.CertPath)
+	}
+	if got.TLS.KeyPath != "/tls/key.pem" {
+		t.Errorf("TLS.KeyPath = %q", got.TLS.KeyPath)
+	}
+	if len(got.TLS.CACertPaths) != 2 {
+		t.Errorf("TLS.CACertPaths len = %d, want 2", len(got.TLS.CACertPaths))
+	}
+	if got.TLS.ServerName != "endorser.example.com" {
+		t.Errorf("TLS.ServerName = %q", got.TLS.ServerName)
+	}
+}
