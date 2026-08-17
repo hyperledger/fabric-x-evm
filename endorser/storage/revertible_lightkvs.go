@@ -78,23 +78,28 @@ func (kvs *RevertibleLightKVS) NewSnapshot(blockNumber *uint64) (execution.ReadS
 	}
 
 	// Exact match on a preserved snapshot, else the nearest older one (state is
-	// unchanged across empty blocks that never called Update).
-	var best *Snapshot
-	for i := 0; i < count; i++ {
+	// unchanged across empty blocks that never called Update). Keep the LAST exact
+	// match in a block.
+	var exact, best *Snapshot
+	for i := range count {
 		snap := kvs.History[i].Load()
 		if snap == nil {
 			continue
 		}
 		if snap.BlockNumber == bn {
-			revertLogger.Debugf("RevertibleLightKVS.NewSnapshot() exact history hit: requested=%d", bn)
-			return &Reader{
-				Snapshot: snap,
-				Kvs:      kvs.LightKVS,
-			}, nil
+			exact = snap
+			continue
 		}
 		if snap.BlockNumber < bn && (best == nil || snap.BlockNumber > best.BlockNumber) {
 			best = snap
 		}
+	}
+	if exact != nil {
+		revertLogger.Debugf("RevertibleLightKVS.NewSnapshot() exact history hit: requested=%d", bn)
+		return &Reader{
+			Snapshot: exact,
+			Kvs:      kvs.LightKVS,
+		}, nil
 	}
 	if best != nil {
 		revertLogger.Debugf("RevertibleLightKVS.NewSnapshot() nearest history hit: requested=%d returned=%d",
@@ -208,7 +213,9 @@ func (kvs *RevertibleLightKVS) RevertToBlock(blockNumber uint64) error {
 	}
 	revertLogger.Debugf("RevertibleLightKVS.RevertToBlock() searching history snapshots: %v", availableBlocks)
 
-	// Search through history snapshots for the requested block number
+	// Search history for the requested block number, keeping the LAST match
+	// rather than the first. Startup funding writes its state at the current
+	// height without advancing it, so block 0 exists twice: empty, then funded.
 	var targetSnapshot *Snapshot
 	targetIndex := -1
 	for i := range kvs.History {
@@ -216,7 +223,6 @@ func (kvs *RevertibleLightKVS) RevertToBlock(blockNumber uint64) error {
 		if snapshot != nil && snapshot.BlockNumber == blockNumber {
 			targetSnapshot = snapshot
 			targetIndex = i
-			break
 		}
 	}
 
