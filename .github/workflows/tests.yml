@@ -133,6 +133,36 @@ jobs:
           path: testdata/openzeppelin-contracts/node_modules
           key: ${{ runner.os }}-oz-node-modules-${{ hashFiles('testdata/openzeppelin-contracts/package-lock.json') }}
 
+      # A cold checkout recompiles all 368 contracts inside the first Hardhat
+      # invocation — ~64s of the run. The submodule pin fixes the sources, the
+      # compiler version and its settings, so its SHA is the whole key.
+      #
+      # cache/ has to travel with artifacts/: it holds solidity-files-cache.json,
+      # which records a contentHash and solcConfig per file. That is what makes a
+      # stale restore self-correcting — Hardhat recompiles whatever no longer
+      # matches rather than trusting the artifacts blindly.
+      #
+      # build-info/ is excluded: 309MB of the 329MB, and neither compilation nor
+      # the test run needs it.
+      - name: Get OZ submodule revision
+        id: oz-rev
+        run: echo "sha=$(git -C testdata/openzeppelin-contracts rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache OZ compilation artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            testdata/openzeppelin-contracts/artifacts
+            !testdata/openzeppelin-contracts/artifacts/build-info
+            testdata/openzeppelin-contracts/cache
+          key: ${{ runner.os }}-oz-artifacts-${{ steps.oz-rev.outputs.sha }}
+          # On a submodule bump the exact key misses, but restoring the previous
+          # revision's artifacts still helps: Hardhat recompiles only the files
+          # whose contentHash changed. Safe for the same reason — the cache
+          # validates itself rather than being trusted.
+          restore-keys: |
+            ${{ runner.os }}-oz-artifacts-
+
       - name: Hardhat OZ compatibility suite (full)
         run: make hardhat-tests-full
 
