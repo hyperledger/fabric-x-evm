@@ -189,7 +189,10 @@ func (kvs *RevertibleLightKVS) Update(updates []KeyValueVersion) error {
 // will match the actual versions in the peer's ledger, avoiding MVCC conflicts.
 //
 // If the requested block number matches the current snapshot, it's a no-op and returns success.
-// Returns an error if the requested block number is not found in history or current.
+// Like NewSnapshot, falls back to the nearest older snapshot when there's no exact
+// match: an empty block never calls Update, so it never gets a history entry, but
+// state is unchanged since the last one that did. Returns an error only when no
+// snapshot at or before the requested block number exists in history or current.
 func (kvs *RevertibleLightKVS) RevertToBlock(blockNumber uint64) error {
 	revertLogger.Debugf("RevertibleLightKVS.RevertToBlock() called with blockNumber=%d", blockNumber)
 
@@ -216,23 +219,38 @@ func (kvs *RevertibleLightKVS) RevertToBlock(blockNumber uint64) error {
 	// Search history for the requested block number, keeping the LAST match
 	// rather than the first. Startup funding writes its state at the current
 	// height without advancing it, so block 0 exists twice: empty, then funded.
-	var targetSnapshot *Snapshot
-	targetIndex := -1
+	// Also track the nearest older snapshot as a fallback (see NewSnapshot):
+	// an empty block leaves no exact entry to find.
+	var targetSnapshot, bestSnapshot *Snapshot
+	targetIndex, bestIndex := -1, -1
 	for i := range kvs.History {
 		snapshot := kvs.History[i].Load()
-		if snapshot != nil && snapshot.BlockNumber == blockNumber {
+		if snapshot == nil {
+			continue
+		}
+		if snapshot.BlockNumber == blockNumber {
 			targetSnapshot = snapshot
 			targetIndex = i
+			continue
+		}
+		if snapshot.BlockNumber < blockNumber && (bestSnapshot == nil || snapshot.BlockNumber > bestSnapshot.BlockNumber) {
+			bestSnapshot = snapshot
+			bestIndex = i
 		}
 	}
 
+	// Only fall back for a target in the past.
+	if targetSnapshot == nil && blockNumber < currentSnapshot.BlockNumber {
+		targetSnapshot, targetIndex = bestSnapshot, bestIndex
+	}
+
 	if targetSnapshot == nil {
-		// No matching snapshot found
+		// No matching or older snapshot found
 		revertLogger.Debugf("RevertibleLightKVS.RevertToBlock() snapshot not found for block %d", blockNumber)
 		return fmt.Errorf("cannot revert: snapshot not found for block number %d", blockNumber)
 	}
 
-	revertLogger.Debugf("RevertibleLightKVS.RevertToBlock() found target snapshot at block %d, performing merge", blockNumber)
+	revertLogger.Debugf("RevertibleLightKVS.RevertToBlock() found target snapshot at block %d (requested %d), performing merge", targetSnapshot.BlockNumber, blockNumber)
 
 	// Create a new merged snapshot
 	// Start with a clone of the target snapshot's data
