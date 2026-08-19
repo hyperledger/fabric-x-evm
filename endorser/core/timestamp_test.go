@@ -173,7 +173,7 @@ func TestExecute_IdenticalTimestampAcrossEndorsers(t *testing.T) {
 	tx := types.NewTx(&types.LegacyTx{Gas: 21000, GasPrice: big.NewInt(0)})
 
 	var got [2]uint64
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		eng := &captureEngine{}
 		// Stagger the local clock slightly; only the request timestamp matters.
 		localSkew := time.Duration(i) * 50 * time.Millisecond
@@ -211,7 +211,7 @@ func TestExecute_ConcurrentRequestsNoSharedTimestampState(t *testing.T) {
 	const n = 32
 	var wg sync.WaitGroup
 	errs := make(chan error, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()

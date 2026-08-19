@@ -44,8 +44,6 @@ func makeMetadata(t *testing.T, propType ProposalType, ethTxBytes []byte) [][]by
 	return [][]byte{b}
 }
 
-func versionPtr(v uint64) *uint64 { return &v }
-
 // ---- NewAllTxBatchDispatcher ----
 
 func TestNewAllTxBatchDispatcher_NoHandlers(t *testing.T) {
@@ -215,7 +213,7 @@ func TestNamespacesToNsRWS_ReadsOnly_WithAndWithoutVersion(t *testing.T) {
 		NsId: "evm",
 		ReadsOnly: []*applicationpb.Read{
 			{Key: []byte("k-noversion"), Version: nil},
-			{Key: []byte("k-versioned"), Version: versionPtr(3)},
+			{Key: []byte("k-versioned"), Version: new(uint64(3))},
 		},
 	}}
 	nsrws, events := namespacesToNsRWS(ns)
@@ -238,7 +236,7 @@ func TestNamespacesToNsRWS_ReadWrites_AppearsInReadsAndWrites(t *testing.T) {
 		NsId: "evm",
 		ReadWrites: []*applicationpb.ReadWrite{
 			{Key: []byte("rw-noversion"), Version: nil, Value: []byte("v1")},
-			{Key: []byte("rw-versioned"), Version: versionPtr(7), Value: []byte("v2")},
+			{Key: []byte("rw-versioned"), Version: new(uint64(7)), Value: []byte("v2")},
 		},
 	}}
 	nsrws, _ := namespacesToNsRWS(ns)
@@ -319,10 +317,10 @@ func TestNamespacesToNsRWS_MixedReadsWritesAndBlind(t *testing.T) {
 	ns := []*applicationpb.TxNamespace{{
 		NsId: "evm",
 		ReadsOnly: []*applicationpb.Read{
-			{Key: []byte("r1"), Version: versionPtr(1)},
+			{Key: []byte("r1"), Version: new(uint64(1))},
 		},
 		ReadWrites: []*applicationpb.ReadWrite{
-			{Key: []byte("rw1"), Version: versionPtr(2), Value: []byte("vrw")},
+			{Key: []byte("rw1"), Version: new(uint64(2)), Value: []byte("vrw")},
 		},
 		BlindWrites: []*applicationpb.Write{
 			{Key: []byte("bw1"), Value: []byte("vbw")},

@@ -35,7 +35,7 @@ func TestVersionedDBWrapper_NewSnapshotNilVsZero(t *testing.T) {
 		t.Fatalf("nil resolved to %d, want latest %d", got, latestH)
 	}
 
-	r0, err := w.NewSnapshot(BlockAt(0))
+	r0, err := w.NewSnapshot(new(uint64(0)))
 	if err != nil {
 		t.Fatalf("block 0: %v", err)
 	}

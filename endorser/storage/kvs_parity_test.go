@@ -53,7 +53,6 @@ func kvsBackends() []kvsBackend {
 func forEachBackend(t *testing.T, historySize int, fn func(t *testing.T, kvs KVS)) {
 	t.Helper()
 	for _, b := range kvsBackends() {
-		b := b
 		t.Run(b.name, func(t *testing.T) {
 			fn(t, b.make(t, historySize))
 		})
@@ -316,7 +315,7 @@ func TestParityTimeTravelReads(t *testing.T) {
 		}
 
 		// A snapshot pins its block: writes after it are invisible.
-		snap, err := kvs.NewSnapshot(BlockAt(2))
+		snap, err := kvs.NewSnapshot(new(uint64(2)))
 		if err != nil {
 			t.Fatalf("NewSnapshot(BlockAt(2)): %v", err)
 		}

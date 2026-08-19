@@ -407,7 +407,7 @@ func BenchmarkSimulation(b *testing.B) {
 					b.ResetTimer()
 					b.ReportAllocs()
 					for range b.N {
-						reader, err := kvs.NewSnapshot(storage.BlockAt(preloadLastBlock))
+						reader, err := kvs.NewSnapshot(new(preloadLastBlock))
 						if err != nil {
 							b.Fatal(err)
 						}
@@ -507,7 +507,7 @@ func BenchmarkMixed(b *testing.B) {
 				b.ResetTimer()
 				for range b.N {
 					n := lastBlock.Load()
-					reader, err := kvs.NewSnapshot(storage.BlockAt(n))
+					reader, err := kvs.NewSnapshot(new(n))
 					if err != nil {
 						b.Fatal(err)
 					}

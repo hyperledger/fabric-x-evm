@@ -209,11 +209,6 @@ func blockRefFromLastBlock(lastBlock uint64) *uint64 {
 	return &lastBlock
 }
 
-// BlockAt returns a *uint64 for an explicit NewSnapshot height (including 0).
-func BlockAt(n uint64) *uint64 {
-	return &n
-}
-
 // Get retrieves the value and version for a key from the reader's snapshot.
 // This implements the execution.ReadStore interface with the signature:
 // Get(namespace, key string) (*blocks.WriteRecord, error)

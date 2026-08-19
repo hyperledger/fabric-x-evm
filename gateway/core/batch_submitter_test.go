@@ -53,8 +53,7 @@ func TestBatchSubmitter_FailedSubmissionCompletesTx(t *testing.T) {
 	submitErr := errors.New("package proposal: proposal response was not successful, error code 460, msg invalid opcode: INVALID")
 	bs := NewBatchSubmitter([]Submitter{stubSubmitter{err: submitErr}}, make(chan EndorsedTx, 1), 1, 0, completer)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	bs.Start(ctx)
 	defer bs.Stop()
 
@@ -75,8 +74,7 @@ func TestBatchSubmitter_SuccessfulSubmissionDoesNotComplete(t *testing.T) {
 	completer := &stubCompleter{}
 	bs := NewBatchSubmitter([]Submitter{stubSubmitter{err: nil}}, make(chan EndorsedTx, 1), 1, 0, completer)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	bs.Start(ctx)
 	defer bs.Stop()
 
@@ -94,8 +92,7 @@ func TestBatchSubmitter_SuccessfulSubmissionDoesNotComplete(t *testing.T) {
 func TestBatchSubmitter_NilCompleterIsSafe(t *testing.T) {
 	bs := NewBatchSubmitter([]Submitter{stubSubmitter{err: errors.New("boom")}}, make(chan EndorsedTx, 1), 1, 0, nil)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	bs.Start(ctx)
 	defer bs.Stop()
 
