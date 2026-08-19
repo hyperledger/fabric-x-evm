@@ -41,9 +41,15 @@
     "note": "block.timestamp is hardcoded (see COMPATIBILITY.md); manifests as timestamp diffs, delay/schedule assertions, or (for ERC20Votes-style checkpoints) an undercount since votes never actually advance in time"
   },
   {
+    "id": "AccessControlDefaultAdminRules begins a default admin transfer when there is no pending delay nor pending admin transfer should set pending default admin and schedule",
+    "note": "Timing-sensitive: block.timestamp reflects the gateway's real wall-clock per tx (evm_increaseTime/evm_setNextBlockTimestamp are no-ops, see COMPATIBILITY.md); this assertion has a near-zero expected margin, so it passes or fails depending on real execution timing (~1s jitter). Confirmed flipping pass/fail across runs on 2026-08-17/2026-08-19.",
+    "flaky": true
+  },
+  {
     "id": "AccessControlDefaultAdminRules changes delay when the delay is decreased begins the delay change to the new delay",
     "cause": "fixed-timestamp",
-    "note": "block.timestamp is hardcoded (see COMPATIBILITY.md); manifests as timestamp diffs, delay/schedule assertions, or (for ERC20Votes-style checkpoints) an undercount since votes never actually advance in time"
+    "note": "Timing-sensitive: block.timestamp reflects the gateway's real wall-clock per tx (evm_increaseTime/evm_setNextBlockTimestamp are no-ops, see COMPATIBILITY.md); this assertion has a near-zero expected margin, so it passes or fails depending on real execution timing (~1s jitter). Confirmed flipping pass/fail across runs on 2026-08-17/2026-08-19.",
+    "flaky": true
   },
   {
     "id": "AccessControlDefaultAdminRules changes delay when the delay is decreased scheduling again should not emit a cancellation event after the delay schedule passes",
@@ -68,7 +74,8 @@
   {
     "id": "AccessControlDefaultAdminRules changes delay when the delay is increased begins the delay change to the new delay",
     "cause": "fixed-timestamp",
-    "note": "block.timestamp is hardcoded (see COMPATIBILITY.md); manifests as timestamp diffs, delay/schedule assertions, or (for ERC20Votes-style checkpoints) an undercount since votes never actually advance in time"
+    "note": "Timing-sensitive: block.timestamp reflects the gateway's real wall-clock per tx (evm_increaseTime/evm_setNextBlockTimestamp are no-ops, see COMPATIBILITY.md); this assertion has a near-zero expected margin, so it passes or fails depending on real execution timing (~1s jitter). Confirmed flipping pass/fail across runs on 2026-08-17/2026-08-19.",
+    "flaky": true
   },
   {
     "id": "AccessControlDefaultAdminRules changes delay when the delay is increased scheduling again should not emit a cancellation event after the delay schedule passes",
@@ -93,7 +100,8 @@
   {
     "id": "AccessControlDefaultAdminRules changes delay when the delay is increased to more than 5 days begins the delay change to the new delay",
     "cause": "fixed-timestamp",
-    "note": "block.timestamp is hardcoded (see COMPATIBILITY.md); manifests as timestamp diffs, delay/schedule assertions, or (for ERC20Votes-style checkpoints) an undercount since votes never actually advance in time"
+    "note": "Timing-sensitive: block.timestamp reflects the gateway's real wall-clock per tx (evm_increaseTime/evm_setNextBlockTimestamp are no-ops, see COMPATIBILITY.md); this assertion has a near-zero expected margin, so it passes or fails depending on real execution timing (~1s jitter). Confirmed flipping pass/fail across runs on 2026-08-17/2026-08-19.",
+    "flaky": true
   },
   {
     "id": "AccessControlDefaultAdminRules changes delay when the delay is increased to more than 5 days scheduling again should not emit a cancellation event after the delay schedule passes",
@@ -1610,6 +1618,11 @@
   },
   {
     "id": "Governor using $ERC20VotesLegacyMock vote with signature votes with an EOA signature on two proposals"
+  },
+  {
+    "id": "Governor using $ERC20VotesTimestampMock ERC-6372 behavior in timestamp mode should have a correct clock value",
+    "note": "Timing-sensitive: block.timestamp reflects the gateway's real wall-clock per tx (evm_increaseTime/evm_setNextBlockTimestamp are no-ops, see COMPATIBILITY.md); this assertion has a near-zero expected margin, so it passes or fails depending on real execution timing (~1s jitter). Confirmed flipping pass/fail across runs on 2026-08-17/2026-08-19.",
+    "flaky": true
   },
   {
     "id": "Governor using $ERC20VotesTimestampMock ERC165 when the interfaceId is not supported uses less than 30k"
@@ -3347,16 +3360,6 @@
     "id": "SafeERC20 with address that has no contract code reverts on increaseAllowance"
   },
   {
-    "id": "Time Delay get & getFull",
-    "cause": "fixed-timestamp",
-    "note": "block.timestamp is hardcoded (see COMPATIBILITY.md); manifests as timestamp diffs, delay/schedule assertions, or (for ERC20Votes-style checkpoints) an undercount since votes never actually advance in time"
-  },
-  {
-    "id": "Time Delay withUpdate",
-    "cause": "fixed-timestamp",
-    "note": "block.timestamp is hardcoded (see COMPATIBILITY.md); manifests as timestamp diffs, delay/schedule assertions, or (for ERC20Votes-style checkpoints) an undercount since votes never actually advance in time"
-  },
-  {
     "id": "Time clocks block number",
     "cause": "fixed-block-number",
     "note": "block.number is hardcoded at 0 (see COMPATIBILITY.md); manifests as block-number diffs or checkpoint-count mismatches, since checkpoints never actually advance"
@@ -3595,10 +3598,6 @@
   },
   {
     "id": "VotesExtended vote with timestamp run votes workflow Compound test suite getPastVotes returns the latest block if >= last checkpoint block",
-    "cause": "hardhat-time-rpc"
-  },
-  {
-    "id": "VotesExtended vote with timestamp run votes workflow Compound test suite getPastVotes returns zero if < first checkpoint block",
     "cause": "hardhat-time-rpc"
   },
   {
