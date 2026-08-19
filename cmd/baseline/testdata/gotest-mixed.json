@@ -1,0 +1,13 @@
+{"Action":"run","Test":"TestA"}
+{"Action":"output","Test":"TestA","Output":"=== RUN   TestA\n"}
+{"Action":"output","Test":"TestA","Output":"--- PASS: TestA (0.00s)\n"}
+{"Action":"pass","Test":"TestA","Elapsed":0}
+{"Action":"run","Test":"TestB"}
+{"Action":"output","Test":"TestB","Output":"=== RUN   TestB\n"}
+{"Action":"output","Test":"TestB","Output":"    b_test.go:5: boom B\n"}
+{"Action":"output","Test":"TestB","Output":"--- FAIL: TestB (0.00s)\n"}
+{"Action":"fail","Test":"TestB","Elapsed":0}
+{"Action":"run","Test":"TestC"}
+{"Action":"output","Test":"TestC","Output":"=== RUN   TestC\n"}
+{"Action":"output","Test":"TestC","Output":"--- SKIP: TestC (0.00s)\n"}
+{"Action":"skip","Test":"TestC","Elapsed":0}

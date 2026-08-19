@@ -1,3 +1,40 @@
+# Configuration
+FABRIC_VERSION ?= 3.1.4
+RELEASE_ARCHS  := amd64 arm64 s390x
+UID := $(shell id -u)
+GID := $(shell id -g)
+export UID
+export GID
+
+# Container runtime — override for rootless Podman:
+#   make start-x DOCKER=podman COMPOSE="podman compose"
+# Note: build-image requires docker buildx (or podman buildx).
+DOCKER  ?= docker
+COMPOSE ?= docker compose
+
+.PHONY: build
+build:
+	go build -o bin/fxevm ./cmd/fxevm
+
+.PHONY: build-release
+build-release:
+	@for arch in $(RELEASE_ARCHS); do \
+		mkdir -p release/linux-$$arch && \
+		CGO_ENABLED=0 GOOS=linux GOARCH=$$arch go build -trimpath -ldflags '-w -s' \
+			-o release/linux-$$arch/fxevm ./cmd/fxevm || exit 1; \
+	done
+
+.PHONY: build-image
+build-image: build-release
+	$(DOCKER) buildx build \
+		--file Dockerfile \
+		--load \
+		--build-arg VERSION=dev \
+		--build-arg CREATED=$(shell date -u +%Y-%m-%dT%H:%M:%SZ) \
+		--build-arg REVISION=$(shell git rev-parse HEAD) \
+		--tag fabric-x-evm:dev \
+		.
+
 .PHONY: checks
 checks:
 	@test -z $(shell gofmt -l -s $(shell go list -f '{{.Dir}}' ./...) | tee /dev/stderr) || (echo "Fix formatting issues"; exit 1)
@@ -5,18 +42,108 @@ checks:
 	@go tool staticcheck ./... || (echo "Staticcheck failed"; exit 1)
 	@find . -type d -name testdata -prune -o -name '*.go' -print | xargs go tool addlicense -check || (echo "Missing license headers"; exit 1)
 
+.PHONY: proto
+proto:
+	@echo "Generating protobufs..."
+	@protoc \
+		-I="$(CURDIR)" \
+		--go_out=paths=source_relative:. \
+		--go-grpc_out=paths=source_relative:. \
+		$(CURDIR)/api/*/*.proto
+
 .PHONY: unit-tests
 unit-tests:
-	go test ./... -short
+	go test ./... -short -coverprofile=coverage.out -covermode=atomic
+
+.PHONY: pre-pull-images
+pre-pull-images:
+	@$(DOCKER) pull hyperledger/fabric-ccenv:$(FABRIC_VERSION) || echo "Warning: Failed to pull fabric-ccenv"
 
 .PHONY: integration-tests
-integration-tests:
-	@VERBOSE=$(VERBOSE) ./scripts/run_integration_test.sh
+integration-tests: pre-pull-images
+	@VERBOSE=$(VERBOSE) FABRIC_VERSION=$(FABRIC_VERSION) ./scripts/run_integration_test.sh
+
+# Container images for fabric-x
+TOOLS_IMAGE          ?= ghcr.io/hyperledger/fabric-x-tools:1.0.0
+ORDERER_IMAGE        ?= ghcr.io/hyperledger/fabric-x-orderer:1.0.0
+TEST_COMMITTER_IMAGE ?= docker.io/hyperledger/fabric-x-committer-test-node:1.0.3
+
+# Namespace init defaults
+NS          ?= basic
+NS1         ?= real
+NS2         ?= synthetic
+POLICY      ?= AND('Org1MSP.member')
+NETWORK     ?= fabric-x
+
+# Second namespace with a 2-of-2 policy. Separate from NS/POLICY so the
+# stricter policy here doesn't affect the existing single-org test-x cases.
+NS_2OF2     ?= basic2of2
+POLICY_2OF2 ?= AND('Org1MSP.member','Org2MSP.member')
+
+# How long to keep trying to create a namespace. The committer accepts
+# connections before it can serve config changes, so the first attempts can
+# legitimately fail; the delay doubles each time, up to roughly a minute.
+NS_ATTEMPTS ?= 6
+
+# create-namespace,<namespace>,<policy> - create the namespace if it does not
+# already exist, waiting for the committer to become able to serve it.
+define create-namespace
+@echo "Creating namespace $(1)..."
+@ok=0; delay=1; for attempt in $$(seq 1 $(NS_ATTEMPTS)); do \
+	if $(DOCKER) run --rm --network $(NETWORK) \
+		--user "$(UID):$(GID)" \
+		--env "FX_NS=$(1)" \
+		--env "FX_POLICY=$(2)" \
+		-v "$(PWD)/testdata/fxconfig.yaml:/config/fxconfig.yaml:ro,Z" \
+		-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/peers/fxconfig.org1.example.com/tls:/tls:ro,Z" \
+		-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/users/channel_admin@org1.example.com/msp:/msp:ro,Z" \
+		-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/msp/tlscacerts/tlsca.org1.example.com-cert.pem:/org-tls-ca.pem:ro,Z" \
+		-v "$(PWD)/testdata/crypto/ordererOrganizations/orderer-org-1/msp/tlscacerts/tlsca.orderer-org-1-cert.pem:/orderer-tls-ca.pem:ro,Z" \
+		$(TOOLS_IMAGE) \
+		sh -c 'fxconfig namespace list --config=/config/fxconfig.yaml 2>/dev/null | grep -q ") $$FX_NS:" || \
+		fxconfig namespace create "$$FX_NS" --policy="$$FX_POLICY" --endorse --submit --wait --config=/config/fxconfig.yaml'; then \
+		ok=1; break; \
+	fi; \
+	echo "  namespace $(1): attempt $$attempt failed, retrying in $$delay""s..."; \
+	sleep $$delay; delay=$$((delay * 2)); \
+done; \
+[ "$$ok" = 1 ] || { echo "Error: could not create namespace $(1) after $(NS_ATTEMPTS) attempts"; exit 1; }
+endef
 
 .PHONY: init-x
 init-x:
-	@go tool cryptogen generate --config testdata/crypto-config.yaml --output testdata/crypto
-	@cd testdata && go tool configtxgen --channelID mychannel --profile OrgsChannel --outputBlock crypto/sc-genesis-block.proto.bin
+	@rm -rf testdata/crypto
+	@$(DOCKER) run --rm \
+		--user "$(UID):$(GID)" \
+		-v "$(PWD)/testdata:/config" \
+		$(TOOLS_IMAGE) \
+		cryptogen generate --config=/config/crypto-config.yaml --output=/config/crypto
+	@# Routers and assemblers accept client certs from any peer org — concatenate all peer TLS CAs.
+	@cat testdata/crypto/peerOrganizations/org1.example.com/msp/tlscacerts/tlsca.org1.example.com-cert.pem \
+		testdata/crypto/peerOrganizations/org2.example.com/msp/tlscacerts/tlsca.org2.example.com-cert.pem \
+		> testdata/crypto/client-tls-ca.pem
+	@$(DOCKER) run --rm \
+		--user "$(UID):$(GID)" \
+		-v "$(PWD)/testdata:/config" \
+		-v "$(PWD)/testdata/crypto:/crypto" \
+		--entrypoint /usr/local/bin/armageddon \
+		$(ORDERER_IMAGE) \
+		createSharedConfigProto \
+		--sharedConfigYaml=/config/shared_config.yaml \
+		--output=/config/crypto/
+	@$(DOCKER) run --rm \
+		--user "$(UID):$(GID)" \
+		-v "$(PWD)/testdata:/config" \
+		$(TOOLS_IMAGE) \
+		configtxgen --channelID mychannel --profile OrgsChannel \
+		--outputBlock /config/crypto/config-block.pb.bin \
+		--configPath /config
+	@# Make crypto files readable by Prometheus (runs as nobody/uid 65534)
+	@find testdata/crypto -type d -exec chmod a+rx {} +
+	@find testdata/crypto -type f -exec chmod a+r {} +
+	@# Make config files readable by Grafana (runs as uid 472)
+	@find testdata/config -type d -exec chmod a+rx {} +
+	@find testdata/config -type f -exec chmod a+r {} +
 
 .PHONY: clean-x
 clean-x:
@@ -24,57 +151,95 @@ clean-x:
 
 .PHONY: start-x
 start-x:
-	@docker run -d --rm -it --name fabric-x-committer-test-node \
-		-p 4001:4001 -p 2110:2110 -p 2114:2114 -p 2117:2117 -p 7001:7001 -p 7050:7050 -p 5433:5433 \
-		-v "$(PWD)/testdata/crypto:/root/config/crypto" \
-		-v "$(PWD)/testdata/crypto/sc-genesis-block.proto.bin:/root/config/sc-genesis-block.proto.bin" \
-		-v "$(PWD)/testdata/crypto/sc-genesis-block.proto.bin:/root/artifacts/config-block.pb.bin" \
-		-v "$(PWD)/testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.crt:/server-certs/public-key.pem" \
-		-v "$(PWD)/testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.key:/server-certs/private-key.pem" \
-		-v "$(PWD)/testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/ca.crt:/server-certs/ca-certificate.pem" \
-		-v "$(PWD)/testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.crt:/client-certs/public-key.pem" \
-		-v "$(PWD)/testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.key:/client-certs/private-key.pem" \
-		-v "$(PWD)/testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/ca.crt:/client-certs/ca-certificate.pem" \
-		-e SC_SIDECAR_ORDERER_IDENTITY_MSP_DIR=/root/config/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/msp \
-		-e SC_SIDECAR_ORDERER_IDENTITY_MSP_ID=Org1MSP \
-		-e SC_SIDECAR_ORDERER_CHANNEL_ID=mychannel \
-		-e SC_SIDECAR_ORDERER_SIGNED_ENVELOPES=true \
-		-e SC_QUERY_SERVICE_SERVER_ENDPOINT=:7001 \
-		-e SC_ORDERER_BLOCK_SIZE=1 \
-		docker.io/hyperledger/fabric-x-committer-test-node:0.1.9 run db orderer committer
+	@if nc -z localhost 7050 2>/dev/null; then echo "Error: port 7050 is already in use — stop any running Fabric orderer before starting."; exit 1; fi
+	@$(COMPOSE) -f compose.fabric-x.yml up -d
+	@echo "Waiting for test committer to be ready..."
 	@while ! nc -z localhost 7001 2>/dev/null; do sleep 1; done
-	@go tool fxconfig namespace create basic --policy="OR('Org1MSP.member')" --endorse --submit --wait --config=testdata/fxconfig.yaml
+	$(call create-namespace,$(NS),$(POLICY))
+	$(call create-namespace,$(NS_2OF2),$(POLICY_2OF2))
 
 .PHONY: test-x
 test-x:
 	@go test -timeout 30s -v -run ^TestFabricX$$ ./integration
 
+.PHONY: perf-smoke
+perf-smoke:
+	@go test -timeout 600s -tags=perf -run ^TestReplayJSONDataset$$ -v -count=1 \
+		./integration/perf/... \
+		-outstanding 500 \
+		-dataset integration/perf/testdata/USDC_dataset_10k.json.gz \
+		-oldqueue \
+		-namespace basic
+
 .PHONY: stop-x
 stop-x:
-	@docker rm -f fabric-x-committer-test-node
+	@$(COMPOSE) -f compose.fabric-x.yml down
 
-.PHONY: init-3
-init-3:
-	@cd testdata && \
-		curl -sSLO https://raw.githubusercontent.com/hyperledger/fabric/main/scripts/install-fabric.sh && \
-		chmod +x install-fabric.sh && \
-		./install-fabric.sh --fabric-version 3.1.3 && \
-		rm ./install-fabric.sh
+.PHONY: start-fablo
+start-fablo:
+	@if nc -z localhost 7030 2>/dev/null; then echo "Error: port 7030 is already in use — stop any running Fabric orderer before starting."; exit 1; fi
+	cd testdata/fablo && ./fablo up
 
+.PHONY: stop-fablo
+stop-fablo:
+	cd testdata/fablo && ./fablo down
 
-.PHONY: start-3
-start-3:
-	@./testdata/fabric-samples/test-network/network.sh up createChannel -i 3.1.3
-	@./testdata/fabric-samples/test-network/network.sh deployCCAAS -ccn basic -ccp "$(PWD)/testdata/fabric-samples/asset-transfer-basic/chaincode-external"
+.PHONY: test-fablo
+test-fablo:
+	@go test -timeout 360s -run ^TestFablo$$ ./integration
 
-.PHONY: test-3
-test-3:
-	@go test -timeout 360s -v -run ^TestFabric$$ ./integration
+.PHONY: clean-fablo
+clean-fablo:
+	cd testdata/fablo && ./fablo prune || true
+	rm -rf testdata/fablo/snapshot.fablo.tar.gz
 
-.PHONY: stop-3
-stop-3:
-	@./testdata/fabric-samples/test-network/network.sh down
-	@docker rm -f $$(docker ps -a -q --filter "ancestor=basic_ccaas_image") || true
+.PHONY: start-full
+start-full:
+	@if nc -z localhost 7050 2>/dev/null; then echo "Error: port 7050 is already in use — stop any running Fabric orderer before starting."; exit 1; fi
+	@mkdir -p \
+		data/orderers/party1-router data/orderers/party1-batcher \
+		data/orderers/party1-consenter data/orderers/party1-assembler \
+		data/orderers/party2-router data/orderers/party2-batcher \
+		data/orderers/party2-consenter data/orderers/party2-assembler \
+		data/orderers/party3-router data/orderers/party3-batcher \
+		data/orderers/party3-consenter data/orderers/party3-assembler \
+		data/orderers/party4-router data/orderers/party4-batcher \
+		data/orderers/party4-consenter data/orderers/party4-assembler \
+		data/committer-org1/db data/committer-org1/sidecar-ledger
+	@$(COMPOSE) -f compose.fabric-x.full.yaml up -d
+	@echo "Waiting for committer to be ready..."
+	@while ! nc -z localhost 7001 2>/dev/null; do sleep 1; done
+	@echo "Waiting for committer sidecar to be ready..."
+	@while ! nc -z localhost 4001 2>/dev/null; do sleep 1; done
+	@$(DOCKER) run --rm --network $(NETWORK) \
+		--user "$(UID):$(GID)" \
+		--env "FX_NS=$(NS1)" \
+		--env "FX_POLICY=$(POLICY)" \
+		-v "$(PWD)/testdata/fxconfig.yaml:/config/fxconfig.yaml:ro,Z" \
+		-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/peers/fxconfig.org1.example.com/tls:/tls:ro,Z" \
+		-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/users/channel_admin@org1.example.com/msp:/msp:ro,Z" \
+		-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/msp/tlscacerts/tlsca.org1.example.com-cert.pem:/org-tls-ca.pem:ro,Z" \
+		-v "$(PWD)/testdata/crypto/ordererOrganizations/orderer-org-1/msp/tlscacerts/tlsca.orderer-org-1-cert.pem:/orderer-tls-ca.pem:ro,Z" \
+		$(TOOLS_IMAGE) \
+		sh -c 'fxconfig namespace list --config=/config/fxconfig.yaml 2>/dev/null | grep -q ") $$FX_NS:" || \
+		fxconfig namespace create "$$FX_NS" --policy="$$FX_POLICY" --endorse --submit --wait --config=/config/fxconfig.yaml'
+	@$(DOCKER) run --rm --network $(NETWORK) \
+		--user "$(UID):$(GID)" \
+		--env "FX_NS=$(NS2)" \
+		--env "FX_POLICY=$(POLICY)" \
+		-v "$(PWD)/testdata/fxconfig.yaml:/config/fxconfig.yaml:ro,Z" \
+		-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/peers/fxconfig.org1.example.com/tls:/tls:ro,Z" \
+		-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/users/channel_admin@org1.example.com/msp:/msp:ro,Z" \
+		-v "$(PWD)/testdata/crypto/peerOrganizations/org1.example.com/msp/tlscacerts/tlsca.org1.example.com-cert.pem:/org-tls-ca.pem:ro,Z" \
+		-v "$(PWD)/testdata/crypto/ordererOrganizations/orderer-org-1/msp/tlscacerts/tlsca.orderer-org-1-cert.pem:/orderer-tls-ca.pem:ro,Z" \
+		$(TOOLS_IMAGE) \
+		sh -c 'fxconfig namespace list --config=/config/fxconfig.yaml 2>/dev/null | grep -q ") $$FX_NS:" || \
+		fxconfig namespace create "$$FX_NS" --policy="$$FX_POLICY" --endorse --submit --wait --config=/config/fxconfig.yaml'
+
+.PHONY: stop-full
+stop-full:
+	@$(COMPOSE) -f compose.fabric-x.full.yaml down
+	@rm -rf data/
 
 .PHONY: test-local
 test-local:
@@ -84,19 +249,27 @@ test-local:
 test-local-x:
 	@go test -timeout 30s -v -run ^TestLocalX$$ ./integration
 
+.PHONY: fetch-execution-specs-tests
+fetch-execution-specs-tests:
+	@./scripts/fetch_execution_specs_tests.sh
+
 .PHONY: eth-tests
-eth-tests:
-	@go test -test.fullpath=true -timeout 2000s -run ^TestEthereumTests$$ github.com/hyperledger/fabric-x-evm/integration
-	# @VERBOSE=$(VERBOSE) ./scripts/run_eth_test.sh
+eth-tests: fetch-execution-specs-tests
+	@./scripts/run_eth_tests.sh
 
-.PHONY: eth-tests-legacy
-eth-tests-legacy:
-	@go test -test.fullpath=true -timeout 2000s -run ^TestEthereumTests$$ github.com/hyperledger/fabric-x-evm/integration -legacy
+# Full OZ compatible set — what CI's oz-hardhat-compat job runs.
+# Narrow it with FILE= and/or GREP= for a focused local run (no baseline diff):
+#   make hardhat-tests FILE=test/token/ERC20/ERC20.test.js
+#   make hardhat-tests GREP='ERC20 _mint'
+# PORT= runs the testnode somewhere other than 8545, so a second run can go
+# alongside one already in progress.
+.PHONY: hardhat-tests
+hardhat-tests:
+	@./scripts/run_hardhat_test.sh \
+		$(if $(FILE),--file '$(FILE)') \
+		$(if $(GREP),--grep '$(GREP)') \
+		$(if $(PORT),--port '$(PORT)')
 
-.PHONY: eth-tests-slow
-eth-tests-slow:
-	@go test -test.fullpath=true -timeout 10000s -run ^TestEthereumTests$$ github.com/hyperledger/fabric-x-evm/integration -very_slow
-
-.PHONY: eth-tests-slow-legacy
-eth-tests-slow-legacy:
-	@go test -test.fullpath=true -timeout 10000s -run ^TestEthereumTests$$ github.com/hyperledger/fabric-x-evm/integration -very_slow -legacy
+.PHONY: perf-tests
+perf-tests: pre-pull-images
+	@VERBOSE=$(VERBOSE) FABRIC_VERSION=$(FABRIC_VERSION) ./scripts/run_perf_test.sh

@@ -15,24 +15,31 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/rpc"
+	estorage "github.com/hyperledger/fabric-x-evm/endorser/storage"
 	"github.com/hyperledger/fabric-x-evm/gateway/api"
+	"github.com/hyperledger/fabric-x-evm/gateway/storage"
 )
 
 // NewTestServer creates an RPC server with test-only methods enabled.
 // This wraps the production server and adds eth_accounts and eth_sendTransaction
-// with server-side signing capabilities.
+// with server-side signing capabilities, plus Hardhat-specific helper methods.
+// The lightKVS parameter is required for snapshot/revert functionality.
+// The store parameter is required for database snapshot/revert functionality.
 //
 // SECURITY WARNING: This server performs server-side transaction signing,
 // which is inherently insecure. Use ONLY for development and testing.
 // NEVER use in production environments.
-func NewTestServer(b api.Backend, testAccounts []common.Address, testAccountKeys map[common.Address]*ecdsa.PrivateKey) (*rpc.Server, error) {
+func NewTestServer(b api.Backend, testAccounts []common.Address, testAccountKeys map[common.Address]*ecdsa.PrivateKey, lightKVS estorage.Revertible, store storage.Revertible, pool TxPool) (*rpc.Server, error) {
 	srv := rpc.NewServer()
+
+	// Shared by the submit path and the snapshot/revert path; see txFence.
+	fence := &txFence{pool: pool}
 
 	// Create production API
 	prodAPI := api.NewEthAPI(b)
 
 	// Wrap with test API that adds unsafe methods
-	testAPI := NewTestEthAPI(prodAPI, b, testAccounts, testAccountKeys)
+	testAPI := NewTestEthAPI(prodAPI, b, testAccounts, testAccountKeys, fence)
 
 	// Register the test-enabled API
 	if err := srv.RegisterName("eth", testAPI); err != nil {
@@ -47,9 +54,38 @@ func NewTestServer(b api.Backend, testAccounts []common.Address, testAccountKeys
 	if err := srv.RegisterName("net", api.NewNetAPI(chainID.String())); err != nil {
 		return nil, err
 	}
-	if err := srv.RegisterName("web3", api.NewWeb3API()); err != nil {
+
+	// Register Web3 API with Hardhat-compatible client version
+	if err := srv.RegisterName("web3", NewTestWeb3API()); err != nil {
+		return nil, err
+	}
+
+	// Register Hardhat helper APIs for test compatibility
+	if err := srv.RegisterName("hardhat", NewHardhatAPI()); err != nil {
+		return nil, err
+	}
+	if err := srv.RegisterName("evm", NewEvmAPI(lightKVS, store, fence)); err != nil {
+		return nil, err
+	}
+
+	// personal_sign for EIP-191 message signing (ethers.js signMessage)
+	if err := srv.RegisterName("personal", NewPersonalAPI(testAccountKeys)); err != nil {
 		return nil, err
 	}
 
 	return srv, nil
+}
+
+// TestWeb3API provides Web3 API with Hardhat-compatible client version.
+type TestWeb3API struct{}
+
+// NewTestWeb3API creates a new test Web3 API instance.
+func NewTestWeb3API() *TestWeb3API {
+	return &TestWeb3API{}
+}
+
+// ClientVersion returns a Hardhat-compatible client version string.
+// This helps Hardhat recognize the node and enable its network helpers.
+func (api *TestWeb3API) ClientVersion() string {
+	return "HardhatNetwork/fabric-evm/0.1.0"
 }

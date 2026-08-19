@@ -1,0 +1,38 @@
+{"Time":"2026-07-23T15:10:02.656774+02:00","Action":"start","Package":"sample"}
+{"Time":"2026-07-23T15:10:03.389823+02:00","Action":"run","Package":"sample","Test":"TestParent"}
+{"Time":"2026-07-23T15:10:03.389899+02:00","Action":"output","Package":"sample","Test":"TestParent","Output":"=== RUN   TestParent\n"}
+{"Time":"2026-07-23T15:10:03.389925+02:00","Action":"run","Package":"sample","Test":"TestParent/child_pass"}
+{"Time":"2026-07-23T15:10:03.389931+02:00","Action":"output","Package":"sample","Test":"TestParent/child_pass","Output":"=== RUN   TestParent/child_pass\n"}
+{"Time":"2026-07-23T15:10:03.389942+02:00","Action":"output","Package":"sample","Test":"TestParent/child_pass","Output":"=== PAUSE TestParent/child_pass\n"}
+{"Time":"2026-07-23T15:10:03.389947+02:00","Action":"pause","Package":"sample","Test":"TestParent/child_pass"}
+{"Time":"2026-07-23T15:10:03.389951+02:00","Action":"run","Package":"sample","Test":"TestParent/child_fail"}
+{"Time":"2026-07-23T15:10:03.389955+02:00","Action":"output","Package":"sample","Test":"TestParent/child_fail","Output":"=== RUN   TestParent/child_fail\n"}
+{"Time":"2026-07-23T15:10:03.38996+02:00","Action":"output","Package":"sample","Test":"TestParent/child_fail","Output":"=== PAUSE TestParent/child_fail\n"}
+{"Time":"2026-07-23T15:10:03.389967+02:00","Action":"pause","Package":"sample","Test":"TestParent/child_fail"}
+{"Time":"2026-07-23T15:10:03.389978+02:00","Action":"cont","Package":"sample","Test":"TestParent/child_pass"}
+{"Time":"2026-07-23T15:10:03.389988+02:00","Action":"output","Package":"sample","Test":"TestParent/child_pass","Output":"=== CONT  TestParent/child_pass\n"}
+{"Time":"2026-07-23T15:10:03.39+02:00","Action":"output","Package":"sample","Test":"TestParent/child_pass","Output":"--- PASS: TestParent/child_pass (0.00s)\n"}
+{"Time":"2026-07-23T15:10:03.390022+02:00","Action":"pass","Package":"sample","Test":"TestParent/child_pass","Elapsed":0}
+{"Time":"2026-07-23T15:10:03.390034+02:00","Action":"cont","Package":"sample","Test":"TestParent/child_fail"}
+{"Time":"2026-07-23T15:10:03.390043+02:00","Action":"output","Package":"sample","Test":"TestParent/child_fail","Output":"=== CONT  TestParent/child_fail\n"}
+{"Time":"2026-07-23T15:10:03.390053+02:00","Action":"output","Package":"sample","Test":"TestParent/child_fail","Output":"    sample_test.go:11: root mismatch: got 0xabc want 0xdef\n"}
+{"Time":"2026-07-23T15:10:03.390077+02:00","Action":"output","Package":"sample","Test":"TestParent/child_fail","Output":"--- FAIL: TestParent/child_fail (0.00s)\n"}
+{"Time":"2026-07-23T15:10:03.390096+02:00","Action":"fail","Package":"sample","Test":"TestParent/child_fail","Elapsed":0}
+{"Time":"2026-07-23T15:10:03.390106+02:00","Action":"output","Package":"sample","Test":"TestParent","Output":"--- FAIL: TestParent (0.00s)\n"}
+{"Time":"2026-07-23T15:10:03.390116+02:00","Action":"fail","Package":"sample","Test":"TestParent","Elapsed":0}
+{"Time":"2026-07-23T15:10:03.390126+02:00","Action":"run","Package":"sample","Test":"TestSkipped"}
+{"Time":"2026-07-23T15:10:03.390136+02:00","Action":"output","Package":"sample","Test":"TestSkipped","Output":"=== RUN   TestSkipped\n"}
+{"Time":"2026-07-23T15:10:03.390146+02:00","Action":"output","Package":"sample","Test":"TestSkipped","Output":"    sample_test.go:16: not applicable\n"}
+{"Time":"2026-07-23T15:10:03.390156+02:00","Action":"output","Package":"sample","Test":"TestSkipped","Output":"--- SKIP: TestSkipped (0.00s)\n"}
+{"Time":"2026-07-23T15:10:03.390174+02:00","Action":"skip","Package":"sample","Test":"TestSkipped","Elapsed":0}
+{"Time":"2026-07-23T15:10:03.390184+02:00","Action":"run","Package":"sample","Test":"TestCrashy"}
+{"Time":"2026-07-23T15:10:03.390193+02:00","Action":"output","Package":"sample","Test":"TestCrashy","Output":"=== RUN   TestCrashy\n"}
+{"Time":"2026-07-23T15:10:03.390204+02:00","Action":"output","Package":"sample","Test":"TestCrashy","Output":"--- FAIL: TestCrashy (0.00s)\n"}
+{"Time":"2026-07-23T15:10:03.392463+02:00","Action":"output","Package":"sample","Test":"TestCrashy","Output":"panic: boom [recovered, repanicked]\n"}
+{"Time":"2026-07-23T15:10:03.392485+02:00","Action":"output","Package":"sample","Test":"TestCrashy","Output":"\n"}
+{"Time":"2026-07-23T15:10:03.392544+02:00","Action":"output","Package":"sample","Test":"TestCrashy","Output":"goroutine 10 [running]:\n"}
+{"Time":"2026-07-23T15:10:03.392568+02:00","Action":"output","Package":"sample","Test":"TestCrashy","Output":"sample.TestCrashy(...)\n"}
+{"Time":"2026-07-23T15:10:03.39263+02:00","Action":"output","Package":"sample","Test":"TestCrashy","Output":"\t/repo/sample_test.go:20 +0x2c\n"}
+{"Time":"2026-07-23T15:10:03.39372+02:00","Action":"fail","Package":"sample","Test":"TestCrashy","Elapsed":0}
+{"Time":"2026-07-23T15:10:03.393751+02:00","Action":"output","Package":"sample","Output":"FAIL\tsample\t0.736s\n"}
+{"Time":"2026-07-23T15:10:03.393768+02:00","Action":"fail","Package":"sample","Elapsed":0.737}

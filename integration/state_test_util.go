@@ -39,7 +39,8 @@ import (
 	"github.com/ethereum/go-ethereum/triedb/hashdb"
 	"github.com/ethereum/go-ethereum/triedb/pathdb"
 	"github.com/holiman/uint256"
-	"github.com/hyperledger/fabric-x-evm/endorser"
+	"github.com/hyperledger/fabric-x-evm/endorser/execution"
+	"github.com/hyperledger/fabric-x-evm/endorser/storage"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	fabricstate "github.com/hyperledger/fabric-x-sdk/state"
 	"golang.org/x/crypto/sha3"
@@ -175,6 +176,14 @@ func (tx *stTransaction) UnmarshalJSON(data []byte) error {
 		Sender               *common.Address
 		BlobVersionedHashes  []common.Hash
 		BlobGasFeeCap        *math.HexOrDecimal256 `json:"maxFeePerBlobGas"`
+		AuthorizationList    []*struct {
+			ChainID *math.HexOrDecimal256 `json:"chainId"`
+			Address common.Address        `json:"address"`
+			Nonce   math.HexOrDecimal64   `json:"nonce"`
+			V       math.HexOrDecimal64   `json:"v"`
+			R       *math.HexOrDecimal256 `json:"r"`
+			S       *math.HexOrDecimal256 `json:"s"`
+		} `json:"authorizationList"`
 	}
 	var dec stTransactionMarshaling
 	if err := json.Unmarshal(data, &dec); err != nil {
@@ -203,6 +212,19 @@ func (tx *stTransaction) UnmarshalJSON(data []byte) error {
 	tx.BlobVersionedHashes = dec.BlobVersionedHashes
 	if dec.BlobGasFeeCap != nil {
 		tx.BlobGasFeeCap = (*big.Int)(dec.BlobGasFeeCap)
+	}
+	if dec.AuthorizationList != nil {
+		tx.AuthorizationList = make([]*stAuthorization, len(dec.AuthorizationList))
+		for i, auth := range dec.AuthorizationList {
+			tx.AuthorizationList[i] = &stAuthorization{
+				ChainID: (*big.Int)(auth.ChainID),
+				Address: auth.Address,
+				Nonce:   uint64(auth.Nonce),
+				V:       uint8(auth.V),
+				R:       (*big.Int)(auth.R),
+				S:       (*big.Int)(auth.S),
+			}
+		}
 	}
 	return nil
 }
@@ -262,11 +284,11 @@ func (t *StateTest) Run(subtest StateSubtest, vmconfig vm.Config, snapshotter bo
 	}
 	// Get logs - need to access the underlying ethStateDB for both types
 	var logs common.Hash
-	if dualDB, ok := st.StateDB.(*endorser.DualStateDB); ok {
+	if dualDB, ok := st.StateDB.(*execution.DualStateDB); ok {
 		logs = rlpHash(dualDB.EthStateDB().Logs())
 	} else if ethDB, ok := st.StateDB.(*state.StateDB); ok {
 		logs = rlpHash(ethDB.Logs())
-	} else if loggerDB, ok := st.StateDB.(*endorser.EthStateDBLogger); ok {
+	} else if loggerDB, ok := st.StateDB.(*execution.EthStateDBLogger); ok {
 		logs = rlpHash(loggerDB.Logs())
 	}
 	if logs != common.Hash(post.Logs) {
@@ -276,7 +298,7 @@ func (t *StateTest) Run(subtest StateSubtest, vmconfig vm.Config, snapshotter bo
 }
 
 // StateTestState groups all the state database objects together for use in tests.
-// StateDB can be either *state.StateDB or *endorser.DualStateDB
+// StateDB can be either *state.StateDB or *execution.DualStateDB
 type StateTestState struct {
 	StateDB   vm.StateDB
 	TrieDB    *triedb.Database
@@ -397,8 +419,7 @@ func (t *StateTest) RunNoVerify(subtest StateSubtest, vmconfig vm.Config, snapsh
 		tracer.OnTxStart(evm.GetVMContext(), nil, msg.From)
 	}
 	snapshot := st.StateDB.Snapshot()
-	gaspool := new(core.GasPool)
-	gaspool.AddGas(block.GasLimit())
+	gaspool := core.NewGasPool(block.GasLimit())
 	vmRet, err := core.ApplyMessage(evm, msg, gaspool)
 	if err != nil {
 		st.StateDB.RevertToSnapshot(snapshot)
@@ -410,7 +431,7 @@ func (t *StateTest) RunNoVerify(subtest StateSubtest, vmconfig vm.Config, snapsh
 	st.StateDB.AddBalance(block.Coinbase(), new(uint256.Int), tracing.BalanceChangeUnspecified)
 
 	// Commit the state - need to access the underlying ethStateDB
-	if dualDB, ok := st.StateDB.(*endorser.DualStateDB); ok {
+	if dualDB, ok := st.StateDB.(*execution.DualStateDB); ok {
 		root, err = dualDB.EthStateDB().Commit(block.NumberU64(), config.IsEIP158(block.Number()), config.IsCancun(block.Number(), block.Time()))
 		if err != nil {
 			return st, common.Hash{}, 0, fmt.Errorf("commit failed: %w", err)
@@ -420,7 +441,7 @@ func (t *StateTest) RunNoVerify(subtest StateSubtest, vmconfig vm.Config, snapsh
 		if err != nil {
 			return st, common.Hash{}, 0, fmt.Errorf("commit failed: %w", err)
 		}
-	} else if loggerDB, ok := st.StateDB.(*endorser.EthStateDBLogger); ok {
+	} else if loggerDB, ok := st.StateDB.(*execution.EthStateDBLogger); ok {
 		root, err = loggerDB.Commit(block.NumberU64(), config.IsEIP158(block.Number()), config.IsCancun(block.Number(), block.Time()))
 		if err != nil {
 			return st, common.Hash{}, 0, fmt.Errorf("commit failed: %w", err)
@@ -539,15 +560,15 @@ func (tx *stTransaction) toMessage(ps stPostState, baseFee *big.Int) (*core.Mess
 		From:                  from,
 		To:                    to,
 		Nonce:                 tx.Nonce,
-		Value:                 value,
+		Value:                 uint256.MustFromBig(value),
 		GasLimit:              gasLimit,
-		GasPrice:              gasPrice,
-		GasFeeCap:             tx.MaxFeePerGas,
-		GasTipCap:             tx.MaxPriorityFeePerGas,
+		GasPrice:              uint256.MustFromBig(gasPrice),
+		GasFeeCap:             uint256.MustFromBig(tx.MaxFeePerGas),
+		GasTipCap:             uint256.MustFromBig(tx.MaxPriorityFeePerGas),
 		Data:                  data,
 		AccessList:            accessList,
 		BlobHashes:            tx.BlobVersionedHashes,
-		BlobGasFeeCap:         tx.BlobGasFeeCap,
+		BlobGasFeeCap:         uint256.MustFromBig(tx.BlobGasFeeCap),
 		SetCodeAuthorizations: authList,
 	}
 	return msg, nil
@@ -590,11 +611,13 @@ func makePreState(db ethdb.Database, accounts types.GenesisAlloc, snapshotter bo
 		}
 		snaps, _ = snapshot.New(snapconfig, db, trieDB, root)
 	}
-	sdb = state.NewDatabase(trieDB, snaps)
+	// Pass nil for the default code db; snaps unused in the current signature.
+	_ = snaps
+	sdb = state.NewDatabase(trieDB, nil)
 	statedb, _ = state.New(root, sdb)
 
 	// Wrap with logger for debugging
-	loggedStateDB := endorser.NewEthStateDBLogger(statedb)
+	loggedStateDB := execution.NewEthStateDBLogger(statedb)
 
 	// Return plain ethStateDB (not wrapped in DualStateDB)
 	// The Run method already handles both DualStateDB and plain StateDB
@@ -616,10 +639,13 @@ func makePreStateWithDualState(db ethdb.Database, accounts types.GenesisAlloc, s
 
 	// Create a mock StateDB for DualStateDB
 	fabricDB, _ := fabricstate.NewWriteDB("testchannel", ":memory:")
-	fabricStateDB, _ := endorser.NewStateDB(context.TODO(), fabricDB, "testns", 0, false)
+	fabricDBWrapper := storage.NewVersionedDBWrapper(fabricDB)
+	fabricDBSnapshot, _ := fabricDBWrapper.NewSnapshot(storage.BlockAt(1))
+	defer fabricDBSnapshot.Close()
+	fabricStateDB, _ := execution.NewStateDB(context.TODO(), fabricDBSnapshot, "testns", 0, false)
 
 	// Use DualStateDB instead of plain StateDB for debugging
-	statedb := endorser.NewDualStateDB(ethStateDB, fabricStateDB)
+	statedb := execution.NewDualStateDB(ethStateDB, fabricStateDB)
 
 	// Populate accounts
 	for addr, a := range accounts {
@@ -665,13 +691,17 @@ func makePreStateWithDualState(db ethdb.Database, accounts types.GenesisAlloc, s
 		}
 		snaps, _ = snapshot.New(snapconfig, db, trieDB, root)
 	}
-	sdb = state.NewDatabase(trieDB, snaps)
+	// Pass nil for the default code db; snaps unused in the current signature.
+	_ = snaps
+	sdb = state.NewDatabase(trieDB, nil)
 	ethStateDB, _ = state.New(root, sdb)
 
 	// Create new StateDB for the reopened state - now reading from block 1
 	// since we just committed block 0
-	fabricStateDB, _ = endorser.NewStateDB(context.TODO(), fabricDB, "testns", 1, false)
-	statedb = endorser.NewDualStateDB(ethStateDB, fabricStateDB)
+	fabricDBSnapshot2, _ := fabricDBWrapper.NewSnapshot(storage.BlockAt(1))
+	defer fabricDBSnapshot2.Close()
+	fabricStateDB, _ = execution.NewStateDB(context.TODO(), fabricDBSnapshot2, "testns", 1, false)
+	statedb = execution.NewDualStateDB(ethStateDB, fabricStateDB)
 
 	return StateTestState{statedb, trieDB, snaps}
 }
@@ -697,5 +727,3 @@ func (d *dummyChain) GetHeaderByHash(h common.Hash) *types.Header     { return n
 func (d *dummyChain) GetHeaderByNumber(n uint64) *types.Header        { return nil }
 func (d *dummyChain) Config() *params.ChainConfig                     { return d.config }
 func (d *dummyChain) CurrentHeader() *types.Header                    { return nil }
-
-// Made with Bob

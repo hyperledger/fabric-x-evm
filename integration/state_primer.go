@@ -13,7 +13,6 @@ import (
 	"math/big"
 	"math/rand"
 	"os"
-	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	ethstate "github.com/ethereum/go-ethereum/core/state"
@@ -23,20 +22,25 @@ import (
 	"github.com/holiman/uint256"
 	pb "github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	lc "github.com/hyperledger/fabric-x-evm/common"
-	"github.com/hyperledger/fabric-x-evm/endorser"
+	"github.com/hyperledger/fabric-x-evm/endorser/execution"
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
-	"github.com/hyperledger/fabric-x-sdk/network"
 )
+
+type KVSSnapshotter interface {
+	NewSnapshot(blockNumber *uint64) (execution.ReadStore, error)
+}
 
 // StatePrimer provides a builder pattern for priming ledger state.
 // It allows setting nonces, code, balances, and storage for addresses,
 // then commits all changes in a single transaction.
 type StatePrimer struct {
 	gw                *core.Gateway
-	db                endorser.ReadStore
+	submitter         core.Submitter
+	kvs               KVSSnapshotter
+	reader            execution.ReadStore
 	namespace         string
 	signer            sdk.Signer
 	builders          []endorsement.Builder
@@ -45,7 +49,7 @@ type StatePrimer struct {
 	monotonicVersions bool
 
 	// DualStateDB that tracks both Fabric and Ethereum state
-	stateDB endorser.ExtendedStateDB
+	stateDB execution.ExtendedStateDB
 
 	priv *ecdsa.PrivateKey
 }
@@ -53,7 +57,8 @@ type StatePrimer struct {
 // NewStatePrimer creates a new state primer builder.
 func NewStatePrimer(
 	gw *core.Gateway,
-	db endorser.ReadStore,
+	submitter core.Submitter,
+	db KVSSnapshotter,
 	namespace string,
 	signer sdk.Signer,
 	builders []endorsement.Builder,
@@ -62,7 +67,11 @@ func NewStatePrimer(
 	monotonicVersions bool,
 ) (*StatePrimer, error) {
 	// Create a DualStateDB with both Fabric and Ethereum state tracking
-	stateDB, err := endorser.NewStateDBWithDualState(context.TODO(), db, namespace, 0, monotonicVersions, nil)
+	store, err := db.NewSnapshot(nil)
+	if err != nil {
+		return nil, err
+	}
+	stateDB, err := execution.NewStateDBWithDualState(context.TODO(), store, namespace, 0, monotonicVersions, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +83,9 @@ func NewStatePrimer(
 
 	return &StatePrimer{
 		gw:                gw,
-		db:                db,
+		submitter:         submitter,
+		reader:            store,
+		kvs:               db,
 		namespace:         namespace,
 		signer:            signer,
 		builders:          builders,
@@ -210,25 +221,23 @@ func (sp *StatePrimer) LoadFromJSON(jsonFilePath string) (*StatePrimer, error) {
 // Commit applies all state changes to the ledger by creating a proposal,
 // endorsing it, and submitting it through the normal Fabric commit flow.
 func (sp *StatePrimer) Commit(ctx context.Context, wait bool) error {
+	defer sp.reader.Close()
+
 	// create a fake ethereum tx so we can use it to track priming
 	tx, ethTxBytes, err := sp.fakeEthTx()
 	if err != nil {
 		return err
 	}
 
-	// Create a proposal for the priming transaction
-	prop, err := network.NewSignedProposal(
+	// Create the invocation for the priming transaction. Must carry sp.nsVersion (like the
+	// real endorsement path does) or the committer rejects it as INVALID_CHAINCODE.
+	inv, err := endorsement.NewInvocation(
 		sp.signer,
 		sp.channel,
 		sp.namespace,
 		sp.nsVersion,
 		[][]byte{{byte(lc.ProposalTypeEVMTx)}, ethTxBytes},
 	)
-	if err != nil {
-		return err
-	}
-
-	inv, err := endorsement.Parse(prop, time.Time{})
 	if err != nil {
 		return err
 	}
@@ -257,7 +266,13 @@ func (sp *StatePrimer) Writes() blocks.ReadWriteSet {
 
 // Reset creates a new DualStateDB, discarding all uncommitted changes.
 func (sp *StatePrimer) Reset() (*StatePrimer, error) {
-	stateDB, err := endorser.NewStateDBWithDualState(context.TODO(), sp.db, sp.namespace, 0, sp.monotonicVersions, nil)
+	sp.reader.Close() // just in case
+	reader, err := sp.kvs.NewSnapshot(nil)
+	if err != nil {
+		return nil, err
+	}
+	sp.reader = reader
+	stateDB, err := execution.NewStateDBWithDualState(context.TODO(), sp.reader, sp.namespace, 0, sp.monotonicVersions, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -269,7 +284,7 @@ func (sp *StatePrimer) Reset() (*StatePrimer, error) {
 // GetEthStateDB extracts the ethStateDB from the underlying DualStateDB.
 // This allows the primed state to be reused in subsequent operations.
 func (sp *StatePrimer) GetEthStateDB() *ethstate.StateDB {
-	if dualDB, ok := sp.stateDB.(*endorser.DualStateDB); ok {
+	if dualDB, ok := sp.stateDB.(*execution.DualStateDB); ok {
 		return dualDB.EthStateDB()
 	}
 	return nil
@@ -305,16 +320,31 @@ func (sp *StatePrimer) fakeEthTx() (*types.Transaction, []byte, error) {
 }
 
 func (sp *StatePrimer) commitAndWait(end sdk.Endorsement, tx *types.Transaction, wait bool) error {
-	if err := sp.gw.SubmitFabricTx(context.Background(), end); err != nil {
-		return err
-	}
-
-	ec, err := newNativeEthClient(sp.gw)
-	if err != nil {
-		return err
-	}
-
 	if wait {
+		// submit through the gateway (asynchronous)
+		if err := sp.gw.SubmitFabricTx(context.Background(), tx.Hash(), end); err != nil {
+			return err
+		}
+	} else {
+		// Submit directly via the submitter (synchronous) instead of via gateway (async BatchSubmitter)
+		// This ensures priming completes before the test continues
+		if err := sp.submitter.Submit(context.Background(), end); err != nil {
+			return err
+		}
+	}
+
+	// Only create the in-proc RPC client when we wait; the no-wait path leaked it.
+	if wait {
+		ec, err := NewNativeEthClient(sp.gw)
+		if err != nil {
+			return err
+		}
+		defer ec.Close()
+		// we ignore the return value of `waitForCommit` for now because
+		// the synchronisation-on-startup architecture might leave the wait
+		// for commit loop unworkable. As soon as
+		// https://github.com/hyperledger/fabric-x-evm/issues/221
+		// is complete we will add the return again
 		waitForCommit(context.Background(), ec, tx)
 	}
 

@@ -1,0 +1,139 @@
+name: Baseline Report Comment
+
+# Companion to the "Tests" workflow's oz-hardhat-compat job. Split into its own
+# workflow (rather than a step in Tests) so it can run with elevated permissions
+# safely: this workflow's own definition is read from the default branch, not a
+# PR's branch, so a fork PR editing this file has no effect on what it does. It
+# never checks out repo/PR code — it only reads a plain-text artifact the
+# unprivileged Tests run already produced, and posts/updates one PR comment from it.
+
+on:
+  workflow_run:
+    workflows: [ "Tests" ]
+    types: [ completed ]
+
+permissions:
+  contents: read
+  actions: read # required by actions/download-artifact for cross-run download
+  pull-requests: write # minimal scope for posting/updating a PR comment
+
+jobs:
+  comment:
+    name: Post baseline report comment
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event.workflow_run.conclusion != 'cancelled'
+    steps:
+      - name: Download summary artifact
+        uses: actions/download-artifact@v4
+        continue-on-error: true # no artifact at all means an early infra failure upstream; nothing to comment
+        with:
+          name: oz-baseline-report
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: oz-baseline-artifact
+
+      - name: Check for PR number
+        id: prnum
+        run: |
+          if [ -f oz-baseline-artifact/pr_number.txt ]; then
+            n=$(cat oz-baseline-artifact/pr_number.txt)
+            [[ "$n" =~ ^[0-9]+$ ]] || { echo "Non-numeric PR number; skipping."; exit 0; }
+            echo "number=$n" >> "$GITHUB_OUTPUT"
+          else
+            echo "No PR number found — not a pull_request run, or no artifact was produced. Skipping comment."
+          fi
+
+      - name: Find-or-update PR comment
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ steps.prnum.outputs.number }}
+        with:
+          script: |
+            const prNumber = Number(process.env.PR_NUMBER);
+
+      - name: Find-or-update PR comment
+        if: steps.prnum.outputs.number != ''
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ steps.prnum.outputs.number }}
+        with:
+          # Builds a compact PR comment from cmd/baseline check --json's structured
+          # summary: an always-visible ✅/❌/🎉 headline, regressions/stale surfaced
+          # immediately since those are the only actionable bit, everything else
+          # (by-suite, cause histogram) folded behind <details>. Inlined here rather
+          # than in a checked-out repo file so this workflow keeps needing zero
+          # checkout of repo/PR code.
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- oz-baseline-report -->';
+            const summary = JSON.parse(fs.readFileSync('oz-baseline-artifact/summary.json', 'utf8'));
+            const regressionCount = summary.regressions.length;
+            const staleCount = summary.stale.length;
+
+            // Three possible states: regressions, new fixes, or no change.
+            // Only the latter requires no action from the developer.
+            let headline;
+            let footer = '';
+            if (regressionCount > 0) {
+              const bits = [`${regressionCount} regression${regressionCount === 1 ? '' : 's'}`];
+              if (staleCount > 0) {
+                bits.push(`🎉 ${staleCount} fixed`);
+                footer = "<sub>Run `go run ./cmd/baseline update --suite oz-hardhat` to accept the expected regressions and drop the fixed entries, then commit the updated baseline.</sub>\n";
+              } else {
+                footer = "<sub>A regression above that's actually expected, not a bug? Run `go run ./cmd/baseline update --suite oz-hardhat` and commit the updated baseline.</sub>\n";
+              }
+              headline = `### ❌ OZ Hardhat Compatibility — ${bits.join(', ')}`;
+            } else if (staleCount > 0) {
+              headline = `### 🎉 OZ Hardhat Compatibility — ${staleCount} test${staleCount === 1 ? '' : 's'} fixed!`;
+              footer = "<sub>Lock in the win — run `go run ./cmd/baseline update --suite oz-hardhat` and commit the updated baseline to remove these.</sub>\n";
+            } else {
+              headline = `### ✅ OZ Hardhat Compatibility — ${summary.passRate.toFixed(1)}% passing (${summary.pass}/${summary.total})`;
+            }
+
+            let out = `${marker}\n${headline}\n\n`;
+            if (regressionCount === 0 && staleCount === 0) out += `No regressions, no stale entries.\n\n`;
+            if (regressionCount > 0) {
+              out += `**Regressions (${regressionCount})**\n\n`;
+              for (const r of summary.regressions) out += `- \`${r.id}\`: ${r.message}\n`;
+              out += '\n';
+            }
+            if (staleCount > 0) {
+              out += `**Stale baseline entries (${staleCount}) — remove these**\n\n`;
+              for (const id of summary.stale) out += `- \`${id}\`\n`;
+              out += '\n';
+            }
+
+            if (summary.bySuite.length > 1 || summary.causes.length > 0) {
+              out += `<details>\n<summary>Full breakdown — ${summary.summaryLine}</summary>\n\n`;
+              if (summary.bySuite.length > 1) {
+                out += `**By suite**\n\n`;
+                for (const s of summary.bySuite) out += `- ${s.name}: ${s.pass}/${s.total} passing (${s.passRate.toFixed(0)}%)\n`;
+                out += '\n';
+              }
+              if (summary.causes.length > 0) {
+                const total = summary.causes.reduce((n, c) => n + c.count, 0);
+                out += `**Expected failures by cause (${total})**\n\n`;
+                for (const c of summary.causes) out += `- ${c.cause}: ${c.count}\n`;
+                out += '\n';
+              }
+              out += `</details>\n\n`;
+            }
+            out += footer;
+
+            const { owner, repo } = context.repo;
+            const prNumber = Number(process.env.PR_NUMBER);
+            const comments = await github.rest.issues.listComments({
+              owner,
+              repo,
+              issue_number: prNumber,
+              per_page: 100,
+            });
+            const existing = comments.data.find((c) => c.body && c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body: out });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number: prNumber, body: out });
+            }
+

@@ -1,0 +1,79 @@
+# Gateway config for integration tests against a Fablo-managed Fabric test
+# network, in split-deployment mode (gateway.endorsers set): the gateway dials
+# org1's and org2's endorsers over gRPC instead of embedding them, one
+# standalone endorser per config file (fablo-org1.yaml, fablo-org2.yaml).
+# Both are needed: the chaincode declares no endorsement policy, so Fablo
+# commits it with AND('Org1MSP.member','Org2MSP.member').
+#
+# Paths are relative to the integration/ package directory (where go test
+# runs). Fablo places orderer crypto under peerOrganizations (not
+# ordererOrganizations).
+
+network:
+  protocol: fabric
+  channel: mychannel
+  namespace: basic
+  ns-version: "1.0"
+  chain-id: 4011
+
+logging:
+  spec: info
+
+gateway:
+  listen: "0.0.0.0:8545"
+
+  identity:
+    msp-id: Org1MSP
+    msp-dir: ../testdata/fablo/fablo-target/fabric-config/crypto-config/peerOrganizations/org1.example.com/users/User1@org1.example.com/msp
+
+  database:
+    connection-string: "file:gateway.db?mode=memory&cache=shared"
+    # trie-path: "" # trie db is temporarily disabled
+
+  orderers:
+    - endpoint:
+        host: 127.0.0.1
+        port: 7030
+      tls:
+        mode: tls
+        server-name: orderer0.group1.orderer.example.com
+        ca-cert-paths:
+          - ../testdata/fablo/fablo-target/fabric-config/crypto-config/peerOrganizations/orderer.example.com/tlsca/tlsca.orderer.example.com-cert.pem
+
+  committer:
+    endpoint:
+      host: 127.0.0.1
+      port: 7041
+    tls:
+      mode: tls
+      server-name: peer0.org1.example.com
+      ca-cert-paths:
+        - ../testdata/fablo/fablo-target/fabric-config/crypto-config/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt
+
+  # Split deployment: dial org1's and org2's endorsers over gRPC rather than
+  # embedding them. Both entries present the gateway's own (org1) client cert;
+  # each endorser's gRPC server is configured to trust both orgs' CAs.
+  #
+  # server-name is required: the endorsers are dialed on 127.0.0.1, but the
+  # peer TLS certs they serve with are only valid for their DNS names.
+  endorsers:
+    - endpoint:
+        host: 127.0.0.1
+        port: 0 # overwritten at runtime with org1 endorser's bound port
+      tls:
+        mode: mtls
+        server-name: peer0.org1.example.com
+        cert-path: ../testdata/fablo/fablo-target/fabric-config/crypto-config/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.crt
+        key-path: ../testdata/fablo/fablo-target/fabric-config/crypto-config/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.key
+        ca-cert-paths:
+          - ../testdata/fablo/fablo-target/fabric-config/crypto-config/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt
+    - endpoint:
+        host: 127.0.0.1
+        port: 0 # overwritten at runtime with org2 endorser's bound port
+      tls:
+        mode: mtls
+        server-name: peer0.org2.example.com
+        cert-path: ../testdata/fablo/fablo-target/fabric-config/crypto-config/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.crt
+        key-path: ../testdata/fablo/fablo-target/fabric-config/crypto-config/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.key
+        ca-cert-paths:
+          - ../testdata/fablo/fablo-target/fabric-config/crypto-config/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/tls/ca.crt

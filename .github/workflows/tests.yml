@@ -4,9 +4,10 @@ on:
   push:
     branches: [ "main" ]
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
+    types: [ opened, synchronize, reopened, labeled ]
     branches: [ "main" ]
   workflow_dispatch:
+
 
 permissions:
   contents: read
@@ -15,7 +16,7 @@ jobs:
   quick-tests:
     name: Quick Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -34,11 +35,178 @@ jobs:
       - name: Unit tests
         run: make unit-tests
 
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: ./coverage.out
+          fail_ci_if_error: false
+
+  perf-smoke:
+    name: Perf Smoke Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: quick-tests
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Start Fabric-X network
+        run: make clean-x init-x start-x
+
+      - name: Run perf smoke test
+        run: make perf-smoke 2>&1 | tee /tmp/perf-smoke.log
+
+      - name: Stop and clean Fabric-X network
+        if: always()
+        run: make stop-x clean-x
+
+      - name: Publish perf results
+        if: always()
+        run: |
+          # Extract the PERF RESULT line logged by TestReplayJSONDataset.
+          # Example: "PERF RESULT throughput=123.45 invalid_rate=0.000000 conflict_rate=0.000000 total=10000 failed=0"
+          RESULT_LINE=$(grep 'PERF RESULT' /tmp/perf-smoke.log | tail -1)
+          if [ -z "$RESULT_LINE" ]; then
+            echo "## ⚠️ Perf smoke — no result line found" >> "$GITHUB_STEP_SUMMARY"
+            echo "NO_RESULT" > /tmp/perf-smoke-result.txt
+            exit 0
+          fi
+          echo "$RESULT_LINE" > /tmp/perf-smoke-result.txt
+
+          THROUGHPUT=$(echo "$RESULT_LINE"   | grep -oP 'throughput=\K[0-9.]+')
+          INVALID_RATE=$(echo "$RESULT_LINE"  | grep -oP 'invalid_rate=\K[0-9.]+')
+          CONFLICT_RATE=$(echo "$RESULT_LINE" | grep -oP 'conflict_rate=\K[0-9.]+')
+
+          {
+            echo "## **Perf Smoke — CI baseline (lower-bound against test committer)**"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|--------|-------|"
+            echo "| Throughput | ${THROUGHPUT} tx/s |"
+            echo "| Invalid rate | ${INVALID_RATE} |"
+            echo "| Conflict rate | ${CONFLICT_RATE} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record PR number for perf comment
+        if: always() && github.event_name == 'pull_request'
+        run: echo "${{ github.event.pull_request.number }}" > /tmp/perf-smoke-pr_number.txt
+
+      - name: Upload perf smoke artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-smoke-report
+          path: |
+            /tmp/perf-smoke-result.txt
+            /tmp/perf-smoke-pr_number.txt
+          retention-days: 1
+          if-no-files-found: warn
+
+  oz-hardhat-compat:
+    name: OZ Hardhat Compatibility
+    runs-on: ubuntu-latest
+    # Full suite needs headroom once more tests get past early failures.
+    timeout-minutes: 35
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Cache OZ node_modules
+        uses: actions/cache@v4
+        with:
+          path: testdata/openzeppelin-contracts/node_modules
+          key: ${{ runner.os }}-oz-node-modules-${{ hashFiles('testdata/openzeppelin-contracts/package-lock.json') }}
+
+      # A cold checkout recompiles all 368 contracts inside the first Hardhat
+      # invocation — ~64s of the run. The submodule pin fixes the sources, the
+      # compiler version and its settings, so its SHA is the whole key.
+      #
+      # cache/ has to travel with artifacts/: it holds solidity-files-cache.json,
+      # which records a contentHash and solcConfig per file. That is what makes a
+      # stale restore self-correcting — Hardhat recompiles whatever no longer
+      # matches rather than trusting the artifacts blindly.
+      #
+      # build-info/ is excluded: 309MB of the 329MB, and neither compilation nor
+      # the test run needs it.
+      - name: Get OZ submodule revision
+        id: oz-rev
+        run: echo "sha=$(git -C testdata/openzeppelin-contracts rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache OZ compilation artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            testdata/openzeppelin-contracts/artifacts
+            !testdata/openzeppelin-contracts/artifacts/build-info
+            testdata/openzeppelin-contracts/cache
+          key: ${{ runner.os }}-oz-artifacts-${{ steps.oz-rev.outputs.sha }}
+          # On a submodule bump the exact key misses, but restoring the previous
+          # revision's artifacts still helps: Hardhat recompiles only the files
+          # whose contentHash changed. Safe for the same reason — the cache
+          # validates itself rather than being trusted.
+          restore-keys: |
+            ${{ runner.os }}-oz-artifacts-
+
+      - name: Hardhat OZ compatibility suite
+        run: make hardhat-tests
+
+      - name: OZ baseline check (gate)
+        run: |
+          mkdir -p oz-baseline-artifact
+          set +e
+          go run ./cmd/baseline check --suite oz-hardhat > oz-baseline-artifact/report.md
+          check_status=$?
+          set -e
+          cat oz-baseline-artifact/report.md
+          if [ "${check_status}" -ne 0 ]; then
+            {
+              echo ""
+              echo "---"
+              echo "A regression above that's actually expected, or a stale entry now passing? Run:"
+              echo "  go run ./cmd/baseline update --suite oz-hardhat"
+              echo "and commit the updated testdata/oz_known_failures.json."
+            } >> oz-baseline-artifact/report.md
+          fi
+          # Structured summary for the comment step; check_status above is the real gate.
+          go run ./cmd/baseline check --suite oz-hardhat --json > oz-baseline-artifact/summary.json || true
+          exit "${check_status}"
+
+      - name: Record PR number for report comment
+        if: always() && github.event_name == 'pull_request'
+        run: |
+          mkdir -p oz-baseline-artifact
+          echo "${{ github.event.pull_request.number }}" > oz-baseline-artifact/pr_number.txt
+
+      - name: Upload OZ baseline report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oz-baseline-report
+          path: oz-baseline-artifact/
+          retention-days: 1
+          if-no-files-found: warn
+
   integration-tests:
     name: Integration Tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: quick-tests
+    needs: [ quick-tests, oz-hardhat-compat ]
     if: |
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
@@ -55,24 +223,20 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Ethereum tests
-        run: make eth-tests
-
       - name: Fabric-X integration tests
         run: make clean-x init-x start-x test-x stop-x
 
       - name: Fabric integration tests
         run: make integration-tests
 
-  optional-tests:
-    name: Optional Tests
+  eth-tests:
+    name: Ethereum Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 120
-    needs:
-      - quick-tests
-      - integration-tests
-    if: |
-      github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'want-optional-tests')
+    # A cache hit finishes in ~3-4 minutes (just the test run), but a cache
+    # miss (first run, or a fixture version bump) pays for the ~400 MB
+    # download + extracting it into ~8 GB of small files too -- can take more
+    # than 15 minutes.
+    timeout-minutes: 25
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -85,11 +249,14 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Legacy Ethereum tests
-        run: make eth-tests-legacy
+      - name: Cache execution-specs fixtures
+        uses: actions/cache@v4
+        with:
+          path: testdata/execution-specs-tests
+          key: ${{ runner.os }}-execution-specs-tests-${{ hashFiles('scripts/fetch_execution_specs_tests.sh') }}
 
-      - name: Slow Ethereum tests
-        run: make eth-tests-slow
+      - name: Ethereum tests
+        run: make eth-tests
 
-      - name: Slow Legacy Ethereum tests
-        run: make eth-tests-slow-legacy
+      - name: Ethereum tests baseline check (gate)
+        run: go run ./cmd/baseline check --suite eth-tests

@@ -2,26 +2,33 @@
 
 ## Table of Contents
 
-- [Introduction](#introduction)
-- [Key Design Decisions](#key-design-decisions)
-  - [Full Ethereum Ecosystem Compatibility](#full-ethereum-ecosystem-compatibility)
-  - [MVCC Validation for Transaction Consistency](#mvcc-validation-for-transaction-consistency)
-  - [Dual Synchronization Architecture](#dual-synchronization-architecture)
-  - [Gas as Metering, Not Payment](#gas-as-metering-not-payment)
-  - [Fabric Ordering Service Instead of PoW/PoS](#fabric-ordering-service-instead-of-powpos)
-- [Core Components](#core-components)
-  - [Gateway](#gateway)
-  - [Endorser](#endorser)
-- [Data Flow](#data-flow)
-  - [Transaction Execution Flow](#transaction-execution-flow)
-- [State Management](#state-management)
-  - [SnapshotDB: The EVM-Fabric Bridge](#snapshotdb-the-evm-fabric-bridge)
-  - [Synchronization Architecture](#synchronization-architecture)
-  - [Storage Layer](#storage-layer)
-- [Performance, Throughput, and Concurrency Management](#performance-throughput-and-concurrency-management)
-  - [Overview](#overview)
-  - [Concurrency Challenges](#concurrency-challenges)
-  - [Scaling Strategy: Phased Approach](#scaling-strategy-phased-approach)
+- [Architecture Overview](#architecture-overview)
+  - [Table of Contents](#table-of-contents)
+  - [Introduction](#introduction)
+  - [Key Design Decisions](#key-design-decisions)
+    - [Full Ethereum Ecosystem Compatibility](#full-ethereum-ecosystem-compatibility)
+    - [MVCC Validation for Transaction Consistency](#mvcc-validation-for-transaction-consistency)
+    - [Dual Synchronization Architecture](#dual-synchronization-architecture)
+    - [Gas as Metering, Not Payment](#gas-as-metering-not-payment)
+    - [Fabric Ordering Service Instead of PoW/PoS](#fabric-ordering-service-instead-of-powpos)
+  - [Core Components](#core-components)
+    - [Gateway](#gateway)
+    - [Endorser](#endorser)
+  - [Data Flow](#data-flow)
+    - [Transaction Execution Flow](#transaction-execution-flow)
+  - [State Management](#state-management)
+    - [SnapshotDB: The EVM-Fabric Bridge](#snapshotdb-the-evm-fabric-bridge)
+    - [Synchronization Architecture](#synchronization-architecture)
+    - [Storage Layer](#storage-layer)
+  - [Performance, Throughput, and Concurrency Management](#performance-throughput-and-concurrency-management)
+    - [Overview](#overview)
+    - [Concurrency Challenges](#concurrency-challenges)
+      - [MVCC Conflicts and Goodput](#mvcc-conflicts-and-goodput)
+    - [Scaling Strategy: Phased Approach](#scaling-strategy-phased-approach)
+      - [Phase 1: Single Gateway (One Node, One Organization)](#phase-1-single-gateway-one-node-one-organization)
+      - [Phase 2: Gateway Replicas (One Organization, Multiple Nodes)](#phase-2-gateway-replicas-one-organization-multiple-nodes)
+      - [Phase 3: Multi-Organization Deployment](#phase-3-multi-organization-deployment)
+      - [Phase 4: BFT Deployment](#phase-4-bft-deployment)
 
 ## Introduction
 
@@ -95,12 +102,15 @@ The Gateway (located at `gateway/`) serves as the primary entry point for client
 
 ### Endorser
 
-The Endorser (located at `endorser/`) simulates EVM transaction execution and produces signed endorsements.
+The Endorser (located at `endorser/`) simulates EVM transaction execution and produces signed endorsements. It mirrors the Gateway's layering, plus one extra split — `execution` is kept independent of `core`/`api` so it can be reused without pulling in endorsement or signing:
 
-- **API** (`endorser/api/`): Processes Fabric proposals containing EVM transactions
-- **EVMEngine** (`endorser/executor.go`): Manages EVM instantiation and execution
-- **SnapshotDB** (`endorser/state.go`): Custom StateDB wrapper that captures read-write sets
-- **Synchronizer**: Continuously fetches committed blocks from Fabric peers to maintain up-to-date ledger state
+- **API** (`endorser/api/`): The published `Service` contract a Gateway calls (`ProcessEVMTransaction`, `ProcessCall`, `ProcessStateQuery`). Today `core.Endorser` implements it in-process; a future gRPC client/server pair implements it over the wire without changing the contract.
+- **Core** (`endorser/core/`): The `Endorser` type — turns a proposal into a signed `ProposalResponse`, classifying execution outcomes (OK, revert, client error, server error) into Fabric response statuses.
+- **Execution** (`endorser/execution/`): `EVMEngine`/`Executor` (EVM instantiation and execution) and `StateDB`/`DualStateDB` (the SnapshotDB that captures read-write sets). Depends only on the `ReadStore`/`KVSSnapshotter` ports it defines — never on `core`, `api`, or `storage` — so it can run standalone (see below).
+- **Storage** (`endorser/storage/`): `LightKVS` (in-memory) and `VersionedDBWrapper` (SQLite) — versioned key-value backends implementing `execution`'s read ports and handling committed-block updates.
+- **Config** (`endorser/config/`): Per-endorser configuration and validation.
+- **App** (`endorser/app/`): Composition root wiring config → storage → execution → core → synchronizer for a single endorser; reused by both the embedded (gateway+endorser) and standalone launch modes.
+- **Synchronizer**: Continuously fetches committed blocks from Fabric peers to keep `storage` up to date for accurate simulation.
 
 **Key Responsibilities**:
 - Execute EVM transactions against versioned state snapshots

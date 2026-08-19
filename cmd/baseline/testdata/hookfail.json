@@ -1,0 +1,13 @@
+{
+  "stats": { "suites": 1, "tests": 1, "passes": 1, "pending": 0, "failures": 1 },
+  "tests": [
+    { "fullTitle": "Foo bar test A", "err": {} }
+  ],
+  "pending": [],
+  "failures": [
+    { "fullTitle": "Foo \"before each\" hook for \"bar test B\"", "err": { "message": "boom hook" } }
+  ],
+  "passes": [
+    { "fullTitle": "Foo bar test A", "err": {} }
+  ]
+}

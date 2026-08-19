@@ -12,6 +12,7 @@ import (
 	_ "embed"
 	"errors"
 	"strings"
+	"sync/atomic"
 
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 )
@@ -20,14 +21,15 @@ import (
 var ddl string
 
 type Store struct {
-	queries *Queries
-	db      *sql.DB
+	queries           *Queries
+	DB                *sql.DB
+	CachedBlockNumber atomic.Uint64 // cached block number for fast reads
 }
 
 func NewStore(db *sql.DB) *Store {
 	return &Store{
 		queries: New(db),
-		db:      db,
+		DB:      db,
 	}
 }
 
@@ -90,16 +92,28 @@ func toDomainTransaction(t Transaction) domain.Transaction {
 	}
 }
 
-// Init creates the tables.
+// Init creates the tables and initializes the cached block number.
 func (s *Store) Init() error {
-	if _, err := s.db.ExecContext(context.TODO(), ddl); err != nil {
+	if _, err := s.DB.ExecContext(context.TODO(), ddl); err != nil {
 		return err
 	}
+
+	// Initialize the cached block number from the database
+	num, err := s.queries.BlockNumber(context.TODO())
+	if err == sql.ErrNoRows {
+		// Empty database, block number is 0
+		s.CachedBlockNumber.Store(0)
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	s.CachedBlockNumber.Store(uint64(num))
 	return nil
 }
 
 func (s *Store) InsertBlock(ctx context.Context, block domain.Block) error {
-	sqlTx, err := s.db.BeginTx(ctx, nil)
+	sqlTx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -127,6 +141,22 @@ func (s *Store) InsertBlock(ctx context.Context, block domain.Block) error {
 	if err := sqlTx.Commit(); err != nil {
 		return err
 	}
+
+	// Update the cached block number after successful commit
+	// Only update if the new block number is greater than the current cached value
+	for {
+		current := s.CachedBlockNumber.Load()
+		if block.BlockNumber <= current {
+			// Block number didn't increase (duplicate or out-of-order), don't update cache
+			break
+		}
+		if s.CachedBlockNumber.CompareAndSwap(current, block.BlockNumber) {
+			// Successfully updated the cache
+			break
+		}
+		// CAS failed, retry (another goroutine updated it)
+	}
+
 	return nil
 }
 
@@ -159,13 +189,23 @@ func toStorageLog(l domain.Log) InsertLogParams {
 	return params
 }
 
-// BlockNumber returns the number of the last committed block. If there are no rows, the blockheight is zero.
+// BlockNumber returns the number of the last committed block from the cache.
+// If there are no blocks, the blockheight is zero.
 func (s *Store) BlockNumber(ctx context.Context) (uint64, error) {
-	num, err := s.queries.BlockNumber(ctx)
-	if err == sql.ErrNoRows {
-		return 0, nil
+	return s.CachedBlockNumber.Load(), nil
+}
+
+// BlockNumberByHash resolves a block hash to its block number.
+func (s *Store) BlockNumberByHash(ctx context.Context, blockHash []byte) (*uint64, error) {
+	num, err := s.queries.BlockNumberByHash(ctx, blockHash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
 	}
-	return uint64(num), err
+	if err != nil {
+		return nil, err
+	}
+	res := uint64(num)
+	return &res, nil
 }
 
 // GetBlockByNumber retrieves a block by its number.
@@ -316,19 +356,19 @@ func (s *Store) GetLogs(ctx context.Context, filter domain.LogFilter) ([]domain.
 	var query strings.Builder
 	var args []any
 
-	query.WriteString(`SELECT block_number, block_hash, tx_hash, tx_index, log_index, address, topic0, topic1, topic2, topic3, data FROM logs WHERE 1=1`)
+	query.WriteString(`SELECT l.block_number, l.block_hash, l.tx_hash, l.tx_index, l.log_index, l.address, l.topic0, l.topic1, l.topic2, l.topic3, l.data, b.timestamp FROM logs l JOIN blocks b ON l.block_number = b.block_number WHERE 1=1`)
 
 	// Block filtering: either by hash or by range (mutually exclusive)
 	if filter.BlockHash != nil {
-		query.WriteString(` AND block_number = (SELECT block_number FROM blocks WHERE block_hash = ?)`)
+		query.WriteString(` AND l.block_number = (SELECT block_number FROM blocks WHERE block_hash = ?)`)
 		args = append(args, *filter.BlockHash)
 	} else {
 		if filter.FromBlock != nil {
-			query.WriteString(` AND block_number >= ?`)
+			query.WriteString(` AND l.block_number >= ?`)
 			args = append(args, *filter.FromBlock)
 		}
 		if filter.ToBlock != nil {
-			query.WriteString(` AND block_number <= ?`)
+			query.WriteString(` AND l.block_number <= ?`)
 			args = append(args, *filter.ToBlock)
 		}
 	}
@@ -376,9 +416,9 @@ func (s *Store) GetLogs(ctx context.Context, filter domain.LogFilter) ([]domain.
 		}
 	}
 
-	query.WriteString(` ORDER BY block_number, tx_index, log_index`)
+	query.WriteString(` ORDER BY l.block_number, l.tx_index, l.log_index`)
 
-	rows, err := s.db.QueryContext(ctx, query.String(), args...)
+	rows, err := s.DB.QueryContext(ctx, query.String(), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -387,6 +427,7 @@ func (s *Store) GetLogs(ctx context.Context, filter domain.LogFilter) ([]domain.
 	var logs []domain.Log
 	for rows.Next() {
 		var l Log
+		var timestamp int64
 		if err := rows.Scan(
 			&l.BlockNumber,
 			&l.BlockHash,
@@ -399,10 +440,13 @@ func (s *Store) GetLogs(ctx context.Context, filter domain.LogFilter) ([]domain.
 			&l.Topic2,
 			&l.Topic3,
 			&l.Data,
+			&timestamp,
 		); err != nil {
 			return nil, err
 		}
-		logs = append(logs, toDomainLog(l))
+		dl := toDomainLog(l)
+		dl.Timestamp = timestamp
+		logs = append(logs, dl)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

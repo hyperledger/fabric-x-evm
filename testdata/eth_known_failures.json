@@ -1,0 +1,182 @@
+[
+  {
+    "id": "TestEthereumTests/collision_with_create2_revert_in_initcode.json#01/tests/paris/eip7610_create_collision/test_revert_in_create.py::test_collision_with_create2_revert_in_initcode[fork_Osaka-state_test]/Osaka/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/collision_with_create2_revert_in_initcode.json#03/tests/paris/eip7610_create_collision/test_revert_in_create.py::test_collision_with_create2_revert_in_initcode[fork_Prague-state_test]/Prague/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/collision_with_create2_revert_in_initcode.json/tests/paris/eip7610_create_collision/test_revert_in_create.py::test_collision_with_create2_revert_in_initcode[fork_Cancun-state_test]/Cancun/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/create2_collision_storage.json#01/tests/paris/eip7610_create_collision/test_revert_in_create.py::test_create2_collision_storage[fork_Osaka-state_test-empty-initcode]/Osaka/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/create2_collision_storage.json#01/tests/paris/eip7610_create_collision/test_revert_in_create.py::test_create2_collision_storage[fork_Osaka-state_test-initcode-with-deploy]/Osaka/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/create2_collision_storage.json#01/tests/paris/eip7610_create_collision/test_revert_in_create.py::test_create2_collision_storage[fork_Osaka-state_test-sstore-initcode]/Osaka/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/create2_collision_storage.json#03/tests/paris/eip7610_create_collision/test_revert_in_create.py::test_create2_collision_storage[fork_Prague-state_test-empty-initcode]/Prague/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/create2_collision_storage.json#03/tests/paris/eip7610_create_collision/test_revert_in_create.py::test_create2_collision_storage[fork_Prague-state_test-initcode-with-deploy]/Prague/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/create2_collision_storage.json#03/tests/paris/eip7610_create_collision/test_revert_in_create.py::test_create2_collision_storage[fork_Prague-state_test-sstore-initcode]/Prague/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/create2_collision_storage.json/tests/paris/eip7610_create_collision/test_revert_in_create.py::test_create2_collision_storage[fork_Cancun-state_test-empty-initcode]/Cancun/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/create2_collision_storage.json/tests/paris/eip7610_create_collision/test_revert_in_create.py::test_create2_collision_storage[fork_Cancun-state_test-initcode-with-deploy]/Cancun/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/create2_collision_storage.json/tests/paris/eip7610_create_collision/test_revert_in_create.py::test_create2_collision_storage[fork_Cancun-state_test-sstore-initcode]/Cancun/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/init_collision_create_opcode.json#02/tests/paris/eip7610_create_collision/test_initcollision.py::test_init_collision_create_opcode[fork_Cancun-state_test-opcode_CREATE-non-empty-balance-correct-initcode]/Cancun/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/init_collision_create_opcode.json#02/tests/paris/eip7610_create_collision/test_initcollision.py::test_init_collision_create_opcode[fork_Cancun-state_test-opcode_CREATE2-non-empty-balance-correct-initcode]/Cancun/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/init_collision_create_opcode.json#08/tests/paris/eip7610_create_collision/test_initcollision.py::test_init_collision_create_opcode[fork_Osaka-state_test-opcode_CREATE-non-empty-balance-correct-initcode]/Osaka/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/init_collision_create_opcode.json#08/tests/paris/eip7610_create_collision/test_initcollision.py::test_init_collision_create_opcode[fork_Osaka-state_test-opcode_CREATE2-non-empty-balance-correct-initcode]/Osaka/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/init_collision_create_opcode.json#10/tests/paris/eip7610_create_collision/test_initcollision.py::test_init_collision_create_opcode[fork_Prague-state_test-opcode_CREATE-non-empty-balance-correct-initcode]/Prague/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/init_collision_create_opcode.json#10/tests/paris/eip7610_create_collision/test_initcollision.py::test_init_collision_create_opcode[fork_Prague-state_test-opcode_CREATE2-non-empty-balance-correct-initcode]/Prague/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/init_collision_create_tx.json#02/tests/paris/eip7610_create_collision/test_initcollision.py::test_init_collision_create_tx[fork_Cancun-tx_type_0-state_test-non-empty-balance-correct-initcode]/Cancun/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/init_collision_create_tx.json#02/tests/paris/eip7610_create_collision/test_initcollision.py::test_init_collision_create_tx[fork_Cancun-tx_type_0-state_test-non-empty-balance-revert-initcode]/Cancun/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/init_collision_create_tx.json#02/tests/paris/eip7610_create_collision/test_initcollision.py::test_init_collision_create_tx[fork_Cancun-tx_type_1-state_test-non-empty-balance-correct-initcode]/Cancun/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/init_collision_create_tx.json#02/tests/paris/eip7610_create_collision/test_initcollision.py::test_init_collision_create_tx[fork_Cancun-tx_type_1-state_test-non-empty-balance-revert-initcode]/Cancun/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/init_collision_create_tx.json#02/tests/paris/eip7610_create_collision/test_initcollision.py::test_init_collision_create_tx[fork_Cancun-tx_type_2-state_test-non-empty-balance-correct-initcode]/Cancun/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/init_collision_create_tx.json#02/tests/paris/eip7610_create_collision/test_initcollision.py::test_init_collision_create_tx[fork_Cancun-tx_type_2-state_test-non-empty-balance-revert-initcode]/Cancun/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/init_collision_create_tx.json#08/tests/paris/eip7610_create_collision/test_initcollision.py::test_init_collision_create_tx[fork_Osaka-tx_type_0-state_test-non-empty-balance-correct-initcode]/Osaka/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/init_collision_create_tx.json#08/tests/paris/eip7610_create_collision/test_initcollision.py::test_init_collision_create_tx[fork_Osaka-tx_type_0-state_test-non-empty-balance-revert-initcode]/Osaka/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/init_collision_create_tx.json#08/tests/paris/eip7610_create_collision/test_initcollision.py::test_init_collision_create_tx[fork_Osaka-tx_type_1-state_test-non-empty-balance-correct-initcode]/Osaka/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/init_collision_create_tx.json#08/tests/paris/eip7610_create_collision/test_initcollision.py::test_init_collision_create_tx[fork_Osaka-tx_type_1-state_test-non-empty-balance-revert-initcode]/Osaka/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/init_collision_create_tx.json#08/tests/paris/eip7610_create_collision/test_initcollision.py::test_init_collision_create_tx[fork_Osaka-tx_type_2-state_test-non-empty-balance-correct-initcode]/Osaka/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/init_collision_create_tx.json#08/tests/paris/eip7610_create_collision/test_initcollision.py::test_init_collision_create_tx[fork_Osaka-tx_type_2-state_test-non-empty-balance-revert-initcode]/Osaka/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/init_collision_create_tx.json#10/tests/paris/eip7610_create_collision/test_initcollision.py::test_init_collision_create_tx[fork_Prague-tx_type_0-state_test-non-empty-balance-correct-initcode]/Prague/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/init_collision_create_tx.json#10/tests/paris/eip7610_create_collision/test_initcollision.py::test_init_collision_create_tx[fork_Prague-tx_type_0-state_test-non-empty-balance-revert-initcode]/Prague/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/init_collision_create_tx.json#10/tests/paris/eip7610_create_collision/test_initcollision.py::test_init_collision_create_tx[fork_Prague-tx_type_1-state_test-non-empty-balance-correct-initcode]/Prague/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/init_collision_create_tx.json#10/tests/paris/eip7610_create_collision/test_initcollision.py::test_init_collision_create_tx[fork_Prague-tx_type_1-state_test-non-empty-balance-revert-initcode]/Prague/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/init_collision_create_tx.json#10/tests/paris/eip7610_create_collision/test_initcollision.py::test_init_collision_create_tx[fork_Prague-tx_type_2-state_test-non-empty-balance-correct-initcode]/Prague/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  },
+  {
+    "id": "TestEthereumTests/init_collision_create_tx.json#10/tests/paris/eip7610_create_collision/test_initcollision.py::test_init_collision_create_tx[fork_Prague-tx_type_2-state_test-non-empty-balance-revert-initcode]/Prague/0",
+    "cause": "eip7610-create-collision",
+    "note": "CREATE/CREATE2 into an account that already has storage/code produces a wrong post-state root; known StateDB gap (cf. #193)"
+  }
+]

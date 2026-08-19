@@ -1,0 +1,91 @@
+name: Perf Smoke Comment
+
+# Companion to the "Tests" workflow's perf-smoke job. Split into its own
+# workflow (rather than a step in Tests) so it can run with elevated permissions
+# safely: this workflow's own definition is read from the default branch, not a
+# PR's branch, so a fork PR editing this file has no effect on what it does. It
+# never checks out repo/PR code — it only reads a plain-text artifact the
+# unprivileged Tests run already produced, and posts/updates one PR comment from it.
+
+on:
+  workflow_run:
+    workflows: [ "Tests" ]
+    types: [ completed ]
+
+permissions:
+  contents: read
+  actions: read       # required by actions/download-artifact for cross-run download
+  pull-requests: write # minimal scope for posting/updating a PR comment
+
+jobs:
+  comment:
+    name: Post perf smoke comment
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event.workflow_run.conclusion != 'cancelled'
+    steps:
+      - name: Download perf smoke artifact
+        uses: actions/download-artifact@v4
+        continue-on-error: true # no artifact = early infra failure upstream; nothing to comment
+        with:
+          name: perf-smoke-report
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: perf-smoke-artifact
+
+      - name: Check for PR number
+        id: prnum
+        run: |
+          if [ -f perf-smoke-artifact/perf-smoke-pr_number.txt ]; then
+            n=$(cat perf-smoke-artifact/perf-smoke-pr_number.txt)
+            [[ "$n" =~ ^[0-9]+$ ]] || { echo "Non-numeric PR number; skipping."; exit 0; }
+            echo "number=$n" >> "$GITHUB_OUTPUT"
+          else
+            echo "No PR number found — not a pull_request run, or no artifact was produced. Skipping comment."
+          fi
+
+      - name: Find-or-update PR comment
+        if: steps.prnum.outputs.number != ''
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ steps.prnum.outputs.number }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          SERVER_URL: ${{ github.server_url }}
+          REPOSITORY: ${{ github.repository }}
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- perf-smoke-report -->';
+            const resultPath = 'perf-smoke-artifact/perf-smoke-result.txt';
+            const resultLine = fs.existsSync(resultPath)
+              ? fs.readFileSync(resultPath, 'utf8').trim() : '';
+            const runUrl = `${process.env.SERVER_URL}/${process.env.REPOSITORY}/actions/runs/${process.env.RUN_ID}`;
+
+            let body;
+            if (!resultLine || resultLine === 'NO_RESULT') {
+              body = `${marker}\n### ⚠️ Perf Smoke — no result recorded\n\nThe test may have failed before producing output. Check the [workflow run](${runUrl}) for details.\n`;
+            } else {
+              const get = (key) => { const m = resultLine.match(new RegExp(key + '=([0-9.]+)')); return m ? m[1] : 'n/a'; };
+              body = [
+                marker,
+                '### **Perf Smoke — CI baseline (lower-bound against test committer)**',
+                '',
+                '| Metric | Value |',
+                '|--------|-------|',
+                `| Throughput | ${get('throughput')} tx/s |`,
+                `| Invalid rate | ${get('invalid_rate')} |`,
+                `| Conflict rate | ${get('conflict_rate')} |`,
+                '',
+                `<sub>[Workflow run](${runUrl})</sub>`,
+              ].join('\n');
+            }
+
+            const { owner, repo } = context.repo;
+            const prNumber = Number(process.env.PR_NUMBER);
+            const comments = await github.rest.issues.listComments({ owner, repo, issue_number: prNumber, per_page: 100 });
+            const existing = comments.data.find((c) => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number: prNumber, body });
+            }

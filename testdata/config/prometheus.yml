@@ -1,0 +1,168 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  # ---------------------------------------------------------------------------
+  # Orderer Party 1 metrics (operations endpoints, plain HTTP)
+  # ---------------------------------------------------------------------------
+  - job_name: "arma-party1-router"
+    static_configs:
+      - targets: ["orderer-party1-router:9443"]
+        labels:
+          party: "party1"
+          role: "router"
+
+  - job_name: "arma-party1-batcher"
+    static_configs:
+      - targets: ["orderer-party1-batcher:9443"]
+        labels:
+          party: "party1"
+          role: "batcher"
+
+  - job_name: "arma-party1-consenter"
+    static_configs:
+      - targets: ["orderer-party1-consenter:9443"]
+        labels:
+          party: "party1"
+          role: "consenter"
+
+  - job_name: "arma-party1-assembler"
+    static_configs:
+      - targets: ["orderer-party1-assembler:9443"]
+        labels:
+          party: "party1"
+          role: "assembler"
+
+  # ---------------------------------------------------------------------------
+  # Orderer Party 2 metrics
+  # ---------------------------------------------------------------------------
+  - job_name: "arma-party2-router"
+    static_configs:
+      - targets: ["orderer-party2-router:9443"]
+        labels:
+          party: "party2"
+          role: "router"
+
+  - job_name: "arma-party2-batcher"
+    static_configs:
+      - targets: ["orderer-party2-batcher:9443"]
+        labels:
+          party: "party2"
+          role: "batcher"
+
+  - job_name: "arma-party2-consenter"
+    static_configs:
+      - targets: ["orderer-party2-consenter:9443"]
+        labels:
+          party: "party2"
+          role: "consenter"
+
+  - job_name: "arma-party2-assembler"
+    static_configs:
+      - targets: ["orderer-party2-assembler:9443"]
+        labels:
+          party: "party2"
+          role: "assembler"
+
+  # ---------------------------------------------------------------------------
+  # Orderer Party 3 metrics
+  # ---------------------------------------------------------------------------
+  - job_name: "arma-party3-router"
+    static_configs:
+      - targets: ["orderer-party3-router:9443"]
+        labels:
+          party: "party3"
+          role: "router"
+
+  - job_name: "arma-party3-batcher"
+    static_configs:
+      - targets: ["orderer-party3-batcher:9443"]
+        labels:
+          party: "party3"
+          role: "batcher"
+
+  - job_name: "arma-party3-consenter"
+    static_configs:
+      - targets: ["orderer-party3-consenter:9443"]
+        labels:
+          party: "party3"
+          role: "consenter"
+
+  - job_name: "arma-party3-assembler"
+    static_configs:
+      - targets: ["orderer-party3-assembler:9443"]
+        labels:
+          party: "party3"
+          role: "assembler"
+
+  # ---------------------------------------------------------------------------
+  # Orderer Party 4 metrics
+  # ---------------------------------------------------------------------------
+  - job_name: "arma-party4-router"
+    static_configs:
+      - targets: ["orderer-party4-router:9443"]
+        labels:
+          party: "party4"
+          role: "router"
+
+  - job_name: "arma-party4-batcher"
+    static_configs:
+      - targets: ["orderer-party4-batcher:9443"]
+        labels:
+          party: "party4"
+          role: "batcher"
+
+  - job_name: "arma-party4-consenter"
+    static_configs:
+      - targets: ["orderer-party4-consenter:9443"]
+        labels:
+          party: "party4"
+          role: "consenter"
+
+  - job_name: "arma-party4-assembler"
+    static_configs:
+      - targets: ["orderer-party4-assembler:9443"]
+        labels:
+          party: "party4"
+          role: "assembler"
+
+  # ---------------------------------------------------------------------------
+  # Committer pipeline metrics
+  # ---------------------------------------------------------------------------
+  - job_name: "committer-sidecar"
+    static_configs:
+      - targets: ["committer-sidecar:2114"]
+    scheme: https
+    tls_config:
+      ca_file: /tls/peerOrganizations/org1.example.com/msp/tlscacerts/tlsca.org1.example.com-cert.pem
+      cert_file: /tls/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.crt
+      key_file: /tls/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.key
+      insecure_skip_verify: true
+
+  - job_name: "committer-verifier"
+    static_configs:
+      - targets: ["committer-verifier:2115"]
+
+  - job_name: "committer-vc"
+    static_configs:
+      - targets: ["committer-validator:2116"]
+
+  - job_name: "committer-query"
+    static_configs:
+      - targets: ["committer-query-service:2117"]
+
+  - job_name: "committer-coordinator"
+    static_configs:
+      - targets: ["committer-coordinator:2119"]
+
+  # ---------------------------------------------------------------------------
+  # Loadgen test metrics (when running with -enable-metrics flag)
+  # The test runs on the host, accessible via host.docker.internal
+  # ---------------------------------------------------------------------------
+  - job_name: "loadgen"
+    static_configs:
+      - targets: ["host.docker.internal:2112"]
+    # Note: Requires iptables rule to allow Docker containers to access host
+    # Run: sudo iptables -I INPUT -i docker0 -p tcp --dport 2112 -j ACCEPT
+

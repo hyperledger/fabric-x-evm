@@ -8,41 +8,38 @@ package core
 
 import (
 	"context"
-	"crypto/rand"
+	"errors"
 	"fmt"
+	"math/big"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum"
+	ethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
-	fabCommon "github.com/hyperledger/fabric-protos-go-apiv2/common"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
-	"github.com/hyperledger/fabric-x-common/protoutil"
+
 	"github.com/hyperledger/fabric-x-evm/common"
-	"github.com/hyperledger/fabric-x-evm/endorser"
-	"github.com/hyperledger/fabric-x-evm/utils"
+	"github.com/hyperledger/fabric-x-evm/endorser/api"
+	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
 
-// Endorser interface defines the contract for endorsement providers.
-// This allows different implementations (e.g., local, gRPC client, mock).
-type Endorser interface {
-	ProcessEVMTransaction(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction, blockInfo *utils.BlockInfo) (*peer.ProposalResponse, error)
-	ProcessCall(ctx context.Context, callMsg *ethereum.CallMsg, blockInfo *utils.BlockInfo) (*peer.ProposalResponse, error)
-	ProcessStateQuery(ctx context.Context, query common.StateQuery) (*peer.ProposalResponse, error)
-}
-
 // EndorsementClient forwards ethereum-style transactions and calls
 // to the endorsers and returns their signed fabric-style responses.
 type EndorsementClient struct {
-	endorsers []*endorser.Endorser
+	endorsers []api.Service
 	signer    Signer
 	channel   string
 	namespace string
 	nsVersion string
 }
 
-func NewEndorsementClient(endorsers []*endorser.Endorser, signer Signer, channel, namespace, nsVersion string) (*EndorsementClient, error) {
+// NewEndorsementClient creates an EndorsementClient from api.Service instances.
+// This allows using concrete endorsers, wrapped endorsers (e.g., from testimpl package), remote
+// gRPC clients to other organizations' endorsers, or other implementations.
+func NewEndorsementClient(endorsers []api.Service, signer Signer, channel, namespace, nsVersion string) (*EndorsementClient, error) {
 	return &EndorsementClient{
 		endorsers: endorsers,
 		signer:    signer,
@@ -52,7 +49,7 @@ func NewEndorsementClient(endorsers []*endorser.Endorser, signer Signer, channel
 	}, nil
 }
 
-func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Transaction, blockInfo *utils.BlockInfo) (sdk.Endorsement, error) {
+func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Transaction) (sdk.Endorsement, error) {
 	// Marshal the transaction for the invocation args
 	ethTxBytes, err := tx.MarshalBinary()
 	if err != nil {
@@ -65,6 +62,9 @@ func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Tra
 		return sdk.Endorsement{}, err
 	}
 
+	// Single timestamp for all endorsers so RWsets match.
+	reqTime := time.Now()
+
 	// Derive a cancellable context so goroutines can stop early on error
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -74,22 +74,50 @@ func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Tra
 	errs := make([]error, len(e.endorsers)) // indexed — deterministic error order
 
 	for i, end := range e.endorsers {
-		wg.Add(1)
-		go func(index int, endorser *endorser.Endorser) {
-			defer wg.Done()
-			pResp, err := endorser.ProcessEVMTransaction(ctx, inv, tx, blockInfo)
+		processEndorsement := func(index int, endorser api.Service) {
+			pResp, err := endorser.Execute(ctx, inv, tx, reqTime)
 			if err != nil {
-				errs[index] = fmt.Errorf("process EVM transaction: %w", err)
+				// A Go error is a transport/delivery failure (e.g. gRPC), not a tx outcome.
+				errs[index] = fmt.Errorf("call endorser: %w", err)
 				cancel() // signal other goroutines to stop early
 				return
 			}
-			res[index] = pResp
-		}(i, end)
+			// Application outcomes ride in the status. A success and a revert are
+			// committed; a valid tx whose execution failed is endorsable here but
+			// not yet committed (a follow-up will mine it). An invalid (rejected) tx
+			// or a server fault is an error the caller must see.
+			switch pResp.Response.Status {
+			case common.StatusOK, common.StatusEVMRevert, common.StatusExecFailure:
+				res[index] = pResp
+			default:
+				errs[index] = fmt.Errorf("process EVM transaction: %s", pResp.Response.Message)
+				cancel()
+			}
+		}
+
+		if len(e.endorsers) > 1 {
+			wg.Add(1)
+			go func(index int, endorser api.Service) {
+				defer wg.Done()
+				processEndorsement(index, endorser)
+			}(i, end)
+		} else {
+			processEndorsement(i, end)
+		}
 	}
 
 	wg.Wait()
 
-	// Return first error in slice order — stable and deterministic
+	// Return the first error in slice order, stable and deterministic, but skip
+	// cancellations on the first pass: the endorser that reports one was most
+	// likely aborted by the cancel above, and returning that would hide the
+	// endorsement error which caused it. A genuinely cancelled caller has
+	// nothing but cancellations, and the second pass returns one of those.
+	for _, err := range errs {
+		if err != nil && !errors.Is(err, context.Canceled) {
+			return sdk.Endorsement{}, err
+		}
+	}
 	for _, err := range errs {
 		if err != nil {
 			return sdk.Endorsement{}, err
@@ -103,90 +131,51 @@ func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Tra
 }
 
 // CallContract queries a smart contract and returns the value.
-func (e *EndorsementClient) CallContract(ctx context.Context, args ethereum.CallMsg, blockInfo *utils.BlockInfo) ([]byte, error) {
-	res, err := e.endorsers[0].ProcessCall(ctx, &args, blockInfo)
-	if err != nil {
+// An EVM revert from the endorser is surfaced as *domain.RevertError so the API
+// layer can map it to JSON-RPC -32000.
+func (e *EndorsementClient) CallContract(ctx context.Context, args ethereum.CallMsg, blockNumber *big.Int) ([]byte, error) {
+	payload, err := e.endorsers[0].Call(ctx, &args, blockNumber)
+	if err == nil {
+		return payload, nil
+	}
+
+	callErr, ok := errors.AsType[*common.CallError](err)
+	if !ok {
+		// Not an application outcome: a transport/delivery failure.
 		return nil, fmt.Errorf("process call: %w", err)
 	}
-	if res.Response.Status < 200 || res.Response.Status >= 400 {
-		return nil, fmt.Errorf("query response was not successful, error code %d, msg %s", res.Response.Status, res.Response.Message)
+	if callErr.Reverted() {
+		return nil, &domain.RevertError{Reason: callErr.Message, Data: callErr.Data}
 	}
-
-	return res.Response.Payload, nil
+	// For a call, both a failed execution and a rejected tx are surfaced as an
+	// execution error (-32000); only the reverted case carries data.
+	if callErr.Status == common.StatusExecFailure || callErr.Status == common.StatusTxRejected {
+		return nil, &domain.ExecutionError{Message: callErr.Message}
+	}
+	return nil, fmt.Errorf("query response was not successful, error code %d, msg %s", callErr.Status, callErr.Message)
 }
 
-// GetState returns ledger state.
-func (e *EndorsementClient) GetState(ctx context.Context, query common.StateQuery) ([]byte, error) {
-	res, err := e.endorsers[0].ProcessStateQuery(ctx, query)
-	if err != nil {
-		return nil, fmt.Errorf("process state query: %w", err)
-	}
-	if res.Response.Status < 200 || res.Response.Status >= 400 {
-		return nil, fmt.Errorf("query response was not successful, error code %d, msg %s", res.Response.Status, res.Response.Message)
-	}
+// BalanceAt returns an account's balance at the given block.
+func (e *EndorsementClient) BalanceAt(ctx context.Context, account ethcommon.Address, blockNumber *big.Int) (*big.Int, error) {
+	return e.endorsers[0].BalanceAt(ctx, account, blockNumber)
+}
 
-	return res.Response.Payload, nil
+// StorageAt returns the storage word at key for an account.
+func (e *EndorsementClient) StorageAt(ctx context.Context, account ethcommon.Address, key ethcommon.Hash, blockNumber *big.Int) ([]byte, error) {
+	return e.endorsers[0].StorageAt(ctx, account, key, blockNumber)
+}
+
+// CodeAt returns an account's contract code.
+func (e *EndorsementClient) CodeAt(ctx context.Context, account ethcommon.Address, blockNumber *big.Int) ([]byte, error) {
+	return e.endorsers[0].CodeAt(ctx, account, blockNumber)
+}
+
+// NonceAt returns an account's nonce.
+func (e *EndorsementClient) NonceAt(ctx context.Context, account ethcommon.Address, blockNumber *big.Int) (uint64, error) {
+	return e.endorsers[0].NonceAt(ctx, account, blockNumber)
 }
 
 // createInvocation creates an endorsement.Invocation from the given parameters
 func (e *EndorsementClient) createInvocation(args [][]byte) (endorsement.Invocation, error) {
-	// Get the creator from the signer
-	creator, err := e.signer.Serialize()
-	if err != nil {
-		return endorsement.Invocation{}, fmt.Errorf("failed to serialize creator: %w", err)
-	}
-
-	// Generate a random nonce
-	nonce := make([]byte, 24)
-	if _, err := rand.Read(nonce); err != nil {
-		return endorsement.Invocation{}, fmt.Errorf("failed to generate nonce: %w", err)
-	}
-
-	// Compute TxID from nonce and creator
-	txID := protoutil.ComputeTxID(nonce, creator)
-
-	proposal, _, err := protoutil.CreateChaincodeProposalWithTxIDNonceAndTransient(
-		protoutil.ComputeTxID(nonce, creator),
-		fabCommon.HeaderType_ENDORSER_TRANSACTION,
-		e.channel,
-		&peer.ChaincodeInvocationSpec{
-			ChaincodeSpec: &peer.ChaincodeSpec{
-				Type: peer.ChaincodeSpec_CAR, // FIXME: should we put some special value here?
-				ChaincodeId: &peer.ChaincodeID{
-					Name:    e.namespace,
-					Version: e.nsVersion,
-				},
-				Input: &peer.ChaincodeInput{
-					Args: args,
-				},
-			},
-		},
-		nonce,
-		creator,
-		nil,
-	)
-	if err != nil {
-		return endorsement.Invocation{}, fmt.Errorf("failed to create the proposal: %w", err)
-	}
-
-	hdr, err := protoutil.UnmarshalHeader(proposal.Header)
-	if err != nil {
-		return endorsement.Invocation{}, fmt.Errorf("failed to deserialise header: %w", err)
-	}
-
-	proposalHash, err := protoutil.GetProposalHash1(hdr, proposal.Payload)
-	if err != nil {
-		return endorsement.Invocation{}, fmt.Errorf("failed to compute proposal hash: %w", err)
-	}
-
-	return endorsement.Invocation{
-		TxID:         txID,
-		Nonce:        nonce,
-		Creator:      creator,
-		Args:         args,
-		CCID:         &peer.ChaincodeID{Name: e.namespace, Version: e.nsVersion},
-		Channel:      e.channel,
-		Proposal:     proposal,
-		ProposalHash: proposalHash,
-	}, nil
+	return endorsement.NewInvocation(e.signer, e.channel, e.namespace, e.nsVersion, args)
 }

@@ -1,0 +1,13 @@
+{
+  "stats": { "suites": 1, "tests": 2, "passes": 0, "pending": 0, "failures": 2 },
+  "tests": [
+    { "fullTitle": "Foo bar test A", "err": { "message": "boom A" } },
+    { "fullTitle": "Foo bar test B", "err": { "message": "boom B" } }
+  ],
+  "pending": [],
+  "failures": [
+    { "fullTitle": "Foo bar test A", "err": { "message": "boom A" } },
+    { "fullTitle": "Foo bar test B", "err": { "message": "boom B" } }
+  ],
+  "passes": []
+}

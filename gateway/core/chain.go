@@ -7,6 +7,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package core
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
@@ -36,7 +37,7 @@ type Chain struct {
 // block, and returns a ready Chain. dbConnStr uses the modernc SQLite DSN format;
 // triePath is the directory for the PebbleDB trie (empty string = in-memory).
 // The caller must register the SQLite driver (e.g. _ "modernc.org/sqlite") before calling.
-func NewChain(dbConnStr, triePath string) (*Chain, error) {
+func NewChain(dbConnStr, triePath string, withTrie bool) (*Chain, error) {
 	db, err := sqlite.Open(dbConnStr)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
@@ -56,44 +57,86 @@ func NewChain(dbConnStr, triePath string) (*Chain, error) {
 		prevHash = common.BytesToHash(latest.BlockHash)
 	}
 
-	ts, err := trie.New(triePath, initialRoot)
-	if err != nil {
-		db.Close()
-		return nil, fmt.Errorf("open trie store: %w", err)
+	var ts *trie.Store
+	if withTrie {
+		ts, err = trie.New(triePath, initialRoot)
+		if err != nil {
+			db.Close()
+			return nil, fmt.Errorf("open trie store: %w", err)
+		}
 	}
 
 	return &Chain{Store: blockStore, db: db, ts: ts, prevHash: prevHash}, nil
 }
 
-// Handle implements blocks.BlockHandler. It commits the block's write sets to the trie,
-// then persists the block and its transactions to the database.
+// Handle implements blocks.BlockHandler. Order matters for tip safety (#304):
+//  1. Build the domain block and stamp ParentHash from the current tip.
+//  2. Commit write sets to the trie when enabled (flush stays here so a crash
+//     after SQL but before a deferred flush cannot leave SQL ahead of the MPT;
+//     trie apply is idempotent on resubscribe replay).
+//  3. Persist the block via InsertBlock.
+//  4. Advance prevHash only after SQL returns nil, so a failed insert never
+//     publishes a tip that the store does not hold.
 func (c *Chain) Handle(ctx context.Context, b blocks.Block) error {
-	ebl := c.convertToDomain(b)
+	ebl := ConvertToDomain(b)
 
-	stateRoot, err := c.ts.Commit(ctx, b)
-	if err != nil {
-		return err // irrecoverable
-	}
-	ebl.StateRoot = stateRoot.Bytes()
 	ebl.ParentHash = c.prevHash.Bytes()
-	c.prevHash = common.BytesToHash(ebl.BlockHash)
+	if c.ts != nil {
+		stateRoot, err := c.ts.Commit(ctx, b)
+		if err != nil {
+			return err // irrecoverable
+		}
+		ebl.StateRoot = stateRoot.Bytes()
+	} else {
+		ebl.StateRoot = types.EmptyRootHash[:]
+	}
 
 	if err := c.Store.InsertBlock(ctx, ebl); err != nil {
 		return err
 	}
 
+	c.prevHash = common.BytesToHash(ebl.BlockHash)
+	return nil
+}
+
+// EnsureGenesisBlock inserts an empty block 0 if the store has no blocks yet, so
+// eth_getBlockByNumber("latest") is never null before the first transaction commits.
+// Real Fabric/fabric-x channels always deliver a genesis block already; this is only
+// for backends (like fabrictest) that don't.
+func (c *Chain) EnsureGenesisBlock(ctx context.Context) error {
+	latest, err := c.Store.LatestBlock(ctx, false)
+	if err != nil {
+		return err
+	}
+	if latest != nil {
+		return nil
+	}
+
+	genesisHash := crypto.Keccak256([]byte("fxevm-testnode-genesis"))
+	if err := c.Store.InsertBlock(ctx, domain.Block{
+		BlockNumber: 0,
+		BlockHash:   genesisHash,
+		ParentHash:  make([]byte, common.HashLength),
+		StateRoot:   types.EmptyRootHash[:],
+	}); err != nil {
+		return err
+	}
+	c.prevHash = common.BytesToHash(genesisHash)
 	return nil
 }
 
 // Close releases the trie and database resources.
 func (c *Chain) Close() error {
-	c.ts.Close()
+	if c.ts != nil {
+		c.ts.Close()
+	}
 	return c.db.Close()
 }
 
-// convertToDomain maps a Fabric SDK block to the gateway domain model,
+// ConvertToDomain maps a Fabric SDK block to the gateway domain model,
 // extracting and decoding the embedded Ethereum transactions.
-func (c *Chain) convertToDomain(b blocks.Block) domain.Block {
+// This is a standalone function so it can be reused by other components like Gateway.
+func ConvertToDomain(b blocks.Block) domain.Block {
 	ebl := domain.Block{
 		BlockNumber:  b.Number,
 		BlockHash:    b.Hash,
@@ -107,17 +150,18 @@ func (c *Chain) convertToDomain(b blocks.Block) domain.Block {
 		// TODO: filter on namespace?
 
 		// retrieve the Ethereum transaction from the chaincode invocation
-		if len(tx.InputArgs) < 2 {
+		if len(tx.InputArgs) < 2 || !bytes.Equal(tx.InputArgs[0], []byte{byte(fc.ProposalTypeEVMTx)}) {
+			// skip non-eth tx
 			continue
 		}
 		status := uint8(0)
-		if tx.Valid {
+		if tx.Valid && !fc.IsRevertEvent(tx.Events) {
 			status = 1
 		}
 
 		etx, err := convertTransaction(tx.InputArgs[1], b.Hash, b.Number, tx.Number, tx.ID, status, tx.Status, tx.Events, &logIndex)
 		if err != nil {
-			continue // ?
+			panic(err) // we surface this for now instead of swallowing it
 		}
 
 		ebl.Transactions = append(ebl.Transactions, etx)
@@ -154,7 +198,7 @@ func convertTransaction(ethTxBytes []byte, blockHash []byte, blockNumber uint64,
 	hash := ethTx.Hash().Bytes()
 
 	var logs []domain.Log
-	if len(events) > 0 {
+	if len(events) > 0 && !fc.IsRevertEvent(events) {
 		rawLogs, err := fc.UnmarshalLogs(events)
 		if err != nil {
 			// ?

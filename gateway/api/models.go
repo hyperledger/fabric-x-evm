@@ -9,7 +9,6 @@ package api
 import (
 	"encoding/json"
 	"math/big"
-	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -48,7 +47,7 @@ func (r *rpcReceipt) MarshalJSON() ([]byte, error) {
 
 // receipt returns a receipt in the form the RPC API can return. Some values are mocked.
 func receipt(r *domain.Transaction) *rpcReceipt {
-	if r == nil {
+	if r == nil || r.BlockHash == nil {
 		return nil
 	}
 
@@ -117,6 +116,11 @@ func (r *RPCTransaction) MarshalJSON() ([]byte, error) {
 	// Remove internal go-ethereum fields that shouldn't be exposed
 	delete(m, "ignore")
 
+	// gasPrice must always be a hex string; EIP-1559 txs leave it null in go-ethereum's marshaler
+	if m["gasPrice"] == nil {
+		m["gasPrice"] = (*hexutil.Big)(big.NewInt(0))
+	}
+
 	// Add block metadata and sender - these override any fields from the transaction
 	m["from"] = r.From
 	m["blockHash"] = r.BlockHash
@@ -127,29 +131,32 @@ func (r *RPCTransaction) MarshalJSON() ([]byte, error) {
 }
 
 type RPCBlock struct {
-	Number           hexutil.Uint64 `json:"number"`
-	Hash             common.Hash    `json:"hash"`
-	ParentHash       common.Hash    `json:"parentHash"`
-	Sha3Uncles       common.Hash    `json:"sha3Uncles"`
-	LogsBloom        string         `json:"logsBloom"`
-	TransactionsRoot common.Hash    `json:"transactionsRoot"`
-	StateRoot        common.Hash    `json:"stateRoot"`
-	ReceiptsRoot     common.Hash    `json:"receiptsRoot"`
-	Miner            common.Address `json:"miner"`
-	Difficulty       hexutil.Big    `json:"difficulty"`
-	TotalDifficulty  hexutil.Big    `json:"totalDifficulty"`
-	ExtraData        string         `json:"extraData"`
-	Size             hexutil.Uint64 `json:"size"`
-	GasLimit         hexutil.Uint64 `json:"gasLimit"`
-	GasUsed          hexutil.Uint64 `json:"gasUsed"`
-	BaseFeePerGas    hexutil.Big    `json:"baseFeePerGas"`
-	Timestamp        hexutil.Uint64 `json:"timestamp"`
-	Transactions     []any          `json:"transactions"`
-	Uncles           []common.Hash  `json:"uncles"`
+	Number           hexutil.Uint64   `json:"number"`
+	Hash             common.Hash      `json:"hash"`
+	ParentHash       common.Hash      `json:"parentHash"`
+	Sha3Uncles       common.Hash      `json:"sha3Uncles"`
+	LogsBloom        hexutil.Bytes    `json:"logsBloom"`
+	TransactionsRoot common.Hash      `json:"transactionsRoot"`
+	StateRoot        common.Hash      `json:"stateRoot"`
+	ReceiptsRoot     common.Hash      `json:"receiptsRoot"`
+	Miner            common.Address   `json:"miner"`
+	Difficulty       hexutil.Big      `json:"difficulty"`
+	TotalDifficulty  hexutil.Big      `json:"totalDifficulty"`
+	ExtraData        hexutil.Bytes    `json:"extraData"`
+	Size             hexutil.Uint64   `json:"size"`
+	GasLimit         hexutil.Uint64   `json:"gasLimit"`
+	GasUsed          hexutil.Uint64   `json:"gasUsed"`
+	BaseFeePerGas    hexutil.Big      `json:"baseFeePerGas"`
+	Timestamp        hexutil.Uint64   `json:"timestamp"`
+	Transactions     []any            `json:"transactions"`
+	Uncles           []common.Hash    `json:"uncles"`
+	MixHash          common.Hash      `json:"mixHash"`
+	Nonce            types.BlockNonce `json:"nonce"`
 }
 
 // rpcTransaction converts a domain.Transaction to an RPCTransaction with block metadata.
 // Returns nil if the transaction cannot be converted.
+// For pending transactions (BlockHash == nil or BlockNumber == 0), the block fields are set to nil.
 func rpcTransaction(tx *domain.Transaction) *RPCTransaction {
 	if tx == nil {
 		return nil
@@ -160,17 +167,25 @@ func rpcTransaction(tx *domain.Transaction) *RPCTransaction {
 		return nil
 	}
 
-	blockHash := common.Hash(tx.BlockHash)
-	blockNumber := hexutil.Big(*big.NewInt(int64(tx.BlockNumber)))
-	txIndex := hexutil.Uint64(tx.TxIndex)
-
-	return &RPCTransaction{
-		tx:               ethTx,
-		From:             common.BytesToAddress(tx.FromAddress),
-		BlockHash:        &blockHash,
-		BlockNumber:      &blockNumber,
-		TransactionIndex: &txIndex,
+	rpcTx := &RPCTransaction{
+		tx:   ethTx,
+		From: common.BytesToAddress(tx.FromAddress),
 	}
+
+	// Check if this is a pending transaction (BlockHash is nil or BlockNumber is 0)
+	// For pending transactions, leave block fields as nil
+	if tx.BlockHash != nil && tx.BlockNumber != 0 {
+		blockHash := common.Hash(tx.BlockHash)
+		blockNumber := hexutil.Big(*big.NewInt(int64(tx.BlockNumber)))
+		txIndex := hexutil.Uint64(tx.TxIndex)
+
+		rpcTx.BlockHash = &blockHash
+		rpcTx.BlockNumber = &blockNumber
+		rpcTx.TransactionIndex = &txIndex
+	}
+	// else: leave BlockHash, BlockNumber, TransactionIndex as nil (pending transaction)
+
+	return rpcTx
 }
 
 // rpcBlock returns a block in the form the RPC API can return. Some values are mocked.
@@ -215,19 +230,25 @@ func rpcBlock(b *domain.Block, full bool) *RPCBlock {
 		transactions = []any{}
 	}
 
+	// ethclient cross-checks: EmptyUncleHash ↔ uncles=[], EmptyTxsHash ↔ txs=[].
+	txRoot := types.EmptyTxsHash
+	if len(transactions) > 0 {
+		txRoot = common.Hash{}
+	}
+
 	return &RPCBlock{
 		Number:           hexutil.Uint64(b.BlockNumber),
 		Hash:             (common.Hash)(b.BlockHash),
 		ParentHash:       (common.Hash)(b.ParentHash),
-		Sha3Uncles:       common.Hash{},
-		LogsBloom:        "" + strings.Repeat("0", 512),
-		TransactionsRoot: common.Hash{},
+		Sha3Uncles:       types.EmptyUncleHash,
+		LogsBloom:        make(hexutil.Bytes, types.BloomByteLength),
+		TransactionsRoot: txRoot,
 		StateRoot:        common.BytesToHash(b.StateRoot),
-		ReceiptsRoot:     common.Hash{},
-		Miner:            common.Address{}, // b.Miner
+		ReceiptsRoot:     types.EmptyRootHash,
+		Miner:            common.HexToAddress("0x0000000000000000000000000000000000000F4B"),
 		Difficulty:       hexutil.Big(*big.NewInt(0)),
 		TotalDifficulty:  hexutil.Big(*big.NewInt(0)),
-		ExtraData:        "",
+		ExtraData:        hexutil.Bytes{},
 		Size:             0,
 		GasLimit:         hexutil.Uint64(0),
 		GasUsed:          hexutil.Uint64(0),

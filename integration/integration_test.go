@@ -7,16 +7,23 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package integration
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
 	"os"
+	"sync"
 	"testing"
-	"time"
 
+	ethereum "github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/tests"
-	"github.com/hyperledger/fabric-x-evm/endorser"
+	"github.com/hyperledger/fabric-x-evm/endorser/execution"
+	"github.com/hyperledger/fabric-x-evm/gateway/core"
 	"github.com/hyperledger/fabric-x-evm/integration/contracts"
 	"google.golang.org/grpc/grpclog"
 	_ "modernc.org/sqlite"
@@ -74,6 +81,21 @@ var cases = []testCase{
 		fn:    testNonceValidation,
 		nodes: 2,
 	},
+	{
+		name:  "query_validation",
+		fn:    testQueryValidation,
+		nodes: 2,
+	},
+	{
+		name:  "revert_handling",
+		fn:    testRevertHandling,
+		nodes: 2,
+	},
+	{
+		name:  "pending_transaction_status",
+		fn:    testPendingTransactionStatus,
+		nodes: 2,
+	},
 }
 
 // TestLocal tests a good portion of the fabric functionality, with the difference that
@@ -88,7 +110,7 @@ func TestLocal(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			th, err := newLocalTestHarness(t, TestLogger{T: t}, evmConfig(tc.fork), tc.primeDbPath, "fabric", nil)
+			th, err := NewLocalTestHarness(t, TestLogger{T: t}, evmConfig(tc.fork), tc.primeDbPath, "fabric", tc.overrides)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -105,7 +127,7 @@ func TestLocalX(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			th, err := newLocalTestHarness(t, TestLogger{T: t}, evmConfig(tc.fork), tc.primeDbPath, "fabric-x", tc.overrides)
+			th, err := NewLocalTestHarness(t, TestLogger{T: t}, evmConfig(tc.fork), tc.primeDbPath, "fabric-x", tc.overrides)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -115,17 +137,28 @@ func TestLocalX(t *testing.T) {
 	}
 }
 
-// TestFabric requires the fabric samples network to be running.
-func TestFabric(t *testing.T) {
+// fabloPeerCAs are the CAs each Fablo endorser accepts callers from, so that
+// the gateway can reach either org's endorser.
+var fabloPeerCAs = []string{
+	"../testdata/fablo/fablo-target/fabric-config/crypto-config/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt",
+	"../testdata/fablo/fablo-target/fabric-config/crypto-config/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/tls/ca.crt",
+}
+
+// TestFablo requires a Fablo network to be running. org1 and org2 each run as
+// a standalone endorser reached over gRPC, and the chaincode is committed with
+// AND('Org1MSP.member','Org2MSP.member'), so both must endorse.
+func TestFablo(t *testing.T) {
 	if testing.Short() {
-		t.Skip("Skipping Fabric test in short mode")
+		t.Skip("Skipping Fablo test in short mode")
 	}
 	// silence GRPC logging
 	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr))
 
+	endorserConfigs := []string{"fablo-org1.yaml", "fablo-org2.yaml"}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			th, err := newFabricTestHarness(t, TestLogger{T: t}, evmConfig(tc.fork), tc.primeDbPath, tc.overrides)
+			th, err := newSplitFileConfigHarness(t, TestLogger{T: t}, evmConfig(tc.fork), tc.primeDbPath,
+				"fablo.yaml", endorserConfigs, fabloPeerCAs, tc.overrides)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -145,7 +178,7 @@ func TestFabricX(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			th, err := newFabricXTestHarness(t, TestLogger{T: t}, evmConfig(tc.fork), tc.primeDbPath, tc.overrides)
+			th, err := newFileConfigHarness(t, TestLogger{T: t}, evmConfig(tc.fork), tc.primeDbPath, "fabx.yaml", tc.overrides)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -153,26 +186,60 @@ func TestFabricX(t *testing.T) {
 			tc.fn(t, th)
 		})
 	}
+
+	// A successful commit here needs signatures from both org1 and org2.
+	t.Run("two_of_two_endorsement_policy", func(t *testing.T) {
+		testTwoOfTwoEndorsementGRPC(t)
+	})
+}
+
+// testTwoOfTwoEndorsementGRPC runs org1's and org2's endorsers as separate,
+// real processes reached over gRPC, and points a split-deployment gateway at
+// both.
+func testTwoOfTwoEndorsementGRPC(t *testing.T) {
+	org1Addr := startEndorserGRPCServer(t, "fabx-2of2-org1.yaml", []string{
+		"../testdata/crypto/peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem",
+		"../testdata/crypto/peerOrganizations/org2.example.com/tlsca/tlsca.org2.example.com-cert.pem",
+	})
+	org2Addr := startEndorserGRPCServer(t, "fabx-2of2-org2.yaml", []string{
+		"../testdata/crypto/peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem",
+		"../testdata/crypto/peerOrganizations/org2.example.com/tlsca/tlsca.org2.example.com-cert.pem",
+	})
+
+	application, chainConfig := buildSplitGatewayApp(t, "fabx-2of2.yaml", org1Addr, org2Addr)
+	gw := application.Gateway()
+
+	ethClient, err := NewEthClient(contracts.HelloMetaData, chainConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	addr := deploySmartContract(t, gw, ethClient)
+
+	greeting := "Hello from a 2-of-2 endorsed transaction"
+	callSmartContract(t, ethClient, addr, gw, "setGreeting", greeting)
+
+	querySmartContractExpect(t, ethClient, addr, &TestHarness{Gateways: []*core.Gateway{gw}}, greeting, "greet")
 }
 
 // evmConfig returns an empty EVMConfig, or, if the name of an ethereum fork
 // is provided, an EVMConfig with that fork as ChainConfig. This can be used
 // for replaying historic ethereum transactions from older forks.
-func evmConfig(fork string) endorser.EVMConfig {
+func evmConfig(fork string) execution.EVMConfig {
 	if len(fork) == 0 {
-		return endorser.EVMConfig{}
+		return execution.EVMConfig{DebugLogs: true}
 	}
 	c, _, err := tests.GetChainConfig(fork)
 	if err != nil {
 		fmt.Println(err)
 	}
 
-	return endorser.EVMConfig{ChainConfig: c}
+	return execution.EVMConfig{ChainConfig: c, DebugLogs: true}
 }
 
 func testGreeter(t *testing.T, th *TestHarness) {
-	node1 := th.gateways[0]
-	node2 := th.gateways[0] // TODO: do we need two?
+	node1 := th.Gateways[0]
+	node2 := th.Gateways[0] // TODO: do we need two?
 
 	ethA, err := NewEthClient(contracts.HelloMetaData, th.ethChainConfig)
 	if err != nil {
@@ -184,12 +251,12 @@ func testGreeter(t *testing.T, th *TestHarness) {
 
 	// test body
 	firstGreeting := "Hello"
-	callSmartContract(t, ethA, addr, node2, "setGreeting", nil, firstGreeting)
+	callSmartContract(t, ethA, addr, node2, "setGreeting", firstGreeting)
 
 	querySmartContractExpect(t, ethA, addr, th, firstGreeting, "greet")
 
 	secondGreeting := "Hi 👋 this is a greeting with a special character and more bytes than can fit in a single slot"
-	env := getEndorsedTxForSmartContractCall(t, ethA, addr, node2, "setGreeting", nil, secondGreeting)
+	env := getEndorsedTxForSmartContractCall(t, ethA, addr, node2, "setGreeting", secondGreeting)
 
 	// not committed yet, expect to still be Hello
 	querySmartContractExpect(t, ethA, addr, th, firstGreeting, "greet")
@@ -200,8 +267,8 @@ func testGreeter(t *testing.T, th *TestHarness) {
 }
 
 func testCounter(t *testing.T, th *TestHarness) {
-	node1 := th.gateways[0]
-	node2 := th.gateways[0] // TODO: do we need two?
+	node1 := th.Gateways[0]
+	node2 := th.Gateways[0] // TODO: do we need two?
 
 	ethOwner, err := NewEthClient(contracts.CounterMetaData, th.ethChainConfig)
 	if err != nil {
@@ -215,17 +282,17 @@ func testCounter(t *testing.T, th *TestHarness) {
 	x := big.NewInt(0)
 	x.Add(x, big.NewInt(1))
 
-	callSmartContract(t, ethOwner, addr, node2, "increment", nil)
+	callSmartContract(t, ethOwner, addr, node2, "increment")
 
 	querySmartContractExpect(t, ethOwner, addr, th, x, "getCount")
 
 	x.Sub(x, big.NewInt(1))
 
-	callSmartContract(t, ethOwner, addr, node1, "decrement", nil)
+	callSmartContract(t, ethOwner, addr, node1, "decrement")
 
 	querySmartContractExpect(t, ethOwner, addr, th, x, "getCount")
 
-	env := getEndorsedTxForSmartContractCall(t, ethOwner, addr, node2, "increment", nil)
+	env := getEndorsedTxForSmartContractCall(t, ethOwner, addr, node2, "increment")
 	querySmartContractExpect(t, ethOwner, addr, th, x, "getCount")
 
 	x.Add(x, big.NewInt(1))
@@ -235,7 +302,7 @@ func testCounter(t *testing.T, th *TestHarness) {
 }
 
 func testNonceValidation(t *testing.T, th *TestHarness) {
-	node := th.gateways[0]
+	node := th.Gateways[0]
 	ethClient, err := NewEthClient(contracts.CounterMetaData, th.ethChainConfig)
 	if err != nil {
 		t.Fatal(err)
@@ -245,7 +312,7 @@ func testNonceValidation(t *testing.T, th *TestHarness) {
 	addr := deploySmartContract(t, node, ethClient)
 
 	// Prime the nonce to 3 for the client's address
-	clientAddr := ethClient.address()
+	clientAddr := ethClient.Address()
 	primer, err := th.NewStatePrimer()
 	if err != nil {
 		t.Fatalf("failed to create state primer: %v", err)
@@ -255,7 +322,7 @@ func testNonceValidation(t *testing.T, th *TestHarness) {
 	}
 
 	// get the transaction with nonce equal to 3
-	tx, err := ethClient.txForCall(t.Context(), node, &addr, "increment", nil)
+	tx, err := ethClient.TxForCall(t.Context(), node, &addr, "increment")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +337,7 @@ func testNonceValidation(t *testing.T, th *TestHarness) {
 	}
 
 	// call should fail now - transaction has nonce 3 but ledger has nonce 5
-	_, err = node.ExecuteEthTx(t.Context(), tx, nil)
+	_, err = node.ExecuteEthTx(t.Context(), tx)
 	if err == nil {
 		t.Fatal("expected transaction with wrong nonce to fail, but it succeeded")
 	}
@@ -281,13 +348,13 @@ func testNonceValidation(t *testing.T, th *TestHarness) {
 	t.Logf("Transaction with wrong nonce correctly failed: %v", err)
 
 	// Now call with correct nonce (5) - should succeed
-	callSmartContract(t, ethClient, addr, node, "increment", nil)
+	callSmartContract(t, ethClient, addr, node, "increment")
 	querySmartContractExpect(t, ethClient, addr, th, big.NewInt(1), "getCount")
 }
 
 func testTetherToken(t *testing.T, th *TestHarness) {
-	node1 := th.gateways[0]
-	node2 := th.gateways[0] // TODO: do we need two?
+	node1 := th.Gateways[0]
+	node2 := th.Gateways[0] // TODO: do we need two?
 	ethOwner, err := NewEthClient(contracts.TetherTokenMetaData, th.ethChainConfig)
 	if err != nil {
 		t.Fatal(err)
@@ -313,82 +380,82 @@ func testTetherToken(t *testing.T, th *TestHarness) {
 	querySmartContractExpect(t, ethA, addr, th, tokenName, "name")
 	querySmartContractExpect(t, ethA, addr, th, tokenSymbol, "symbol")
 	querySmartContractExpect(t, ethA, addr, th, tokenDecimals, "decimals")
-	querySmartContractExpect(t, ethA, addr, th, deploySupply, "balanceOf", ethOwner.address())
+	querySmartContractExpect(t, ethA, addr, th, deploySupply, "balanceOf", ethOwner.Address())
 
 	// -------------------- Owner transfers to user1 --------------------
 	toA := big.NewInt(500_000)
-	callSmartContract(t, ethOwner, addr, node2, "transfer", nil, ethA.address(), toA)
+	callSmartContract(t, ethOwner, addr, node2, "transfer", ethA.Address(), toA)
 
 	ownerBalance := new(big.Int).Sub(deploySupply, toA)
-	querySmartContractExpect(t, ethOwner, addr, th, ownerBalance, "balanceOf", ethOwner.address())
-	querySmartContractExpect(t, ethOwner, addr, th, toA, "balanceOf", ethA.address())
+	querySmartContractExpect(t, ethOwner, addr, th, ownerBalance, "balanceOf", ethOwner.Address())
+	querySmartContractExpect(t, ethOwner, addr, th, toA, "balanceOf", ethA.Address())
 
 	// -------------------- Owner approves user2 --------------------
 	approveAmount := big.NewInt(100_000)
-	callSmartContract(t, ethOwner, addr, node2, "approve", nil, ethA.address(), approveAmount)
-	querySmartContractExpect(t, ethOwner, addr, th, approveAmount, "allowance", ethOwner.address(), ethA.address())
+	callSmartContract(t, ethOwner, addr, node2, "approve", ethA.Address(), approveAmount)
+	querySmartContractExpect(t, ethOwner, addr, th, approveAmount, "allowance", ethOwner.Address(), ethA.Address())
 
 	// -------------------- User2 transferFrom --------------------
-	callSmartContract(t, ethA, addr, node2, "transferFrom", nil, ethOwner.address(), ethA.address(), approveAmount)
+	callSmartContract(t, ethA, addr, node2, "transferFrom", ethOwner.Address(), ethA.Address(), approveAmount)
 	ownerBalance.Sub(ownerBalance, approveAmount)
 	toA.Add(toA, approveAmount)
 	zero := big.NewInt(0)
-	querySmartContractExpect(t, ethOwner, addr, th, ownerBalance, "balanceOf", ethOwner.address())
-	querySmartContractExpect(t, ethOwner, addr, th, toA, "balanceOf", ethA.address())
-	querySmartContractExpect(t, ethOwner, addr, th, zero, "allowance", ethOwner.address(), ethA.address())
+	querySmartContractExpect(t, ethOwner, addr, th, ownerBalance, "balanceOf", ethOwner.Address())
+	querySmartContractExpect(t, ethOwner, addr, th, toA, "balanceOf", ethA.Address())
+	querySmartContractExpect(t, ethOwner, addr, th, zero, "allowance", ethOwner.Address(), ethA.Address())
 
 	// -------------------- Blacklist user1 --------------------
-	callSmartContract(t, ethOwner, addr, node2, "addBlackList", nil, ethA.address())
+	callSmartContract(t, ethOwner, addr, node2, "addBlackList", ethA.Address())
 	trueVal := true
-	querySmartContractExpect(t, ethA, addr, th, trueVal, "isBlackListed", ethA.address())
+	querySmartContractExpect(t, ethA, addr, th, trueVal, "isBlackListed", ethA.Address())
 
-	callSmartContract(t, ethOwner, addr, node2, "destroyBlackFunds", nil, ethA.address())
-	querySmartContractExpect(t, ethA, addr, th, zero, "balanceOf", ethA.address())
-	querySmartContractExpect(t, ethOwner, addr, th, zero, "balanceOf", ethA.address())
-	querySmartContractExpect(t, ethOwner, addr, th, ownerBalance, "balanceOf", ethOwner.address())
+	callSmartContract(t, ethOwner, addr, node2, "destroyBlackFunds", ethA.Address())
+	querySmartContractExpect(t, ethA, addr, th, zero, "balanceOf", ethA.Address())
+	querySmartContractExpect(t, ethOwner, addr, th, zero, "balanceOf", ethA.Address())
+	querySmartContractExpect(t, ethOwner, addr, th, ownerBalance, "balanceOf", ethOwner.Address())
 
 	newTotalSupply := new(big.Int).Sub(deploySupply, toA)
-	querySmartContractExpect(t, ethA, addr, th, zero, "balanceOf", ethA.address())
-	querySmartContractExpect(t, ethA, addr, th, newTotalSupply, "balanceOf", ethOwner.address())
+	querySmartContractExpect(t, ethA, addr, th, zero, "balanceOf", ethA.Address())
+	querySmartContractExpect(t, ethA, addr, th, newTotalSupply, "balanceOf", ethOwner.Address())
 	querySmartContractExpect(t, ethA, addr, th, newTotalSupply, "totalSupply")
 
-	callSmartContract(t, ethOwner, addr, node2, "removeBlackList", nil, ethA.address())
+	callSmartContract(t, ethOwner, addr, node2, "removeBlackList", ethA.Address())
 	falseVal := false
-	querySmartContractExpect(t, ethA, addr, th, falseVal, "isBlackListed", ethA.address())
+	querySmartContractExpect(t, ethA, addr, th, falseVal, "isBlackListed", ethA.Address())
 
 	// -------------------- Pause/unpause --------------------
-	callSmartContract(t, ethOwner, addr, node2, "pause", nil)
-	callSmartContract(t, ethOwner, addr, node2, "unpause", nil)
+	callSmartContract(t, ethOwner, addr, node2, "pause")
+	callSmartContract(t, ethOwner, addr, node2, "unpause")
 
 	// -------------------- Ownership transfer to user2 --------------------
-	callSmartContract(t, ethOwner, addr, node2, "transferOwnership", nil, ethA.address())
-	querySmartContractExpect(t, ethA, addr, th, ethA.address(), "getOwner")
-	querySmartContractExpect(t, ethA, addr, th, zero, "balanceOf", ethA.address())
-	querySmartContractExpect(t, ethA, addr, th, newTotalSupply, "balanceOf", ethOwner.address())
+	callSmartContract(t, ethOwner, addr, node2, "transferOwnership", ethA.Address())
+	querySmartContractExpect(t, ethA, addr, th, ethA.Address(), "getOwner")
+	querySmartContractExpect(t, ethA, addr, th, zero, "balanceOf", ethA.Address())
+	querySmartContractExpect(t, ethA, addr, th, newTotalSupply, "balanceOf", ethOwner.Address())
 	querySmartContractExpect(t, ethA, addr, th, newTotalSupply, "totalSupply")
 
 	// -------------------- User2 issues tokens --------------------
 	issueAmount := big.NewInt(500_000)
 	ownerAmount := new(big.Int).Set(newTotalSupply)
 	totalAmount := new(big.Int).Add(issueAmount, ownerAmount)
-	callSmartContract(t, ethA, addr, node2, "issue", nil, issueAmount)
-	querySmartContractExpect(t, ethA, addr, th, issueAmount, "balanceOf", ethA.address())
-	querySmartContractExpect(t, ethA, addr, th, ownerAmount, "balanceOf", ethOwner.address())
+	callSmartContract(t, ethA, addr, node2, "issue", issueAmount)
+	querySmartContractExpect(t, ethA, addr, th, issueAmount, "balanceOf", ethA.Address())
+	querySmartContractExpect(t, ethA, addr, th, ownerAmount, "balanceOf", ethOwner.Address())
 	querySmartContractExpect(t, ethA, addr, th, totalAmount, "totalSupply")
 
 	// -------------------- User2 redeems tokens --------------------
 	redeemAmount := big.NewInt(100_000)
-	callSmartContract(t, ethA, addr, node2, "redeem", nil, redeemAmount)
+	callSmartContract(t, ethA, addr, node2, "redeem", redeemAmount)
 	issueAmount.Sub(issueAmount, redeemAmount)
 	totalAmount.Sub(totalAmount, redeemAmount)
-	querySmartContractExpect(t, ethA, addr, th, issueAmount, "balanceOf", ethA.address())
-	querySmartContractExpect(t, ethA, addr, th, ownerAmount, "balanceOf", ethOwner.address())
+	querySmartContractExpect(t, ethA, addr, th, issueAmount, "balanceOf", ethA.Address())
+	querySmartContractExpect(t, ethA, addr, th, ownerAmount, "balanceOf", ethOwner.Address())
 	querySmartContractExpect(t, ethA, addr, th, totalAmount, "totalSupply")
 }
 
 func testTetherTokenParallel(t *testing.T, th *TestHarness) {
-	node1 := th.gateways[0]
-	node2 := th.gateways[0] // TODO: do we need two?
+	node1 := th.Gateways[0]
+	node2 := th.Gateways[0] // TODO: do we need two?
 
 	ethOwner, err := NewEthClient(contracts.TetherTokenMetaData, th.ethChainConfig)
 	if err != nil {
@@ -426,7 +493,7 @@ func testTetherTokenParallel(t *testing.T, th *TestHarness) {
 	querySmartContractExpect(t, ethC, addr, th, tokenName, "name")
 	querySmartContractExpect(t, ethA, addr, th, tokenSymbol, "symbol")
 	querySmartContractExpect(t, ethC, addr, th, tokenDecimals, "decimals")
-	querySmartContractExpect(t, ethA, addr, th, deploySupply, "balanceOf", ethOwner.address())
+	querySmartContractExpect(t, ethA, addr, th, deploySupply, "balanceOf", ethOwner.Address())
 
 	// Initial balances:
 	//   Owner:  1,000,000 USDT
@@ -437,7 +504,7 @@ func testTetherTokenParallel(t *testing.T, th *TestHarness) {
 
 	// // Owner transfers 200,000 to userA
 	toA := big.NewInt(200_000)
-	callSmartContract(t, ethOwner, addr, node2, "transfer", nil, ethA.address(), toA)
+	callSmartContract(t, ethOwner, addr, node2, "transfer", ethA.Address(), toA)
 
 	// Result:
 	//   Owner:  800,000 USDT (-200,000)
@@ -447,12 +514,12 @@ func testTetherTokenParallel(t *testing.T, th *TestHarness) {
 	//   User D:       0 USDT
 
 	ownerBalance := new(big.Int).Sub(deploySupply, toA)
-	querySmartContractExpect(t, ethA, addr, th, ownerBalance, "balanceOf", ethOwner.address())
-	querySmartContractExpect(t, ethA, addr, th, toA, "balanceOf", ethA.address())
+	querySmartContractExpect(t, ethA, addr, th, ownerBalance, "balanceOf", ethOwner.Address())
+	querySmartContractExpect(t, ethA, addr, th, toA, "balanceOf", ethA.Address())
 
 	// Owner transfers 150,000 to userB
 	toB := big.NewInt(150_000)
-	callSmartContract(t, ethOwner, addr, node2, "transfer", nil, ethB.address(), toB)
+	callSmartContract(t, ethOwner, addr, node2, "transfer", ethB.Address(), toB)
 
 	// Result:
 	//   Owner:  650,000 USDT (-150,000)
@@ -462,15 +529,15 @@ func testTetherTokenParallel(t *testing.T, th *TestHarness) {
 	//   User D:       0 USDT
 
 	ownerBalance = ownerBalance.Sub(ownerBalance, toB)
-	querySmartContractExpect(t, ethA, addr, th, ownerBalance, "balanceOf", ethOwner.address()) // 650,000
-	querySmartContractExpect(t, ethA, addr, th, toB, "balanceOf", ethB.address())              // 150,000
+	querySmartContractExpect(t, ethA, addr, th, ownerBalance, "balanceOf", ethOwner.Address()) // 650,000
+	querySmartContractExpect(t, ethA, addr, th, toB, "balanceOf", ethB.Address())              // 150,000
 
 	// UserA transfers 30,000 USDT to UserC and
 	// UserB transfers 30,000 USDT to UserD
 	toAC := big.NewInt(30_000)
 	toBD := big.NewInt(20_000)
-	env1 := getEndorsedTxForSmartContractCall(t, ethA, addr, node1, "transfer", nil, ethC.address(), toAC)
-	env2 := getEndorsedTxForSmartContractCall(t, ethB, addr, node2, "transfer", nil, ethD.address(), toBD)
+	env1 := getEndorsedTxForSmartContractCall(t, ethA, addr, node1, "transfer", ethC.Address(), toAC)
+	env2 := getEndorsedTxForSmartContractCall(t, ethB, addr, node2, "transfer", ethD.Address(), toBD)
 
 	// Commit the two transactions in parallel (in one block)
 	// Result:
@@ -479,22 +546,22 @@ func testTetherTokenParallel(t *testing.T, th *TestHarness) {
 	//   User B: 130,000 USDT (-20,000)
 	//   User C:  30,000 USDT (+30,000)
 	//   User D:  20,000 USDT (+20,000)
-	go submit(t, node1, env1)
-	submit(t, node2, env2)
-
-	// ensure some slack for the background tx to be committed.
-	time.Sleep(200 * time.Millisecond)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); submit(t, node1, env1) }()
+	go func() { defer wg.Done(); submit(t, node2, env2) }()
+	wg.Wait()
 
 	toB = toB.Sub(toB, toBD)
 	toA = toA.Sub(toA, toAC)
-	querySmartContractExpect(t, ethA, addr, th, toA, "balanceOf", ethA.address())  // 170,000
-	querySmartContractExpect(t, ethA, addr, th, toB, "balanceOf", ethB.address())  // 130,000
-	querySmartContractExpect(t, ethA, addr, th, toAC, "balanceOf", ethC.address()) //  30,000
-	querySmartContractExpect(t, ethA, addr, th, toBD, "balanceOf", ethD.address()) //  20,000
+	querySmartContractExpect(t, ethA, addr, th, toA, "balanceOf", ethA.Address())  // 170,000
+	querySmartContractExpect(t, ethA, addr, th, toB, "balanceOf", ethB.Address())  // 130,000
+	querySmartContractExpect(t, ethA, addr, th, toAC, "balanceOf", ethC.Address()) //  30,000
+	querySmartContractExpect(t, ethA, addr, th, toBD, "balanceOf", ethD.Address()) //  20,000
 }
 
 func testUniswapFactory(t *testing.T, th *TestHarness) {
-	node := th.gateways[0]
+	node := th.Gateways[0]
 
 	// -------------------- clients --------------------
 	erc20A, err := NewEthClient(contracts.GenericERC20MetaData, th.ethChainConfig)
@@ -541,7 +608,7 @@ func testUniswapFactory(t *testing.T, th *TestHarness) {
 	)
 
 	// -------------------- deploy Uniswap factory --------------------
-	feeToSetter := erc20A.address()
+	feeToSetter := erc20A.Address()
 
 	factoryAddr := deploySmartContract(
 		t,
@@ -557,7 +624,6 @@ func testUniswapFactory(t *testing.T, th *TestHarness) {
 		factoryAddr,
 		node,
 		"createPair",
-		nil,
 		tokenAAddr,
 		tokenBAddr,
 	)
@@ -637,7 +703,7 @@ func testUniswapFactory(t *testing.T, th *TestHarness) {
 	}
 
 	// -------------------- approve tokens for pair --------------------
-	liquidityProvider := erc20A.address()
+	liquidityProvider := erc20A.Address()
 
 	amountA := big.NewInt(100_000)
 	amountB := big.NewInt(200_000)
@@ -649,7 +715,6 @@ func testUniswapFactory(t *testing.T, th *TestHarness) {
 		tokenAAddr,
 		node,
 		"approve",
-		nil,
 		pairAddr,
 		amountA,
 	)
@@ -661,7 +726,6 @@ func testUniswapFactory(t *testing.T, th *TestHarness) {
 		tokenBAddr,
 		node,
 		"approve",
-		nil,
 		pairAddr,
 		amountB,
 	)
@@ -673,7 +737,6 @@ func testUniswapFactory(t *testing.T, th *TestHarness) {
 		tokenAAddr,
 		node,
 		"transfer",
-		nil,
 		pairAddr,
 		amountA,
 	)
@@ -684,7 +747,6 @@ func testUniswapFactory(t *testing.T, th *TestHarness) {
 		tokenBAddr,
 		node,
 		"transfer",
-		nil,
 		pairAddr,
 		amountB,
 	)
@@ -696,7 +758,6 @@ func testUniswapFactory(t *testing.T, th *TestHarness) {
 		pairAddr,
 		node,
 		"mint",
-		nil,
 		liquidityProvider,
 	)
 
@@ -725,7 +786,6 @@ func testUniswapFactory(t *testing.T, th *TestHarness) {
 		tokenAAddr,
 		node,
 		"transfer",
-		nil,
 		pairAddr,
 		swapIn,
 	)
@@ -746,7 +806,6 @@ func testUniswapFactory(t *testing.T, th *TestHarness) {
 		pairAddr,
 		node,
 		"swap",
-		nil,
 		amount0Out,
 		amount1Out,
 		liquidityProvider,
@@ -768,4 +827,326 @@ func testUniswapFactory(t *testing.T, th *TestHarness) {
 	if reserve0After.Cmp(reserve0) == 0 && reserve1After.Cmp(reserve1) == 0 {
 		t.Fatal("expected reserves to change after swap")
 	}
+}
+
+// testQueryValidation asserts every read endpoint returns coherent data after a deploy + call.
+func testQueryValidation(t *testing.T, th *TestHarness) {
+	node := th.Gateways[0]
+	ec, err := NewNativeEthClient(node)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	counter, err := NewEthClient(contracts.CounterMetaData, th.ethChainConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	deployTx, contractAddr, err := counter.txForDeploy(t.Context(), node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ec.SendTransaction(t.Context(), deployTx); err != nil {
+		t.Fatal(err)
+	}
+	waitForCommitT(t, ec, deployTx)
+
+	callTx, err := counter.TxForCall(t.Context(), node, &contractAddr, "increment")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ec.SendTransaction(t.Context(), callTx); err != nil {
+		t.Fatal(err)
+	}
+	waitForCommitT(t, ec, callTx)
+
+	sender := counter.Address()
+
+	cases := []struct {
+		name   string
+		tx     *types.Transaction
+		isCall bool
+	}{
+		{name: "deploy", tx: deployTx, isCall: false},
+		{name: "call", tx: callTx, isCall: true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			gotTx, isPending, err := ec.TransactionByHash(t.Context(), c.tx.Hash())
+			if err != nil {
+				t.Fatalf("TransactionByHash: %v", err)
+			}
+			if gotTx == nil {
+				t.Fatal("TransactionByHash returned nil for a committed tx")
+			}
+			// TODO: flip once #116 is fixed.
+			if isPending {
+				t.Errorf("expected isPending=false, got true")
+			}
+
+			gotJSON, err := gotTx.MarshalJSON()
+			if err != nil {
+				t.Fatalf("MarshalJSON(got): %v", err)
+			}
+			wantJSON, err := c.tx.MarshalJSON()
+			if err != nil {
+				t.Fatalf("MarshalJSON(want): %v", err)
+			}
+			if !bytes.Equal(gotJSON, wantJSON) {
+				t.Errorf("tx JSON mismatch:\n got:  %s\n want: %s", gotJSON, wantJSON)
+			}
+
+			receipt, err := ec.TransactionReceipt(t.Context(), c.tx.Hash())
+			if err != nil {
+				t.Fatalf("TransactionReceipt: %v", err)
+			}
+			if receipt.Status != types.ReceiptStatusSuccessful {
+				t.Errorf("expected receipt.Status=%d, got %d", types.ReceiptStatusSuccessful, receipt.Status)
+			}
+
+			if !c.isCall {
+				expected := crypto.CreateAddress(sender, c.tx.Nonce())
+				if receipt.ContractAddress != expected {
+					t.Errorf("receipt.ContractAddress mismatch: got %s, want %s", receipt.ContractAddress, expected)
+				}
+				if expected != contractAddr {
+					t.Errorf("computed contract addr drifted from txForDeploy: got %s, want %s", expected, contractAddr)
+				}
+			}
+
+			byHashIdx, err := ec.TransactionInBlock(t.Context(), receipt.BlockHash, receipt.TransactionIndex)
+			if err != nil {
+				t.Fatalf("TransactionInBlock: %v", err)
+			}
+			if byHashIdx == nil || byHashIdx.Hash() != c.tx.Hash() {
+				t.Errorf("by-(blockHash,index) lookup did not return the same tx")
+			}
+
+			// byHash.Hash() is recomputed from RLP, so it diverges from the
+			// gateway-side hash. Real Ethereum-style header hashes will be
+			// added later.
+			byHash, err := ec.BlockByHash(t.Context(), receipt.BlockHash)
+			if err != nil {
+				t.Fatalf("BlockByHash: %v", err)
+			}
+			if byHash.NumberU64() != receipt.BlockNumber.Uint64() {
+				t.Errorf("BlockByHash number = %d, want %d", byHash.NumberU64(), receipt.BlockNumber.Uint64())
+			}
+
+			byNum, err := ec.BlockByNumber(t.Context(), receipt.BlockNumber)
+			if err != nil {
+				t.Fatalf("BlockByNumber: %v", err)
+			}
+			if byNum.NumberU64() != receipt.BlockNumber.Uint64() {
+				t.Errorf("BlockByNumber number = %d, want %d", byNum.NumberU64(), receipt.BlockNumber.Uint64())
+			}
+		})
+	}
+
+	var unknown common.Hash
+	unknown[0] = 0xde
+	gotTx, isPending, err := ec.TransactionByHash(t.Context(), unknown)
+	if err != nil && err != ethereum.NotFound {
+		t.Fatalf("TransactionByHash(unknown): %v", err)
+	}
+	if gotTx != nil {
+		t.Errorf("expected nil for unknown hash, got %+v", gotTx)
+	}
+	if isPending {
+		t.Error("expected isPending=false for unknown hash")
+	}
+}
+
+// testRevertHandling exercises both revert paths against an ERC-20 (TetherToken):
+// transferFrom without prior approval reverts. Via eth_call (CallContract) the
+// gateway must surface JSON-RPC -32000 with the revert payload as ErrorData.
+// Via eth_sendRawTransaction the tx must commit with receipt.Status=0.
+func testRevertHandling(t *testing.T, th *TestHarness) {
+	node := th.Gateways[0]
+	ec, err := NewNativeEthClient(node)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	owner, err := NewEthClient(contracts.TetherTokenMetaData, th.ethChainConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, err := NewEthClient(contracts.TetherTokenMetaData, th.ethChainConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	addr := deploySmartContract(t, node, owner, big.NewInt(100_000_000), "Tether USD", "USDT", big.NewInt(6))
+
+	// transferFrom without approval — both paths revert at the EVM.
+	amount := big.NewInt(1_000)
+
+	t.Run("eth_call_revert_returns_-32000", func(t *testing.T) {
+		args, err := user.argsForCall(&addr, "transferFrom", owner.Address(), user.Address(), amount)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = ec.CallContract(t.Context(), *args, nil)
+		if err == nil {
+			t.Fatal("expected revert error, got nil")
+		}
+
+		var rpcErr rpc.Error
+		if !errors.As(err, &rpcErr) {
+			t.Fatalf("expected rpc.Error, got %T (%v)", err, err)
+		}
+		if rpcErr.ErrorCode() != -32000 {
+			t.Errorf("code = %d, want -32000 (ExecutionReverted)", rpcErr.ErrorCode())
+		}
+
+		var dataErr rpc.DataError
+		if !errors.As(err, &dataErr) {
+			t.Fatalf("expected rpc.DataError, got %T", err)
+		}
+		data, ok := dataErr.ErrorData().(string)
+		if !ok || len(data) <= 2 {
+			t.Errorf("ErrorData() = %v, want non-empty hex string", dataErr.ErrorData())
+		}
+	})
+
+	t.Run("eth_sendRawTransaction_revert_commits_with_status_0", func(t *testing.T) {
+		tx, err := user.TxForCall(t.Context(), node, &addr, "transferFrom", owner.Address(), user.Address(), amount)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := ec.SendTransaction(t.Context(), tx); err != nil {
+			t.Fatalf("SendTransaction: %v", err)
+		}
+		waitForCommitT(t, ec, tx)
+
+		receipt, err := ec.TransactionReceipt(t.Context(), tx.Hash())
+		if err != nil {
+			t.Fatalf("TransactionReceipt: %v", err)
+		}
+		if receipt.Status != types.ReceiptStatusFailed {
+			t.Errorf("receipt.Status = %d, want %d (failed)", receipt.Status, types.ReceiptStatusFailed)
+		}
+	})
+}
+
+// testPendingTransactionStatus verifies that transactions return isPending=true while in the queue
+// and isPending=false after commit. This test races to catch a transaction in the pending state
+// by submitting it and immediately querying in a tight loop.
+func testPendingTransactionStatus(t *testing.T, th *TestHarness) {
+	node := th.Gateways[0]
+	ec, err := NewNativeEthClient(node)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	counter, err := NewEthClient(contracts.CounterMetaData, th.ethChainConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Prepare a deployment transaction
+	deployTx, _, err := counter.txForDeploy(t.Context(), node)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Channel to signal when we've sent the transaction
+	txSent := make(chan bool, 1)
+	caughtPending := make(chan bool, 1)
+	pendingReceiptCheckErr := make(chan error, 1)
+
+	// Start a goroutine that will poll for the transaction immediately after we send it
+	go func() {
+		// Wait for the signal that transaction was sent
+		<-txSent
+
+		// Poll aggressively for the transaction
+		for range 1000 {
+			tx, isPending, err := ec.TransactionByHash(t.Context(), deployTx.Hash())
+
+			// Skip if transaction not found yet (still being processed by gateway)
+			if err != nil {
+				continue
+			}
+
+			// Check if we caught it in pending state
+			if tx != nil && isPending {
+				t.Logf("✓ Successfully caught transaction %s in pending state (isPending=true)", deployTx.Hash().Hex())
+
+				// While pending, receipt must not be available yet.
+				// JSON-RPC returns null; go-ethereum maps this to ethereum.NotFound.
+				receipt, receiptErr := ec.TransactionReceipt(t.Context(), deployTx.Hash())
+				if receiptErr == nil {
+					pendingReceiptCheckErr <- fmt.Errorf("expected pending tx receipt to be unavailable, got %+v", receipt)
+					caughtPending <- false
+					return
+				}
+				if !errors.Is(receiptErr, ethereum.NotFound) {
+					pendingReceiptCheckErr <- fmt.Errorf("expected ethereum.NotFound for pending receipt lookup, got %v", receiptErr)
+					caughtPending <- false
+					return
+				}
+				pendingReceiptCheckErr <- nil
+
+				caughtPending <- true
+				return
+			}
+
+			// If we found it but it's already committed, we missed the window
+			if tx != nil && !isPending {
+				t.Logf("Transaction %s already committed (isPending=false), missed pending window", deployTx.Hash().Hex())
+				caughtPending <- false
+				return
+			}
+		}
+
+		t.Log("Could not catch transaction in pending state after 1000 attempts (timing issue)")
+		caughtPending <- false
+	}()
+
+	// Send the transaction and immediately signal the polling goroutine
+	if err := ec.SendTransaction(t.Context(), deployTx); err != nil {
+		t.Fatal(err)
+	}
+	txSent <- true
+
+	// Wait for the polling goroutine to finish and check if we caught it pending
+	caught := <-caughtPending
+	if !caught {
+		t.Fatal("Failed to catch transaction in pending state - this test requires catching isPending=true")
+	}
+	if err := <-pendingReceiptCheckErr; err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for the transaction to commit
+	waitForCommitT(t, ec, deployTx)
+
+	// Verify it's now committed (not pending)
+	tx, isPending, err := ec.TransactionByHash(t.Context(), deployTx.Hash())
+	if err != nil {
+		t.Fatalf("TransactionByHash after commit: %v", err)
+	}
+	if tx == nil {
+		t.Fatal("Transaction not found after commit")
+	}
+	if isPending {
+		t.Error("Transaction still marked as pending after commit (isPending should be false)")
+	}
+
+	// After commit, receipt should be available and successful.
+	receipt, err := ec.TransactionReceipt(t.Context(), deployTx.Hash())
+	if err != nil {
+		t.Fatalf("TransactionReceipt after commit: %v", err)
+	}
+	if receipt == nil {
+		t.Fatal("TransactionReceipt returned nil after commit")
+	}
+	if receipt.Status != types.ReceiptStatusSuccessful {
+		t.Errorf("receipt.Status = %d, want %d", receipt.Status, types.ReceiptStatusSuccessful)
+	}
+
+	t.Logf("Transaction successfully committed (isPending=false)")
 }

@@ -16,6 +16,7 @@ import (
 	"crypto/ecdsa"
 	"fmt"
 	"math/big"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -33,16 +34,18 @@ type TestEthAPI struct {
 	backend         api.Backend
 	testAccounts    []common.Address
 	testAccountKeys map[common.Address]*ecdsa.PrivateKey
+	fence           *txFence
 }
 
 // NewTestEthAPI creates a test-enabled Ethereum API wrapper.
 // It embeds the production API and adds unsafe test-only methods.
-func NewTestEthAPI(prodAPI *api.EthAPI, backend api.Backend, accounts []common.Address, keys map[common.Address]*ecdsa.PrivateKey) *TestEthAPI {
+func NewTestEthAPI(prodAPI *api.EthAPI, backend api.Backend, accounts []common.Address, keys map[common.Address]*ecdsa.PrivateKey, fence *txFence) *TestEthAPI {
 	return &TestEthAPI{
 		EthAPI:          prodAPI,
 		backend:         backend,
 		testAccounts:    accounts,
 		testAccountKeys: keys,
+		fence:           fence,
 	}
 }
 
@@ -59,6 +62,23 @@ func (api *TestEthAPI) Accounts(ctx context.Context) ([]common.Address, error) {
 // which means the server has access to private keys. This is acceptable for
 // development/testing but is a critical security vulnerability in production.
 func (api *TestEthAPI) SendTransaction(ctx context.Context, args TransactionArgs) (common.Hash, error) {
+	txHash, err := api.signAndEnqueue(ctx, args)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	return txHash, api.awaitCommit(ctx, txHash)
+}
+
+// signAndEnqueue signs args and hands the transaction to the gateway. The fence
+// spans the nonce read as well, so a rewind can't land in between and leave us
+// signing against a nonce that no longer exists.
+func (api *TestEthAPI) signAndEnqueue(ctx context.Context, args TransactionArgs) (common.Hash, error) {
+	return api.fence.submit(func() (common.Hash, error) {
+		return api.signAndEnqueueLocked(ctx, args)
+	})
+}
+
+func (api *TestEthAPI) signAndEnqueueLocked(ctx context.Context, args TransactionArgs) (common.Hash, error) {
 	// Validate from address
 	if args.From == nil {
 		return common.Hash{}, fmt.Errorf("missing 'from' field")
@@ -132,10 +152,60 @@ func (api *TestEthAPI) SendTransaction(ctx context.Context, args TransactionArgs
 		return common.Hash{}, fmt.Errorf("failed to marshal transaction: %w", err)
 	}
 
-	_, err = api.EthAPI.SendRawTransaction(ctx, hexutil.Bytes(txBytes))
+	// Enqueue only: the caller waits for the commit outside the fence.
+	return api.EthAPI.SendRawTransaction(ctx, hexutil.Bytes(txBytes))
+}
+
+// SendRawTransaction overrides the base implementation to make it synchronous for Hardhat compatibility.
+// It sends the transaction and polls until it's committed to a block, mimicking Hardhat's auto-mining behavior.
+func (api *TestEthAPI) SendRawTransaction(ctx context.Context, input hexutil.Bytes) (common.Hash, error) {
+	txHash, err := api.fence.submit(func() (common.Hash, error) {
+		return api.EthAPI.SendRawTransaction(ctx, input)
+	})
 	if err != nil {
 		return common.Hash{}, err
 	}
+	return txHash, api.awaitCommit(ctx, txHash)
+}
 
-	return signedTx.Hash(), nil
+// commitPollInterval paces the wait below; sleeping rather than spinning keeps a
+// hot loop from starving the gateway workers we are waiting on.
+const commitPollInterval = time.Millisecond
+
+// commitTimeout bounds the wait for a single transaction. The fence is already
+// released by now, so a transaction that never commits delays only its own caller.
+const commitTimeout = 30 * time.Second
+
+// awaitCommit blocks until the transaction reaches a block, mimicking Hardhat's
+// auto-mining. Deliberately outside the fence; see txFence.
+func (api *TestEthAPI) awaitCommit(ctx context.Context, txHash common.Hash) error {
+	deadline := time.NewTimer(commitTimeout)
+	defer deadline.Stop()
+	poll := time.NewTicker(commitPollInterval)
+	defer poll.Stop()
+
+	for {
+		tx, err := api.backend.TransactionByHash(ctx, txHash)
+		switch {
+		case err != nil:
+			// Not visible yet; keep waiting.
+			hardhatLogger.Debugf("polling TransactionByHash for %s: %v", txHash, err)
+		case tx == nil:
+			// Gone from both the queue and the store: the gateway worker failed it and
+			// dropped it (gateway/core.Gateway.worker), so no block will ever carry it.
+			// TODO: delete once a worker-failed transaction gets a terminal state of its
+			// own in gateway/core, rather than becoming indistinguishable from unknown.
+			return fmt.Errorf("transaction %s was dropped before it committed", txHash)
+		case tx.BlockNumber > 0:
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return fmt.Errorf("transaction %s did not commit within %s", txHash, commitTimeout)
+		case <-poll.C:
+		}
+	}
 }
