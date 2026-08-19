@@ -105,8 +105,16 @@ func parseCommonFlags(name string, args []string) (*commonFlags, error) {
 // within) matched files is folded into one entry rather than double-counted — OZ's
 // suite genuinely does this (a shared-behavior helper invoked twice in one file
 // produces two identical fullTitles) — but only when every occurrence agrees on
-// status and message; a real disagreement (e.g. an overlapping --results glob mixing
-// two different runs of the same test) is ambiguous and gets rejected instead.
+// status and message.
+//
+// A disagreement is resolved by File, which the parser already attributes per
+// result: different files sharing an ID (e.g. ERC721.test.js and
+// ERC721Enumerable.test.js both running OZ's shared shouldBehaveLikeERC721 helper,
+// which reuses the exact same nested `it` titles) are genuinely two different
+// tests, so both are kept rather than rejected — the baseline entry for that ID
+// then just covers either occurrence. Same file (or file unknown) with disagreeing
+// outcomes is still ambiguous — most likely an overlapping --results glob mixing
+// two different runs of the same test — and stays a hard error.
 func loadResults(format, resultsGlob string) ([]Result, error) {
 	parse, ok := parsers[format]
 	if !ok {
@@ -134,14 +142,18 @@ func loadResults(format, resultsGlob string) ([]Result, error) {
 			return nil, fmt.Errorf("parse results %s: %w", p, err)
 		}
 		for _, r := range results {
-			if prev, dup := seen[r.ID]; dup {
-				if prev.Status == r.Status && prev.Message == r.Message {
-					continue
-				}
+			prev, dup := seen[r.ID]
+			switch {
+			case !dup:
+				seen[r.ID] = r
+				all = append(all, r)
+			case prev.Status == r.Status && prev.Message == r.Message:
+				continue // same logical test observed twice, fold into one
+			case prev.File != "" && r.File != "" && prev.File != r.File:
+				all = append(all, r) // different source files, genuinely different tests
+			default:
 				return nil, fmt.Errorf("test ID %q reported inconsistently (%s vs %s) in %s", r.ID, prev.Status, r.Status, p)
 			}
-			seen[r.ID] = r
-			all = append(all, r)
 		}
 	}
 	return all, nil

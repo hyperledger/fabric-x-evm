@@ -15,13 +15,18 @@ import (
 
 func writeMochaFixture(t *testing.T, dir, name, fullTitle, errMessage string) string {
 	t.Helper()
+	return writeMochaFixtureInFile(t, dir, name, fullTitle, errMessage, "")
+}
+
+func writeMochaFixtureInFile(t *testing.T, dir, name, fullTitle, errMessage, sourceFile string) string {
+	t.Helper()
 	err := ""
 	if errMessage != "" {
 		err = `"message": ` + `"` + errMessage + `"`
 	}
 	data := `{
   "stats": {"tests": 1, "passes": 0, "pending": 0, "failures": 0},
-  "tests": [{"fullTitle": "` + fullTitle + `", "err": {` + err + `}}],
+  "tests": [{"fullTitle": "` + fullTitle + `", "file": "` + sourceFile + `", "err": {` + err + `}}],
   "pending": [],
   "failures": [],
   "passes": []
@@ -79,6 +84,26 @@ func TestLoadResults_ConflictingDuplicateErrors(t *testing.T) {
 	_, err := loadResults("mocha-json", filepath.Join(dir, "*.json"))
 	if err == nil {
 		t.Fatal("expected an error for a test ID reported with conflicting outcomes")
+	}
+}
+
+// TestLoadResults_ConflictingDuplicateFromDifferentFilesIsKept covers OZ's shared
+// test-behavior helpers (e.g. shouldBehaveLikeERC721), which are invoked from
+// several concrete-contract test files and reuse the exact same nested `it`
+// titles. Two genuinely different tests sharing an ID isn't the ambiguous case
+// the error exists for — that's an overlapping --results glob mixing two runs of
+// the *same* test, which still has to error (see the sibling test above).
+func TestLoadResults_ConflictingDuplicateFromDifferentFilesIsKept(t *testing.T) {
+	dir := t.TempDir()
+	writeMochaFixtureInFile(t, dir, "a.json", "shared test", "", "/repo/test/ERC721.test.js")
+	writeMochaFixtureInFile(t, dir, "b.json", "shared test", "boom", "/repo/test/ERC721Enumerable.test.js")
+
+	results, err := loadResults("mocha-json", filepath.Join(dir, "*.json"))
+	if err != nil {
+		t.Fatalf("loadResults: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected both occurrences kept as distinct results, got %+v", results)
 	}
 }
 
