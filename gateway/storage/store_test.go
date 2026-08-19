@@ -23,6 +23,14 @@ func setupTestDB(t *testing.T) *Store {
 	}
 	t.Cleanup(func() { db.Close() })
 
+	// Production opens with PRAGMA foreign_keys=ON (see fabric-x-sdk's
+	// state/sqlite.Open); match it here so tests catch FK violations —
+	// e.g. deleting a referenced row in the wrong order — the same way
+	// production would.
+	if _, err := db.Exec("PRAGMA foreign_keys=ON"); err != nil {
+		t.Fatalf("failed to enable foreign keys: %v", err)
+	}
+
 	store := NewStore(db)
 	if err := store.Init(); err != nil {
 		t.Fatalf("failed to init store: %v", err)
@@ -46,6 +54,32 @@ func insertTestBlock(t *testing.T, store *Store, blockNum uint64, blockHash []by
 
 func insertTestLog(t *testing.T, store *Store, blockNum uint64, txHash, address []byte, logIndex int64, topics [][]byte) {
 	t.Helper()
+
+	// logs.tx_hash is a foreign key into transactions; insert the parent row
+	// if it isn't already there (several logs commonly share one transaction).
+	// tx_index must stay unique within the block, so it's derived from how
+	// many transactions the block already has.
+	var exists bool
+	if err := store.DB.QueryRowContext(t.Context(),
+		"SELECT EXISTS(SELECT 1 FROM transactions WHERE tx_hash = ?)", txHash,
+	).Scan(&exists); err != nil {
+		t.Fatalf("failed to check parent transaction for log: %v", err)
+	}
+	if !exists {
+		var txIndex int64
+		if err := store.DB.QueryRowContext(t.Context(),
+			"SELECT COUNT(*) FROM transactions WHERE block_number = ?", blockNum,
+		).Scan(&txIndex); err != nil {
+			t.Fatalf("failed to count transactions for log: %v", err)
+		}
+		fabricTxID := fmt.Sprintf("fabric-tx-%x", txHash[:8])
+		if _, err := store.DB.ExecContext(t.Context(), `
+			INSERT INTO transactions (tx_hash, block_hash, block_number, tx_index, raw_tx, from_address, to_address, contract_address, status, fabric_tx_id, fabric_tx_status)
+			VALUES (?, NULL, ?, ?, ?, ?, NULL, NULL, ?, ?, 0)`,
+			txHash, blockNum, txIndex, []byte{0x01}, makeAddress(0x11), 1, fabricTxID); err != nil {
+			t.Fatalf("failed to insert parent transaction for log: %v", err)
+		}
+	}
 
 	// Pad topics to 4 elements
 	padded := make([][]byte, 4)

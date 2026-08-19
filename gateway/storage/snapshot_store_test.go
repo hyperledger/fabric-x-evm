@@ -13,17 +13,33 @@ import (
 )
 
 // setupSnapshotStore builds a SnapshotStore over blocks 0..upTo, each carrying
-// one transaction, and leaves the cached tip at upTo.
+// one transaction and one log, and leaves the cached tip at upTo.
+//
+// Populating all three tables matters: RevertToBlock deletes logs and
+// transactions before blocks specifically because both reference
+// blocks(block_number) under foreign_keys=ON (see [[setupTestDB]]). A revert
+// test that only ever inserts blocks can't exercise that ordering — flipping
+// the delete order would still pass. addTestSnapshotRow / this helper give
+// every revert test a logs row to lose.
 func setupSnapshotStore(t *testing.T, upTo uint64) *SnapshotStore {
 	t.Helper()
 	store := setupTestDB(t)
 	for n := uint64(0); n <= upTo; n++ {
-		blockHash := makeHash(byte(n))
-		insertTestBlock(t, store, n, blockHash)
-		insertTestTransaction(t, store, n, blockHash, makeHash(byte(0xA0+n)), 0)
+		addTestSnapshotRow(t, store, n)
 	}
 	store.CachedBlockNumber.Store(upTo)
 	return NewSnapshotStore(store)
+}
+
+// addTestSnapshotRow inserts one block at blockNum, carrying one transaction
+// and one log that references it.
+func addTestSnapshotRow(t *testing.T, store *Store, blockNum uint64) {
+	t.Helper()
+	blockHash := makeHash(byte(blockNum))
+	txHash := makeHash(byte(0xA0 + blockNum))
+	insertTestBlock(t, store, blockNum, blockHash)
+	insertTestTransaction(t, store, blockNum, blockHash, txHash, 0)
+	insertTestLog(t, store, blockNum, txHash, makeAddress(0x33), 0, nil)
 }
 
 func countRows(t *testing.T, s *SnapshotStore, table string) int {
@@ -57,8 +73,9 @@ func TestSnapshotStore_Snapshot(t *testing.T) {
 	}
 }
 
-// TestSnapshotStore_RevertToBlock drops everything above the target, in both the
-// blocks table and the transactions that reference it, and moves the tip back.
+// TestSnapshotStore_RevertToBlock drops everything above the target, in the
+// blocks table and in the transactions and logs that reference it, and moves
+// the tip back.
 func TestSnapshotStore_RevertToBlock(t *testing.T) {
 	s := setupSnapshotStore(t, 5)
 
@@ -71,6 +88,9 @@ func TestSnapshotStore_RevertToBlock(t *testing.T) {
 	}
 	if got := countRows(t, s, "transactions"); got != 3 {
 		t.Errorf("transactions after revert = %d, want 3", got)
+	}
+	if got := countRows(t, s, "logs"); got != 3 {
+		t.Errorf("logs after revert = %d, want 3", got)
 	}
 	if got := s.CachedBlockNumber.Load(); got != 2 {
 		t.Errorf("cached tip after revert = %d, want 2", got)
@@ -97,6 +117,12 @@ func TestSnapshotStore_RevertToBlock_Repeated(t *testing.T) {
 		if got := countRows(t, s, "blocks"); got != int(target)+1 {
 			t.Errorf("after revert to %d: blocks = %d, want %d", target, got, target+1)
 		}
+		if got := countRows(t, s, "transactions"); got != int(target)+1 {
+			t.Errorf("after revert to %d: transactions = %d, want %d", target, got, target+1)
+		}
+		if got := countRows(t, s, "logs"); got != int(target)+1 {
+			t.Errorf("after revert to %d: logs = %d, want %d", target, got, target+1)
+		}
 		if got := s.CachedBlockNumber.Load(); got != target {
 			t.Errorf("after revert to %d: cached tip = %d", target, got)
 		}
@@ -113,6 +139,12 @@ func TestSnapshotStore_RevertToBlock_CurrentIsNoOp(t *testing.T) {
 	}
 	if got := countRows(t, s, "blocks"); got != 4 {
 		t.Errorf("blocks = %d, want 4 (unchanged)", got)
+	}
+	if got := countRows(t, s, "transactions"); got != 4 {
+		t.Errorf("transactions = %d, want 4 (unchanged)", got)
+	}
+	if got := countRows(t, s, "logs"); got != 4 {
+		t.Errorf("logs = %d, want 4 (unchanged)", got)
 	}
 }
 
@@ -131,6 +163,12 @@ func TestSnapshotStore_RevertToBlock_ForwardRejected(t *testing.T) {
 	if got := countRows(t, s, "blocks"); got != 4 {
 		t.Errorf("failed revert must leave the data alone, got %d blocks", got)
 	}
+	if got := countRows(t, s, "transactions"); got != 4 {
+		t.Errorf("failed revert must leave the data alone, got %d transactions", got)
+	}
+	if got := countRows(t, s, "logs"); got != 4 {
+		t.Errorf("failed revert must leave the data alone, got %d logs", got)
+	}
 }
 
 // TestSnapshotStore_SnapshotThenRevertRoundTrip is the sequence evm_snapshot and
@@ -144,9 +182,7 @@ func TestSnapshotStore_SnapshotThenRevertRoundTrip(t *testing.T) {
 	}
 
 	for n := uint64(3); n <= 6; n++ {
-		blockHash := makeHash(byte(n))
-		insertTestBlock(t, s.Store, n, blockHash)
-		insertTestTransaction(t, s.Store, n, blockHash, makeHash(byte(0xA0+n)), 0)
+		addTestSnapshotRow(t, s.Store, n)
 	}
 	s.CachedBlockNumber.Store(6)
 
@@ -155,6 +191,12 @@ func TestSnapshotStore_SnapshotThenRevertRoundTrip(t *testing.T) {
 	}
 	if got := countRows(t, s, "blocks"); got != 3 {
 		t.Errorf("blocks after round trip = %d, want 3", got)
+	}
+	if got := countRows(t, s, "transactions"); got != 3 {
+		t.Errorf("transactions after round trip = %d, want 3", got)
+	}
+	if got := countRows(t, s, "logs"); got != 3 {
+		t.Errorf("logs after round trip = %d, want 3", got)
 	}
 	if got := s.CachedBlockNumber.Load(); got != id {
 		t.Errorf("cached tip after round trip = %d, want %d", got, id)
