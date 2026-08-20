@@ -1736,6 +1736,12 @@
     "cause": "execution reverted"
   },
   {
+    "id": "Governor using $ERC20VotesLegacyMock \"before each\" hook for \"deployment check\"",
+    "cause": "concurrent-tx-race",
+    "note": "Races: GovernorHelper.delegate() submits self-delegate + transfer concurrently (Promise.all, no confirmation wait) against a freshly-funded account, the same root cause as the other concurrent-tx-race entries -- but here it manifested as the tx getting dropped before it committed (no receipt at all) rather than a stale-read assertion mismatch. Confirmed in real CI (not just local), wiping out the rest of this describe block since mocha skips remaining tests after a beforeEach hook fails on its first attempt. Exact trigger not yet pinned down (testnode logs aren't captured by CI); fabric-x-sdk has unreleased fixes upstream (stricter MVCC-conflict alignment, submission finality tracking, orderer-rejection logging) that may address this once pulled in.",
+    "flaky": true
+  },
+  {
     "id": "Governor using $ERC20VotesLegacyMock ERC-6372 behavior in blockNumber mode should have a correct clock value",
     "cause": "fixed-block-number",
     "note": "block.number is hardcoded at 0 (see COMPATIBILITY.md); ERC-6372 clock() in blockNumber mode reads it directly."
@@ -1975,6 +1981,12 @@
   {
     "id": "Governor using $ERC20VotesLegacyMock vote with signature votes with an EOA signature on two proposals",
     "cause": "execution reverted"
+  },
+  {
+    "id": "Governor using $ERC20VotesTimestampMock \"before each\" hook for \"deployment check\"",
+    "cause": "concurrent-tx-race",
+    "note": "Races: GovernorHelper.delegate() submits self-delegate + transfer concurrently (Promise.all, no confirmation wait) against a freshly-funded account, the same root cause as the other concurrent-tx-race entries -- but here it manifested as the tx getting dropped before it committed (no receipt at all) rather than a stale-read assertion mismatch. Confirmed in real CI (not just local), wiping out the rest of this describe block since mocha skips remaining tests after a beforeEach hook fails on its first attempt. Exact trigger not yet pinned down (testnode logs aren't captured by CI); fabric-x-sdk has unreleased fixes upstream (stricter MVCC-conflict alignment, submission finality tracking, orderer-rejection logging) that may address this once pulled in.",
+    "flaky": true
   },
   {
     "id": "Governor using $ERC20VotesTimestampMock ERC-6372 behavior in timestamp mode should have a correct clock value",

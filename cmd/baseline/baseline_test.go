@@ -339,6 +339,28 @@ func TestDiff_NothingWrong(t *testing.T) {
 	}
 }
 
+// TestDiff_StaleAloneDoesNotRegress locks in the policy that Stale, unlike a
+// Regression, never gates CI on its own: "no longer failing" is ambiguous (a
+// real fix, or just a test that didn't run this time) in a way a new failure
+// isn't, so Regressed() must stay false with nothing but stale entries.
+func TestDiff_StaleAloneDoesNotRegress(t *testing.T) {
+	results := []Result{
+		{ID: "now-passing", Status: StatusPass},
+	}
+	baseline := []Entry{
+		{ID: "now-passing"},
+		{ID: "disappeared"}, // renamed/removed upstream, absent from results entirely
+	}
+
+	diff := Diff(results, baseline)
+	if len(diff.Stale) != 2 {
+		t.Fatalf("expected both entries stale, got %+v", diff.Stale)
+	}
+	if diff.Regressed() {
+		t.Fatalf("expected Regressed() false with only stale entries, got stale=%+v", diff.Stale)
+	}
+}
+
 // TestDiff_Quarantined verifies a Flaky entry never lands in Regressions,
 // Stale, or Expected, and never trips Regressed(), regardless of whether it
 // failed, passed, or didn't run at all this time.

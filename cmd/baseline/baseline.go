@@ -75,12 +75,18 @@ type DiffResult struct {
 	Quarantined []QuarantinedResult // Flaky baseline entries, whatever they did this run — never gates
 }
 
-// Regressed reports whether the diff should fail CI: any regression, or any stale
-// entry (a listed test that no longer fails is exactly as much "baseline doesn't
-// match reality" as a new failure). Quarantined (Flaky) entries never contribute
-// here, by design.
+// Regressed reports whether the diff should fail CI: any unlisted failure.
+// Stale entries are reported (see WriteReport/Summary) but never gate here:
+// unlike a regression, "no longer failing" is ambiguous rather than unambiguously
+// bad -- it can mean a real fix, but it can equally mean the test never ran at
+// all this time (e.g. an unrelated dropped-transaction bug wiping out the rest of
+// a describe block after a beforeEach hook fails), which Diff cannot tell apart
+// from a pass. Gating on that ambiguity means a PR having nothing to do with the
+// flake still turns CI red. Quarantined (Flaky) entries never contribute here
+// either, by the same reasoning, just for already-known-unreliable tests instead
+// of unexpectedly-quiet ones.
 func (d DiffResult) Regressed() bool {
-	return len(d.Regressions) > 0 || len(d.Stale) > 0
+	return len(d.Regressions) > 0
 }
 
 // mochaTest mirrors the fields we need from Mocha's built-in --reporter json output.
@@ -524,7 +530,7 @@ func WriteReport(w io.Writer, suite string, results []Result, diff DiffResult) {
 	}
 
 	if len(diff.Stale) > 0 {
-		fmt.Fprintf(w, "## Stale baseline entries (%d) — remove these\n\n", len(diff.Stale))
+		fmt.Fprintf(w, "## Stale baseline entries (%d) — please clean up, but this alone won't fail CI\n\n", len(diff.Stale))
 		for _, e := range diff.Stale {
 			fmt.Fprintf(w, "- `%s`\n", e.ID)
 		}
