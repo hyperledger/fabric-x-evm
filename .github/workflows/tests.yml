@@ -137,10 +137,12 @@ jobs:
       # invocation — ~64s of the run. The submodule pin fixes the sources, the
       # compiler version and its settings, so its SHA is the whole key.
       #
-      # cache/ has to travel with artifacts/: it holds solidity-files-cache.json,
-      # which records a contentHash and solcConfig per file. That is what makes a
-      # stale restore self-correcting — Hardhat recompiles whatever no longer
-      # matches rather than trusting the artifacts blindly.
+      # cache/ holds solidity-files-cache.json (a contentHash per file) — what
+      # makes a stale restore self-correcting, since Hardhat recompiles whatever
+      # no longer matches. contracts-exposed/ (hardhat-exposed's generated
+      # $-prefixed contracts, gitignored) has to travel with it for the same
+      # reason: when missing, Hardhat trusts cache/'s hashes for files it never
+      # checked still exist and skips compiling them.
       #
       # build-info/ is excluded: 309MB of the 329MB, and neither compilation nor
       # the test run needs it.
@@ -155,11 +157,12 @@ jobs:
             testdata/openzeppelin-contracts/artifacts
             !testdata/openzeppelin-contracts/artifacts/build-info
             testdata/openzeppelin-contracts/cache
+            testdata/openzeppelin-contracts/contracts-exposed
           key: ${{ runner.os }}-oz-artifacts-${{ steps.oz-rev.outputs.sha }}
           # On a submodule bump the exact key misses, but restoring the previous
           # revision's artifacts still helps: Hardhat recompiles only the files
-          # whose contentHash changed. Safe for the same reason — the cache
-          # validates itself rather than being trusted.
+          # whose contentHash changed. Safe as long as everything cache/
+          # describes actually arrives with it (see above).
           restore-keys: |
             ${{ runner.os }}-oz-artifacts-
 

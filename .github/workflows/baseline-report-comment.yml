@@ -86,7 +86,7 @@ jobs:
               headline = `### ❌ OZ Hardhat Compatibility — ${bits.join(', ')}`;
             } else if (staleCount > 0) {
               headline = `### 🎉 OZ Hardhat Compatibility — ${staleCount} test${staleCount === 1 ? '' : 's'} fixed!`;
-              footer = "<sub>Lock in the win — run `go run ./cmd/baseline update --suite oz-hardhat` and commit the updated baseline to remove these.</sub>\n";
+              footer = "\nLock in the win — run `go run ./cmd/baseline update --suite oz-hardhat` and commit the updated baseline to remove these.\n";
             } else {
               headline = `### ✅ OZ Hardhat Compatibility — ${summary.passRate.toFixed(1)}% passing (${summary.pass}/${summary.total})`;
             }
@@ -136,4 +136,3 @@ jobs:
             } else {
               await github.rest.issues.createComment({ owner, repo, issue_number: prNumber, body: out });
             }
-
