@@ -389,14 +389,19 @@ func callMsgToMessage(msg ethereum.CallMsg, baseFee *big.Int, skipNonceCheck, sk
 }
 
 // Call executes a read-only call (eth_call semantics).
-// An empty revert is treated as a non-error: many Ethereum tools probe contracts this way.
 // usedGas is the gas consumed by the EVM (for eth_estimateGas).
+//
+// An empty revert is returned as-is, not specially masked here: gas estimation
+// re-simulates a call at a candidate gas limit to verify it (see
+// gateway/core/endorse.go's EstimateGas), and a delegatecall (e.g. through an
+// EIP-1167 minimal proxy) that runs out of the gas forwarded to it also bubbles
+// up as an empty revert -- indistinguishable, at this layer, from a genuine
+// zero-data revert. Masking it here would make that verification trust a false
+// "succeeded" for an out-of-gas candidate. Callers that want eth_call's classic
+// "empty revert probing a contract is not an error" behavior apply it
+// themselves (see EndorsementClient.call in gateway/core/endorse.go).
 func (h *Executor) Call(msg ethereum.CallMsg) (ret []byte, usedGas uint64, err error) {
-	ret, usedGas, err = h.execute(callMsgToMessage(msg, h.BlockCtx.BaseFee, true, true))
-	if errors.Is(err, vm.ErrExecutionReverted) && len(ret) == 0 {
-		return nil, usedGas, nil // empty revert on a call is not an error
-	}
-	return ret, usedGas, err
+	return h.execute(callMsgToMessage(msg, h.BlockCtx.BaseFee, true, true))
 }
 
 // PrepareMessage is the transaction gate: it recovers the sender (validating the

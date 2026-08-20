@@ -138,14 +138,59 @@ func (e *EndorsementClient) CallContract(ctx context.Context, args ethereum.Call
 	return payload, err
 }
 
-// EstimateGas simulates the call and returns EVM usedGas.
-// Reverts and other call failures surface the same errors as CallContract.
+// estimateGasCeiling bounds the search. The endorser never charges for gas,
+// so there's no cost to simulating generously.
+const estimateGasCeiling = uint64(10_000_000)
+
+// EstimateGas returns a gas limit verified to work if resubmitted, not a raw
+// usedGas value: EVM rules like EIP-2200's SSTORE sentry and EIP-150's
+// 63/64 call-forwarding need gas in reserve during execution, not just
+// enough in total, so exact usedGas can sometimes still run out (view calls
+// and other simple cases usually don't hit this). Since gas isn't charged,
+// we generously double on each failure, until we hit the ceiling or succeed.
 func (e *EndorsementClient) EstimateGas(ctx context.Context, args ethereum.CallMsg, blockNumber *big.Int) (uint64, error) {
-	_, gas, err := e.call(ctx, args, blockNumber)
-	return gas, err
+	call := args
+
+	probeGas := func(gas uint64) (usedGas uint64, ok bool, err error) {
+		call.Gas = gas
+		_, usedGas, err = e.endorsers[0].Call(ctx, &call, blockNumber)
+		if err == nil {
+			return usedGas, true, nil
+		}
+		callErr, isCallErr := errors.AsType[*common.CallError](err)
+		if !isCallErr {
+			return 0, false, fmt.Errorf("process call: %w", err)
+		}
+		if callErr.Reverted() && len(callErr.Data) > 0 {
+			// A revert with a reason: a real business-logic outcome that no
+			// amount of extra gas fixes, so stop instead of escalating.
+			return 0, false, &domain.RevertError{Reason: callErr.Message, Data: callErr.Data}
+		}
+		// Out of gas, or an empty-data revert -- indistinguishable here from a
+		// delegatecall (e.g. through an EIP-1167 minimal proxy) that ran out of
+		// the gas forwarded to it. Either way, treat it as "not enough gas yet".
+		return usedGas, false, nil
+	}
+
+	usedGas, ok, err := probeGas(estimateGasCeiling)
+	if err != nil {
+		return 0, err
+	}
+	if !ok {
+		return 0, fmt.Errorf("gas required exceeds allowance (%d)", estimateGasCeiling)
+	}
+
+	for guess := usedGas; guess < estimateGasCeiling; guess *= 2 {
+		if _, ok, err := probeGas(guess); err != nil {
+			return 0, err
+		} else if ok {
+			return guess, nil
+		}
+	}
+	return estimateGasCeiling, nil // already verified above
 }
 
-// call is the shared endorser query path for eth_call and eth_estimateGas.
+// call is CallContract's query path.
 func (e *EndorsementClient) call(ctx context.Context, args ethereum.CallMsg, blockNumber *big.Int) ([]byte, uint64, error) {
 	payload, gas, err := e.endorsers[0].Call(ctx, &args, blockNumber)
 	if err == nil {
@@ -158,6 +203,13 @@ func (e *EndorsementClient) call(ctx context.Context, args ethereum.CallMsg, blo
 		return nil, gas, fmt.Errorf("process call: %w", err)
 	}
 	if callErr.Reverted() {
+		if len(callErr.Data) == 0 {
+			// Empty revert on a call is not an error: many Ethereum tools probe
+			// contracts this way. (EstimateGas does not apply this -- see its
+			// probeGas -- since it can't tell that apart from a delegatecall
+			// running out of the gas it was given.)
+			return nil, gas, nil
+		}
 		return nil, gas, &domain.RevertError{Reason: callErr.Message, Data: callErr.Data}
 	}
 	// For a call, both a failed execution and a rejected tx are surfaced as an

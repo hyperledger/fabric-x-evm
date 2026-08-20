@@ -29,13 +29,16 @@ type stubEndorser struct {
 	callPayload []byte
 	callGas     uint64
 	callErr     error
-	nonce       uint64
-	nonceErr    error
-	balance     *big.Int
-	storage     []byte
-	code        []byte
-	execResp    *peer.ProposalResponse
-	execErr     error
+	// callFunc, if set, computes Call's result from the requested gas limit
+	// instead of the fixed fields above (for EstimateGas tests).
+	callFunc func(gas uint64) ([]byte, uint64, error)
+	nonce    uint64
+	nonceErr error
+	balance  *big.Int
+	storage  []byte
+	code     []byte
+	execResp *peer.ProposalResponse
+	execErr  error
 	// lastTS is the timestamp from the most recent Execute call.
 	lastTS time.Time
 }
@@ -45,6 +48,9 @@ func (s *stubEndorser) Execute(ctx context.Context, inv endorsement.Invocation, 
 	return s.execResp, s.execErr
 }
 func (s *stubEndorser) Call(ctx context.Context, msg *ethereum.CallMsg, _ *big.Int) ([]byte, uint64, error) {
+	if s.callFunc != nil {
+		return s.callFunc(msg.Gas)
+	}
 	return s.callPayload, s.callGas, s.callErr
 }
 func (s *stubEndorser) BalanceAt(ctx context.Context, _ ethcommon.Address, _ *big.Int) (*big.Int, error) {
@@ -160,15 +166,134 @@ func TestCallContract_Status200ReturnsPayload(t *testing.T) {
 	}
 }
 
-func TestEstimateGas_ReturnsUsedGas(t *testing.T) {
+// An empty-data revert on eth_call is not an error: many Ethereum tools probe
+// contracts this way (e.g. checking whether a function exists).
+func TestCallContract_EmptyRevertIsNotAnError(t *testing.T) {
+	c := newClient(&stubEndorser{
+		callErr: &common.CallError{Status: common.StatusEVMRevert, Message: "execution reverted"},
+	})
+
+	got, err := c.CallContract(context.Background(), ethereum.CallMsg{}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != nil {
+		t.Errorf("payload = %x, want nil", got)
+	}
+}
+
+// When the raw usedGas already verifies (e.g. a view call with no SSTORE),
+// that's what comes back untouched -- no unnecessary padding.
+func TestEstimateGas_ReturnsRawUsedGasWhenThatVerifies(t *testing.T) {
 	c := newClient(&stubEndorser{callPayload: []byte{0x01}, callGas: 42123})
 
 	got, err := c.EstimateGas(context.Background(), ethereum.CallMsg{}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got != 42123 {
-		t.Errorf("gas = %d, want 42123", got)
+	if want := uint64(42123); got != want {
+		t.Errorf("gas = %d, want %d", got, want)
+	}
+}
+
+// A real submission needs more than the estimate (reentrancy-sentry). The stub
+// only succeeds once actually given at least threshold gas, regardless of
+// what usedGas it reports, so a correct estimate must be verified to
+// actually work at >= threshold, not just usedGas*2 if that's still short.
+func TestEstimateGas_EscalatesPastFailingGuess(t *testing.T) {
+	const (
+		reportedUsedGas = uint64(10_000) // 2x = 20,000, still short
+		threshold       = uint64(25_000) // real minimum working gas limit
+	)
+	c := newClient(&stubEndorser{
+		callFunc: func(gas uint64) ([]byte, uint64, error) {
+			if gas < threshold {
+				return nil, reportedUsedGas, &common.CallError{
+					Status:  common.StatusExecFailure,
+					Message: "out of gas: not enough gas for reentrancy sentry",
+				}
+			}
+			return []byte{0x01}, reportedUsedGas, nil
+		},
+	})
+
+	got, err := c.EstimateGas(context.Background(), ethereum.CallMsg{}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got < threshold {
+		t.Fatalf("gas = %d, want >= %d (the verified working minimum)", got, threshold)
+	}
+}
+
+// If nothing below the ceiling verifies, EstimateGas falls back to the
+// ceiling -- which the initial probe already proved works.
+func TestEstimateGas_FallsBackToCeilingWhenNothingSmallerVerifies(t *testing.T) {
+	c := newClient(&stubEndorser{
+		callFunc: func(gas uint64) ([]byte, uint64, error) {
+			if gas < estimateGasCeiling {
+				return nil, 100, &common.CallError{Status: common.StatusExecFailure, Message: "out of gas"}
+			}
+			return []byte{0x01}, 100, nil
+		},
+	})
+
+	got, err := c.EstimateGas(context.Background(), ethereum.CallMsg{}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != estimateGasCeiling {
+		t.Errorf("gas = %d, want %d (the ceiling)", got, estimateGasCeiling)
+	}
+}
+
+// Reproduces the actual bug this fix exists for: a call through an EIP-1167
+// minimal proxy (delegatecall) that runs out of the gas forwarded to it
+// bubbles up as an empty-data revert, indistinguishable at this layer from a
+// genuine zero-data revert. Escalating (not hard-stopping) is what finds a
+// gas limit that actually works.
+func TestEstimateGas_EmptyRevertKeepsEscalating(t *testing.T) {
+	const (
+		reportedUsedGas = uint64(10_000)
+		threshold       = uint64(25_000) // real minimum working gas limit
+	)
+	c := newClient(&stubEndorser{
+		callFunc: func(gas uint64) ([]byte, uint64, error) {
+			if gas < threshold {
+				// Empty Data: the delegatecall ran out of gas, no revert reason.
+				return nil, reportedUsedGas, &common.CallError{Status: common.StatusEVMRevert, Message: "execution reverted"}
+			}
+			return []byte{0x01}, reportedUsedGas, nil
+		},
+	})
+
+	got, err := c.EstimateGas(context.Background(), ethereum.CallMsg{}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got < threshold {
+		t.Fatalf("gas = %d, want >= %d (the verified working minimum)", got, threshold)
+	}
+}
+
+// If even the ceiling probe hits an empty revert, EstimateGas must not
+// silently treat that as success -- it should report the same allowance
+// error as any other unrecoverable failure at the ceiling.
+func TestEstimateGas_EmptyRevertAtCeilingIsAllowanceError(t *testing.T) {
+	c := newClient(&stubEndorser{
+		callErr: &common.CallError{Status: common.StatusEVMRevert, Message: "execution reverted"},
+	})
+
+	_, err := c.EstimateGas(context.Background(), ethereum.CallMsg{}, nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var rev *domain.RevertError
+	if errors.As(err, &rev) {
+		t.Errorf("an empty revert must not be treated as a hard *RevertError, got %v", rev)
+	}
+	if !strings.Contains(err.Error(), "gas required exceeds allowance") {
+		t.Errorf("error = %q, want it to mention the allowance ceiling", err.Error())
 	}
 }
 
@@ -182,6 +307,26 @@ func TestEstimateGas_RevertPropagates(t *testing.T) {
 	var rev *domain.RevertError
 	if !errors.As(err, &rev) {
 		t.Fatalf("expected *RevertError, got %T (%v)", err, err)
+	}
+}
+
+// A non-revert failure (out of gas, ...) maps to an allowance error, not a
+// *domain.RevertError, since raising the ceiling further could still help.
+func TestEstimateGas_ExecFailurePropagatesAsAllowanceError(t *testing.T) {
+	c := newClient(&stubEndorser{
+		callErr: &common.CallError{Status: common.StatusExecFailure, Message: "out of gas"},
+	})
+
+	_, err := c.EstimateGas(context.Background(), ethereum.CallMsg{}, nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var rev *domain.RevertError
+	if errors.As(err, &rev) {
+		t.Errorf("a non-revert failure at the ceiling must not be *RevertError, got %v", rev)
+	}
+	if !strings.Contains(err.Error(), "gas required exceeds allowance") {
+		t.Errorf("error = %q, want it to mention the allowance ceiling", err.Error())
 	}
 }
 

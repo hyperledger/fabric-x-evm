@@ -532,19 +532,22 @@ func WriteReport(w io.Writer, suite string, results []Result, diff DiffResult) {
 	}
 
 	if len(diff.Quarantined) > 0 {
-		fmt.Fprintf(w, "## Quarantined (flaky) (%d) — for visibility only, never gates\n\n", len(diff.Quarantined))
+		var passed, failed, notRun []QuarantinedResult
 		for _, q := range diff.Quarantined {
-			status := "did not run"
-			if q.Result.Status != "" {
-				status = string(q.Result.Status)
+			switch q.Result.Status {
+			case StatusPass:
+				passed = append(passed, q)
+			case StatusFail:
+				failed = append(failed, q)
+			default:
+				notRun = append(notRun, q)
 			}
-			note := q.Entry.Note
-			if note == "" {
-				note = "(no note)"
-			}
-			fmt.Fprintf(w, "- `%s`: %s — %s\n", q.Entry.ID, status, note)
 		}
-		fmt.Fprintln(w)
+		fmt.Fprintf(w, "## Quarantined (flaky) (%d) — for visibility only, never gates\n\n", len(diff.Quarantined))
+		fmt.Fprintf(w, "%d passed this run, %d failed, %d did not run\n\n", len(passed), len(failed), len(notRun))
+		writeQuarantinedGroup(w, "Passed this run", passed)
+		writeQuarantinedGroup(w, "Failed", failed)
+		writeQuarantinedGroup(w, "Did not run", notRun)
 	}
 
 	if len(diff.Expected) > 0 {
@@ -554,6 +557,39 @@ func WriteReport(w io.Writer, suite string, results []Result, diff DiffResult) {
 		}
 		fmt.Fprintln(w)
 	}
+}
+
+// writeQuarantinedGroup renders one outcome bucket (passed/failed/did-not-run)
+// of the Quarantined section: cause and name only, never the full Note — with
+// dozens of flaky entries sharing a near-identical multi-sentence Note, printing
+// it per line drowns out the one thing this section exists to answer, which
+// entries did what this run. The Note stays in the baseline JSON for whoever
+// wants the full story. Cause leads each line, and entries are sorted by cause,
+// so everything blocked on the same fix sits together — scan down the left edge
+// instead of hunting for a repeated tag.
+func writeQuarantinedGroup(w io.Writer, label string, group []QuarantinedResult) {
+	if len(group) == 0 {
+		return
+	}
+	sorted := make([]QuarantinedResult, len(group))
+	copy(sorted, group)
+	sort.Slice(sorted, func(i, j int) bool {
+		ci, cj := sorted[i].Entry.Cause, sorted[j].Entry.Cause
+		if ci != cj {
+			return ci < cj
+		}
+		return sorted[i].Entry.ID < sorted[j].Entry.ID
+	})
+
+	fmt.Fprintf(w, "%s (%d):\n", label, len(sorted))
+	for _, q := range sorted {
+		cause := q.Entry.Cause
+		if cause == "" {
+			cause = "untagged"
+		}
+		fmt.Fprintf(w, "- (%s) `%s`\n", cause, q.Entry.ID)
+	}
+	fmt.Fprintln(w)
 }
 
 type expectedGroup struct {
@@ -628,6 +664,7 @@ type CauseCount struct {
 type Quarantined struct {
 	ID     string `json:"id"`
 	Status Status `json:"status"`
+	Cause  string `json:"cause,omitempty"`
 	Note   string `json:"note,omitempty"`
 }
 
@@ -670,7 +707,7 @@ func BuildSummary(suite string, results []Result, diff DiffResult) Summary {
 
 	quarantined := []Quarantined{}
 	for _, q := range diff.Quarantined {
-		quarantined = append(quarantined, Quarantined{ID: q.Entry.ID, Status: q.Result.Status, Note: q.Entry.Note})
+		quarantined = append(quarantined, Quarantined{ID: q.Entry.ID, Status: q.Result.Status, Cause: q.Entry.Cause, Note: q.Entry.Note})
 	}
 
 	causes := []CauseCount{}
