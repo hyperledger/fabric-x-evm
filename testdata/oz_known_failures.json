@@ -1736,17 +1736,6 @@
     "cause": "execution reverted"
   },
   {
-    "id": "Governor using $ERC20VotesLegacyMock \"before each\" hook for \"deployment check\"",
-    "cause": "concurrent-tx-race",
-    "note": "Races: GovernorHelper.delegate() fires self-delegate + transfer concurrently (Promise.all, no confirmation wait); same root cause as the other concurrent-tx-race entries, but here the tx is dropped before it commits (no receipt) rather than a stale read. Exact trigger not confirmed.",
-    "flaky": true
-  },
-  {
-    "id": "Governor using $ERC20VotesLegacyMock ERC-6372 behavior in blockNumber mode should have a correct clock value",
-    "cause": "fixed-block-number",
-    "note": "block.number is hardcoded at 0 (COMPATIBILITY.md); ERC-6372 clock() in blockNumber mode reads it directly."
-  },
-  {
     "id": "Governor using $ERC20VotesLegacyMock cancel internal after deadline",
     "cause": "fixed-block-number",
     "note": "block.number is hardcoded at 0 (COMPATIBILITY.md), so Governor's voteStart/voteEnd collapse to just the delay/period value. mineUpTo(that constant) only works while the real, ever-growing chain height is still below it, so pass/fail depends on how many txs ran earlier in the suite, not this test. Confirmed via isolated reproduction.",
@@ -1793,55 +1782,6 @@
     "cause": "fixed-block-number",
     "note": "block.number is hardcoded at 0 (COMPATIBILITY.md), so Governor's voteStart/voteEnd collapse to just the delay/period value. mineUpTo(that constant) only works while the real, ever-growing chain height is still below it, so pass/fail depends on how many txs ran earlier in the suite, not this test. Confirmed via isolated reproduction.",
     "flaky": true
-  },
-  {
-    "id": "Governor using $ERC20VotesLegacyMock deployment check",
-    "cause": "execution reverted"
-  },
-  {
-    "id": "Governor using $ERC20VotesLegacyMock frontrun protection using description suffix with protection via proposer suffix proposer can propose",
-    "cause": "fixed-block-number",
-    "note": "block.number is hardcoded at 0 (COMPATIBILITY.md); ProposalCreated's voteStart/voteEnd come out as just votingDelay instead of real accumulated height + votingDelay."
-  },
-  {
-    "id": "Governor using $ERC20VotesLegacyMock frontrun protection using description suffix with protection via proposer suffix someone else can propose",
-    "cause": "fixed-block-number",
-    "note": "block.number is hardcoded at 0 (COMPATIBILITY.md); ProposalCreated's voteStart/voteEnd come out as just votingDelay instead of real accumulated height + votingDelay."
-  },
-  {
-    "id": "Governor using $ERC20VotesLegacyMock frontrun protection using description suffix without protection with different suffix proposer can propose",
-    "cause": "fixed-block-number",
-    "note": "block.number is hardcoded at 0 (COMPATIBILITY.md); ProposalCreated's voteStart/voteEnd come out as just votingDelay instead of real accumulated height + votingDelay."
-  },
-  {
-    "id": "Governor using $ERC20VotesLegacyMock frontrun protection using description suffix without protection with different suffix someone else can propose",
-    "cause": "fixed-block-number",
-    "note": "block.number is hardcoded at 0 (COMPATIBILITY.md); ProposalCreated's voteStart/voteEnd come out as just votingDelay instead of real accumulated height + votingDelay."
-  },
-  {
-    "id": "Governor using $ERC20VotesLegacyMock frontrun protection using description suffix without protection with proposer suffix but bad address part proposer can propose",
-    "cause": "fixed-block-number",
-    "note": "block.number is hardcoded at 0 (COMPATIBILITY.md); ProposalCreated's voteStart/voteEnd come out as just votingDelay instead of real accumulated height + votingDelay."
-  },
-  {
-    "id": "Governor using $ERC20VotesLegacyMock frontrun protection using description suffix without protection with proposer suffix but bad address part someone else can propose",
-    "cause": "fixed-block-number",
-    "note": "block.number is hardcoded at 0 (COMPATIBILITY.md); ProposalCreated's voteStart/voteEnd come out as just votingDelay instead of real accumulated height + votingDelay."
-  },
-  {
-    "id": "Governor using $ERC20VotesLegacyMock frontrun protection using description suffix without protection without suffix proposer can propose",
-    "cause": "fixed-block-number",
-    "note": "block.number is hardcoded at 0 (COMPATIBILITY.md); ProposalCreated's voteStart/voteEnd come out as just votingDelay instead of real accumulated height + votingDelay."
-  },
-  {
-    "id": "Governor using $ERC20VotesLegacyMock frontrun protection using description suffix without protection without suffix someone else can propose",
-    "cause": "fixed-block-number",
-    "note": "block.number is hardcoded at 0 (COMPATIBILITY.md); ProposalCreated's voteStart/voteEnd come out as just votingDelay instead of real accumulated height + votingDelay."
-  },
-  {
-    "id": "Governor using $ERC20VotesLegacyMock nominal workflow",
-    "cause": "fixed-block-number",
-    "note": "block.number is hardcoded at 0 (COMPATIBILITY.md); ProposalCreated's voteStart/voteEnd come out as just votingDelay instead of real accumulated height + votingDelay."
   },
   {
     "id": "Governor using $ERC20VotesLegacyMock onlyGovernance updates can setProposalThreshold to 0 through governance",
@@ -1910,11 +1850,6 @@
     "flaky": true
   },
   {
-    "id": "Governor using $ERC20VotesLegacyMock should revert on propose if proposer has below threshold votes",
-    "cause": "fixed-timestamp",
-    "note": "block.timestamp is hardcoded (COMPATIBILITY.md); $ERC20VotesTimestampMock checkpoints never advance, so proposer votes undercount as 0."
-  },
-  {
     "id": "Governor using $ERC20VotesLegacyMock should revert on queue always",
     "cause": "fixed-block-number",
     "note": "block.number is hardcoded at 0 (COMPATIBILITY.md), so Governor's voteStart/voteEnd collapse to just the delay/period value. mineUpTo(that constant) only works while the real, ever-growing chain height is still below it, so pass/fail depends on how many txs ran earlier in the suite, not this test. Confirmed via isolated reproduction.",
@@ -1972,20 +1907,6 @@
     "id": "Governor using $ERC20VotesLegacyMock state Succeeded",
     "cause": "fixed-block-number",
     "note": "block.number is hardcoded at 0 (COMPATIBILITY.md), so Governor's voteStart/voteEnd collapse to just the delay/period value. mineUpTo(that constant) only works while the real, ever-growing chain height is still below it, so pass/fail depends on how many txs ran earlier in the suite, not this test. Confirmed via isolated reproduction.",
-    "flaky": true
-  },
-  {
-    "id": "Governor using $ERC20VotesLegacyMock vote with signature votes with a valid EIP-1271 signature",
-    "cause": "execution reverted"
-  },
-  {
-    "id": "Governor using $ERC20VotesLegacyMock vote with signature votes with an EOA signature on two proposals",
-    "cause": "execution reverted"
-  },
-  {
-    "id": "Governor using $ERC20VotesTimestampMock \"before each\" hook for \"deployment check\"",
-    "cause": "concurrent-tx-race",
-    "note": "Races: GovernorHelper.delegate() fires self-delegate + transfer concurrently (Promise.all, no confirmation wait); same root cause as the other concurrent-tx-race entries, but here the tx is dropped before it commits (no receipt) rather than a stale read. Exact trigger not confirmed.",
     "flaky": true
   },
   {
@@ -2125,6 +2046,14 @@
     "cause": "execution reverted"
   },
   {
+    "id": "Governor-family before-each-hook dropped-tx race",
+    "cause": "concurrent-tx-race",
+    "note": "GovernorHelper.delegate() fires self-delegate + transfer concurrently (Promise.all, no confirmation wait) in the fixture; same root cause as the other concurrent-tx-race entries, but here the tx is dropped before it commits instead of a stale read. Matched by signature (idPattern + messagePattern) rather than enumerated per (file, token) combination, since which combination flakes is not deterministic -- see cmd/baseline/README.md. Exact trigger not confirmed.",
+    "idPattern": "^Governor\\S*.*\"before each\" hook for \"",
+    "messagePattern": "^transaction 0x[0-9a-fA-F]+ was dropped before it committed$",
+    "flaky": true
+  },
+  {
     "id": "GovernorCountingFractional using $ERC20Votes \"before each\" hook for \"deployment check\"",
     "cause": "concurrent-tx-race",
     "note": "Predicted, not yet observed failing: this fixture uses the same vulnerable pattern confirmed racy elsewhere (GovernorHelper.delegate()'s Promise.all of dependent writes, no confirmation wait -- the endorsement-time read snapshot goes stale before commit).",
@@ -2183,42 +2112,6 @@
     "cause": "concurrent-tx-race",
     "note": "Predicted, not yet observed failing: this fixture uses the same vulnerable pattern confirmed racy elsewhere (GovernorHelper.delegate()'s Promise.all of dependent writes, no confirmation wait -- the endorsement-time read snapshot goes stale before commit).",
     "flaky": true
-  },
-  {
-    "id": "GovernorCountingFractional using $ERC20VotesTimestampMock nominal is unaffected",
-    "cause": "execution reverted"
-  },
-  {
-    "id": "GovernorCountingFractional using $ERC20VotesTimestampMock voting with a fraction of the weight fractional then nominal",
-    "cause": "execution reverted"
-  },
-  {
-    "id": "GovernorCountingFractional using $ERC20VotesTimestampMock voting with a fraction of the weight revert if no weight remaining",
-    "cause": "execution reverted"
-  },
-  {
-    "id": "GovernorCountingFractional using $ERC20VotesTimestampMock voting with a fraction of the weight revert if params are not properly formatted #1",
-    "cause": "fixed-timestamp",
-    "note": "block.timestamp is hardcoded (COMPATIBILITY.md); $ERC20VotesTimestampMock proposal state never advances (voting never appears 'over') since time doesn't pass."
-  },
-  {
-    "id": "GovernorCountingFractional using $ERC20VotesTimestampMock voting with a fraction of the weight revert if params are not properly formatted #2",
-    "cause": "fixed-timestamp",
-    "note": "block.timestamp is hardcoded (COMPATIBILITY.md); $ERC20VotesTimestampMock proposal state never advances (voting never appears 'over') since time doesn't pass."
-  },
-  {
-    "id": "GovernorCountingFractional using $ERC20VotesTimestampMock voting with a fraction of the weight revert if params spend more than available",
-    "cause": "fixed-timestamp",
-    "note": "block.timestamp is hardcoded (COMPATIBILITY.md); $ERC20VotesTimestampMock proposal state never advances (voting never appears 'over') since time doesn't pass."
-  },
-  {
-    "id": "GovernorCountingFractional using $ERC20VotesTimestampMock voting with a fraction of the weight revert if vote type is invalid",
-    "cause": "fixed-timestamp",
-    "note": "block.timestamp is hardcoded (COMPATIBILITY.md); $ERC20VotesTimestampMock proposal state never advances (voting never appears 'over') since time doesn't pass."
-  },
-  {
-    "id": "GovernorCountingFractional using $ERC20VotesTimestampMock voting with a fraction of the weight twice",
-    "cause": "execution reverted"
   },
   {
     "id": "GovernorCountingOverridable using $ERC20VotesExtendedMock \"before each\" hook for \"deployment check\"",
@@ -2410,10 +2303,6 @@
     "cause": "concurrent-tx-race",
     "note": "Predicted, not yet observed failing: this fixture uses the same vulnerable pattern confirmed racy elsewhere (GovernorHelper.delegate()'s Promise.all of dependent writes, no confirmation wait -- the endorsement-time read snapshot goes stale before commit).",
     "flaky": true
-  },
-  {
-    "id": "GovernorSequentialProposalId using $ERC20VotesTimestampMock nominal workflow",
-    "cause": "execution reverted"
   },
   {
     "id": "GovernorStorage using $ERC20Votes \"before each\" hook for \"queue and execute by id\"",
@@ -2642,12 +2531,6 @@
     "flaky": true
   },
   {
-    "id": "GovernorTimelockAccess using $ERC20VotesTimestampMock \"before each\" hook for \"accepts ether transfers\"",
-    "cause": "concurrent-tx-race",
-    "note": "Races: GovernorHelper.delegate() fires self-delegate + transfer concurrently (Promise.all, no confirmation wait); same root cause as the other concurrent-tx-race entries, but here the tx is dropped before it commits (no receipt) rather than a stale read. Exact trigger not confirmed.",
-    "flaky": true
-  },
-  {
     "id": "GovernorTimelockAccess using $ERC20VotesTimestampMock base delay only delay 0, with queuing",
     "cause": "fixed-block-number",
     "note": "block.number is hardcoded at 0 (COMPATIBILITY.md), so Governor's voteStart/voteEnd collapse to just the delay/period value. mineUpTo(that constant) only works while the real, ever-growing chain height is still below it, so pass/fail depends on how many txs ran earlier in the suite, not this test. Confirmed via isolated reproduction.",
@@ -2861,12 +2744,6 @@
     "id": "GovernorTimelockCompound using $ERC20Votes should revert on queue if proposal contains duplicate calls",
     "cause": "fixed-block-number",
     "note": "block.number is hardcoded at 0 (COMPATIBILITY.md), so Governor's voteStart/voteEnd collapse to just the delay/period value. mineUpTo(that constant) only works while the real, ever-growing chain height is still below it, so pass/fail depends on how many txs ran earlier in the suite, not this test. Confirmed via isolated reproduction.",
-    "flaky": true
-  },
-  {
-    "id": "GovernorTimelockCompound using $ERC20VotesTimestampMock \"before each\" hook for \"doesn't accept ether transfers\"",
-    "cause": "concurrent-tx-race",
-    "note": "Races: GovernorHelper.delegate() fires self-delegate + transfer concurrently (Promise.all, no confirmation wait); same root cause as the other concurrent-tx-race entries, but here the tx is dropped before it commits (no receipt) rather than a stale read. Exact trigger not confirmed.",
     "flaky": true
   },
   {

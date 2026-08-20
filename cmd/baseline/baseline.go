@@ -44,11 +44,33 @@ type Result struct {
 // never required for an entry to be valid. Flaky marks a test whose pass/fail
 // outcome is not deterministic (e.g. a race condition, not a clean incompatibility);
 // see Diff and Quarantined for how that changes gating.
+//
+// IDPattern/MessagePattern turn this into a pattern entry instead of a literal
+// one: both are regexps (Go RE2 syntax), and both must match — an unlisted failure
+// matching only one still surfaces as a regression, so a genuinely different bug in
+// the same describe block isn't silently absorbed. Pattern entries exist for a
+// nondeterministic failure that can hit many (file, token, ...) combinations of the
+// same test helper: enumerating one literal ID per combination as it's individually
+// observed can never catch up with a random trigger (testdata/oz_known_failures.json
+// once carried ~25 such entries for one race and still missed combinations that then
+// surprised an unrelated PR as a "new" regression). ID stays a required human label
+// on a pattern entry, not a real test name — it's never looked up literally, only
+// shown in reports. Pattern entries are always Flaky by construction: LoadBaseline
+// rejects one without Flaky: true, since unconditionally matching a whole class of
+// failure without ever gating on it is exactly what Flaky already means.
 type Entry struct {
-	ID    string `json:"id"`
-	Cause string `json:"cause,omitempty"`
-	Note  string `json:"note,omitempty"`
-	Flaky bool   `json:"flaky,omitempty"`
+	ID             string `json:"id"`
+	Cause          string `json:"cause,omitempty"`
+	Note           string `json:"note,omitempty"`
+	Flaky          bool   `json:"flaky,omitempty"`
+	IDPattern      string `json:"idPattern,omitempty"`
+	MessagePattern string `json:"messagePattern,omitempty"`
+}
+
+// IsPattern reports whether e is a pattern entry (see Entry's doc comment)
+// rather than a literal one matched by exact ID.
+func (e Entry) IsPattern() bool {
+	return e.IDPattern != "" || e.MessagePattern != ""
 }
 
 // ExpectedFailure pairs a currently-failing result with the baseline entry that
@@ -268,6 +290,14 @@ func cleanGoTestOutput(raw string) string {
 
 // LoadBaseline reads a baseline file. A missing file is an empty baseline, not an
 // error, so `update` can create one from scratch (initial seeding).
+//
+// Every pattern entry (see Entry) is validated here rather than left for Diff to
+// discover at match time: IDPattern and MessagePattern must both be set (matching
+// on only one is exactly the too-loose case Entry's doc comment warns against),
+// both must compile as regexps, and Flaky must be true. A checked-in entry that
+// fails this looks broken loudly at load time — check/update refuse to run — instead
+// of silently never matching anything, which would look identical to "working" until
+// someone notices the regression it was meant to catch stopped being caught.
 func LoadBaseline(path string) ([]Entry, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -280,6 +310,23 @@ func LoadBaseline(path string) ([]Entry, error) {
 	var entries []Entry
 	if err := json.Unmarshal(data, &entries); err != nil {
 		return nil, fmt.Errorf("parse baseline %s: %w", path, err)
+	}
+	for _, e := range entries {
+		if !e.IsPattern() {
+			continue
+		}
+		if e.IDPattern == "" || e.MessagePattern == "" {
+			return nil, fmt.Errorf("baseline %s: entry %q: idPattern and messagePattern must both be set", path, e.ID)
+		}
+		if !e.Flaky {
+			return nil, fmt.Errorf("baseline %s: entry %q: pattern entries must be flaky", path, e.ID)
+		}
+		if _, err := regexp.Compile(e.IDPattern); err != nil {
+			return nil, fmt.Errorf("baseline %s: entry %q: invalid idPattern: %w", path, e.ID, err)
+		}
+		if _, err := regexp.Compile(e.MessagePattern); err != nil {
+			return nil, fmt.Errorf("baseline %s: entry %q: invalid messagePattern: %w", path, e.ID, err)
+		}
 	}
 	return entries, nil
 }
@@ -317,18 +364,70 @@ func SaveBaseline(path string, entries []Entry) error {
 	return nil
 }
 
+// compiledPattern is a pattern Entry (see Entry's doc comment) with its two
+// regexps pre-compiled once per Diff call instead of per candidate failure.
+type compiledPattern struct {
+	entry   Entry
+	id      *regexp.Regexp
+	message *regexp.Regexp
+}
+
+// compilePatterns compiles every pattern entry in baseline, skipping (never
+// matching) any that fails to compile instead of erroring Diff out entirely —
+// LoadBaseline is the real validation gate for checked-in data (see its doc
+// comment); this is just a defensive fallback for baseline slices built some
+// other way (tests construct []Entry literals directly, bypassing LoadBaseline).
+func compilePatterns(baseline []Entry) []compiledPattern {
+	var patterns []compiledPattern
+	for _, e := range baseline {
+		if !e.IsPattern() {
+			continue
+		}
+		id, err := regexp.Compile(e.IDPattern)
+		if err != nil {
+			continue
+		}
+		message, err := regexp.Compile(e.MessagePattern)
+		if err != nil {
+			continue
+		}
+		patterns = append(patterns, compiledPattern{entry: e, id: id, message: message})
+	}
+	return patterns
+}
+
+// matchPattern returns the first compiledPattern whose id and message both
+// match r, or false if none do.
+func matchPattern(patterns []compiledPattern, r Result) (Entry, bool) {
+	for _, p := range patterns {
+		if p.id.MatchString(r.ID) && p.message.MatchString(r.Message) {
+			return p.entry, true
+		}
+	}
+	return Entry{}, false
+}
+
 // Diff compares current results against a baseline: failing-and-listed is
 // expected (the normal case), failing-and-unlisted is a regression, and
 // listed-but-not-failing (including a listed ID that no longer appears in
 // results at all — renamed or removed upstream) is stale and should be
 // removed from the baseline. A Flaky entry is carved out of all three of
 // those into Quarantined instead, regardless of what it did this run — its
-// outcome isn't reliable enough to gate on, by definition.
+// outcome isn't reliable enough to gate on, by definition. An unlisted failure
+// still gets one more chance before becoming a Regression: if it matches a
+// pattern entry (see Entry's doc comment), it's quarantined under that entry
+// instead of needing its own literal one added first.
 func Diff(results []Result, baseline []Entry) DiffResult {
 	byID := make(map[string]Entry, len(baseline))
+	var literal []Entry
 	for _, e := range baseline {
+		if e.IsPattern() {
+			continue
+		}
 		byID[e.ID] = e
+		literal = append(literal, e)
 	}
+	patterns := compilePatterns(baseline)
 	seen := make(map[string]bool, len(results))
 
 	var out DiffResult
@@ -342,17 +441,24 @@ func Diff(results []Result, baseline []Entry) DiffResult {
 		case r.Status == StatusFail && listed:
 			out.Expected = append(out.Expected, ExpectedFailure{Result: r, Entry: entry})
 		case r.Status == StatusFail && !listed:
+			if pe, ok := matchPattern(patterns, r); ok {
+				out.Quarantined = append(out.Quarantined, QuarantinedResult{Result: r, Entry: pe})
+				continue
+			}
 			out.Regressions = append(out.Regressions, r)
 		case r.Status != StatusFail && listed:
 			out.Stale = append(out.Stale, entry)
 		}
 	}
 
-	// Baseline entries whose ID never appeared in this run at all (upstream
-	// renamed/removed the test) are safe to remove, same as a passing test —
-	// unless Flaky, in which case "didn't run" is just as unreliable a signal
-	// as any other outcome, so it goes to Quarantined instead.
-	for _, e := range baseline {
+	// Literal baseline entries whose ID never appeared in this run at all
+	// (upstream renamed/removed the test) are safe to remove, same as a passing
+	// test — unless Flaky, in which case "didn't run" is just as unreliable a
+	// signal as any other outcome, so it goes to Quarantined instead. Pattern
+	// entries are excluded: their ID is a human label, never a real result ID,
+	// so it would never appear "seen" and would otherwise show up here as a
+	// phantom Quarantined ("did not run") on every single invocation.
+	for _, e := range literal {
 		if seen[e.ID] {
 			continue
 		}
@@ -530,7 +636,7 @@ func WriteReport(w io.Writer, suite string, results []Result, diff DiffResult) {
 	}
 
 	if len(diff.Stale) > 0 {
-		fmt.Fprintf(w, "## Stale baseline entries (%d) — please clean up, but this alone won't fail CI\n\n", len(diff.Stale))
+		fmt.Fprintf(w, "## Stale baseline entries (%d) — please clean up\n\n", len(diff.Stale))
 		for _, e := range diff.Stale {
 			fmt.Fprintf(w, "- `%s`\n", e.ID)
 		}
@@ -549,7 +655,7 @@ func WriteReport(w io.Writer, suite string, results []Result, diff DiffResult) {
 				notRun = append(notRun, q)
 			}
 		}
-		fmt.Fprintf(w, "## Quarantined (flaky) (%d) — for visibility only, never gates\n\n", len(diff.Quarantined))
+		fmt.Fprintf(w, "## Quarantined (flaky) (%d) — for visibility only\n\n", len(diff.Quarantined))
 		fmt.Fprintf(w, "%d passed this run, %d failed, %d did not run\n\n", len(passed), len(failed), len(notRun))
 		writeQuarantinedGroup(w, "Passed this run", passed)
 		writeQuarantinedGroup(w, "Failed", failed)

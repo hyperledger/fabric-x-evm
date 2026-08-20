@@ -291,6 +291,78 @@ func TestSaveBaseline_WritesCharactersVerbatim(t *testing.T) {
 	}
 }
 
+// TestLoadBaseline_ValidPatternEntry confirms a well-formed pattern entry
+// (idPattern + messagePattern, both valid regexps, Flaky: true) loads cleanly.
+func TestLoadBaseline_ValidPatternEntry(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "known_failures.json")
+	entries := []Entry{{
+		ID:             "Governor-family before-each-hook dropped-tx race",
+		IDPattern:      `^Governor\S*.*"before each" hook for "`,
+		MessagePattern: `^transaction 0x[0-9a-fA-F]+ was dropped before it committed$`,
+		Cause:          "concurrent-tx-race",
+		Flaky:          true,
+	}}
+	if err := SaveBaseline(path, entries); err != nil {
+		t.Fatalf("SaveBaseline: %v", err)
+	}
+	if _, err := LoadBaseline(path); err != nil {
+		t.Fatalf("LoadBaseline: %v", err)
+	}
+}
+
+// TestLoadBaseline_RejectsMalformedPatternEntry covers the three ways a
+// pattern entry can be broken, each of which must fail loudly at load time
+// rather than silently never matching anything at Diff time — see
+// LoadBaseline's doc comment for why that matters.
+func TestLoadBaseline_RejectsMalformedPatternEntry(t *testing.T) {
+	cases := []struct {
+		name  string
+		entry Entry
+	}{
+		{
+			name: "idPattern without messagePattern",
+			entry: Entry{
+				ID: "x", IDPattern: `^Governor`, Flaky: true,
+			},
+		},
+		{
+			name: "messagePattern without idPattern",
+			entry: Entry{
+				ID: "x", MessagePattern: `dropped`, Flaky: true,
+			},
+		},
+		{
+			name: "pattern entry not marked flaky",
+			entry: Entry{
+				ID: "x", IDPattern: `^Governor`, MessagePattern: `dropped`,
+			},
+		},
+		{
+			name: "invalid idPattern regexp",
+			entry: Entry{
+				ID: "x", IDPattern: `(unclosed`, MessagePattern: `dropped`, Flaky: true,
+			},
+		},
+		{
+			name: "invalid messagePattern regexp",
+			entry: Entry{
+				ID: "x", IDPattern: `^Governor`, MessagePattern: `(unclosed`, Flaky: true,
+			},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "known_failures.json")
+			if err := SaveBaseline(path, []Entry{c.entry}); err != nil {
+				t.Fatalf("SaveBaseline: %v", err)
+			}
+			if _, err := LoadBaseline(path); err == nil {
+				t.Fatal("expected LoadBaseline to reject this entry, got nil error")
+			}
+		})
+	}
+}
+
 func TestDiff(t *testing.T) {
 	results := []Result{
 		{ID: "regression", Status: StatusFail, Message: "new break"},
@@ -409,6 +481,79 @@ func TestDiff_Quarantined(t *testing.T) {
 	// by any of the three flaky outcomes above.
 	if !diff.Regressed() {
 		t.Fatal("expected Regressed() true from the one real regression")
+	}
+}
+
+// TestDiff_PatternEntryAutoQuarantines locks in that an unlisted failure
+// matching a pattern entry (both idPattern and messagePattern) is quarantined
+// rather than treated as a regression — the whole point being that a new
+// (file, token) combination hitting the known Governor delegate()-race drop
+// doesn't need a baseline entry added for it first, unlike literal-ID matching.
+func TestDiff_PatternEntryAutoQuarantines(t *testing.T) {
+	results := []Result{
+		{
+			ID:      `GovernorTimelockAccess using $ERC20Votes "before each" hook for "accepts ether transfers"`,
+			Status:  StatusFail,
+			Message: "transaction 0xb7e2b38564cbd1f45a371883542dd7b4428d2b4193e0e06561d6260e84411082 was dropped before it committed",
+		},
+		// Same describe-block shape, but a genuinely different failure message:
+		// must NOT be absorbed just because the ID matches the Governor/"before
+		// each" hook pattern — only the specific dropped-tx symptom should.
+		{
+			ID:      `GovernorTimelockAccess using $ERC20Votes "before each" hook for "post deployment check"`,
+			Status:  StatusFail,
+			Message: "expected 5n to equal 4n",
+		},
+	}
+	baseline := []Entry{
+		{
+			ID:             "Governor-family before-each-hook dropped-tx race",
+			IDPattern:      `^Governor\S*.*"before each" hook for "`,
+			MessagePattern: `^transaction 0x[0-9a-fA-F]+ was dropped before it committed$`,
+			Cause:          "concurrent-tx-race",
+			Flaky:          true,
+		},
+	}
+
+	diff := Diff(results, baseline)
+
+	if len(diff.Regressions) != 1 || diff.Regressions[0].Message != "expected 5n to equal 4n" {
+		t.Fatalf("regressions = %+v", diff.Regressions)
+	}
+	if len(diff.Quarantined) != 1 {
+		t.Fatalf("quarantined = %+v", diff.Quarantined)
+	}
+	q := diff.Quarantined[0]
+	if q.Entry.Cause != "concurrent-tx-race" || !q.Entry.Flaky {
+		t.Errorf("matched entry = %+v", q.Entry)
+	}
+	if !diff.Regressed() {
+		t.Fatal("expected Regressed() true from the one real (non-matching) regression")
+	}
+}
+
+// TestDiff_PatternEntryNeverShowsUpAsStaleOrPhantomQuarantine confirms a
+// pattern entry that matches nothing this run is invisible in Stale (it's not
+// Flaky-gated the normal way) and does not appear in Quarantined either (its
+// label ID never "runs", so treating that as a Flaky did-not-run would be a
+// false phantom on every single invocation).
+func TestDiff_PatternEntryNeverShowsUpAsStaleOrPhantomQuarantine(t *testing.T) {
+	results := []Result{
+		{ID: "unrelated-test", Status: StatusPass},
+	}
+	baseline := []Entry{
+		{
+			ID:             "Governor-family before-each-hook dropped-tx race",
+			IDPattern:      `^Governor\S*.*"before each" hook for "`,
+			MessagePattern: `^transaction 0x[0-9a-fA-F]+ was dropped before it committed$`,
+			Cause:          "concurrent-tx-race",
+			Flaky:          true,
+		},
+	}
+
+	diff := Diff(results, baseline)
+	if len(diff.Stale) != 0 || len(diff.Quarantined) != 0 {
+		t.Fatalf("expected no stale/quarantined entries, got stale=%+v quarantined=%+v", diff.Stale, diff.Quarantined)
 	}
 }
 
