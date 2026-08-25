@@ -12,6 +12,7 @@ package testimpl
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -23,17 +24,33 @@ import (
 
 var hardhatLogger = flogging.MustGetLogger("gateway.testimpl.hardhat")
 
+// BalanceSetter submits a setBalance directive and blocks until it commits;
+// satisfied by *core.Gateway.
+type BalanceSetter interface {
+	SetBalance(ctx context.Context, addr common.Address, amount *big.Int) error
+}
+
 // HardhatAPI provides Hardhat-specific RPC methods for testing.
-// These are stub implementations that allow Hardhat tests to run but don't
-// actually implement the full functionality.
+// Most methods are stubs that let Hardhat tests run; SetBalance is backed by a
+// real system directive via the gateway.
 //
 // SECURITY WARNING: These methods are for testing only and should NEVER
 // be enabled in production environments.
-type HardhatAPI struct{}
+type HardhatAPI struct {
+	submit BalanceSetter
+}
 
-// NewHardhatAPI creates a new Hardhat API instance.
-func NewHardhatAPI() *HardhatAPI {
-	return &HardhatAPI{}
+// NewHardhatAPI creates a new Hardhat API instance backed by submit for state-modifying methods.
+func NewHardhatAPI(submit BalanceSetter) *HardhatAPI {
+	return &HardhatAPI{submit: submit}
+}
+
+// SetBalance sets an account's wei balance (hardhat_setBalance), blocking until committed
+// and reflected in reads of the account's balance.
+func (api *HardhatAPI) SetBalance(ctx context.Context, addr common.Address, balance hexutil.Big) error {
+	target := (*big.Int)(&balance)
+	hardhatLogger.Debugf("HardhatAPI.SetBalance() called with address=%s, balance=%s", addr.Hex(), target.String())
+	return api.submit.SetBalance(ctx, addr, target)
 }
 
 // SetCode sets the code at a given address (hardhat_setCode).
