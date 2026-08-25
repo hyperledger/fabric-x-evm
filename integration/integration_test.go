@@ -223,9 +223,15 @@ func testTwoOfTwoEndorsementGRPC(t *testing.T) {
 	}
 
 	addr := deploySmartContract(t, gw, ethClient)
+	// The endorsers sync independently of the gateway, so a commit the gateway has
+	// already recorded is not necessarily visible to them yet. Wait before the call
+	// below, whose nonce is read from an endorser. See waitForReadEndorser.
+	waitForReadEndorser(t, gw, ethClient.Address(), 1)
 
 	greeting := "Hello from a 2-of-2 endorsed transaction"
 	callSmartContract(t, ethClient, addr, gw, "setGreeting", greeting)
+	// Likewise before the query, which an endorser answers from its own state.
+	waitForReadEndorser(t, gw, ethClient.Address(), 2)
 
 	querySmartContractExpect(t, ethClient, addr, &TestHarness{Gateways: []*core.Gateway{gw}}, greeting, "greet")
 }

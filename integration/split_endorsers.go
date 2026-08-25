@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	ethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/hyperledger/fabric-x-committer/utils/connection"
 	"github.com/hyperledger/fabric-x-committer/utils/serve"
@@ -26,6 +27,7 @@ import (
 	estorage "github.com/hyperledger/fabric-x-evm/endorser/storage"
 	"github.com/hyperledger/fabric-x-evm/gateway/app"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
+	"github.com/hyperledger/fabric-x-evm/gateway/core"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	"github.com/hyperledger/fabric-x-sdk/identity"
@@ -186,6 +188,59 @@ func buildSplitGatewayApp(t *testing.T, configFile, org1Addr, org2Addr string) (
 	waitForTCP(t, net.JoinHostPort("127.0.0.1", listenPort))
 
 	return application, common.BuildChainConfig(cfg.Network.ChainID)
+}
+
+// waitForReadEndorser blocks until the endorser that answers the gateway's reads
+// has applied the sender's transaction that leaves the account at wantNonce.
+//
+// Why this is needed, and why it is a test concern rather than a bug: in a split
+// deployment the gateway and every endorser sync from the committer
+// independently. The gateway runs its own synchronizer (hybridx, for fabric-x)
+// and each endorser runs a separate one of its own (startEndorserGRPCServer),
+// with nothing ordering the three against each other. waitForCommit observes
+// only the *gateway's* block store, but reads are answered by an endorser --
+// both EndorsementClient.NonceAt and EndorsementClient.call go to endorsers[0].
+// So when waitForCommit returns, that endorser may still be a block behind and a
+// read then sees pre-transaction state: a stale nonce, which gets the next
+// transaction rejected with "nonce too low", or stale contract storage.
+//
+// Before hybridx hands over, both sides are on the delivery pipeline and happen
+// to stay roughly level. After the handover the gap becomes structural rather
+// than incidental: the gateway is fed by the committer's notification push, while
+// an endorser only ever runs a plain delivery synchronizer (see the nfabx
+// synchronizer in endorser/app.NewEndorser -- endorsers never switch to
+// notification), so the gateway is systematically ahead from then on.
+//
+// That is working as designed -- getting ahead of delivery is the whole purpose
+// of hybridx. The gateway is not a replica of the endorsers and promises no
+// read-your-writes across them, so any client of a split deployment that reads
+// straight after a commit has to tolerate the lag. Tests driving one must too.
+//
+// The single-process harness tests need none of this. They register
+// [endorser KVS..., chain, gateway] on one synchronizer, so endorser state is
+// always applied before the gateway marks a transaction complete -- see
+// app.NewGatewaySynchronizer.
+//
+// The account nonce is used as the marker because an endorser applies a block's
+// state in one step: once the nonce reflects the transaction, that same
+// transaction's storage writes are visible too.
+func waitForReadEndorser(t *testing.T, gw *core.Gateway, sender ethcommon.Address, wantNonce uint64) {
+	t.Helper()
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		got, err := gw.NonceAt(t.Context(), sender, nil)
+		if err != nil {
+			t.Fatalf("read nonce for %s: %v", sender, err)
+		}
+		if got >= wantNonce {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("endorser serving reads stuck at nonce %d for %s, want %d", got, sender, wantNonce)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // setDialPort points a client config at the ephemeral port a listener actually
