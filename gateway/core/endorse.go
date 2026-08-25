@@ -62,6 +62,36 @@ func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Tra
 		return sdk.Endorsement{}, err
 	}
 
+	return e.endorse(ctx, inv, "process EVM transaction", func(ctx context.Context, s api.Service, inv endorsement.Invocation, ts time.Time) (*peer.ProposalResponse, error) {
+		return s.Execute(ctx, inv, tx, ts)
+	})
+}
+
+// balanceSetter is implemented only by the test-only directive endorser.
+type balanceSetter interface {
+	SetBalance(ctx context.Context, inv endorsement.Invocation, addr ethcommon.Address, amount *big.Int) (*peer.ProposalResponse, error)
+}
+
+// SetBalance forwards a setBalance directive to every endorser.
+func (e EndorsementClient) SetBalance(ctx context.Context, addr ethcommon.Address, amount *big.Int) (sdk.Endorsement, error) {
+	inv, err := e.createInvocation([][]byte{{byte(common.ProposalTypeSetBalance)}, addr.Bytes(), amount.Bytes()})
+	if err != nil {
+		return sdk.Endorsement{}, err
+	}
+
+	return e.endorse(ctx, inv, "process setBalance directive", func(ctx context.Context, s api.Service, inv endorsement.Invocation, _ time.Time) (*peer.ProposalResponse, error) {
+		bs, ok := s.(balanceSetter)
+		if !ok {
+			return nil, fmt.Errorf("endorser %T does not support setBalance directives", s)
+		}
+		return bs.SetBalance(ctx, inv, addr, amount)
+	})
+}
+
+// endorse fans the invocation out to every endorser via call and assembles the
+// endorsement. label identifies the invocation kind in the error message.
+func (e EndorsementClient) endorse(ctx context.Context, inv endorsement.Invocation, label string,
+	call func(context.Context, api.Service, endorsement.Invocation, time.Time) (*peer.ProposalResponse, error)) (sdk.Endorsement, error) {
 	// Single timestamp for all endorsers so RWsets match.
 	reqTime := time.Now()
 
@@ -75,7 +105,7 @@ func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Tra
 
 	for i, end := range e.endorsers {
 		processEndorsement := func(index int, endorser api.Service) {
-			pResp, err := endorser.Execute(ctx, inv, tx, reqTime)
+			pResp, err := call(ctx, endorser, inv, reqTime)
 			if err != nil {
 				// A Go error is a transport/delivery failure (e.g. gRPC), not a tx outcome.
 				errs[index] = fmt.Errorf("call endorser: %w", err)
@@ -90,7 +120,7 @@ func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Tra
 			case common.StatusOK, common.StatusEVMRevert, common.StatusExecFailure:
 				res[index] = pResp
 			default:
-				errs[index] = fmt.Errorf("process EVM transaction: %s", pResp.Response.Message)
+				errs[index] = fmt.Errorf("%s: %s", label, pResp.Response.Message)
 				cancel()
 			}
 		}

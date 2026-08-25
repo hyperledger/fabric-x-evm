@@ -8,11 +8,13 @@ package core
 
 import (
 	"context"
+	crand "crypto/rand"
 	"fmt"
 	"log"
 	"math"
 	"math/big"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
@@ -24,6 +26,12 @@ import (
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 )
+
+// directiveCommitTimeout bounds how long SetBalance waits for the balance to land.
+const directiveCommitTimeout = 30 * time.Second
+
+// directivePollInterval is how often SetBalance polls the balance while waiting.
+const directivePollInterval = 50 * time.Millisecond
 
 type Signer interface {
 	Sign(msg []byte) ([]byte, error)
@@ -212,6 +220,61 @@ func (g *Gateway) SubmitFabricTx(ctx context.Context, hash common.Hash, end sdk.
 	case <-ctx.Done():
 		return fmt.Errorf("context canceled while sending endorsement: %w", ctx.Err())
 	}
+}
+
+// SetBalance submits a setBalance directive and blocks until the balance change is
+// observable. It deliberately bypasses ValidateTx/TxQueue (a directive is not a
+// user-signed EVM tx and would be rejected there), and since a directive leaves no
+// eth receipt, commit is observed by polling the target balance directly.
+func (g *Gateway) SetBalance(ctx context.Context, addr common.Address, amount *big.Int) error {
+	if got, err := g.BalanceAt(ctx, addr, nil); err == nil && got.Cmp(amount) == 0 {
+		return nil
+	}
+
+	end, err := g.endorsers.SetBalance(ctx, addr, amount)
+	if err != nil {
+		return fmt.Errorf("endorse setBalance: %w", err)
+	}
+
+	hash, err := newDirectiveTxHash()
+	if err != nil {
+		return fmt.Errorf("build directive tx hash: %w", err)
+	}
+
+	if err := g.SubmitFabricTx(ctx, hash, end); err != nil {
+		return err
+	}
+
+	waitCtx, cancel := context.WithTimeout(ctx, directiveCommitTimeout)
+	defer cancel()
+
+	ticker := time.NewTicker(directivePollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-waitCtx.Done():
+			return fmt.Errorf("setBalance commit wait: %w", waitCtx.Err())
+		case <-ticker.C:
+			got, err := g.BalanceAt(waitCtx, addr, nil)
+			if err != nil {
+				// Transient read error while committing; keep polling until timeout.
+				continue
+			}
+			if got.Cmp(amount) == 0 {
+				return nil
+			}
+		}
+	}
+}
+
+// newDirectiveTxHash returns a unique hash to track a directive through SubmitFabricTx.
+func newDirectiveTxHash() (common.Hash, error) {
+	var h common.Hash
+	if _, err := crand.Read(h[:]); err != nil {
+		return common.Hash{}, err
+	}
+	return h, nil
 }
 
 // ChainID returns the configured chainID for this deployment.
