@@ -109,6 +109,11 @@ func (d *AllTxBatchDispatcher) HandleBatch(ctx context.Context, batch notificati
 
 	for _, h := range d.handlers {
 		if err := h.Handle(ctx, b); err != nil {
+			// graceful shutdown
+			if ctx.Err() != nil {
+				return err
+			}
+
 			panic(fmt.Errorf("handler failed: %w", err))
 		}
 	}

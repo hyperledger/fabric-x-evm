@@ -32,6 +32,14 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 // between dispatches, so it is never interrupted mid-block.  The wait on
 // dispatched is what keeps the two paths from overlapping.
 //
+// Seeding: claimed and dispatched start at math.MinInt64, a sentinel that no real
+// block number can produce (real values are ≥ -1).  On its very first Handle call
+// deliveryShim atomically installs b.Number-1 into both, establishing the real
+// base that all subsequent CAS operations build on.  Notification batches that
+// arrive before that moment always lose their CAS (MinInt64 ≠ b.Number-1 for any
+// real b) and are silently dropped — which is correct, since notification is lossy
+// and must not win any block until delivery has proven it can receive from the peer.
+//
 // Failures are fatal by design: a block that cannot be applied leaves a hole in
 // the store that neither path will ever fill.
 //
@@ -42,6 +50,7 @@ package hybridx
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync/atomic"
 	"time"
 
@@ -64,7 +73,6 @@ const deliveryWaitPoll = time.Millisecond
 type deliverySyncer interface {
 	Start(ctx context.Context) error
 	Ready() error
-	BlockHeight(ctx context.Context) (uint64, error)
 }
 
 // HybridSynchronizer implements the two-phase startup strategy described in
@@ -77,7 +85,6 @@ type HybridSynchronizer struct {
 	delivery  deliverySyncer
 	notifPeer notification.AllTxPeer
 	notifReq  *notification.StreamAllRequest
-	seeder    claimSeeder
 
 	// claimed is the highest block claimed by either path; both take a block by
 	// compare-and-swapping it from B-1 to B.  dispatched is the highest block
@@ -121,7 +128,6 @@ func New(
 		IncludeReadWriteSets: true,
 		IncludeMetadata:      true,
 	}
-	h.seeder = &throwawaySeeder{db: db, channel: channel, conf: conf, signer: signer, h: h}
 	return h, nil
 }
 
@@ -141,10 +147,12 @@ func (h *HybridSynchronizer) dispatch(ctx context.Context, b blocks.Block) error
 // Both services start concurrently.  A notifGate sits between the streamer and
 // the handler chain and performs the handoff described in the package doc.
 func (h *HybridSynchronizer) Start(ctx context.Context) error {
-	// Seed claimed and dispatched before notification starts.
-	if err := h.seeder.Seed(ctx); err != nil {
-		return err
-	}
+	// claimed and dispatched start at math.MinInt64 (set on HybridSynchronizer
+	// construction).  deliveryShim installs the real seed on its first Handle
+	// call, so notification cannot win any CAS until delivery has proven it can
+	// receive from the peer.
+	h.claimed.Store(math.MinInt64)
+	h.dispatched.Store(math.MinInt64)
 
 	deliveryCtx, deliveryCancel := context.WithCancel(ctx)
 	defer deliveryCancel()
@@ -214,11 +222,12 @@ func (h *HybridSynchronizer) Ready() error {
 // that the live handler chain (including any handlers added or removed via
 // AddHandler/RemoveHandler) is always used.
 //
-// off needs no synchronisation: the delivery synchronizer calls Handle
-// sequentially from a single goroutine.
+// off and seeded need no synchronisation: the delivery synchronizer calls
+// Handle sequentially from a single goroutine.
 type deliveryShim struct {
-	h   *HybridSynchronizer
-	off bool
+	h      *HybridSynchronizer
+	off    bool
+	seeded bool // true once the first Handle call has installed the real seed
 }
 
 func (s *deliveryShim) Handle(ctx context.Context, b blocks.Block) error {
@@ -227,6 +236,24 @@ func (s *deliveryShim) Handle(ctx context.Context, b blocks.Block) error {
 	}
 
 	n := int64(b.Number)
+
+	// First call: atomically replace the MinInt64 sentinel with the real seed
+	// (b.Number - 1).  Notification batches that arrived before this point all
+	// lost their CAS against MinInt64 and were dropped, which is correct —
+	// notification is lossy and must never win before delivery is established.
+	// If the CAS fails here, notification somehow won against MinInt64, which
+	// is a bug; the panic surfaces it rather than silently misbehaving.
+	if !s.seeded {
+		s.seeded = true
+		if !s.h.claimed.CompareAndSwap(math.MinInt64, n-1) {
+			panic(fmt.Errorf(
+				"hybridx: claimed was not MinInt64 on delivery's first block %d — "+
+					"notification must not win before delivery is seeded", b.Number))
+		}
+		s.h.dispatched.Store(n - 1)
+		s.h.logger.Infof("hybridx: delivery seeded at block %d (claimed=%d)", b.Number, n-1)
+	}
+
 	if !s.h.claimed.CompareAndSwap(n-1, n) {
 		// Notification claimed this block first.  Delivery is done for good: it can
 		// only ever offer blocks notification already owns.
@@ -236,6 +263,11 @@ func (s *deliveryShim) Handle(ctx context.Context, b blocks.Block) error {
 	}
 
 	if err := s.h.dispatch(ctx, b); err != nil {
+		// graceful shutdown
+		if ctx.Err() != nil {
+			return err
+		}
+
 		// Fatal by design: the claim is not released, so nothing else will ever
 		// apply this block and carrying on would leave a permanent hole in the
 		// store.  Re-requesting it would almost certainly fail the same way unless
@@ -343,6 +375,11 @@ func (g *notifGate) deliveryReached(upTo int64) bool {
 // The dispatcher is allocated once per gate in Start and stored here.
 func (g *notifGate) dispatchBatch(ctx context.Context, batch notification.AllTxBatch) error {
 	if err := g.dispatcher.HandleBatch(ctx, batch); err != nil {
+		// graceful shutdown
+		if ctx.Err() != nil {
+			return err
+		}
+
 		// Fatal by design, and unrecoverable in place: the notification stream has
 		// no historical replay, so a block dropped here can never be re-fetched —
 		// only a restart, which brings delivery back, can repair the store.

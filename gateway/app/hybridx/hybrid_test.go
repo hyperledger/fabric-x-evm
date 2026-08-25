@@ -9,6 +9,7 @@ package hybridx
 import (
 	"context"
 	"errors"
+	"math"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -34,7 +35,6 @@ import (
 type fakeDelivery struct {
 	mu      sync.Mutex
 	ready   bool
-	height  uint64
 	handler blocks.BlockHandler
 	started chan struct{} // closed when Start is called
 	stopped chan struct{} // closed when Start returns
@@ -70,16 +70,20 @@ func (f *fakeDelivery) Ready() error {
 	return errors.New("not ready")
 }
 
-func (f *fakeDelivery) BlockHeight(_ context.Context) (uint64, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.height, nil
-}
-
 func (f *fakeDelivery) setReady() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.ready = true
+}
+
+// seedHeight returns the first block number delivery would stream from the given
+// store height — used by tests that drive the gate/shim directly (without Start)
+// to call seedClaimAt with the right value.
+func (f *fakeDelivery) seedHeight(height uint64) uint64 {
+	if height > 1 {
+		return height // delivery resumes at height; peer delivers block height first
+	}
+	return 0 // delivery resumes at 0; peer delivers block 0 first
 }
 
 // fakeNotifPeer is a controllable notification.AllTxPeer.
@@ -145,10 +149,26 @@ func newHybrid(t *testing.T, delivery *fakeDelivery, peer *fakeNotifPeer, handle
 		delivery:  delivery,
 		notifPeer: peer,
 		notifReq:  &notification.StreamAllRequest{IncludeMetadata: true, IncludeReadWriteSets: true},
-		seeder:    noopSeeder{},
 	}
 	delivery.handler = &deliveryShim{h: h}
 	return h
+}
+
+// seedClaimAt seeds claimed and dispatched to first-1, simulating the state after
+// delivery has already processed first-1 blocks.  Tests that drive the gate or
+// shim directly (without calling Start) use this so the CAS invariants are
+// satisfied from the start.  It also marks the deliveryShim as seeded so the
+// MinInt64 guard in Handle does not misfire.
+func (h *HybridSynchronizer) seedClaimAt(first uint64) {
+	seed := int64(first) - 1
+	h.claimed.Store(seed)
+	h.dispatched.Store(seed)
+	// Mark the shim as already seeded so its first-call MinInt64 guard is skipped.
+	if shim, ok := h.delivery.(*fakeDelivery); ok {
+		if ds, ok := shim.handler.(*deliveryShim); ok {
+			ds.seeded = true
+		}
+	}
 }
 
 // newGate builds a notifGate over h, as Start does, recording whether the gate
@@ -241,7 +261,6 @@ func TestReady_BeforeAndAfterSwitch(t *testing.T) {
 		peer := newFakeNotifPeer()
 		recorder := &recordingHandler{}
 		h := newHybrid(t, delivery, peer, recorder)
-		h.seedClaimAt(delivery.seedHeight(6)) // store holds up to block 5, seeds claimed=5
 
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
@@ -255,6 +274,10 @@ func TestReady_BeforeAndAfterSwitch(t *testing.T) {
 
 		delivery.setReady()
 		assert.NoError(t, h.Ready(), "should be ready once delivery is ready")
+
+		// Delivery processes block 5, which installs the seed (claimed=5).
+		delivery.deliver(t, 5)
+		synctest.Wait()
 
 		// Batch for block 6 is exactly one past the seed, so the gate takes it and
 		// switches. The batch carries no EVM metadata so the recorder sees nothing,
@@ -279,7 +302,6 @@ func TestGate_DiscardsBatchWhileDeliveryBehind(t *testing.T) {
 		peer := newFakeNotifPeer()
 		recorder := &recordingHandler{}
 		h := newHybrid(t, delivery, peer, recorder)
-		h.seedClaimAt(delivery.seedHeight(3)) // store holds up to block 2, seeds claimed=2
 
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
@@ -288,11 +310,16 @@ func TestGate_DiscardsBatchWhileDeliveryBehind(t *testing.T) {
 		synctest.Wait()
 		<-delivery.started
 
-		// Delivery is at block 2, notif sends block 10: claimed(2) != 9, discarded.
+		// Delivery processes block 2, installing the seed (claimed=2).
+		delivery.deliver(t, 2)
+		synctest.Wait()
+
+		// Notif sends block 10: claimed(2) != 9, so the batch is discarded.
 		peer.batches <- evmBatch(t, 10)
 		synctest.Wait()
 
-		assert.Empty(t, recorder.received(), "batch ahead of delivery must be discarded")
+		// Only block 2 (dispatched by delivery) must be in the recorder — block 10 must not.
+		assert.Equal(t, []uint64{2}, blockNumbers(recorder.received()), "batch ahead of delivery must be discarded")
 		assert.Equal(t, int64(2), h.claimed.Load(), "a discarded batch must not move the claim")
 		select {
 		case <-delivery.stopped:
@@ -311,7 +338,6 @@ func TestGate_SwitchesAndForwardsWhenCaughtUp(t *testing.T) {
 		peer := newFakeNotifPeer()
 		recorder := &recordingHandler{}
 		h := newHybrid(t, delivery, peer, recorder)
-		h.seedClaimAt(delivery.seedHeight(6)) // store holds up to block 5, seeds claimed=5
 
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
@@ -320,6 +346,11 @@ func TestGate_SwitchesAndForwardsWhenCaughtUp(t *testing.T) {
 		synctest.Wait()
 		<-delivery.started
 
+		// Delivery processes block 5, installing the seed (claimed=5).
+		delivery.deliver(t, 5)
+		synctest.Wait()
+
+		// Notification takes block 6 — exactly one past delivery's position.
 		peer.batches <- evmBatch(t, 6)
 		synctest.Wait()
 
@@ -329,14 +360,14 @@ func TestGate_SwitchesAndForwardsWhenCaughtUp(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatal("delivery was not cancelled after switch")
 		}
-		assert.Equal(t, []uint64{6}, blockNumbers(recorder.received()),
-			"the batch that triggered the switch must itself be dispatched")
+		assert.Equal(t, []uint64{5, 6}, blockNumbers(recorder.received()),
+			"delivery's seed block and the switching batch must both be dispatched")
 
 		// Subsequent batches keep flowing without consulting the claim counter, so a
 		// gap in batch numbers (blocks with no EVM txs) does not stall the stream.
 		peer.batches <- evmBatch(t, 9)
 		synctest.Wait()
-		assert.Equal(t, []uint64{6, 9}, blockNumbers(recorder.received()))
+		assert.Equal(t, []uint64{5, 6, 9}, blockNumbers(recorder.received()))
 	})
 }
 
@@ -444,6 +475,32 @@ func TestSeedClaim_RestartWithPopulatedStore(t *testing.T) {
 	})
 }
 
+// TestDelivery_HandlesUnexpectedFirstBlock verifies the TestLocalX/in-process-
+// test-network quirk: the peer may deliver block 1 as its first block even though
+// the store is empty (expected block 0).  Because the shim seeds from whatever
+// block the peer actually delivers, this is handled automatically — the shim
+// installs claimed=0, then CAS 0→1 succeeds and the block is dispatched.
+func TestDelivery_HandlesUnexpectedFirstBlock(t *testing.T) {
+	delivery := newFakeDelivery()
+	recorder := &recordingHandler{}
+	h := newHybrid(t, delivery, newFakeNotifPeer(), recorder)
+	// Start sets claimed=MinInt64; shim will seed from whatever block arrives first.
+	h.claimed.Store(math.MinInt64)
+	h.dispatched.Store(math.MinInt64)
+
+	// Peer delivers block 1 instead of 0.
+	delivery.deliver(t, 1)
+
+	assert.Equal(t, []uint64{1}, blockNumbers(recorder.received()),
+		"unexpected first block must be dispatched after shim installs seed")
+	assert.Equal(t, int64(1), h.claimed.Load())
+	assert.Equal(t, int64(1), h.dispatched.Load())
+
+	// Subsequent blocks must work normally.
+	delivery.deliver(t, 2)
+	assert.Equal(t, []uint64{1, 2}, blockNumbers(recorder.received()))
+}
+
 // TestGate_WaitsForDeliveryToFinishInFlightBlock verifies the ordering guarantee:
 // after winning the claim for N the gate must not touch the handler chain until
 // delivery has finished N-1, so the two paths never run it concurrently.
@@ -515,7 +572,6 @@ func TestStart_DeliveryErrorIsLogged(t *testing.T) {
 			delivery:  errDelivery,
 			notifPeer: peer,
 			notifReq:  &notification.StreamAllRequest{},
-			seeder:    noopSeeder{},
 		}
 
 		ctx, cancel := context.WithCancel(t.Context())
@@ -551,5 +607,4 @@ func (e *errDeliverySyncer) Start(ctx context.Context) error {
 	return e.err
 }
 
-func (e *errDeliverySyncer) Ready() error                                  { return errors.New("not ready") }
-func (e *errDeliverySyncer) BlockHeight(_ context.Context) (uint64, error) { return 0, nil }
+func (e *errDeliverySyncer) Ready() error { return errors.New("not ready") }
