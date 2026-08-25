@@ -191,6 +191,14 @@ func TestFabricX(t *testing.T) {
 	t.Run("two_of_two_endorsement_policy", func(t *testing.T) {
 		testTwoOfTwoEndorsementGRPC(t)
 	})
+
+	t.Run("hybrid_switches_to_notification", func(t *testing.T) {
+		testHybridSwitchesToNotification(t)
+	})
+
+	t.Run("hybrid_revert_after_switch", func(t *testing.T) {
+		testHybridRevertAfterSwitch(t)
+	})
 }
 
 // testTwoOfTwoEndorsementGRPC runs org1's and org2's endorsers as separate,
