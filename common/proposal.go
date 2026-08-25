@@ -10,8 +10,9 @@ type ProposalType byte
 
 const (
 	ProposalTypeEVMTx ProposalType = 0xfb
-	ProposalTypeCall
-	ProposalTypeState
+	// ProposalTypeSetBalance marks a setBalance invocation's first arg so
+	// ConvertToDomain can filter it out; it is not a discriminator.
+	ProposalTypeSetBalance ProposalType = 0xfa
 )
 
 const (
