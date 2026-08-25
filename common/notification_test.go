@@ -44,6 +44,14 @@ func makeMetadata(t *testing.T, propType ProposalType, ethTxBytes []byte) [][]by
 	return [][]byte{b}
 }
 
+// makeMetadataWithEvent is like makeMetadata but also appends eventBytes as
+// Metadata[1], mirroring the fabric-x builder which stores events there.
+func makeMetadataWithEvent(t *testing.T, propType ProposalType, ethTxBytes, eventBytes []byte) [][]byte {
+	t.Helper()
+	meta := makeMetadata(t, propType, ethTxBytes)
+	return append(meta, eventBytes)
+}
+
 // ---- NewAllTxBatchDispatcher ----
 
 func TestNewAllTxBatchDispatcher_NoHandlers(t *testing.T) {
@@ -145,6 +153,8 @@ func TestHandleBatch_DispatchesOnlyEVMTxsFromMixedBatch(t *testing.T) {
 	require.Len(t, h.seen, 1, "one dispatched Block")
 	b := h.seen[0]
 	assert.Equal(t, uint64(42), b.Number)
+	assert.Equal(t, blockNumberHash(42), b.Hash)
+	assert.Equal(t, blockNumberHash(41), b.ParentHash)
 	require.Len(t, b.Transactions, 2, "only the two EVM txs make it through")
 
 	assert.Equal(t, "evm-1", b.Transactions[0].ID)
@@ -158,6 +168,25 @@ func TestHandleBatch_DispatchesOnlyEVMTxsFromMixedBatch(t *testing.T) {
 	assert.Equal(t, int64(2), b.Transactions[1].Number)
 	assert.False(t, b.Transactions[1].Valid, "non-COMMITTED tx has Valid=false")
 	assert.Equal(t, int(committerpb.Status_ABORTED_MVCC_CONFLICT), b.Transactions[1].Status)
+}
+
+func TestHandleBatch_BlockZeroParentHashDoesNotUnderflow(t *testing.T) {
+	// Block 0 realistically never reaches here (genesis has no EVM txs, so the
+	// len(txs)==0 guard returns early) but the parentNum computation must not
+	// wrap a uint64 to MaxUint64 if it ever does.
+	h := &stubHandler{}
+	d := NewAllTxBatchDispatcher(h)
+	err := d.HandleBatch(context.Background(), notification.AllTxBatch{
+		BlockNumber: 0,
+		Events: []notification.CommittedTxEvent{
+			{TxID: "evm-1", Status: committerpb.Status_COMMITTED,
+				Metadata: makeMetadata(t, ProposalTypeEVMTx, []byte{0xaa})},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, h.seen, 1)
+	assert.Equal(t, blockNumberHash(0), h.seen[0].Hash)
+	assert.Equal(t, blockNumberHash(0), h.seen[0].ParentHash, "parent of block 0 must not underflow")
 }
 
 func TestHandleBatch_MultipleHandlersAllReceive(t *testing.T) {
@@ -175,6 +204,36 @@ func TestHandleBatch_MultipleHandlersAllReceive(t *testing.T) {
 	require.Len(t, h2.seen, 1)
 	assert.Equal(t, uint64(7), h1.seen[0].Number)
 	assert.Equal(t, uint64(7), h2.seen[0].Number)
+}
+
+// TestHandleBatch_EventsFromMetadata1 verifies that the revert event (and any
+// other event) is taken from Metadata[1], mirroring how the fabric-x block
+// parser populates tx.Events on the delivery path.  A nil events slice means
+// no event was emitted; a non-nil one is forwarded as-is to the handler.
+func TestHandleBatch_EventsFromMetadata1(t *testing.T) {
+	eventPayload := []byte("some-event-bytes")
+
+	h := &stubHandler{}
+	d := NewAllTxBatchDispatcher(h)
+	err := d.HandleBatch(context.Background(), notification.AllTxBatch{
+		BlockNumber: 5,
+		Events: []notification.CommittedTxEvent{
+			// tx with event in Metadata[1]
+			{TxID: "evm-with-event", Status: committerpb.Status_COMMITTED,
+				Metadata: makeMetadataWithEvent(t, ProposalTypeEVMTx, []byte{0xaa}, eventPayload)},
+			// tx with no event (only Metadata[0])
+			{TxID: "evm-no-event", Status: committerpb.Status_COMMITTED,
+				Metadata: makeMetadata(t, ProposalTypeEVMTx, []byte{0xbb})},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, h.seen, 1)
+	require.Len(t, h.seen[0].Transactions, 2)
+
+	assert.Equal(t, eventPayload, h.seen[0].Transactions[0].Events,
+		"Metadata[1] event bytes must be forwarded")
+	assert.Nil(t, h.seen[0].Transactions[1].Events,
+		"missing Metadata[1] must leave Events nil")
 }
 
 func TestHandleBatch_HandlerErrorPanics(t *testing.T) {
