@@ -132,7 +132,8 @@ func (w *EVMEngineWrapper) Execute(ctx context.Context, tx *types.Transaction, b
 
 // Call executes a read-only call against the state.
 // The behavior depends on the configured mode.
-// usedGas is the EVM gas consumed .
+// maxUsedGas is the EVM gas the simulation needed before EIP-3529 refunds are
+// credited.
 func (w *EVMEngineWrapper) Call(msg ethereum.CallMsg, blockNumber *big.Int) ([]byte, uint64, error) {
 	// Create the appropriate executor based on mode
 	type caller interface {

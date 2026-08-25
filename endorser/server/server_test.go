@@ -194,8 +194,8 @@ func TestCall_Success(t *testing.T) {
 	if resp.GetStatus() != common.StatusOK {
 		t.Errorf("status = %d, want %d", resp.GetStatus(), common.StatusOK)
 	}
-	if resp.GetUsedGas() != 21000 {
-		t.Errorf("usedGas = %d, want 21000", resp.GetUsedGas())
+	if resp.GetMaxUsedGas() != 21000 {
+		t.Errorf("maxUsedGas = %d, want 21000", resp.GetMaxUsedGas())
 	}
 }
 

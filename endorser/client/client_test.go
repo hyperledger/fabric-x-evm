@@ -135,7 +135,7 @@ func TestExecute_TransportErrorIsReturned(t *testing.T) {
 }
 
 func TestCall_Success(t *testing.T) {
-	c := newClient(t, &mockServer{callResp: &endorsementpb.CallResponse{ReturnData: []byte{0xde, 0xad}, Status: common.StatusOK, UsedGas: 21000}})
+	c := newClient(t, &mockServer{callResp: &endorsementpb.CallResponse{ReturnData: []byte{0xde, 0xad}, Status: common.StatusOK, MaxUsedGas: 21000}})
 
 	out, gas, err := c.Call(context.Background(), &ethereum.CallMsg{}, nil)
 	if err != nil {
@@ -152,7 +152,7 @@ func TestCall_Success(t *testing.T) {
 // A non-OK Call status comes back as a *common.CallError, not a gRPC error.
 func TestCall_RevertBecomesCallError(t *testing.T) {
 	data := []byte{0x08, 0xc3, 0x79, 0xa0}
-	c := newClient(t, &mockServer{callResp: &endorsementpb.CallResponse{ReturnData: data, Status: common.StatusEVMRevert, Message: "reverted", UsedGas: 15000}})
+	c := newClient(t, &mockServer{callResp: &endorsementpb.CallResponse{ReturnData: data, Status: common.StatusEVMRevert, Message: "reverted", MaxUsedGas: 15000}})
 
 	out, gas, err := c.Call(context.Background(), &ethereum.CallMsg{}, nil)
 	ce, ok := err.(*common.CallError)

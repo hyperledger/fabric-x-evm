@@ -11,10 +11,13 @@ import (
 	"math/big"
 	"testing"
 
+	"github.com/ethereum/go-ethereum"
 	ethcommon "github.com/ethereum/go-ethereum/common"
 	gethcore "github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/holiman/uint256"
 	"github.com/hyperledger/fabric-x-evm/common"
+	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/state"
 	_ "modernc.org/sqlite"
 )
@@ -229,5 +232,66 @@ func TestNewExecutor_NegativeBlockNumberResolvesToLatest(t *testing.T) {
 	got := ex.reader.(*testVersionedDBReader).blockNumber
 	if got != wantLatest {
 		t.Errorf("newExecutor(-5) resolved to block %d, want latest (%d)", got, wantLatest)
+	}
+}
+
+// TestCall_ReportsPreRefundGasNotPostRefund verifies that Call/ApplyMessage
+// return go-ethereum's pre-refund MaxUsedGas, not the post-refund UsedGas.
+// EstimateGas seeds its search from this value; if it silently became the
+// net figure again, every call that clears storage to zero would report less
+// gas than it actually needs on resubmission, since EIP-3529's refund is
+// only credited to the final bill and is never spendable mid-execution.
+func TestCall_ReportsPreRefundGasNotPostRefund(t *testing.T) {
+	backend, err := state.NewWriteDB(Channel, "file:exec_refund?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	contract := newAddress()
+	slot := ethcommon.HexToHash("0x00")
+	// PUSH1 0x00; PUSH1 0x00; SSTORE; STOP -- clears slot 0 to zero.
+	code := []byte{0x60, 0x00, 0x60, 0x00, 0x55, 0x00}
+
+	// Prime the slot with a nonzero original value and commit it, so the
+	// SSTORE-to-zero below actually earns an EIP-3529 clear refund: the
+	// refund only applies when the slot's value *before this transaction*
+	// was nonzero.
+	setup := snapshotDB(t, backend, 0)
+	setup.CreateAccount(contract)
+	setup.SetCode(contract, code, tracing.CodeChangeContractCreation)
+	setup.SetState(contract, slot, ethcommon.HexToHash("0x01"))
+	err = backend.UpdateWorldState(t.Context(), blocks.Block{
+		Number: 0,
+		Transactions: []blocks.Transaction{{
+			ID: "setup", Number: 0, Valid: true,
+			NsRWS: []blocks.NsReadWriteSet{{Namespace: Namespace, RWS: setup.Result()}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	kvs := &testVersionedDBSnapshotter{db: backend}
+	cfg := EVMConfig{ChainConfig: common.BuildChainConfig(4011)}
+	eng := NewEVMEngine(Namespace, kvs, cfg, false)
+
+	ex, err := eng.newExecutor(nil, uint64(1_700_000_000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ex.Close()
+
+	_, gotGas, err := ex.Call(ethereum.CallMsg{To: &contract})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// 21,000 intrinsic + 6 (two PUSH1s) + 5,000 (cold-access SSTORE clear:
+	// 2,100 cold surcharge + 2,900 warm reset). If the post-refund figure
+	// leaked back in, this would read 21,206 (26,006 minus the uncapped
+	// 4,800 clear refund) instead.
+	const want = 26_006
+	if gotGas != want {
+		t.Errorf("gas = %d, want %d (the pre-refund figure)", gotGas, want)
 	}
 }

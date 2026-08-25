@@ -43,8 +43,9 @@ type EVMEngineInterface interface {
 	// Execute runs a state-changing tx. blockTime is the Unix second used as
 	// EVM block.timestamp and must be non-zero (gateway always supplies it).
 	Execute(ctx context.Context, tx *types.Transaction, blockTime uint64) (endorsement.ExecutionResult, error)
-	// Call returns return data and EVM usedGas from the simulation.
-	Call(msg ethereum.CallMsg, blockNumber *big.Int) (ret []byte, usedGas uint64, err error)
+	// Call returns return data and the EVM gas the simulation needed before
+	// EIP-3529 refunds are credited.
+	Call(msg ethereum.CallMsg, blockNumber *big.Int) (ret []byte, maxUsedGas uint64, err error)
 	BalanceAt(ctx context.Context, account ethcommon.Address, blockNumber *big.Int) (*big.Int, error)
 	StorageAt(ctx context.Context, account ethcommon.Address, key ethcommon.Hash, blockNumber *big.Int) ([]byte, error)
 	CodeAt(ctx context.Context, account ethcommon.Address, blockNumber *big.Int) ([]byte, error)
@@ -126,8 +127,9 @@ func validateRequestTimestamp(ts, now time.Time, maxFuture, maxPast time.Duratio
 
 // Call runs a read-only eth_call. A revert or failed execution comes back as a
 // *common.CallError; on a revert the payload is returned alongside it.
-// usedGas is the EVM gas consumed by the simulation.
-func (f *Endorser) Call(ctx context.Context, msg *ethereum.CallMsg, blockNumber *big.Int) (ret []byte, usedGas uint64, err error) {
+// maxUsedGas is the EVM gas the simulation needed before EIP-3529 refunds are
+// credited.
+func (f *Endorser) Call(ctx context.Context, msg *ethereum.CallMsg, blockNumber *big.Int) (ret []byte, maxUsedGas uint64, err error) {
 	res, gas, err := f.Engine.Call(*msg, blockNumber)
 	if err != nil {
 		return res, gas, &common.CallError{Status: classify(err), Message: err.Error(), Data: res}

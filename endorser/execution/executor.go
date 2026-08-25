@@ -120,9 +120,9 @@ func (e *EVMEngine) Execute(ctx context.Context, tx *types.Transaction, blockTim
 // TIMESTAMP uses the endorser's wall clock (Unix seconds) so view functions see a time
 // consistent with gateway-stamped Execute. Historical block times are not reconstructed;
 // every call gets "now".
-// usedGas is the EVM gas consumed by the simulation; 0 when the call is rejected
-// before ApplyMessage runs.
-func (e *EVMEngine) Call(msg ethereum.CallMsg, blockNumber *big.Int) (ret []byte, usedGas uint64, err error) {
+// maxUsedGas is the EVM gas the simulation needed before EIP-3529 refunds are
+// credited; 0 when the call is rejected before ApplyMessage runs.
+func (e *EVMEngine) Call(msg ethereum.CallMsg, blockNumber *big.Int) (ret []byte, maxUsedGas uint64, err error) {
 	blockTime := uint64(time.Now().Unix())
 	ex, err := e.newExecutor(blockNumber, blockTime)
 	if err != nil {
@@ -389,18 +389,14 @@ func callMsgToMessage(msg ethereum.CallMsg, baseFee *big.Int, skipNonceCheck, sk
 }
 
 // Call executes a read-only call (eth_call semantics).
-// usedGas is the gas consumed by the EVM (for eth_estimateGas).
+// maxUsedGas is the gas the EVM would need in total to complete the call,
+// before EIP-3529 refunds are credited.
 //
-// An empty revert is returned as-is, not specially masked here: gas estimation
-// re-simulates a call at a candidate gas limit to verify it (see
-// gateway/core/endorse.go's EstimateGas), and a delegatecall (e.g. through an
-// EIP-1167 minimal proxy) that runs out of the gas forwarded to it also bubbles
-// up as an empty revert -- indistinguishable, at this layer, from a genuine
-// zero-data revert. Masking it here would make that verification trust a false
-// "succeeded" for an out-of-gas candidate. Callers that want eth_call's classic
-// "empty revert probing a contract is not an error" behavior apply it
-// themselves (see EndorsementClient.call in gateway/core/endorse.go).
-func (h *Executor) Call(msg ethereum.CallMsg) (ret []byte, usedGas uint64, err error) {
+// An empty revert is returned as-is, not masked: it's indistinguishable here
+// from a delegatecall (e.g. an EIP-1167 minimal proxy) running out of its
+// forwarded gas, and masking it would let gas-estimation's verification
+// trust a false success for an out-of-gas candidate.
+func (h *Executor) Call(msg ethereum.CallMsg) (ret []byte, maxUsedGas uint64, err error) {
 	return h.execute(callMsgToMessage(msg, h.BlockCtx.BaseFee, true, true))
 }
 
@@ -445,7 +441,7 @@ func (h *Executor) Send(tx *types.Transaction) ([]byte, error) {
 // execute applies production defaults then runs the EVM via ApplyMessage.
 // Gas prices are always zeroed (free gas) so buyGas never requires ETH balance.
 // If MaxTxGas is set, msg.GasLimit is capped before execution.
-func (h *Executor) execute(msg *core.Message) (ret []byte, usedGas uint64, err error) {
+func (h *Executor) execute(msg *core.Message) (ret []byte, maxUsedGas uint64, err error) {
 	if msg.GasLimit == 0 {
 		msg.GasLimit = 5_000_000
 	}
@@ -465,8 +461,10 @@ func (h *Executor) execute(msg *core.Message) (ret []byte, usedGas uint64, err e
 
 // ApplyMessage runs msg on the EVM exactly as provided, without production defaults.
 // Use this in test infrastructure (testimpl) when real gas pricing is needed.
-// usedGas is the gas consumed by the EVM (0 if rejected before ApplyMessage).
-func (h *Executor) ApplyMessage(msg *core.Message) (ret []byte, usedGas uint64, err error) {
+// maxUsedGas is go-ethereum's ExecutionResult.MaxUsedGas: gas needed before
+// EIP-3529 refunds are credited (0 if rejected before ApplyMessage). See
+// Call's doc comment for why.
+func (h *Executor) ApplyMessage(msg *core.Message) (ret []byte, maxUsedGas uint64, err error) {
 	evm := vm.NewEVM(h.BlockCtx, h.state, h.ChainCfg, vm.Config{})
 
 	// Snapshot before execution mirrors geth's approach and allows reverting on error.
@@ -494,13 +492,13 @@ func (h *Executor) ApplyMessage(msg *core.Message) (ret []byte, usedGas uint64, 
 		// rejection.
 		if errors.Is(result.Err, vm.ErrExecutionReverted) {
 			if reason, uErr := abi.UnpackRevert(result.ReturnData); uErr == nil {
-				return result.ReturnData, result.UsedGas, fmt.Errorf("%w: %v", vm.ErrExecutionReverted, reason)
+				return result.ReturnData, result.MaxUsedGas, fmt.Errorf("%w: %v", vm.ErrExecutionReverted, reason)
 			}
-			return result.ReturnData, result.UsedGas, result.Err
+			return result.ReturnData, result.MaxUsedGas, result.Err
 		}
-		return result.ReturnData, result.UsedGas, &ExecFailure{err: result.Err}
+		return result.ReturnData, result.MaxUsedGas, &ExecFailure{err: result.Err}
 	}
-	return result.ReturnData, result.UsedGas, nil
+	return result.ReturnData, result.MaxUsedGas, nil
 }
 
 // TxRejected tags an invalid transaction rejected before execution (nonce, funds,

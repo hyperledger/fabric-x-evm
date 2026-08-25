@@ -142,20 +142,26 @@ func (e *EndorsementClient) CallContract(ctx context.Context, args ethereum.Call
 // so there's no cost to simulating generously.
 const estimateGasCeiling = uint64(10_000_000)
 
+// sstoreSentryBuffer covers EIP-2200's SSTORE sentry: at every SSTORE the EVM
+// requires strictly more than 2300 gas in reserve, regardless of the opcode's
+// own cost. Almost any state-changing call needs at least this much above its
+// own maxUsedGas.
+const sstoreSentryBuffer = uint64(2301)
+
 // EstimateGas returns a gas limit verified to work if resubmitted, not a raw
-// usedGas value: EVM rules like EIP-2200's SSTORE sentry and EIP-150's
+// maxUsedGas value: EVM rules like EIP-2200's SSTORE sentry and EIP-150's
 // 63/64 call-forwarding need gas in reserve during execution, not just
-// enough in total, so exact usedGas can sometimes still run out (view calls
-// and other simple cases usually don't hit this). Since gas isn't charged,
-// we generously double on each failure, until we hit the ceiling or succeed.
+// enough in total, so exact maxUsedGas can sometimes still run out. EIP-150's
+// forwarding loss compounds with call depth, so we generously double on each
+// failure, until we hit the ceiling or succeed.
 func (e *EndorsementClient) EstimateGas(ctx context.Context, args ethereum.CallMsg, blockNumber *big.Int) (uint64, error) {
 	call := args
 
-	probeGas := func(gas uint64) (usedGas uint64, ok bool, err error) {
+	probeGas := func(gas uint64) (maxUsedGas uint64, ok bool, err error) {
 		call.Gas = gas
-		_, usedGas, err = e.endorsers[0].Call(ctx, &call, blockNumber)
+		_, maxUsedGas, err = e.endorsers[0].Call(ctx, &call, blockNumber)
 		if err == nil {
-			return usedGas, true, nil
+			return maxUsedGas, true, nil
 		}
 		callErr, isCallErr := errors.AsType[*common.CallError](err)
 		if !isCallErr {
@@ -169,10 +175,10 @@ func (e *EndorsementClient) EstimateGas(ctx context.Context, args ethereum.CallM
 		// Out of gas, or an empty-data revert -- indistinguishable here from a
 		// delegatecall (e.g. through an EIP-1167 minimal proxy) that ran out of
 		// the gas forwarded to it. Either way, treat it as "not enough gas yet".
-		return usedGas, false, nil
+		return maxUsedGas, false, nil
 	}
 
-	usedGas, ok, err := probeGas(estimateGasCeiling)
+	maxUsedGas, ok, err := probeGas(estimateGasCeiling)
 	if err != nil {
 		return 0, err
 	}
@@ -180,7 +186,7 @@ func (e *EndorsementClient) EstimateGas(ctx context.Context, args ethereum.CallM
 		return 0, fmt.Errorf("gas required exceeds allowance (%d)", estimateGasCeiling)
 	}
 
-	for guess := usedGas; guess < estimateGasCeiling; guess *= 2 {
+	for guess := maxUsedGas + sstoreSentryBuffer; guess < estimateGasCeiling; guess *= 2 {
 		if _, ok, err := probeGas(guess); err != nil {
 			return 0, err
 		} else if ok {

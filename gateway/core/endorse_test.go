@@ -182,16 +182,18 @@ func TestCallContract_EmptyRevertIsNotAnError(t *testing.T) {
 	}
 }
 
-// When the raw usedGas already verifies (e.g. a view call with no SSTORE),
-// that's what comes back untouched -- no unnecessary padding.
-func TestEstimateGas_ReturnsRawUsedGasWhenThatVerifies(t *testing.T) {
+// The loop's first try is always padded by the sentry buffer, even when the
+// raw maxUsedGas alone would already have verified: we can't tell in advance
+// whether a call touches storage, and paying that fixed, tiny padding
+// unconditionally is cheaper than risking a wasted probe on every write.
+func TestEstimateGas_PadsFirstGuessWithSentryBuffer(t *testing.T) {
 	c := newClient(&stubEndorser{callPayload: []byte{0x01}, callGas: 42123})
 
 	got, err := c.EstimateGas(context.Background(), ethereum.CallMsg{}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if want := uint64(42123); got != want {
+	if want := uint64(42123) + sstoreSentryBuffer; got != want {
 		t.Errorf("gas = %d, want %d", got, want)
 	}
 }

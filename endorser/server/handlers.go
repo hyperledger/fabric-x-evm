@@ -58,16 +58,16 @@ func invocation(req *endorsementpb.ExecuteRequest) endorsement.Invocation {
 
 // Call runs a read-only eth_call. A revert or failed execution is carried in
 // the response; only transport faults are a gRPC error.
-// used_gas is always set from the simulation.
+// max_used_gas is always set from the simulation.
 func (s *Server) Call(ctx context.Context, req *endorsementpb.CallRequest) (*endorsementpb.CallResponse, error) {
-	out, usedGas, err := s.svc.Call(ctx, callMsg(req), blockNumber(req.BlockNumber))
+	out, maxUsedGas, err := s.svc.Call(ctx, callMsg(req), blockNumber(req.BlockNumber))
 	if err != nil {
 		if ce, ok := errors.AsType[*common.CallError](err); ok {
-			return &endorsementpb.CallResponse{ReturnData: ce.Data, Status: ce.Status, Message: ce.Message, UsedGas: usedGas}, nil
+			return &endorsementpb.CallResponse{ReturnData: ce.Data, Status: ce.Status, Message: ce.Message, MaxUsedGas: maxUsedGas}, nil
 		}
 		return nil, status.Errorf(codes.Internal, "call: %v", err)
 	}
-	return &endorsementpb.CallResponse{ReturnData: out, Status: common.StatusOK, UsedGas: usedGas}, nil
+	return &endorsementpb.CallResponse{ReturnData: out, Status: common.StatusOK, MaxUsedGas: maxUsedGas}, nil
 }
 
 func (s *Server) BalanceAt(ctx context.Context, req *endorsementpb.BalanceRequest) (*endorsementpb.BalanceResponse, error) {

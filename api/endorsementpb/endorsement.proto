@@ -88,9 +88,10 @@ message CallResponse {
     int32 status = 2;
     string message = 3;
 
-    // EVM gas consumed by the simulation (eth_estimateGas).
-    // Zero when the call is rejected before ApplyMessage runs.
-    uint64 used_gas = 4;
+    // Maximum EVM gas the simulation needed, before EIP-3529 refunds are
+    // credited (eth_estimateGas needs this pre-refund figure as its search
+    // baseline). Zero when the call is rejected before ApplyMessage runs.
+    uint64 max_used_gas = 4;
 }
 
 message BalanceRequest {

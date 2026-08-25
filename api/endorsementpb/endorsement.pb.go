@@ -369,9 +369,10 @@ type CallResponse struct {
 	// Set when the call did not succeed; carries the revert reason and payload.
 	Status  int32  `protobuf:"varint,2,opt,name=status,proto3" json:"status,omitempty"`
 	Message string `protobuf:"bytes,3,opt,name=message,proto3" json:"message,omitempty"`
-	// EVM gas consumed by the simulation (eth_estimateGas).
-	// Zero when the call is rejected before ApplyMessage runs.
-	UsedGas       uint64 `protobuf:"varint,4,opt,name=used_gas,json=usedGas,proto3" json:"used_gas,omitempty"`
+	// Maximum EVM gas the simulation needed, before EIP-3529 refunds are
+	// credited (eth_estimateGas needs this pre-refund figure as its search
+	// baseline). Zero when the call is rejected before ApplyMessage runs.
+	MaxUsedGas    uint64 `protobuf:"varint,4,opt,name=max_used_gas,json=maxUsedGas,proto3" json:"max_used_gas,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -427,9 +428,9 @@ func (x *CallResponse) GetMessage() string {
 	return ""
 }
 
-func (x *CallResponse) GetUsedGas() uint64 {
+func (x *CallResponse) GetMaxUsedGas() uint64 {
 	if x != nil {
-		return x.UsedGas
+		return x.MaxUsedGas
 	}
 	return 0
 }
@@ -865,13 +866,14 @@ const file_api_endorsementpb_endorsement_proto_rawDesc = "" +
 	"\x05value\x18\x05 \x01(\fR\x05value\x12\x12\n" +
 	"\x04data\x18\x06 \x01(\fR\x04data\x12&\n" +
 	"\fblock_number\x18\a \x01(\x04H\x00R\vblockNumber\x88\x01\x01B\x0f\n" +
-	"\r_block_number\"|\n" +
+	"\r_block_number\"\x83\x01\n" +
 	"\fCallResponse\x12\x1f\n" +
 	"\vreturn_data\x18\x01 \x01(\fR\n" +
 	"returnData\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\x05R\x06status\x12\x18\n" +
-	"\amessage\x18\x03 \x01(\tR\amessage\x12\x19\n" +
-	"\bused_gas\x18\x04 \x01(\x04R\ausedGas\"c\n" +
+	"\amessage\x18\x03 \x01(\tR\amessage\x12 \n" +
+	"\fmax_used_gas\x18\x04 \x01(\x04R\n" +
+	"maxUsedGas\"c\n" +
 	"\x0eBalanceRequest\x12\x18\n" +
 	"\aaccount\x18\x01 \x01(\fR\aaccount\x12&\n" +
 	"\fblock_number\x18\x02 \x01(\x04H\x00R\vblockNumber\x88\x01\x01B\x0f\n" +

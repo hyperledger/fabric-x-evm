@@ -64,16 +64,16 @@ func (c *Client) Execute(ctx context.Context, inv endorsement.Invocation, ethTx 
 
 // Call runs a read-only eth_call. A non-OK status is returned as a
 // *common.CallError; only transport faults surface as a gRPC error.
-// usedGas is the EVM gas consumed by the simulation.
+// maxUsedGas is the EVM gas the simulation needed before EIP-3529 refunds are credited.
 func (c *Client) Call(ctx context.Context, msg *ethereum.CallMsg, blockNumber *big.Int) ([]byte, uint64, error) {
 	resp, err := c.rpc.Call(ctx, callRequest(msg, blockNumber))
 	if err != nil {
 		return nil, 0, err
 	}
 	if resp.GetStatus() != common.StatusOK {
-		return resp.GetReturnData(), resp.GetUsedGas(), &common.CallError{Status: resp.GetStatus(), Message: resp.GetMessage(), Data: resp.GetReturnData()}
+		return resp.GetReturnData(), resp.GetMaxUsedGas(), &common.CallError{Status: resp.GetStatus(), Message: resp.GetMessage(), Data: resp.GetReturnData()}
 	}
-	return resp.GetReturnData(), resp.GetUsedGas(), nil
+	return resp.GetReturnData(), resp.GetMaxUsedGas(), nil
 }
 
 func (c *Client) BalanceAt(ctx context.Context, account ethcommon.Address, blockNumber *big.Int) (*big.Int, error) {
