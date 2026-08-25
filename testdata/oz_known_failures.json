@@ -145,12 +145,19 @@
     "note": "block.timestamp is hardcoded (COMPATIBILITY.md); manifests as timestamp diffs, delay/schedule assertions, or vote undercounts since checkpoints never advance."
   },
   {
-    "id": "AccessManaged \"before each\" hook for \"sets authority and emits AuthorityUpdated event during construction\"",
-    "cause": "hardhat_setBalance"
+    "id": "AccessManaged isConsumingScheduledOp \"before each\" hook for \"returns bytes4(0) when not consuming operation\""
   },
   {
-    "id": "AccessManager #consumeScheduledOp \"before each\" hook: define scheduling parameters for \"reverts as AccessManagerUnauthorizedConsume\"",
-    "cause": "hardhat_setBalance"
+    "id": "AccessManaged restricted modifier panics in short calldata"
+  },
+  {
+    "id": "AccessManaged restricted modifier when role is granted with execution delay succeeds if the operation is scheduled"
+  },
+  {
+    "id": "AccessManaged setAuthority sets authority and emits AuthorityUpdated event"
+  },
+  {
+    "id": "AccessManager #consumeScheduledOp when caller is consuming scheduled operation when operation is scheduled \"before each\" hook: schedule operation for \"reverts as AccessManagerNotReady\""
   },
   {
     "id": "AccessManager #execute cannot execute a setAuthority call when a target admin delay is set",
@@ -166,8 +173,8 @@
     "cause": "execution reverted"
   },
   {
-    "id": "AccessManager #execute restrictions when the manager is open when the call comes from the manager (msg.sender == manager) \"before each\" hook: define caller as manager for \"succeeds\"",
-    "cause": "hardhat_setBalance"
+    "id": "AccessManager #execute restrictions when the manager is open when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector \"before each\" hook: set _executionId flag from calldata and target for \"succeeds\"",
+    "cause": "hardhat_setStorageAt"
   },
   {
     "id": "AccessManager #execute restrictions when the manager is open when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -211,16 +218,12 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager #schedule restrictions when the manager is open when the call comes from the manager (msg.sender == manager) \"before each\" hook: define caller as manager for \"reverts as AccessManagerUnauthorizedCall\"",
-    "cause": "hardhat_setBalance"
-  },
-  {
     "id": "AccessManager #schedule restrictions when the manager is open when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect succeeds",
     "cause": "execution reverted"
   },
   {
-    "id": "AccessManager access managed self operations when calling a restricted target function restrictions when the manager is open when the call comes from the manager (msg.sender == manager) \"before each\" hook: define caller as manager for \"succeeds\"",
-    "cause": "hardhat_setBalance"
+    "id": "AccessManager access managed self operations when calling a restricted target function restrictions when the manager is open when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector \"before each\" hook: set _executionId flag from calldata and target for \"succeeds\"",
+    "cause": "hardhat_setStorageAt"
   },
   {
     "id": "AccessManager access managed self operations when calling a restricted target function restrictions when the manager is open when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -255,8 +258,8 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager access managed target operations when calling a restricted target function restrictions when the manager is open when the call comes from the manager (msg.sender == manager) \"before each\" hook: define caller as manager for \"succeeds\"",
-    "cause": "hardhat_setBalance"
+    "id": "AccessManager access managed target operations when calling a restricted target function restrictions when the manager is open when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector \"before each\" hook: set _executionId flag from calldata and target for \"succeeds\"",
+    "cause": "hardhat_setStorageAt"
   },
   {
     "id": "AccessManager access managed target operations when calling a restricted target function restrictions when the manager is open when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -291,8 +294,8 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations not subject to a delay #setTargetClosed restrictions when the call comes from the manager (msg.sender == manager) \"before each\" hook: define caller as manager for \"succeeds\"",
-    "cause": "hardhat_setBalance"
+    "id": "AccessManager admin operations not subject to a delay #setTargetClosed restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector \"before each\" hook: set _executionId flag from calldata and target for \"succeeds\"",
+    "cause": "hardhat_setStorageAt"
   },
   {
     "id": "AccessManager admin operations not subject to a delay #setTargetClosed restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect with operation delay when operation delay is greater than execution delay when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -345,8 +348,8 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations not subject to a delay #setTargetFunctionRole restrictions when the call comes from the manager (msg.sender == manager) \"before each\" hook: define caller as manager for \"succeeds\"",
-    "cause": "hardhat_setBalance"
+    "id": "AccessManager admin operations not subject to a delay #setTargetFunctionRole restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector \"before each\" hook: set _executionId flag from calldata and target for \"succeeds\"",
+    "cause": "hardhat_setStorageAt"
   },
   {
     "id": "AccessManager admin operations not subject to a delay #setTargetFunctionRole restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect with operation delay when operation delay is greater than execution delay when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -404,8 +407,8 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations not subject to a delay #updateAuthority restrictions when the call comes from the manager (msg.sender == manager) \"before each\" hook: define caller as manager for \"succeeds\"",
-    "cause": "hardhat_setBalance"
+    "id": "AccessManager admin operations not subject to a delay #updateAuthority restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector \"before each\" hook: set _executionId flag from calldata and target for \"succeeds\"",
+    "cause": "hardhat_setStorageAt"
   },
   {
     "id": "AccessManager admin operations not subject to a delay #updateAuthority restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect with operation delay when operation delay is greater than execution delay when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -458,8 +461,8 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations not subject to a delay role admin operations #grantRole restrictions when the call comes from the manager (msg.sender == manager) \"before each\" hook: define caller as manager for \"succeeds\"",
-    "cause": "hardhat_setBalance"
+    "id": "AccessManager admin operations not subject to a delay role admin operations #grantRole restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector \"before each\" hook: set _executionId flag from calldata and target for \"succeeds\"",
+    "cause": "hardhat_setStorageAt"
   },
   {
     "id": "AccessManager admin operations not subject to a delay role admin operations #grantRole restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -519,8 +522,8 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations not subject to a delay role admin operations #revokeRole restrictions when the call comes from the manager (msg.sender == manager) \"before each\" hook: define caller as manager for \"succeeds\"",
-    "cause": "hardhat_setBalance"
+    "id": "AccessManager admin operations not subject to a delay role admin operations #revokeRole restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector \"before each\" hook: set _executionId flag from calldata and target for \"succeeds\"",
+    "cause": "hardhat_setStorageAt"
   },
   {
     "id": "AccessManager admin operations not subject to a delay role admin operations #revokeRole restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -560,8 +563,8 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations subject to a delay #labelRole restrictions when the call comes from the manager (msg.sender == manager) \"before each\" hook: define caller as manager for \"succeeds\"",
-    "cause": "hardhat_setBalance"
+    "id": "AccessManager admin operations subject to a delay #labelRole restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector \"before each\" hook: set _executionId flag from calldata and target for \"succeeds\"",
+    "cause": "hardhat_setStorageAt"
   },
   {
     "id": "AccessManager admin operations subject to a delay #labelRole restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect with operation delay when operation delay is greater than execution delay when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -614,8 +617,8 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations subject to a delay #setGrantDelay restrictions when the call comes from the manager (msg.sender == manager) \"before each\" hook: define caller as manager for \"succeeds\"",
-    "cause": "hardhat_setBalance"
+    "id": "AccessManager admin operations subject to a delay #setGrantDelay restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector \"before each\" hook: set _executionId flag from calldata and target for \"succeeds\"",
+    "cause": "hardhat_setStorageAt"
   },
   {
     "id": "AccessManager admin operations subject to a delay #setGrantDelay restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect with operation delay when operation delay is greater than execution delay when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -683,8 +686,8 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations subject to a delay #setRoleAdmin restrictions when the call comes from the manager (msg.sender == manager) \"before each\" hook: define caller as manager for \"succeeds\"",
-    "cause": "hardhat_setBalance"
+    "id": "AccessManager admin operations subject to a delay #setRoleAdmin restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector \"before each\" hook: set _executionId flag from calldata and target for \"succeeds\"",
+    "cause": "hardhat_setStorageAt"
   },
   {
     "id": "AccessManager admin operations subject to a delay #setRoleAdmin restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect with operation delay when operation delay is greater than execution delay when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -742,8 +745,8 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations subject to a delay #setRoleGuardian restrictions when the call comes from the manager (msg.sender == manager) \"before each\" hook: define caller as manager for \"succeeds\"",
-    "cause": "hardhat_setBalance"
+    "id": "AccessManager admin operations subject to a delay #setRoleGuardian restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector \"before each\" hook: set _executionId flag from calldata and target for \"succeeds\"",
+    "cause": "hardhat_setStorageAt"
   },
   {
     "id": "AccessManager admin operations subject to a delay #setRoleGuardian restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect with operation delay when operation delay is greater than execution delay when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -801,8 +804,8 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations subject to a delay #setTargetAdminDelay restrictions when the call comes from the manager (msg.sender == manager) \"before each\" hook: define caller as manager for \"succeeds\"",
-    "cause": "hardhat_setBalance"
+    "id": "AccessManager admin operations subject to a delay #setTargetAdminDelay restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector \"before each\" hook: set _executionId flag from calldata and target for \"succeeds\"",
+    "cause": "hardhat_setStorageAt"
   },
   {
     "id": "AccessManager admin operations subject to a delay #setTargetAdminDelay restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect with operation delay when operation delay is greater than execution delay when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -870,8 +873,8 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager getters #canCall when the manager is open when the call comes from the manager (msg.sender == manager) \"before each\" hook: define caller as manager for \"should return true and no delay\"",
-    "cause": "hardhat_setBalance"
+    "id": "AccessManager getters #canCall when the manager is open when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector \"before each\" hook: set _executionId flag from calldata and target for \"should return true and no delay\"",
+    "cause": "hardhat_setStorageAt"
   },
   {
     "id": "AccessManager getters #canCall when the manager is open when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect when operation is not scheduled should return false and execution delay",
@@ -1060,16 +1063,13 @@
     "note": "Deploy/sub-call side effects (balance after a value-transfer deploy, upgraded-implementation address, nested-call event) don't land, even though the top-level tx succeeds. Confirmed via bisection to PR #321 (reproduces with or without the gas-estimation fix, and in full isolation); exact mechanism inside #321 not yet diagnosed."
   },
   {
-    "id": "CrosschainBridgeERC1155 \"before each\" hook for \"token getters\"",
-    "cause": "hardhat_setBalance"
+    "id": "CrosschainBridgeERC1155 bridge ERC1155 like reconfiguration reject invalid gateway"
   },
   {
-    "id": "CrosschainBridgeERC20 \"before each\" hook for \"token getters\"",
-    "cause": "hardhat_setBalance"
+    "id": "CrosschainBridgeERC20 bridge ERC20 like reconfiguration reject invalid gateway"
   },
   {
-    "id": "CrosschainBridgeERC721 \"before each\" hook for \"token getters\"",
-    "cause": "hardhat_setBalance"
+    "id": "CrosschainBridgeERC721 bridge ERC721 like reconfiguration reject invalid gateway"
   },
   {
     "id": "CrosschainRemoteController & CrosschainRemoteExecutor reconfigure with an invalid new gateway: revert",
@@ -1078,15 +1078,14 @@
   },
   {
     "id": "ERC-6372 timestamp-mode clock value race (shouldBehaveLikeERC6372)",
-    "idPattern": "ERC-6372 behavior in timestamp mode should have a correct clock value",
-    "messagePattern": "^Clock mismatch in timestamp mode: expected \\d+ to equal \\d+\\.$",
     "cause": "hardhat-time-rpc",
     "note": "block.timestamp is real wall-clock, second resolution (COMPATIBILITY.md); shouldBehaveLikeERC6372 (test/governance/utils/ERC6372.behavior.js) reads time.clock.timestamp() (a JS-side RPC round trip) and compares it against the on-chain clock() call, which executes slightly later in real time -- if that gap straddles a real wall-clock second boundary the two values differ. Confirmed directly on ERC20Votes ('expected 1787306583 to equal 1787306582'); shared by every token family that calls this same behavior in timestamp mode (ERC721Votes, Votes, VotesExtended, ...), matched by signature rather than enumerated per token since which one races is not deterministic -- same reasoning as the Governor-family concurrent-tx-race entry.",
-    "flaky": true
+    "flaky": true,
+    "idPattern": "ERC-6372 behavior in timestamp mode should have a correct clock value",
+    "messagePattern": "^Clock mismatch in timestamp mode: expected \\d+ to equal \\d+\\.$"
   },
   {
-    "id": "ERC1155Crosschain \"before each\" hook for \"bridge setup\"",
-    "cause": "hardhat_setBalance"
+    "id": "ERC1155Crosschain bridge ERC1155 like reconfiguration reject invalid gateway"
   },
   {
     "id": "ERC1967Clones deterministic deployment (create2) initialization with parameters non payable when sending some balance reverts",
@@ -1131,8 +1130,7 @@
     "cause": "hardhat_setStorageAt"
   },
   {
-    "id": "ERC20Crosschain \"before each\" hook for \"bridge setup\"",
-    "cause": "hardhat_setBalance"
+    "id": "ERC20Crosschain bridge ERC20 like reconfiguration reject invalid gateway"
   },
   {
     "id": "ERC20TransferAuthorization with blockNumber cancelAuthorization cancels the next nonce after consuming the previous one",
@@ -1385,9 +1383,10 @@
     "cause": "execution reverted"
   },
   {
-    "id": "ERC2771Context \"before each\" hook for \"recognize trusted forwarder\"",
-    "cause": "hardhat_setBalance",
-    "note": "Deploy/sub-call side effects (balance after a value-transfer deploy, upgraded-implementation address, nested-call event) don't land, even though the top-level tx succeeds. Confirmed via bisection to PR #321 (reproduces with or without the gas-estimation fix, and in full isolation); exact mechanism inside #321 not yet diagnosed."
+    "id": "ERC2771Context when receiving a relayed call msgSender returns the original sender when calldata length is less than 20 bytes (address length)"
+  },
+  {
+    "id": "ERC2771Context when receiving a relayed call returns the full original data when calldata length is less than 20 bytes (address length)"
   },
   {
     "id": "ERC2771Forwarder execute bubbles out of gas",
@@ -1451,8 +1450,7 @@
     "flaky": true
   },
   {
-    "id": "ERC721Crosschain \"before each\" hook for \"bridge setup\"",
-    "cause": "hardhat_setBalance"
+    "id": "ERC721Crosschain bridge ERC721 like reconfiguration reject invalid gateway"
   },
   {
     "id": "ERC721Votes vote with blockNumber ERC-6372 behavior in blockNumber mode should have a correct clock value",
@@ -2219,9 +2217,9 @@
     "id": "Governor-family before-each-hook dropped-tx race",
     "cause": "concurrent-tx-race",
     "note": "GovernorHelper.delegate() fires self-delegate + transfer concurrently (Promise.all, no confirmation wait) in the fixture; same root cause as the other concurrent-tx-race entries, but here the tx is dropped before it commits instead of a stale read. Matched by signature (idPattern + messagePattern) rather than enumerated per (file, token) combination, since which combination flakes is not deterministic -- see cmd/baseline/README.md. Exact trigger not confirmed.",
+    "flaky": true,
     "idPattern": "^Governor\\S*.*\"before each\" hook for \"",
-    "messagePattern": "^transaction 0x[0-9a-fA-F]+ was dropped before it committed$",
-    "flaky": true
+    "messagePattern": "^transaction 0x[0-9a-fA-F]+ was dropped before it committed$"
   },
   {
     "id": "GovernorCountingFractional using $ERC20Votes \"before each\" hook for \"deployment check\"",
@@ -2510,8 +2508,28 @@
     "cause": "hardhat_setBalance"
   },
   {
+    "id": "GovernorProposalGuardian using $ERC20Votes cancel proposal during active state \"before each\" hook for \"from proposal guardian\"",
+    "cause": "hardhat-block-rpc",
+    "note": "Reachable only once hardhat_setBalance works; the fixture then mines to a proposal deadline the gateway's block RPCs do not support."
+  },
+  {
+    "id": "GovernorProposalGuardian using $ERC20Votes set proposal guardian from governance",
+    "cause": "hardhat_impersonateAccount",
+    "note": "Reachable only once hardhat_setBalance works; the fixture then needs a governance signer that hardhat_impersonateAccount does not yet provide."
+  },
+  {
     "id": "GovernorProposalGuardian using $ERC20VotesTimestampMock \"before each\" hook for \"deployment check\"",
     "cause": "hardhat_setBalance"
+  },
+  {
+    "id": "GovernorProposalGuardian using $ERC20VotesTimestampMock cancel proposal during active state \"before each\" hook for \"from proposal guardian\"",
+    "cause": "hardhat-block-rpc",
+    "note": "Reachable only once hardhat_setBalance works; the fixture then mines to a proposal deadline the gateway's block RPCs do not support."
+  },
+  {
+    "id": "GovernorProposalGuardian using $ERC20VotesTimestampMock set proposal guardian from governance",
+    "cause": "hardhat_impersonateAccount",
+    "note": "Reachable only once hardhat_setBalance works; the fixture then needs a governance signer that hardhat_impersonateAccount does not yet provide."
   },
   {
     "id": "GovernorSequentialProposalId using $ERC20Votes \"before each\" hook for \"sequential proposal ids\"",
@@ -4651,6 +4669,12 @@
     "note": "Deploy/sub-call side effects (balance after a value-transfer deploy, upgraded-implementation address, nested-call event) don't land, even though the top-level tx succeeds. Confirmed via bisection to PR #321 (reproduces with or without the gas-estimation fix, and in full isolation); exact mechanism inside #321 not yet diagnosed."
   },
   {
+    "id": "Time Delay get & getFull",
+    "cause": "hardhat-time-rpc",
+    "note": "Same root cause as the Time Delay withUpdate entry: delay math depends on real elapsed wall-clock time, which evm_increaseTime/evm_setNextBlockTimestamp can't control (COMPATIBILITY.md). Observed failing in one CI run and passing in another with no related code change.",
+    "flaky": true
+  },
+  {
     "id": "Time Delay withUpdate",
     "cause": "hardhat-time-rpc",
     "note": "Confirmed flipping pass/fail across runs on 2026-08-19 with no code changes in between: delay math depends on real elapsed wall-clock time, which evm_increaseTime/evm_setNextBlockTimestamp can't control (COMPATIBILITY.md). Same root cause as the RateLimiter entry.",
@@ -4716,8 +4740,37 @@
     "id": "TimelockController usage scenario call throw"
   },
   {
-    "id": "TransparentUpgradeableProxy \"before each\" hook for \"cannot be initialized with a non-contract address\"",
-    "cause": "hardhat_setBalance"
+    "id": "TransparentUpgradeableProxy proxy admin can overwrite the admin by the implementation"
+  },
+  {
+    "id": "TransparentUpgradeableProxy regression should add fallback function"
+  },
+  {
+    "id": "TransparentUpgradeableProxy regression should add new function"
+  },
+  {
+    "id": "TransparentUpgradeableProxy regression should change function signature"
+  },
+  {
+    "id": "TransparentUpgradeableProxy regression should remove fallback function"
+  },
+  {
+    "id": "TransparentUpgradeableProxy regression should remove function"
+  },
+  {
+    "id": "TransparentUpgradeableProxy transparent proxy when function names clash executes the proxy function if the sender is the admin"
+  },
+  {
+    "id": "TransparentUpgradeableProxy upgradeToAndCall with migrations when the sender is not the admin reverts"
+  },
+  {
+    "id": "TransparentUpgradeableProxy upgradeToAndCall with migrations when the sender is the admin when upgrading to V1 \"before each\" hook for \"upgrades to the requested version and emits an event\""
+  },
+  {
+    "id": "TransparentUpgradeableProxy upgradeToAndCall without migrations when the call does not fail when the sender is not the admin reverts"
+  },
+  {
+    "id": "TransparentUpgradeableProxy upgradeToAndCall without migrations when the call does not fail when the sender is the admin \"before each\" hook for \"upgrades to the requested implementation\""
   },
   {
     "id": "TrieProof process invalid proofs fails to process proof with invalid internal large hash",
