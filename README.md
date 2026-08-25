@@ -28,10 +28,22 @@ setting.
 
 ## Try it out
 
-The fastest way to see Fabric-X EVM in action is in the samples repository. It includes a full
+A nice way to see Fabric-X EVM in action is in the samples repository. It includes a full
 network, a block explorer, and a token deploy-and-transfer demo. No need to clone or build this repo.
 
 👉 **[hyperledger/fabric-x-samples → evm](https://github.com/hyperledger/fabric-x-samples/tree/main/evm)**
+
+If you just want to check whether your existing Ethereum tooling works against
+this chain, run a self-contained test node in one command:
+
+```shell
+go run github.com/hyperledger/fabric-x-evm/cmd/fxevm@main testnode
+```
+
+This starts an in-process node with test RPC enabled at `http://localhost:8545` (chain ID `31337`),
+backed by in-memory storage and embedded Hardhat test accounts — nothing persists across restarts.
+Not a stand-in for a real network; see [Building and running from
+source](#building-and-running-from-source) or the samples for that.
 
 ## Documentation
 
@@ -110,61 +122,40 @@ GATEWAY_GATEWAY_LISTEN=0.0.0.0:9545 fxevm -c config.yaml start
 
 ## Testing
 
-### Unit tests
+`make help` lists every target. Four suites cover different things:
+
+| Suite | Answers | Command |
+| ----- | ------- | ------- |
+| **Unit** | do the components meet their contracts? | `make unit-tests` |
+| **Ethereum conformance** | does the EVM behave exactly as the spec says? | `make eth-tests` |
+| **OpenZeppelin** | do real contracts and real tooling work over our RPC? | `make hardhat-tests` |
+| **Integration** | does the Fabric-X pipeline work end to end? | `make test-local` |
+| **Performance** | what throughput does a real backend sustain? | `make perf-smoke` |
+
+Conformance runs the `ethereum/execution-specs` fixtures (Osaka+), fetched and
+checksum-verified on demand into a gitignored directory — no submodule init
+needed. OpenZeppelin runs the real OZ suites via Hardhat against a
+self-contained `fxevm testnode`.
+
+`make test-local` needs no network at all — it still exercises building
+read/write sets from EVM transactions and reading them back. To run the same
+cases against a real backend:
 
 ```shell
-make unit-tests
-```
-
-### Integration tests
-
-The Ethereum conformance suite (`make eth-tests`, `TestEthereumTests`) runs the
-`ethereum/execution-specs` state-test fixtures (Osaka+). The fixtures are fetched
-on demand — downloaded and checksum-verified into a gitignored
-`testdata/execution-specs-tests/` directory — so no submodule init is required:
-
-```shell
-make eth-tests
-```
-
-#### Local
-
-The simplest integration tests don't require a Fabric network, but still
-exercise the basic functionality of creating read/write sets out of EVM
-transactions, and subsequently reading them.
-
-```shell
-make test-local
-```
-
-#### Fabric-X
-
-Generate the crypto material once:
-
-```shell
-make init-x
-```
-
-Then start the Fabric-X testcontainer and create the namespace, run the
-integration tests against it, and stop it again:
-
-```shell
-make start-x
+make init-x && make start-x   # Fabric-X (crypto material is one-time)
 make test-x
 make stop-x
-```
 
-The container does not keep state.
-
-#### Fablo
-
-Start the network, run the integration tests, and stop it again:
-
-```shell
-make start-fablo
+make start-fablo              # or classic Fabric
 make test-fablo
 make stop-fablo
 ```
+
+Two suites keep a checked-in list of known failures and gate on *changes* to it,
+so a red CI run is often a baseline diff rather than a broken test —
+[`CONTRIBUTING.md`](CONTRIBUTING.md) explains what to do about it.
+[`docs/TESTING_STRATEGY.md`](docs/TESTING_STRATEGY.md) covers what the project
+asserts and what it deliberately does not.
 
 ## Build your own contracts
 
