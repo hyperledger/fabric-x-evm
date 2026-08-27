@@ -7,8 +7,8 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package storage
 
 import (
+	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -46,6 +46,10 @@ type LightKVS struct {
 
 	// Next index in the ring buffer to write to
 	NextIndex atomic.Uint32
+
+	// hasCheckpoint distinguishes an applied block 0 from a fresh store, which
+	// Current.BlockNumber alone cannot.
+	hasCheckpoint atomic.Bool
 }
 
 // Snapshot represents an immutable point-in-time view of the key-value store.
@@ -86,9 +90,6 @@ type Reader struct {
 	// Snapshot holds a reference to the immutable snapshot
 	// This prevents the snapshot from being garbage collected
 	Snapshot *Snapshot
-
-	// Kvs reference for BlockNumber queries
-	Kvs *LightKVS
 }
 
 // KeyValueVersion represents a key-value pair with version for batch updates.
@@ -99,38 +100,6 @@ type KeyValueVersion struct {
 	TxNum    uint64
 	TxID     string
 	IsDelete bool // True to delete the key, false to store Value (even if nil)
-}
-
-// truncateValue truncates a byte slice to maxLen bytes for logging
-func truncateValue(v []byte, maxLen int) string {
-	if v == nil {
-		return "<nil>"
-	}
-	if len(v) <= maxLen {
-		return fmt.Sprintf("%x", v)
-	}
-	return fmt.Sprintf("%x...", v[:maxLen])
-}
-
-// logUpdate is a helper type for JSON logging with truncated values
-type logUpdate struct {
-	Key      string `json:"key"`
-	Value    string `json:"value"`
-	BlockNum uint64 `json:"block_num"`
-	TxNum    uint64 `json:"tx_num"`
-	TxID     string `json:"tx_id"`
-	IsDelete bool   `json:"is_delete"`
-}
-
-func (u KeyValueVersion) toLogUpdate() logUpdate {
-	return logUpdate{
-		Key:      u.Key,
-		Value:    truncateValue(u.Value, 20),
-		BlockNum: u.BlockNum,
-		TxNum:    u.TxNum,
-		TxID:     u.TxID,
-		IsDelete: u.IsDelete,
-	}
 }
 
 // NewLightKVS creates a new empty versioned key-value store.
@@ -159,30 +128,21 @@ func (kvs *LightKVS) NewSnapshot(blockNumber *uint64) (execution.ReadStore, erro
 
 	// Latest tip.
 	if blockNumber == nil {
-		return &Reader{
-			Snapshot: current,
-			Kvs:      kvs,
-		}, nil
+		return &Reader{Snapshot: current}, nil
 	}
 
 	bn := *blockNumber
 
 	// At or past the tip: serve current (covers current height and "future" asks).
 	if bn >= current.BlockNumber {
-		return &Reader{
-			Snapshot: current,
-			Kvs:      kvs,
-		}, nil
+		return &Reader{Snapshot: current}, nil
 	}
 
 	// Historical: exact match only.
 	for i := range kvs.History {
 		snapshot := kvs.History[i].Load()
 		if snapshot != nil && snapshot.BlockNumber == bn {
-			return &Reader{
-				Snapshot: snapshot,
-				Kvs:      kvs,
-			}, nil
+			return &Reader{Snapshot: snapshot}, nil
 		}
 	}
 
@@ -232,30 +192,9 @@ func (r *Reader) Get(namespace, key string) (*blocks.WriteRecord, error) {
 			TxID:      vv.TxID,
 		}
 
-		if false {
-			// Debug: JSON dump the record with truncated value
-			logRec := map[string]any{
-				"namespace": namespace,
-				"key":       key,
-				"block_num": vv.BlockNum,
-				"tx_num":    vv.TxNum,
-				"version":   vv.Version,
-				"value":     truncateValue(vv.Value, 32),
-				"is_delete": vv.IsDelete,
-				"tx_id":     vv.TxID,
-			}
-			if jsonData, err := json.MarshalIndent(logRec, "", "  "); err == nil {
-				fmt.Printf("[LightKVS Get] %s\n", string(jsonData))
-			}
-		}
-
 		return record, nil
 	}
 
-	if false {
-		// Key not found - return nil record (not an error)
-		fmt.Printf("[LightKVS Get] key not found: %s\n", fullKey)
-	}
 	return nil, nil
 }
 
@@ -276,13 +215,31 @@ func (r *Reader) Close() error {
 // 3. Atomically swaps in the new snapshot
 //
 // The single writer assumption means no locking is needed for the update itself.
+//
+// The block number comes from the batch's first entry; Handle passes it
+// explicitly instead, so an empty block still advances the checkpoint.
 func (kvs *LightKVS) Update(updates []KeyValueVersion) error {
-	// Load current snapshot
-	oldSnapshot := kvs.Current.Load()
+	blockNum := uint64(0)
+	if len(updates) > 0 {
+		blockNum = updates[0].BlockNum
+	}
+	return kvs.applyBlock(blockNum, updates)
+}
 
-	// Shallow clone the map - copies map structure, shares value pointers
-	// This is O(n) but highly optimized in Go's runtime
-	newData := maps.Clone(oldSnapshot.Data)
+// applyUpdates computes new snapshot data by applying updates on top of
+// oldData, assigning each write the existing version + 1 (or 0 for a new
+// key). Shared by LightKVS.applyBlock and
+// RevertibleLightKVS.applyBlockSequential, which only differ in how they
+// append the resulting snapshot to history.
+func applyUpdates(oldData map[string]*ValueVersion, updates []KeyValueVersion) map[string]*ValueVersion {
+	// Nothing to apply: share the old map. Snapshots are immutable and every
+	// mutation path clones first.
+	newData := oldData
+	if len(updates) > 0 {
+		// Shallow clone the map - copies map structure, shares value pointers
+		// This is O(n) but highly optimized in Go's runtime
+		newData = maps.Clone(oldData)
+	}
 
 	// Update changed entries with new ValueVersion structs
 	// Only these allocations are new; unchanged entries share pointers
@@ -293,7 +250,7 @@ func (kvs *LightKVS) Update(updates []KeyValueVersion) error {
 		} else {
 			// Compute next version for this key: existing version + 1, or 0 if new
 			nextVersion := uint64(0)
-			if existing, ok := oldSnapshot.Data[update.Key]; ok {
+			if existing, ok := oldData[update.Key]; ok {
 				nextVersion = existing.Version + 1
 			}
 
@@ -306,35 +263,23 @@ func (kvs *LightKVS) Update(updates []KeyValueVersion) error {
 				TxID:     update.TxID,
 				IsDelete: false,
 			}
-
-			if false {
-				// Debug: JSON dump the record with truncated value
-				logRec := map[string]any{
-					"key":       update.Key,
-					"block_num": update.BlockNum,
-					"tx_num":    update.TxNum,
-					"version":   nextVersion,
-					"value":     truncateValue(update.Value, 20),
-					"is_delete": false,
-					"tx_id":     update.TxID,
-				}
-				if jsonData, err := json.MarshalIndent(logRec, "", "  "); err == nil {
-					fmt.Printf("[LightKVS Put] %s\n", string(jsonData))
-				}
-			}
-
 		}
 	}
 
-	// Create new snapshot with the block number from updates
-	// All updates in a batch come from the same block
-	blockNum := uint64(0)
-	if len(updates) > 0 {
-		blockNum = updates[0].BlockNum
-	}
+	return newData
+}
+
+// applyBlock swaps in a new snapshot at blockNum with updates applied.
+//
+// It advances even when updates is empty, keeping height equal to ledger height
+// so this KVS can serve as a synchronizer's height reader.
+func (kvs *LightKVS) applyBlock(blockNum uint64, updates []KeyValueVersion) error {
+	// Load current snapshot
+	oldSnapshot := kvs.Current.Load()
+
 	newSnapshot := &Snapshot{
 		BlockNumber: blockNum,
-		Data:        newData,
+		Data:        applyUpdates(oldSnapshot.Data, updates),
 	}
 
 	// Get the next history slot to write to
@@ -350,6 +295,7 @@ func (kvs *LightKVS) Update(updates []KeyValueVersion) error {
 	// Atomically swap in the new snapshot
 	// New readers will see this snapshot; existing readers keep their old snapshot
 	kvs.Current.Store(newSnapshot)
+	kvs.hasCheckpoint.Store(true)
 
 	return nil
 }
@@ -379,10 +325,23 @@ func collectWrites(updates *[]KeyValueVersion, nsrwsList []blocks.NsReadWriteSet
 	}
 }
 
-// Handle implements the blocks.BlockHandler interface.
-// It processes a block by extracting all valid transaction writes and applying them atomically.
-// This is called by the synchronizer when a new block is committed to the ledger.
+// Handle implements blocks.BlockHandler, applying a block's valid writes
+// atomically.
+//
+// A tip redelivery is verified, not just skipped: Update derives versions
+// from current state, so re-applying it would double-bump MVCC read-set
+// versions and the committer would reject later transactions on those keys.
+// A shared synchronizer always redelivers identical content on resume, so an
+// identical replay is a no-op and a differing one is a loud error.
+//
+// Anything older than the tip is skipped unverified — LightKVS only retains
+// historySize recent snapshots, so there's nothing left to check it against.
 func (kvs *LightKVS) Handle(ctx context.Context, b blocks.Block) error {
+	current := kvs.Current.Load()
+	if kvs.hasCheckpoint.Load() && b.Number < current.BlockNumber {
+		return nil
+	}
+
 	// Collect all writes from all transactions in the block
 	var allUpdates []KeyValueVersion
 
@@ -390,11 +349,36 @@ func (kvs *LightKVS) Handle(ctx context.Context, b blocks.Block) error {
 		collectWrites(&allUpdates, tx.NsRWS, b.Number, uint64(tx.Number), tx.ID, tx.Valid)
 	}
 
-	// Apply all updates atomically in a single Update call
-	if len(allUpdates) > 0 {
-		return kvs.Update(allUpdates)
+	if kvs.hasCheckpoint.Load() && b.Number == current.BlockNumber {
+		return verifyReplay(current, allUpdates)
 	}
 
+	// Applied even with no writes, so the checkpoint tracks ledger height.
+	return kvs.applyBlock(b.Number, allUpdates)
+}
+
+// verifyReplay checks a redelivery of the current tip against what's already
+// stored, erroring if the net effect of updates (last write per key wins,
+// matching applyBlock) differs from current. LightKVS stores only the final
+// per-key value after a block's writes, not each write individually, so
+// comparison happens at that same granularity.
+func verifyReplay(current *Snapshot, updates []KeyValueVersion) error {
+	final := make(map[string]KeyValueVersion, len(updates))
+	for _, u := range updates {
+		final[u.Key] = u
+	}
+	for key, u := range final {
+		existing, ok := current.Data[key]
+		if u.IsDelete {
+			if ok {
+				return fmt.Errorf("conflicting write for %q at block=%d: existing value present, replayed is a delete", key, u.BlockNum)
+			}
+			continue
+		}
+		if !ok || !bytes.Equal(existing.Value, u.Value) || existing.TxID != u.TxID {
+			return fmt.Errorf("conflicting write for %q at block=%d: replayed content differs from existing", key, u.BlockNum)
+		}
+	}
 	return nil
 }
 

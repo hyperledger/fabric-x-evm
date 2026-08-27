@@ -39,14 +39,6 @@ func NewEndorserCore(
 	// tsCfg supplies timestamp skew bounds (zero value uses package defaults).
 	tsCfg config.Endorser,
 ) (*core.Endorser, storage.KVS, endorsement.Builder, error) {
-	// Reject backend/protocol combinations that cannot work before opening any
-	// files. gateway config validation catches this earlier for a real
-	// deployment; this covers callers that build an endorser directly (testnode,
-	// the in-process test harness).
-	if err := config.ValidateDatabaseProtocol(dbCfg.Database, protocol); err != nil {
-		return nil, nil, nil, err
-	}
-
 	// An unset protocol means fabric-x, matching the documented default
 	// (common.Network.Protocol) and the gateway wiring (NewNetworkSubmitters,
 	// NewSynchronizer). Normalize once so the KVS and builder choices

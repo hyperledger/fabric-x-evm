@@ -64,7 +64,7 @@ const (
 	DBSQLite = "sqlite"
 	// DBMemory is the in-memory LightKVS. Lost on restart; supports both protocols.
 	DBMemory = "memory"
-	// DBPebble is the pebble-backed PebbleKVS. Persistent; fabric-x only.
+	// DBPebble is the pebble-backed PebbleKVS. Persistent; supports both protocols.
 	DBPebble = "pebble"
 )
 
@@ -73,30 +73,6 @@ type DB struct {
 	Database    string `mapstructure:"database" yaml:"database"`
 	ConnString  string `mapstructure:"connection-string" yaml:"connection-string"`
 	HistorySize int    `mapstructure:"history_size" yaml:"history_size"` // number of historical snapshots to keep (default: 2; test RPC uses a large value)
-}
-
-// ValidateDatabaseProtocol rejects endorser backend/protocol combinations that
-// cannot work. The protocol may be empty, meaning the default (fabric-x).
-//
-// PebbleKVS assigns versions as MAX(version)+1 per key and keeps deletes as
-// tombstones, mirroring the fabric-x committer's own worldstate so that the
-// versions it puts in the MVCC read-set validate against it. Classic Fabric
-// expects the LightKVS scheme instead (one version shared across a block's
-// writes to a key, reset after a delete), so pairing pebble with fabric would
-// not fail loudly — it would produce read-sets the committer rejects, or worse,
-// silently accepts against the wrong version. Fail at config time instead.
-func ValidateDatabaseProtocol(database, protocol string) error {
-	resolved, err := common.NormalizeProtocol(protocol)
-	if err != nil {
-		return err
-	}
-	if database == DBPebble && resolved == common.ProtocolFabric {
-		return fmt.Errorf(
-			"database.database %q is only supported with network.protocol %q, not %q "+
-				"(its MVCC version scheme matches the fabric-x committer; use %q or %q for classic Fabric)",
-			DBPebble, common.ProtocolFabricX, common.ProtocolFabric, DBSQLite, DBMemory)
-	}
-	return nil
 }
 
 // Validate checks that required fields are set and values are within acceptable ranges.

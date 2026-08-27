@@ -150,16 +150,6 @@ func (cfg Config) Validate() error {
 	case cfg.Endorser != nil:
 		errs = append(errs, cfg.Endorser.Validate())
 
-		// Checked here rather than in Endorser.Validate because the backend and
-		// the protocol it has to agree with live at different config levels.
-		// Skipped when the protocol itself is already invalid, so one bad
-		// protocol value is not also reported once per endorser.
-		if protocolErr == nil {
-			if err := endorser.ValidateDatabaseProtocol(cfg.Endorser.Database.Database, cfg.Network.Protocol); err != nil {
-				errs = append(errs, fmt.Errorf("endorser: %w", err))
-			}
-		}
-
 	default:
 		for i, e := range cfg.Gateway.Endorsers {
 			if err := e.Validate(); err != nil {

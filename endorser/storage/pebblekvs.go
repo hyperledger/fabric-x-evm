@@ -7,6 +7,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package storage
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -71,9 +72,9 @@ import (
 //   - Block height tracks the ledger exactly: a block that yields no writes still
 //     advances the persisted checkpoint, where LightKVS leaves its height at the
 //     last block that contained writes. See Handle.
-//   - The write path is idempotent per block: re-applying a block at or below the
-//     checkpoint is a no-op, where LightKVS would apply it again and bump every
-//     touched key's version. See commitBlock.
+//   - The write path is idempotent per write, not just per block: re-applying an
+//     already-stored (key, block, tx) write is a no-op if the content matches,
+//     and an error if it doesn't.
 //   - Version numbers mirror the VersionedDB, not LightKVS: each write's Version
 //     is MAX(version)+1 for its key, so multiple writes to one key within a block
 //     get consecutive versions and the counter is monotonic across a tombstone
@@ -174,7 +175,9 @@ func (p *PebbleKVS) readMetaBlock() (uint64, bool, error) {
 // data keys and the meta checkpoint are committed in one pebble batch, so a
 // crash either leaves the whole block applied or none of it.
 //
-// Blocks at or below the persisted checkpoint are skipped as already applied —
+// Blocks at or below the persisted checkpoint are not skipped outright:
+// commitBlock checks each write's exact (key, block, tx) coordinate and skips
+// only the ones already present verbatim, erroring on a content mismatch —
 // see commitBlock.
 func (p *PebbleKVS) Update(updates []KeyValueVersion) error {
 	if len(updates) == 0 {
@@ -199,46 +202,55 @@ func (p *PebbleKVS) Update(updates []KeyValueVersion) error {
 	return p.commitBlock(blockNum, updates)
 }
 
-// commitBlock applies a single block's writes (possibly none) and advances the
-// persisted checkpoint to blockNum, in one atomic pebble batch.
+// commitBlock applies a single block's writes (possibly none) and advances
+// the persisted checkpoint to blockNum, in one atomic pebble batch.
 //
-// Blocks at or below the current checkpoint are skipped. This is what makes the
-// write path idempotent under replay, which is required rather than merely nice:
-// the synchronizer resumes at lastBlock+1 of whichever store it was given as its
-// height reader, and in the gateway topology that store is the block DB, not
-// this KVS (see integration/test_helpers.go, where handlers run in the order
-// [endorser KVSs..., chain, gateway]). A crash between this KVS's commit and the
-// block DB's therefore replays a block this KVS has already applied. Applying a
-// block's writes twice would advance every touched key's version an extra step
-// and permanently desynchronize this store from the committer's worldstate, so
-// the read-sets built from it would fail MVCC validation. The block DB tolerates
-// the same replay via ON CONFLICT DO NOTHING (gateway/storage/query.sql).
+// Each write is keyed by (key, block, tx) — see dataKey — so a write already
+// present at that exact coordinate is a replay: it's verified against the
+// incoming write and skipped rather than re-versioned, erroring if the
+// content differs.
+//
+// The checkpoint advances monotonically, independent of the per-write check:
+// a block at or below it may still be processed to verify its writes, but
+// never moves the checkpoint backward.
 func (p *PebbleKVS) commitBlock(blockNum uint64, updates []KeyValueVersion) error {
 	p.writeMu.Lock()
 	defer p.writeMu.Unlock()
 
-	if p.hasCheckpoint.Load() && blockNum <= p.currentBlock.Load() {
-		pebbleLogger.Debugf("skipping already-applied block %d (checkpoint at %d)", blockNum, p.currentBlock.Load())
-		return nil
-	}
-
 	batch := p.db.NewBatch()
 	defer batch.Close()
 
-	// nextVersion holds the version to assign to the *next* write of each key
-	// within this batch. VersionedDB computes COALESCE(MAX(version)+1, 0) live
-	// per insert, so successive writes to the same key in one block receive
-	// consecutive versions (fabric-x-sdk state.VersionedDB.UpdateWorldState).
-	// We mirror that exactly: the first write to a key seeds from the committed
-	// latest, and each subsequent write in the same batch increments — so the
-	// highest-tx write wins the read with the highest version, matching the
-	// committer's worldstate that the fabric-x MVCC read-set is validated
-	// against. Seeding from a single point-read also avoids re-reading committed
-	// state for a key written multiple times in one block.
+	// advance is false only for a genuine replay (blockNum at or below the
+	// persisted checkpoint).
+	advance := !p.hasCheckpoint.Load() || blockNum > p.currentBlock.Load()
+
+	// nextVersion holds the version to assign to the *next* new write of each
+	// key within this batch.
 	nextVersion := make(map[string]uint64, len(updates))
 
 	for i := range updates {
 		u := &updates[i]
+		key := dataKey(u.Key, u.BlockNum, u.TxNum)
+
+		// sameness check on existing writes
+		if !advance {
+			existing, err := p.db.Get(key)
+			if err != nil && !errors.Is(err, pebble.ErrNotFound) {
+				return fmt.Errorf("failed to check existing write for %q: %w", u.Key, err)
+			}
+			if err == nil {
+				rec, err := decodeRecord(existing)
+				if err != nil {
+					return fmt.Errorf("failed to decode existing write for %q: %w", u.Key, err)
+				}
+				if !bytes.Equal(rec.Value, u.Value) || rec.IsDelete != u.IsDelete || rec.TxID != u.TxID {
+					return fmt.Errorf(
+						"conflicting write for %q at block=%d tx=%d: existing (is_delete=%v tx_id=%s) differs from replayed (is_delete=%v tx_id=%s)",
+						u.Key, u.BlockNum, u.TxNum, rec.IsDelete, rec.TxID, u.IsDelete, u.TxID)
+				}
+				continue // identical replay: already stored, don't re-version it
+			}
+		}
 
 		version, seen := nextVersion[u.Key]
 		if !seen {
@@ -259,22 +271,25 @@ func (p *PebbleKVS) commitBlock(blockNum uint64, updates []KeyValueVersion) erro
 			Value:    u.Value,
 		})
 
-		if err := batch.Put(dataKey(u.Key, u.BlockNum, u.TxNum), value); err != nil {
+		if err := batch.Put(key, value); err != nil {
 			return fmt.Errorf("failed to stage write for %q: %w", u.Key, err)
 		}
 	}
 
-	// Checkpoint the block number in the same batch for an atomic commit.
-	if err := batch.Put(metaBlockKey, u64be(blockNum)); err != nil {
-		return fmt.Errorf("failed to stage block checkpoint: %w", err)
+	if advance {
+		if err := batch.Put(metaBlockKey, u64be(blockNum)); err != nil {
+			return fmt.Errorf("failed to stage block checkpoint: %w", err)
+		}
 	}
 
 	if err := batch.Write(); err != nil {
 		return fmt.Errorf("failed to commit block %d: %w", blockNum, err)
 	}
 
-	p.currentBlock.Store(blockNum)
-	p.hasCheckpoint.Store(true)
+	if advance {
+		p.currentBlock.Store(blockNum)
+		p.hasCheckpoint.Store(true)
+	}
 	return nil
 }
 
