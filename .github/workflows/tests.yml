@@ -126,6 +126,9 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Pre-fetch Go dependencies
+        run: go build ./cmd/fxevm
+
       - name: Cache OZ node_modules
         uses: actions/cache@v4
         with:
