@@ -21,17 +21,24 @@ import (
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 )
 
-// stubDirectiveSubmitter records the last setBalance submitted, standing in for
+// stubDirectiveSubmitter records the last directive submitted, standing in for
 // the gateway in tests that only exercise RPC registration.
 type stubDirectiveSubmitter struct {
 	lastAddr   common.Address
 	lastAmount *big.Int
+	lastCode   []byte
 	err        error
 }
 
 func (s *stubDirectiveSubmitter) SetBalance(_ context.Context, addr common.Address, amount *big.Int) error {
 	s.lastAddr = addr
 	s.lastAmount = amount
+	return s.err
+}
+
+func (s *stubDirectiveSubmitter) SetCode(_ context.Context, addr common.Address, code []byte) error {
+	s.lastAddr = addr
+	s.lastCode = code
 	return s.err
 }
 

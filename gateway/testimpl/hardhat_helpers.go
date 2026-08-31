@@ -24,24 +24,25 @@ import (
 
 var hardhatLogger = flogging.MustGetLogger("gateway.testimpl.hardhat")
 
-// BalanceSetter submits a setBalance directive and blocks until it commits;
-// satisfied by *core.Gateway.
-type BalanceSetter interface {
+// StateSetter submits setBalance/setCode directives and blocks until each
+// commits; satisfied by *core.Gateway.
+type StateSetter interface {
 	SetBalance(ctx context.Context, addr common.Address, amount *big.Int) error
+	SetCode(ctx context.Context, addr common.Address, code []byte) error
 }
 
 // HardhatAPI provides Hardhat-specific RPC methods for testing.
-// Most methods are stubs that let Hardhat tests run; SetBalance is backed by a
-// real system directive via the gateway.
+// Most methods are stubs that let Hardhat tests run; SetBalance and SetCode are
+// backed by real system directives via the gateway.
 //
 // SECURITY WARNING: These methods are for testing only and should NEVER
 // be enabled in production environments.
 type HardhatAPI struct {
-	submit BalanceSetter
+	submit StateSetter
 }
 
 // NewHardhatAPI creates a new Hardhat API instance backed by submit for state-modifying methods.
-func NewHardhatAPI(submit BalanceSetter) *HardhatAPI {
+func NewHardhatAPI(submit StateSetter) *HardhatAPI {
 	return &HardhatAPI{submit: submit}
 }
 
@@ -53,14 +54,13 @@ func (api *HardhatAPI) SetBalance(ctx context.Context, addr common.Address, bala
 	return api.submit.SetBalance(ctx, addr, target)
 }
 
-// SetCode sets the code at a given address (hardhat_setCode).
-// This is a stub implementation that returns success but doesn't actually modify state.
-// TODO: Implement proper code modification if needed for specific test scenarios.
+// SetCode sets an account's code (hardhat_setCode), blocking until committed
+// and reflected in reads of the account's code. Empty code clears it.
 func (api *HardhatAPI) SetCode(ctx context.Context, address common.Address, code hexutil.Bytes) (bool, error) {
 	hardhatLogger.Debugf("HardhatAPI.SetCode() called with address=%s, code length=%d", address.Hex(), len(code))
-	// Stub: return success without actually modifying state
-	// In a full implementation, this would modify the account's code in the state DB
-	hardhatLogger.Debugf("HardhatAPI.SetCode() returning: true")
+	if err := api.submit.SetCode(ctx, address, code); err != nil {
+		return false, err
+	}
 	return true, nil
 }
 

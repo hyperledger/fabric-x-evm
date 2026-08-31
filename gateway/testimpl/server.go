@@ -61,11 +61,11 @@ func NewTestServer(b api.Backend, testAccounts []common.Address, testAccountKeys
 		return nil, err
 	}
 
-	// Register Hardhat helper APIs for test compatibility. hardhat_setBalance
-	// submits a system directive, so the backend must be a BalanceSetter.
-	submitter, ok := b.(BalanceSetter)
+	// Register Hardhat helper APIs for test compatibility. hardhat_setBalance and
+	// hardhat_setCode submit system directives, so the backend must be a StateSetter.
+	submitter, ok := b.(StateSetter)
 	if !ok {
-		return nil, fmt.Errorf("test RPC backend %T does not implement BalanceSetter", b)
+		return nil, fmt.Errorf("test RPC backend %T does not implement StateSetter", b)
 	}
 	if err := srv.RegisterName("hardhat", NewHardhatAPI(submitter)); err != nil {
 		return nil, err
