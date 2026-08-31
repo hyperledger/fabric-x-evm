@@ -83,3 +83,21 @@ func (d *DirectiveEndorser) SetBalance(ctx context.Context, inv endorsement.Invo
 	}
 	return d.builder.Endorse(inv, endorsement.Success(stateDB.Result(), nil, nil))
 }
+
+// SetCode forces addr's code to code and endorses the resulting read-write set.
+// It does not call CreateAccount, so it never touches balance or nonce.
+func (d *DirectiveEndorser) SetCode(ctx context.Context, inv endorsement.Invocation, addr common.Address, code []byte) (*peer.ProposalResponse, error) {
+	reader, err := d.kvs.NewSnapshot(nil)
+	if err != nil {
+		return nil, fmt.Errorf("setCode directive: snapshot: %w", err)
+	}
+	defer reader.Close()
+
+	stateDB, err := execution.NewStateDB(ctx, reader, d.namespace, 0, d.monotonicVersions)
+	if err != nil {
+		return nil, fmt.Errorf("setCode directive: statedb: %w", err)
+	}
+
+	stateDB.SetCode(addr, code, tracing.CodeChangeUnspecified)
+	return d.builder.Endorse(inv, endorsement.Success(stateDB.Result(), nil, nil))
+}
