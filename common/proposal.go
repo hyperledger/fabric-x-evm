@@ -13,6 +13,9 @@ const (
 	// ProposalTypeSetBalance marks a setBalance invocation's first arg so
 	// ConvertToDomain can filter it out; it is not a discriminator.
 	ProposalTypeSetBalance ProposalType = 0xfa
+	// ProposalTypeSetCode marks a setCode invocation's first arg so
+	// ConvertToDomain can filter it out; it is not a discriminator.
+	ProposalTypeSetCode ProposalType = 0xf9
 )
 
 const (
