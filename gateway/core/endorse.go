@@ -88,6 +88,27 @@ func (e EndorsementClient) SetBalance(ctx context.Context, addr ethcommon.Addres
 	})
 }
 
+// codeSetter is implemented only by the test-only directive endorser.
+type codeSetter interface {
+	SetCode(ctx context.Context, inv endorsement.Invocation, addr ethcommon.Address, code []byte) (*peer.ProposalResponse, error)
+}
+
+// SetCode forwards a setCode directive to every endorser.
+func (e EndorsementClient) SetCode(ctx context.Context, addr ethcommon.Address, code []byte) (sdk.Endorsement, error) {
+	inv, err := e.createInvocation([][]byte{{byte(common.ProposalTypeSetCode)}, addr.Bytes(), code})
+	if err != nil {
+		return sdk.Endorsement{}, err
+	}
+
+	return e.endorse(ctx, inv, "process setCode directive", func(ctx context.Context, s api.Service, inv endorsement.Invocation, _ time.Time) (*peer.ProposalResponse, error) {
+		cs, ok := s.(codeSetter)
+		if !ok {
+			return nil, fmt.Errorf("endorser %T does not support setCode directives", s)
+		}
+		return cs.SetCode(ctx, inv, addr, code)
+	})
+}
+
 // endorse fans the invocation out to every endorser via call and assembles the
 // endorsement. label identifies the invocation kind in the error message.
 func (e EndorsementClient) endorse(ctx context.Context, inv endorsement.Invocation, label string,
