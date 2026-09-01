@@ -18,6 +18,17 @@ network:
 logging:
   spec: info
 
+committer:
+  endpoint:
+    host: 127.0.0.1
+    port: 4001
+  tls:
+    mode: mtls
+    cert-path: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.crt
+    key-path: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.key
+    ca-cert-paths:
+      - ../testdata/crypto/peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem
+
 gateway:
   listen: "0.0.0.0:8546"
 
@@ -38,17 +49,6 @@ gateway:
         key-path: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.key
         ca-cert-paths:
           - ../testdata/crypto/ordererOrganizations/orderer-org-1/tlsca/tlsca.orderer-org-1-cert.pem
-
-  committer:
-    endpoint:
-      host: 127.0.0.1
-      port: 4001
-    tls:
-      mode: mtls
-      cert-path: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.crt
-      key-path: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.key
-      ca-cert-paths:
-        - ../testdata/crypto/peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem
 
   # Split deployment: dial org1's and org2's endorsers over gRPC rather than
   # embedding them. Both entries present the gateway's own (org1) client

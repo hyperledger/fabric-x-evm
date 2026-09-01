@@ -11,6 +11,17 @@ network:
 logging:
   spec: info
 
+committer:
+  endpoint:
+    host: 127.0.0.1
+    port: 4001
+  tls:
+    mode: mtls
+    cert-path: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.crt
+    key-path: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.key
+    ca-cert-paths:
+      - ../testdata/crypto/peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem
+
 gateway:
   listen: "0.0.0.0:8545"
 
@@ -60,32 +71,11 @@ gateway:
         ca-cert-paths:
           - ../testdata/crypto/ordererOrganizations/orderer-org-4/tlsca/tlsca.orderer-org-4-cert.pem
 
-  committer:
-    endpoint:
-      host: 127.0.0.1
-      port: 4001
-    tls:
-      mode: mtls
-      cert-path: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.crt
-      key-path: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.key
-      ca-cert-paths:
-        - ../testdata/crypto/peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem
-
 endorser:
   name: org1
   identity:
     msp-id: Org1MSP
     msp-dir: ../testdata/crypto/peerOrganizations/org1.example.com/peers/endorser.org1.example.com/msp
-  committer:
-    endpoint:
-      host: 127.0.0.1
-      port: 4001
-    tls:
-      mode: mtls
-      cert-path: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.crt
-      key-path: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.key
-      ca-cert-paths:
-        - ../testdata/crypto/peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem
   database:
     database: memory
     # connection-string: "file:endorser-org1.db?mode=memory&cache=shared"

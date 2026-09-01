@@ -257,7 +257,7 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 	// The ordering is the responsibility of the chainFactory; see defaultHandlerChain for
 	// the conventional ordering (endorser KVS…, chain store, gateway, extra observers…).
 	if !bypass {
-		sync, err = app.NewGatewaySynchronizer(cfg.Network.Protocol, heightReader, cfg.Network.Channel, cfg.Network.Namespace, cfg.Gateway.Committer.ToPeerConf(), gwSigner, logger, handlers...)
+		sync, err = app.NewSynchronizer(cfg.Network.Protocol, heightReader, cfg.Network.Channel, cfg.Network.Namespace, cfg.Committer.ToPeerConf(), gwSigner, logger, handlers...)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -405,22 +405,19 @@ func NewLocalTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig e
 			NsVersion: "1.0",
 			ChainID:   4011,
 		},
+		Committer:    common.ClientConfig{Endpoint: peer},
+		Synchronizer: config.Synchronizer{Timeout: 2 * time.Second},
 		Gateway: config.Gateway{
 			Database: config.DB{
 				ConnString: filepath.Join(dir, "gateway.db"),
 				TriePath:   filepath.Join(dir, "triedb.db"),
 			},
-			SyncTimeout: 2 * time.Second,
 			Orderers: []common.ClientConfig{
 				{Endpoint: orderer},
 			},
-			Committer: common.ClientConfig{
-				Endpoint: peer,
-			},
 		},
 		Endorser: &econf.Endorser{
-			Committer: common.ClientConfig{Endpoint: peer},
-			Name:      "endorser1",
+			Name: "endorser1",
 			Database: econf.DB{
 				Database:    "memory",
 				ConnString:  filepath.Join(dir, "endorser1.db"),

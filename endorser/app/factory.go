@@ -49,7 +49,7 @@ func NewEndorserCore(
 
 	// An unset protocol means fabric-x, matching the documented default
 	// (common.Network.Protocol) and the gateway wiring (NewNetworkSubmitters,
-	// NewGatewaySynchronizer). Normalize once so the KVS and builder choices
+	// NewSynchronizer). Normalize once so the KVS and builder choices
 	// below cannot disagree about what "" means.
 	protocol, err := common.NormalizeProtocol(protocol)
 	if err != nil {
@@ -110,6 +110,7 @@ func NewEndorserCore(
 func NewEndorser(
 	cfg config.Endorser,
 	network common.Network,
+	committer common.ClientConfig,
 	signer sdk.Signer,
 	logger sdk.Logger,
 	testImpl bool,
@@ -128,9 +129,9 @@ func NewEndorser(
 	var sync *sdknet.Synchronizer
 	switch network.Protocol {
 	case common.ProtocolFabric:
-		sync, err = nfab.NewSynchronizer(kvs, network.Channel, cfg.Committer.ToPeerConf(), signer, logger, kvs)
+		sync, err = nfab.NewSynchronizer(kvs, network.Channel, committer.ToPeerConf(), signer, logger, kvs)
 	default: // "fabric-x" or "" (the default)
-		sync, err = nfabx.NewSynchronizer(kvs, network.Channel, cfg.Committer.ToPeerConf(), signer, logger, kvs)
+		sync, err = nfabx.NewSynchronizer(kvs, network.Channel, committer.ToPeerConf(), signer, logger, kvs)
 	}
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to create synchronizer: %w", err)

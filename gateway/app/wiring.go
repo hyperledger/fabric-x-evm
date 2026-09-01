@@ -57,15 +57,18 @@ func NewNetworkSubmitters(ctx context.Context, protocol string, orderers []netwo
 	return submitters, nil
 }
 
-// NewGatewaySynchronizer creates the protocol-appropriate synchronizer that delivers
-// committed blocks to handlers, in order. Callers decide the handler list (and therefore
-// the sync topology): a real backend typically registers only [chain, gateway], while an
-// in-process test backend with per-endorser-embedded synchronization instead registers
-// [endorser DBs..., chain, gateway] on a single synchronizer so that endorser state is
-// applied before the gateway marks a transaction complete.
+// NewSynchronizer creates the protocol-appropriate synchronizer that delivers
+// committed blocks to handlers, in order — the one synchronizer a process
+// runs, feeding every store it owns (chain, an embedded endorser's KVS,
+// gateway), not just the gateway. Callers decide the handler list (and
+// therefore the sync topology): a real backend typically registers only
+// [chain, gateway], while an in-process test backend with per-endorser-
+// embedded synchronization instead registers [endorser DBs..., chain,
+// gateway] on a single synchronizer so that endorser state is applied before
+// the gateway marks a transaction complete.
 //
 // namespace is used by the fabric-x hybrid synchronizer to filter the notification stream.
-func NewGatewaySynchronizer(protocol string, db network.BlockHeightReader, channel, namespace string, committer network.PeerConf, gwSigner sdk.Signer, logger sdk.Logger, handlers ...blocks.BlockHandler) (Synchronizer, error) {
+func NewSynchronizer(protocol string, db network.BlockHeightReader, channel, namespace string, committer network.PeerConf, gwSigner sdk.Signer, logger sdk.Logger, handlers ...blocks.BlockHandler) (Synchronizer, error) {
 	switch protocol {
 	case "fabric":
 		return nfab.NewSynchronizer(db, channel, committer, gwSigner, logger, handlers...)

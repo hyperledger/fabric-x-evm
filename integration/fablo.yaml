@@ -19,6 +19,16 @@ network:
 logging:
   spec: info
 
+committer:
+  endpoint:
+    host: 127.0.0.1
+    port: 7041
+  tls:
+    mode: tls
+    server-name: peer0.org1.example.com
+    ca-cert-paths:
+      - ../testdata/fablo/fablo-target/fabric-config/crypto-config/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt
+
 gateway:
   listen: "0.0.0.0:8545"
 
@@ -39,16 +49,6 @@ gateway:
         server-name: orderer0.group1.orderer.example.com
         ca-cert-paths:
           - ../testdata/fablo/fablo-target/fabric-config/crypto-config/peerOrganizations/orderer.example.com/tlsca/tlsca.orderer.example.com-cert.pem
-
-  committer:
-    endpoint:
-      host: 127.0.0.1
-      port: 7041
-    tls:
-      mode: tls
-      server-name: peer0.org1.example.com
-      ca-cert-paths:
-        - ../testdata/fablo/fablo-target/fabric-config/crypto-config/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt
 
   # Split deployment: dial org1's and org2's endorsers over gRPC rather than
   # embedding them. Both entries present the gateway's own (org1) client cert;

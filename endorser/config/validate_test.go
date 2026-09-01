@@ -42,9 +42,6 @@ func validEndorser(t *testing.T) config.Endorser {
 	return config.Endorser{
 		Name:     "org1",
 		Identity: common.IdentityConfig{MspID: "Org1MSP", MSPDir: mspDir},
-		Committer: common.ClientConfig{
-			Endpoint: &common.Endpoint{Host: "127.0.0.1", Port: 4001},
-		},
 		Database: config.DB{Database: "sqlite", ConnString: "file:endorser.db"},
 	}
 }
@@ -63,8 +60,6 @@ func TestEndorserValidate(t *testing.T) {
 		{"missing msp-id", func(e *config.Endorser) { e.Identity.MspID = "" }, "msp-id"},
 		{"missing msp-dir", func(e *config.Endorser) { e.Identity.MSPDir = "" }, "msp-dir"},
 		{"msp-dir not exist", func(e *config.Endorser) { e.Identity.MSPDir = "/no/such/dir" }, "msp-dir"},
-		{"nil committer endpoint", func(e *config.Endorser) { e.Committer.Endpoint = nil }, "endpoint"},
-		{"missing committer key", func(e *config.Endorser) { e.Committer.TLS.KeyPath = "/no/key" }, "tls.key-path"},
 		{"no db at all", func(e *config.Endorser) {
 			e.Database.Database = ""
 			e.Database.ConnString = ""

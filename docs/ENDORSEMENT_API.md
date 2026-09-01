@@ -9,15 +9,19 @@ Schema: [`api/endorsementpb/endorsement.proto`](../api/endorsementpb/endorsement
 
 ## Table of Contents
 
-- [Architecture](#architecture)
-- [Service](#service)
-- [Messages](#messages)
-- [Endorsement](#endorsement)
-- [Errors](#errors)
-- [Security](#security)
-- [Resilience](#resilience)
-- [Configuration](#configuration)
-- [Testing](#testing)
+- [Endorsement API](#endorsement-api)
+  - [Table of Contents](#table-of-contents)
+  - [Architecture](#architecture)
+  - [Service](#service)
+  - [Messages](#messages)
+  - [Endorsement](#endorsement)
+  - [Errors](#errors)
+  - [Security](#security)
+  - [Resilience](#resilience)
+  - [Configuration](#configuration)
+    - [Endorser](#endorser)
+    - [Gateway](#gateway)
+  - [Testing](#testing)
 
 ## Architecture
 
@@ -49,14 +53,14 @@ as separate processes. See [Configuration](#configuration).
 One RPC per engine function. Only `Execute` produces an endorsement; the reads
 return plain values.
 
-| RPC | Purpose |
-|---|---|
-| `Execute` | Execute and endorse an Ethereum transaction |
-| `Call` | Read-only `eth_call` |
-| `BalanceAt` | Account balance |
-| `StorageAt` | Storage word at a key |
-| `CodeAt` | Contract code |
-| `NonceAt` | Account nonce |
+| RPC         | Purpose                                     |
+| ----------- | ------------------------------------------- |
+| `Execute`   | Execute and endorse an Ethereum transaction |
+| `Call`      | Read-only `eth_call`                        |
+| `BalanceAt` | Account balance                             |
+| `StorageAt` | Storage word at a key                       |
+| `CodeAt`    | Contract code                               |
+| `NonceAt`   | Account nonce                               |
 
 Separate reads, rather than one query RPC with a type enum, keep every request
 and response fully typed: a storage key cannot be sent on a balance query, and
@@ -77,12 +81,12 @@ the full proposal never crosses the wire.
 **`ExecuteResponse`** carries the execution result and the endorser's signature
 over it:
 
-| Field | Meaning |
-|---|---|
-| `read_write_set` | Serialized read-write set of the execution, kept byte-exact for signing |
-| `event` | Optional event |
-| `status`, `message`, `payload` | Execution outcome and EVM return data |
-| `endorser_id`, `signature` | Serialized identity of the signer, and its signature |
+| Field                          | Meaning                                                                 |
+| ------------------------------ | ----------------------------------------------------------------------- |
+| `read_write_set`               | Serialized read-write set of the execution, kept byte-exact for signing |
+| `event`                        | Optional event                                                          |
+| `status`, `message`, `payload` | Execution outcome and EVM return data                                   |
+| `endorser_id`, `signature`     | Serialized identity of the signer, and its signature                    |
 
 **`CallRequest`/`CallResponse`** carry the `ethereum.CallMsg` fields (from, to,
 gas, gas price, value, data) and a block selector; the response is the return
@@ -116,24 +120,24 @@ Application outcomes and transport faults travel on separate channels.
 the result carries the outcome. Status codes are defined in
 [`common/proposal.go`](../common/proposal.go):
 
-| Status | Meaning |
-|---|---|
-| `200` | Success |
-| `201` | EVM reverted; still endorsed and committed, receipt records `status=0` |
-| `400` | Invalid transaction, rejected before execution (nonce, funds, intrinsic gas, signature) |
-| `460` | Valid transaction whose EVM execution failed (out of gas, invalid opcode) |
-| `500` | Server-side fault, such as a signing failure |
+| Status | Meaning                                                                                 |
+| ------ | --------------------------------------------------------------------------------------- |
+| `200`  | Success                                                                                 |
+| `201`  | EVM reverted; still endorsed and committed, receipt records `status=0`                  |
+| `400`  | Invalid transaction, rejected before execution (nonce, funds, intrinsic gas, signature) |
+| `460`  | Valid transaction whose EVM execution failed (out of gas, invalid opcode)               |
+| `500`  | Server-side fault, such as a signing failure                                            |
 
 **Everything else** travels as a gRPC status error, and only these ever surface
 as a Go error:
 
-| gRPC code | Meaning | Retryable |
-|---|---|---|
-| `INVALID_ARGUMENT` | Malformed request, such as a transaction that fails to decode | no |
-| `UNAVAILABLE` | Endorser unreachable | yes |
-| `DEADLINE_EXCEEDED` | Call timed out | yes |
-| `INTERNAL` | Transport fault | no |
-| `RESOURCE_EXHAUSTED` | Server overloaded (rate limit or concurrent-stream limit) | yes |
+| gRPC code            | Meaning                                                       | Retryable |
+| -------------------- | ------------------------------------------------------------- | --------- |
+| `INVALID_ARGUMENT`   | Malformed request, such as a transaction that fails to decode | no        |
+| `UNAVAILABLE`        | Endorser unreachable                                          | yes       |
+| `DEADLINE_EXCEEDED`  | Call timed out                                                | yes       |
+| `INTERNAL`           | Transport fault                                               | no        |
+| `RESOURCE_EXHAUSTED` | Server overloaded (rate limit or concurrent-stream limit)     | yes       |
 
 The separation matters because a revert is a successful RPC carrying a
 committed outcome, while an unreachable endorser is not an endorsement outcome
@@ -181,24 +185,28 @@ endorsement policy is evaluated against.
 ### Endorser
 
 An endorser is configured with its identity (which it signs endorsements
-with), its committer connection, and its database:
+with) and its database. The committer connection it stays in sync with is
+not endorser-specific config — it's a top-level, process-wide field (see
+below), since a combined gateway+endorser process has exactly one
+synchronizer and therefore exactly one committer connection to configure:
 
 ```yaml
+committer:
+  endpoint:
+    host: committer.org1.example.com
+    port: 4001
+  tls:
+    mode: mtls
+    cert-path: /crypto/.../client.crt
+    key-path: /crypto/.../client.key
+    ca-cert-paths:
+      - /crypto/.../tlsca.org1.example.com-cert.pem
+
 endorser:
   name: org1
   identity:
     msp-id: Org1MSP
     msp-dir: /crypto/peerOrganizations/org1.example.com/peers/endorser.org1.example.com/msp
-  committer:
-    endpoint:
-      host: committer.org1.example.com
-      port: 4001
-    tls:
-      mode: mtls
-      cert-path: /crypto/.../client.crt
-      key-path: /crypto/.../client.key
-      ca-cert-paths:
-        - /crypto/.../tlsca.org1.example.com-cert.pem
   database:
     database: memory
 ```
@@ -208,8 +216,9 @@ max-concurrent-streams and rate limiting. Its bootstrap (listen, TLS,
 interceptors, health) comes from the `serve` package in fabric-x-committer;
 it moves to fabric-x-common once published there.
 
-The endorser's `committer` connection is how it stays in sync with committed
-blocks. It is separate from the gRPC server the gateway dials.
+The top-level `committer` connection is how this process stays in sync with
+committed blocks — shared with `gateway:` when both are present in the same
+process.
 
 ### Gateway
 

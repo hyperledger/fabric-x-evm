@@ -23,11 +23,40 @@ import (
 type Config struct {
 	Logging Logging        `mapstructure:"logging"   yaml:"logging"`
 	Network common.Network `mapstructure:"network"   yaml:"network"`
-	Gateway Gateway        `mapstructure:"gateway"   yaml:"gateway"`
+
+	// Committer is this process's connection to the committer it stays in
+	// sync with. One synchronizer per process means one committer
+	// connection per process, so it lives here rather than under gateway:
+	// or endorser: even though today only the synchronizer consumes it.
+	Committer common.ClientConfig `mapstructure:"committer" yaml:"committer"`
+	// Synchronizer configures this process's single synchronizer, which
+	// delivers committed blocks to the chain, the embedded endorser's KVS,
+	// and the gateway.
+	Synchronizer Synchronizer `mapstructure:"synchronizer" yaml:"synchronizer"`
+
+	Gateway Gateway `mapstructure:"gateway"   yaml:"gateway"`
 
 	// Endorser configures this process's own, embedded endorser. A real
 	// deployment never embeds more than one.
 	Endorser *endorser.Endorser `mapstructure:"endorser" yaml:"endorser"`
+}
+
+// Synchronizer configures the process-wide synchronizer.
+type Synchronizer struct {
+	// Timeout bounds how long Run waits for the initial sync to complete
+	// before returning an error. Zero means DefaultSyncTimeout.
+	Timeout time.Duration `mapstructure:"timeout" yaml:"timeout"`
+}
+
+// DefaultSyncTimeout is used when Synchronizer.Timeout is unset.
+const DefaultSyncTimeout = 10 * time.Minute
+
+// SyncTimeout returns the configured timeout, or DefaultSyncTimeout.
+func (s Synchronizer) SyncTimeout() time.Duration {
+	if s.Timeout <= 0 {
+		return DefaultSyncTimeout
+	}
+	return s.Timeout
 }
 
 // Logging is the config for the Fabric Logger
@@ -60,14 +89,12 @@ type Gateway struct {
 	Identity common.IdentityConfig `mapstructure:"identity" yaml:"identity"`
 	Database DB                    `mapstructure:"database" yaml:"database"`
 
-	Orderers  []common.ClientConfig `mapstructure:"orderers" yaml:"orderers"`
-	Committer common.ClientConfig   `mapstructure:"committer" yaml:"committer"`
+	Orderers []common.ClientConfig `mapstructure:"orderers" yaml:"orderers"`
 
 	// Endorsers, when set, switches to split deployment: the gateway dials each
 	// entry over gRPC (co-located endorsers included, addressed on localhost)
 	// instead of embedding one from the top-level Endorser config.
-	Endorsers   []common.ClientConfig `mapstructure:"endorsers" yaml:"endorsers"`
-	SyncTimeout time.Duration         `mapstructure:"sync-timeout" yaml:"sync-timeout"`
+	Endorsers []common.ClientConfig `mapstructure:"endorsers" yaml:"endorsers"`
 
 	WorkerCount         int `mapstructure:"worker-count"  yaml:"worker-count"`
 	SubmitterCount      int `mapstructure:"submitter-count" yaml:"submitter-count"`
@@ -88,6 +115,9 @@ func (cfg Config) Validate() error {
 	if protocolErr != nil {
 		errs = append(errs, protocolErr)
 	}
+	if err := cfg.Committer.Validate(); err != nil {
+		errs = append(errs, fmt.Errorf("committer: %w", err))
+	}
 	if cfg.Gateway.Listen == "" {
 		errs = append(errs, errors.New("gateway.listen is required"))
 	} else if err := common.ValidateListenAddress(cfg.Gateway.Listen); err != nil {
@@ -98,9 +128,6 @@ func (cfg Config) Validate() error {
 	}
 	if cfg.Gateway.Database.ConnString == "" {
 		errs = append(errs, errors.New("gateway.database.connection-string is required"))
-	}
-	if err := cfg.Gateway.Committer.Validate(); err != nil {
-		errs = append(errs, fmt.Errorf("gateway.committer: %w", err))
 	}
 	if len(cfg.Gateway.Orderers) == 0 {
 		errs = append(errs, errors.New("gateway.orderers must have at least one entry"))

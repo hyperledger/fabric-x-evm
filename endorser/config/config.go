@@ -24,12 +24,14 @@ const (
 	DefaultTimestampPastSkew = 60 * time.Second
 )
 
-// Endorser contains configuration for a single embedded endorser peer.
+// Endorser contains configuration for the embedded endorser peer.
 type Endorser struct {
-	Name      string                `mapstructure:"name"      yaml:"name"`
-	Identity  common.IdentityConfig `mapstructure:"identity"  yaml:"identity"`
-	Committer common.ClientConfig   `mapstructure:"committer" yaml:"committer"`
-	Database  DB                    `mapstructure:"database"  yaml:"database"`
+	// Name is purely used for logging.
+	Name string `mapstructure:"name"      yaml:"name"`
+	// Identity is the signing identity of the endorser.
+	Identity common.IdentityConfig `mapstructure:"identity"  yaml:"identity"`
+	// Database stores the world state.
+	Database DB `mapstructure:"database"  yaml:"database"`
 	// DebugLogs enables per-tx StateDB DEBUG logging via StateDBLogger.
 	DebugLogs bool `mapstructure:"debug-logs" yaml:"debug-logs"`
 	// MaxTimestampFuture is how far ahead of local time a request timestamp may
@@ -106,9 +108,6 @@ func (cfg Endorser) Validate() error {
 	}
 	if err := cfg.Identity.Validate(); err != nil {
 		errs = append(errs, fmt.Errorf("identity: %w", err))
-	}
-	if err := cfg.Committer.Validate(); err != nil {
-		errs = append(errs, fmt.Errorf("committer: %w", err))
 	}
 	if cfg.Database.Database == "" {
 		errs = append(errs, errors.New("database.database is required"))

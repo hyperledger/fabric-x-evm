@@ -51,19 +51,18 @@ func validConfig(t *testing.T) config.Config {
 	client := common.ClientConfig{Endpoint: ep, TLS: tlsCfg}
 	identity := common.IdentityConfig{MspID: "Org1MSP", MSPDir: mspDir}
 	return config.Config{
-		Network: common.Network{Channel: "mychannel", Namespace: "basic"},
+		Network:   common.Network{Channel: "mychannel", Namespace: "basic"},
+		Committer: client,
 		Gateway: config.Gateway{
-			Listen:    "0.0.0.0:8545",
-			Identity:  identity,
-			Database:  config.DB{ConnString: "file:gw.db"},
-			Committer: client,
-			Orderers:  []common.ClientConfig{client},
+			Listen:   "0.0.0.0:8545",
+			Identity: identity,
+			Database: config.DB{ConnString: "file:gw.db"},
+			Orderers: []common.ClientConfig{client},
 		},
 		Endorser: &endorsercfg.Endorser{
-			Name:      "org1",
-			Identity:  identity,
-			Committer: client,
-			Database:  endorsercfg.DB{Database: "sqlite", ConnString: "file:e.db"},
+			Name:     "org1",
+			Identity: identity,
+			Database: endorsercfg.DB{Database: "sqlite", ConnString: "file:e.db"},
 		},
 	}
 }
@@ -85,8 +84,8 @@ func TestConfigValidate(t *testing.T) {
 		{"missing identity msp-dir", func(c *config.Config) { c.Gateway.Identity.MSPDir = "" }, "msp-dir"},
 		{"msp-dir not exist", func(c *config.Config) { c.Gateway.Identity.MSPDir = "/no/such/dir" }, "msp-dir"},
 		{"missing db conn-string", func(c *config.Config) { c.Gateway.Database.ConnString = "" }, "gateway.database.connection-string"},
-		{"nil committer endpoint", func(c *config.Config) { c.Gateway.Committer.Endpoint = nil }, "endpoint"},
-		{"missing committer cert", func(c *config.Config) { c.Gateway.Committer.TLS.CertPath = "/no/cert" }, "tls.cert-path"},
+		{"nil committer endpoint", func(c *config.Config) { c.Committer.Endpoint = nil }, "endpoint"},
+		{"missing committer cert", func(c *config.Config) { c.Committer.TLS.CertPath = "/no/cert" }, "tls.cert-path"},
 		{"no orderers", func(c *config.Config) { c.Gateway.Orderers = nil }, "gateway.orderers"},
 		{"orderer nil endpoint", func(c *config.Config) { c.Gateway.Orderers[0].Endpoint = nil }, "endpoint"},
 		{"orderer missing ca cert", func(c *config.Config) { c.Gateway.Orderers[0].TLS.CACertPaths = []string{"/no/ca"} }, "tls.ca-cert-paths"},
@@ -98,7 +97,7 @@ func TestConfigValidate(t *testing.T) {
 			c.Endorser.Database.Database = ""
 		}, "database"},
 		{"split mode: gateway.endorsers set, no embedded endorser is fine", func(c *config.Config) {
-			c.Gateway.Endorsers = []common.ClientConfig{c.Gateway.Committer}
+			c.Gateway.Endorsers = []common.ClientConfig{c.Committer}
 			c.Endorser = nil
 		}, ""},
 		{"split mode: invalid gateway.endorsers entry reported", func(c *config.Config) {
@@ -106,7 +105,7 @@ func TestConfigValidate(t *testing.T) {
 			c.Endorser = nil
 		}, "gateway.endorsers[0]"},
 		{"both endorser and gateway.endorsers set", func(c *config.Config) {
-			c.Gateway.Endorsers = []common.ClientConfig{c.Gateway.Committer}
+			c.Gateway.Endorsers = []common.ClientConfig{c.Committer}
 		}, "mutually exclusive"},
 	}
 

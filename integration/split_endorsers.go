@@ -127,7 +127,7 @@ func startEndorserGRPCServer(t *testing.T, configFile string, trustedCAs []strin
 	// A plain logger, not TestLogger: the synchronizer logs from goroutines
 	// that outlive the test, and t.Logf panics once the test has finished.
 	logger := sdk.NewStdLogger("endorser-" + ecfg.Name)
-	end, sync, _, err := eapp.NewEndorser(ecfg, cfg.Network, signer, logger, false)
+	end, sync, _, err := eapp.NewEndorser(ecfg, cfg.Network, cfg.Committer, signer, logger, false)
 	if err != nil {
 		t.Fatalf("%s: NewEndorser: %v", ecfg.Name, err)
 	}
@@ -219,7 +219,7 @@ func buildSplitGatewayApp(t *testing.T, configFile, org1Addr, org2Addr string) (
 // The single-process harness tests need none of this. They register
 // [endorser KVS..., chain, gateway] on one synchronizer, so endorser state is
 // always applied before the gateway marks a transaction complete -- see
-// app.NewGatewaySynchronizer.
+// app.NewSynchronizer.
 //
 // The account nonce is used as the marker because an endorser applies a block's
 // state in one step: once the nonce reflects the transaction, that same

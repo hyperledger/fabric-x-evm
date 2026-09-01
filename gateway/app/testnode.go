@@ -94,10 +94,6 @@ func NewTestNode(ctx context.Context, tcfg TestNodeConfig) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to start in-process network: %w", err)
 	}
-
-	orderer := &common.Endpoint{Host: "127.0.0.1", Port: nw.OrdererPort}
-	peer := &common.Endpoint{Host: "127.0.0.1", Port: nw.PeerPort}
-
 	cfg := config.Config{
 		Network: common.Network{
 			Protocol:  protocol,
@@ -106,15 +102,29 @@ func NewTestNode(ctx context.Context, tcfg TestNodeConfig) (*App, error) {
 			NsVersion: testNodeNsVersion,
 			ChainID:   tcfg.ChainID,
 		},
+		Committer: common.ClientConfig{
+			Endpoint: &common.Endpoint{
+				Host: "127.0.0.1",
+				Port: nw.PeerPort,
+			},
+		},
 		Gateway: config.Gateway{
-			Listen:    tcfg.Listen,
-			Database:  config.DB{ConnString: ":memory:"},
-			Orderers:  []common.ClientConfig{{Endpoint: orderer}},
-			Committer: common.ClientConfig{Endpoint: peer},
+			Listen: tcfg.Listen,
+			Database: config.DB{
+				ConnString: ":memory:",
+			},
+			Orderers: []common.ClientConfig{
+				{
+					Endpoint: &common.Endpoint{
+						Host: "127.0.0.1",
+						Port: nw.OrdererPort,
+					},
+				},
+			},
 		},
 	}
 
-	application, err := buildApp(ctx, cfg, signer, logger, []eapi.Service{directiveEndorser}, nil, endorserKVS, true, tcfg.TestAccountsPath, endorserKVS)
+	application, err := buildApp(ctx, cfg, signer, logger, []eapi.Service{directiveEndorser}, endorserKVS, true, tcfg.TestAccountsPath, endorserKVS)
 	if err != nil {
 		return nil, err
 	}

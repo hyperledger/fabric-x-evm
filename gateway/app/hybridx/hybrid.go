@@ -44,7 +44,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 // the store that neither path will ever fill.
 //
 // HybridSynchronizer satisfies the app.Synchronizer interface (Start + Ready)
-// and plugs directly into NewGatewaySynchronizer as the fabric-x implementation.
+// and plugs directly into app.NewSynchronizer as the fabric-x implementation.
 package hybridx
 
 import (
