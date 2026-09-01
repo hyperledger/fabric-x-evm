@@ -645,7 +645,7 @@ func getEndorsedTxForSmartContractCall(t *testing.T, client *EthClient, addr eth
 
 func NewNativeEthClient(gw *core.Gateway) (*ethclient.Client, error) {
 	// Create production RPC server (no test accounts needed for integration tests)
-	rpcServer, err := gwapi.NewServer(gw)
+	rpcServer, err := gwapi.NewServer(gw, nil)
 	if err != nil {
 		return nil, err
 	}

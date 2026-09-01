@@ -18,6 +18,7 @@ import (
 	"github.com/ethereum/go-ethereum/rpc"
 	estorage "github.com/hyperledger/fabric-x-evm/endorser/storage"
 	"github.com/hyperledger/fabric-x-evm/gateway/api"
+	"github.com/hyperledger/fabric-x-evm/gateway/api/filters"
 	"github.com/hyperledger/fabric-x-evm/gateway/storage"
 )
 
@@ -30,7 +31,7 @@ import (
 // SECURITY WARNING: This server performs server-side transaction signing,
 // which is inherently insecure. Use ONLY for development and testing.
 // NEVER use in production environments.
-func NewTestServer(b api.Backend, testAccounts []common.Address, testAccountKeys map[common.Address]*ecdsa.PrivateKey, lightKVS estorage.Revertible, store storage.Revertible, pool TxPool) (*rpc.Server, error) {
+func NewTestServer(b api.Backend, testAccounts []common.Address, testAccountKeys map[common.Address]*ecdsa.PrivateKey, lightKVS estorage.Revertible, store storage.Revertible, pool TxPool, feed *filters.BlockFeed) (*rpc.Server, error) {
 	srv := rpc.NewServer()
 
 	// Shared by the submit path and the snapshot/revert path; see txFence.
@@ -45,6 +46,11 @@ func NewTestServer(b api.Backend, testAccounts []common.Address, testAccountKeys
 	// Register the test-enabled API
 	if err := srv.RegisterName("eth", testAPI); err != nil {
 		return nil, err
+	}
+	if feed != nil {
+		if err := srv.RegisterName("eth", filters.NewFilterAPI(feed, b)); err != nil {
+			return nil, err
+		}
 	}
 
 	// Register other standard APIs

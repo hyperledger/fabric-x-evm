@@ -92,8 +92,8 @@ Per-suite pass rates and compatibility matrices will be added as coverage stabil
 | `net_version` | ✅ | returns chain ID as network ID |
 | `net_listening` | 🔧 | always returns `true` |
 | `web3_clientVersion` | 🔧 | returns `"fabric-evm/0.1.0"` |
-| `eth_subscribe` / `eth_unsubscribe` | ❌ | no WebSocket support |
-| `eth_newFilter` / filter APIs | ❌ | no server-side filter state; use `eth_getLogs` |
+| `eth_subscribe` / `eth_unsubscribe` | ✅ | `newHeads` over WebSocket; `logs` / `newPendingTransactions` subscriptions not supported |
+| `eth_newFilter` / filter APIs | ✅ | block and log filters (`eth_newBlockFilter`, `eth_newFilter`, `eth_getFilterChanges`, `eth_getFilterLogs`, `eth_uninstallFilter`); `eth_newPendingTransactionFilter` unsupported (no pending-tx model under execute-order-commit) |
 | `eth_sendTransaction` | ❌ | server-side signing not supported |
 | `eth_pendingTransactions` | ❌ | endpoint not implemented |
 | `eth_getUncleBy*` / uncle count | ❌ | no uncle concept in Fabric |
@@ -479,9 +479,10 @@ example error objects, and the layering of the classifier.
 
 ## Not implemented
 
-- **WebSocket / subscriptions**: no `eth_subscribe`, `eth_unsubscribe`. No `eth_newFilter`,
- `eth_newBlockFilter`, `eth_newPendingTransactionFilter`, `eth_getFilterChanges`,
- `eth_getFilterLogs`, `eth_uninstallFilter`. Poll `eth_blockNumber` and `eth_getLogs` instead.
+- **Push subscriptions beyond newHeads**: `eth_subscribe("logs")` and
+ `eth_subscribe("newPendingTransactions")` are not supported. `newHeads` works over WebSocket.
+ Polling block/log filters are covered separately above; `eth_newPendingTransactionFilter` is not
+ (no pending-tx model under execute-order-commit).
 - **`eth_sendTransaction`**: server-side key management is not supported. Use
  `eth_sendRawTransaction` with a client-signed transaction.
 - **Uncle queries** (`eth_getUncleByBlockHashAndIndex`, etc.): always empty; no uncle concept in

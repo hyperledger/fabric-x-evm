@@ -16,15 +16,23 @@ import (
 	"github.com/ethereum/go-ethereum/node"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
+
+	"github.com/hyperledger/fabric-x-evm/gateway/api/filters"
 )
 
 var apiLogger = flogging.MustGetLogger("gateway.api")
 
 // NewServer returns an RPC server.
-func NewServer(b Backend) (*rpc.Server, error) {
+// feed may be nil to skip eth_*Filter methods (unit tests that do not exercise filters).
+func NewServer(b Backend, feed *filters.BlockFeed) (*rpc.Server, error) {
 	srv := rpc.NewServer()
 	if err := srv.RegisterName("eth", NewEthAPI(b)); err != nil {
 		return nil, err
+	}
+	if feed != nil {
+		if err := srv.RegisterName("eth", filters.NewFilterAPI(feed, b)); err != nil {
+			return nil, err
+		}
 	}
 
 	chainID, err := b.ChainID(context.TODO())

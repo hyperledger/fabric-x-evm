@@ -18,11 +18,36 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/gorilla/websocket"
+
+	"github.com/hyperledger/fabric-x-evm/gateway/api/filters"
 )
+
+func TestNewServer_RegistersFilterAPI(t *testing.T) {
+	feed := filters.NewBlockFeed()
+	defer feed.Close()
+
+	rpcSrv, err := NewServer(&stubBackend{chainID: big.NewInt(4011), blockNum: 1}, feed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := rpc.DialInProc(rpcSrv)
+
+	var id string
+	if err := client.Call(&id, "eth_newBlockFilter"); err != nil {
+		t.Fatalf("eth_newBlockFilter: %v", err)
+	}
+	if id == "" {
+		t.Fatal("empty filter id")
+	}
+	var ok bool
+	if err := client.Call(&ok, "eth_uninstallFilter", id); err != nil || !ok {
+		t.Fatalf("uninstall: ok=%v err=%v", ok, err)
+	}
+}
 
 func newTestHTTPServer(t *testing.T) string {
 	t.Helper()
-	rpcSrv, err := NewServer(&stubBackend{chainID: big.NewInt(4011)})
+	rpcSrv, err := NewServer(&stubBackend{chainID: big.NewInt(4011)}, nil)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
