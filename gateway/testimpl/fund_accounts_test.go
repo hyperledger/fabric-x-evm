@@ -173,7 +173,13 @@ func TestFundTestAccounts_NegativeBalanceIsNoop(t *testing.T) {
 }
 
 func TestFundTestAccounts_UsesHandleVersions(t *testing.T) {
-	// Two funding rounds for the same account should bump the key version via Update.
+	// Funding writes through the same Handle path real commits use, so the key
+	// picks up a version from Update.
+	//
+	// It is a one-shot pre-seed: the synthetic block is stamped at the store's
+	// current height so seeding does not advance a synchronizer's resume point,
+	// which means a repeat call is absorbed by Handle's replay guard. The only
+	// production caller (gateway/app.buildApp) funds once, on a fresh store.
 	kvs := estorage.NewLightKVS(4)
 	addr := common.HexToAddress("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266")
 	half := new(big.Int).Mul(big.NewInt(5_000), big.NewInt(params.Ether))
@@ -194,7 +200,7 @@ func TestFundTestAccounts_UsesHandleVersions(t *testing.T) {
 		t.Fatalf("first write version = %d, want 0", rec1.Version)
 	}
 
-	// Second fund AddBalances again (creates a new write through Handle).
+	// Second fund targets the same height, so the replay guard skips it.
 	if err := FundTestAccounts(t.Context(), kvs, testNS, []common.Address{addr}, half); err != nil {
 		t.Fatalf("second fund: %v", err)
 	}
@@ -207,10 +213,10 @@ func TestFundTestAccounts_UsesHandleVersions(t *testing.T) {
 	if err != nil || rec2 == nil {
 		t.Fatalf("second bal: rec=%v err=%v", rec2, err)
 	}
-	if rec2.Version != 1 {
-		t.Fatalf("second write version = %d, want 1 (Handle/Update path)", rec2.Version)
+	if rec2.Version != 0 {
+		t.Fatalf("second write version = %d, want 0 (replayed block skipped)", rec2.Version)
 	}
-	// CreateAccount resets bal to 0 before AddBalance, so the second fund ends at half.
+	// The balance is the first round's, left untouched by the skipped replay.
 	got := new(big.Int).SetBytes(rec2.Value)
 	if got.Cmp(half) != 0 {
 		t.Fatalf("balance after second fund = %s, want %s", got, half)

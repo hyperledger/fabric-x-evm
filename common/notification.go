@@ -11,11 +11,11 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"time"
 
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-common/api/applicationpb"
-	"github.com/hyperledger/fabric-x-common/api/committerpb"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/notification"
 	"google.golang.org/protobuf/proto"
@@ -80,7 +80,7 @@ func (d *AllTxBatchDispatcher) HandleBatch(ctx context.Context, batch notificati
 			ID:        event.TxID,
 			Number:    int64(event.TxNum),
 			InputArgs: input.Args,
-			Valid:     event.Status == committerpb.Status_COMMITTED,
+			Valid:     event.Status == notification.StatusCommitted,
 			Status:    int(event.Status),
 			Events:    txEvents,
 			NsRWS:     nsrws,
@@ -104,6 +104,7 @@ func (d *AllTxBatchDispatcher) HandleBatch(ctx context.Context, batch notificati
 		Number:       batch.BlockNumber,
 		Hash:         blockNumberHash(batch.BlockNumber),
 		ParentHash:   blockNumberHash(parentNum),
+		Timestamp:    time.Now().Unix(),
 		Transactions: txs,
 	}
 

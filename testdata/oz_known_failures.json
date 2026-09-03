@@ -402,11 +402,6 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations not subject to a delay #setTargetFunctionRole restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is not delayed when caller has no execution delay succeeds via execute",
-    "cause": "hardhat-time-rpc",
-    "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
-  },
-  {
     "id": "AccessManager admin operations not subject to a delay #updateAuthority restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector \"before each\" hook: set _executionId flag from calldata and target for \"succeeds\"",
     "cause": "hardhat_setStorageAt"
   },
@@ -493,11 +488,6 @@
   },
   {
     "id": "AccessManager admin operations not subject to a delay role admin operations #grantRole restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is not delayed when caller has an execution delay when operation is scheduled when operation is ready for execution succeeds via execute",
-    "cause": "hardhat-time-rpc",
-    "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
-  },
-  {
-    "id": "AccessManager admin operations not subject to a delay role admin operations #grantRole restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is not delayed when caller has no execution delay succeeds via execute",
     "cause": "hardhat-time-rpc",
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
@@ -671,11 +661,6 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations subject to a delay #setGrantDelay restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is not delayed when caller has no execution delay succeeds via execute",
-    "cause": "hardhat-time-rpc",
-    "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
-  },
-  {
     "id": "AccessManager admin operations subject to a delay #setGrantDelay when increasing the delay \"before each\" hook: sets old delay for \"increases the delay after minsetback\"",
     "cause": "hardhat-time-rpc",
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
@@ -740,11 +725,6 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations subject to a delay #setRoleAdmin restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is not delayed when caller has no execution delay succeeds via execute",
-    "cause": "hardhat-time-rpc",
-    "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
-  },
-  {
     "id": "AccessManager admin operations subject to a delay #setRoleGuardian restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector \"before each\" hook: set _executionId flag from calldata and target for \"succeeds\"",
     "cause": "hardhat_setStorageAt"
   },
@@ -799,11 +779,6 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations subject to a delay #setRoleGuardian restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is not delayed when caller has no execution delay succeeds via execute",
-    "cause": "hardhat-time-rpc",
-    "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
-  },
-  {
     "id": "AccessManager admin operations subject to a delay #setTargetAdminDelay restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector \"before each\" hook: set _executionId flag from calldata and target for \"succeeds\"",
     "cause": "hardhat_setStorageAt"
   },
@@ -854,11 +829,6 @@
   },
   {
     "id": "AccessManager admin operations subject to a delay #setTargetAdminDelay restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is not delayed when caller has an execution delay when operation is scheduled when operation is ready for execution succeeds via execute",
-    "cause": "hardhat-time-rpc",
-    "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
-  },
-  {
-    "id": "AccessManager admin operations subject to a delay #setTargetAdminDelay restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is not delayed when caller has no execution delay succeeds via execute",
     "cause": "hardhat-time-rpc",
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
@@ -1024,11 +994,6 @@
   },
   {
     "id": "Create2 deploy deploys a contract with funds deposited in the factory",
-    "cause": "subcall-effect-lost",
-    "note": "Deploy/sub-call side effects (balance after a value-transfer deploy, upgraded-implementation address, nested-call event) don't land, even though the top-level tx succeeds. Confirmed via bisection to PR #321 (reproduces with or without the gas-estimation fix, and in full isolation); exact mechanism inside #321 not yet diagnosed."
-  },
-  {
-    "id": "Create2 deploy deploys a contract without constructor",
     "cause": "subcall-effect-lost",
     "note": "Deploy/sub-call side effects (balance after a value-transfer deploy, upgraded-implementation address, nested-call event) don't land, even though the top-level tx succeeds. Confirmed via bisection to PR #321 (reproduces with or without the gas-estimation fix, and in full isolation); exact mechanism inside #321 not yet diagnosed."
   },
@@ -1496,11 +1461,6 @@
   {
     "id": "ERC721Votes vote with blockNumber transfers \"after each\" hook for \"no delegation\"",
     "cause": "execution reverted"
-  },
-  {
-    "id": "ERC721Wrapper onERC721Received mints a token to from",
-    "cause": "subcall-effect-lost",
-    "note": "Deploy/sub-call side effects (balance after a value-transfer deploy, upgraded-implementation address, nested-call event) don't land, even though the top-level tx succeeds. Confirmed via bisection to PR #321 (reproduces with or without the gas-estimation fix, and in full isolation); exact mechanism inside #321 not yet diagnosed."
   },
   {
     "id": "Governor using $ERC20Votes ERC-6372 behavior in blockNumber mode should have a correct clock value",
@@ -4524,6 +4484,12 @@
     "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
   },
   {
+    "id": "RateLimiter RefillingBucket with some capacity consume consume all capacity at once",
+    "cause": "hardhat-time-rpc",
+    "note": "Bucket/window state depends on real elapsed wall-clock time between txs (evm_increaseTime/evm_setNextBlockTimestamp are no-ops, COMPATIBILITY.md); tests assuming zero/exact elapsed time pick up unintended refill/decay.",
+    "flaky": true
+  },
+  {
     "id": "RateLimiter RefillingBucket with some capacity consume consume one key does not affect another key",
     "cause": "hardhat-time-rpc",
     "note": "Bucket/window state depends on real elapsed wall-clock time between txs (evm_increaseTime/evm_setNextBlockTimestamp are no-ops, COMPATIBILITY.md); tests assuming zero/exact elapsed time pick up unintended refill/decay.",
@@ -4800,11 +4766,6 @@
     "id": "TrieProof verify verify transaction and receipt inclusion in block",
     "cause": "evm_setAutomine",
     "note": "evm_setAutomine is a stub that accepts the call but changes nothing (gateway/testimpl/hardhat_helpers.go SetAutomine); every tx lands in its own block regardless. batchInBlock's check that all receipts share one blockNumber fails since 3 txs land in 3 separate blocks. Not documented in COMPATIBILITY.md yet."
-  },
-  {
-    "id": "UUPSUpgradeable upgrade to upgradeable implementation with call",
-    "cause": "subcall-effect-lost",
-    "note": "Deploy/sub-call side effects (balance after a value-transfer deploy, upgraded-implementation address, nested-call event) don't land, even though the top-level tx succeeds. Confirmed via bisection to PR #321 (reproduces with or without the gas-estimation fix, and in full isolation); exact mechanism inside #321 not yet diagnosed."
   },
   {
     "id": "VestingWallet vesting schedule ERC20 vesting check vesting schedule",

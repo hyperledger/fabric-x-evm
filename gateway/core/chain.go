@@ -69,14 +69,13 @@ func NewChain(dbConnStr, triePath string, withTrie bool) (*Chain, error) {
 	return &Chain{Store: blockStore, db: db, ts: ts, prevHash: prevHash}, nil
 }
 
-// Handle implements blocks.BlockHandler. Order matters for tip safety (#304):
-//  1. Build the domain block and stamp ParentHash from the current tip.
-//  2. Commit write sets to the trie when enabled (flush stays here so a crash
-//     after SQL but before a deferred flush cannot leave SQL ahead of the MPT;
-//     trie apply is idempotent on resubscribe replay).
-//  3. Persist the block via InsertBlock.
-//  4. Advance prevHash only after SQL returns nil, so a failed insert never
-//     publishes a tip that the store does not hold.
+// Handle implements blocks.BlockHandler. Order matters: the trie
+// commits before InsertBlock, so a crash between them never leaves SQL ahead
+// of the MPT, and prevHash only advances after InsertBlock succeeds, so a
+// failed insert never publishes a tip the store doesn't hold.
+//
+// Re-delivering an already-stored block is safe: the trie apply and
+// InsertBlock/InsertTransaction/InsertLog are all idempotent under replay.
 func (c *Chain) Handle(ctx context.Context, b blocks.Block) error {
 	ebl := ConvertToDomain(b)
 

@@ -36,7 +36,7 @@ func NewVersionedDBWrapper(db *state.VersionedDB) *VersionedDBWrapper {
 func (w *VersionedDBWrapper) NewSnapshot(blockNumber *uint64) (execution.ReadStore, error) {
 	var bn uint64
 	if blockNumber == nil {
-		latest, err := w.db.BlockNumber(context.Background())
+		latest, err := w.BlockNumber(context.Background())
 		if err != nil {
 			return nil, err
 		}
@@ -75,9 +75,18 @@ func (s *VersionedDBSnapshot) Close() error {
 	return nil
 }
 
-// Get retrieves the value for a key as of the given block number.
+// Get retrieves the value for a key as of the given block number, honoring the
+// KVS convention that lastBlock 0 means "latest" (see blockRefFromLastBlock) —
+// the same route LightKVS.Get and PebbleKVS.Get take. Passing 0 straight
+// through to VersionedDB.Get would instead match `version_block <= 0`, so
+// every latest-read would come back empty.
 func (w *VersionedDBWrapper) Get(namespace, key string, lastBlock uint64) (*blocks.WriteRecord, error) {
-	return w.db.Get(namespace, key, lastBlock)
+	r, err := w.NewSnapshot(blockRefFromLastBlock(lastBlock))
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	return r.Get(namespace, key)
 }
 
 // Handle implements blocks.BlockHandler by delegating to the underlying VersionedDB.

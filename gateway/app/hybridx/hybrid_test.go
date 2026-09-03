@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
-	"github.com/hyperledger/fabric-x-common/api/committerpb"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/notification"
@@ -113,7 +112,7 @@ func (f *fakeNotifPeer) push(blockNum uint64, txID string) {
 	f.batches <- notification.AllTxBatch{
 		BlockNumber: blockNum,
 		Events: []notification.CommittedTxEvent{
-			{TxID: txID, BlockNum: blockNum, Status: committerpb.Status_COMMITTED},
+			{TxID: txID, BlockNum: blockNum, Status: notification.StatusCommitted},
 		},
 	}
 }
@@ -195,7 +194,7 @@ func evmBatch(t *testing.T, blockNum uint64) notification.AllTxBatch {
 		Events: []notification.CommittedTxEvent{{
 			TxID:     "evm-tx",
 			BlockNum: blockNum,
-			Status:   committerpb.Status_COMMITTED,
+			Status:   notification.StatusCommitted,
 			Metadata: [][]byte{raw},
 		}},
 	}

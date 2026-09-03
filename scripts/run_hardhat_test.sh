@@ -141,7 +141,7 @@ start_testnode() {
     set +m
 
     echo "Waiting for testnode to be ready..."
-    MAX_RETRIES=30
+    MAX_RETRIES=90 # give time for go mod download and build with cold cache.
     RETRY_COUNT=0
     while [ ${RETRY_COUNT} -lt ${MAX_RETRIES} ]; do
         if curl -s -X POST -H "Content-Type: application/json" \

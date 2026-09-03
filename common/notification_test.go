@@ -141,11 +141,11 @@ func TestHandleBatch_DispatchesOnlyEVMTxsFromMixedBatch(t *testing.T) {
 	err := d.HandleBatch(context.Background(), notification.AllTxBatch{
 		BlockNumber: 42,
 		Events: []notification.CommittedTxEvent{
-			{TxID: "evm-1", TxNum: 0, Status: committerpb.Status_COMMITTED,
+			{TxID: "evm-1", TxNum: 0, Status: notification.StatusCommitted,
 				Metadata: makeMetadata(t, ProposalTypeEVMTx, []byte{0xaa})},
-			{TxID: "non-evm", TxNum: 1, Status: committerpb.Status_COMMITTED,
+			{TxID: "non-evm", TxNum: 1, Status: notification.StatusCommitted,
 				Metadata: makeMetadata(t, ProposalType(0x01), []byte{0xbb})},
-			{TxID: "evm-2", TxNum: 2, Status: committerpb.Status_ABORTED_MVCC_CONFLICT,
+			{TxID: "evm-2", TxNum: 2, Status: notification.StatusMVCCConflict,
 				Metadata: makeMetadata(t, ProposalTypeEVMTx, []byte{0xcc})},
 		},
 	})
@@ -179,7 +179,7 @@ func TestHandleBatch_BlockZeroParentHashDoesNotUnderflow(t *testing.T) {
 	err := d.HandleBatch(context.Background(), notification.AllTxBatch{
 		BlockNumber: 0,
 		Events: []notification.CommittedTxEvent{
-			{TxID: "evm-1", Status: committerpb.Status_COMMITTED,
+			{TxID: "evm-1", Status: notification.StatusCommitted,
 				Metadata: makeMetadata(t, ProposalTypeEVMTx, []byte{0xaa})},
 		},
 	})
@@ -195,7 +195,7 @@ func TestHandleBatch_MultipleHandlersAllReceive(t *testing.T) {
 	err := d.HandleBatch(context.Background(), notification.AllTxBatch{
 		BlockNumber: 7,
 		Events: []notification.CommittedTxEvent{
-			{TxID: "evm-1", Status: committerpb.Status_COMMITTED,
+			{TxID: "evm-1", Status: notification.StatusCommitted,
 				Metadata: makeMetadata(t, ProposalTypeEVMTx, []byte{0xaa})},
 		},
 	})
@@ -219,10 +219,10 @@ func TestHandleBatch_EventsFromMetadata1(t *testing.T) {
 		BlockNumber: 5,
 		Events: []notification.CommittedTxEvent{
 			// tx with event in Metadata[1]
-			{TxID: "evm-with-event", Status: committerpb.Status_COMMITTED,
+			{TxID: "evm-with-event", Status: notification.StatusCommitted,
 				Metadata: makeMetadataWithEvent(t, ProposalTypeEVMTx, []byte{0xaa}, eventPayload)},
 			// tx with no event (only Metadata[0])
-			{TxID: "evm-no-event", Status: committerpb.Status_COMMITTED,
+			{TxID: "evm-no-event", Status: notification.StatusCommitted,
 				Metadata: makeMetadata(t, ProposalTypeEVMTx, []byte{0xbb})},
 		},
 	})
@@ -252,7 +252,7 @@ func TestHandleBatch_HandlerErrorPanics(t *testing.T) {
 	_ = d.HandleBatch(context.Background(), notification.AllTxBatch{
 		BlockNumber: 1,
 		Events: []notification.CommittedTxEvent{
-			{TxID: "evm-1", Status: committerpb.Status_COMMITTED,
+			{TxID: "evm-1", Status: notification.StatusCommitted,
 				Metadata: makeMetadata(t, ProposalTypeEVMTx, []byte{0xaa})},
 		},
 	})

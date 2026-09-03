@@ -8,6 +8,8 @@ package storage
 
 import (
 	"testing"
+
+	"github.com/hyperledger/fabric-x-sdk/blocks"
 )
 
 func TestNewRevertibleLightKVS(t *testing.T) {
@@ -393,5 +395,114 @@ func TestRevertibleLightKVS_NewSnapshot_DuplicateBlockNumber(t *testing.T) {
 	}
 	if rec == nil || string(rec.Value) != "funded" {
 		t.Errorf("reading at block 0 should see the last state written at block 0 (%q), got %+v", "funded", rec)
+	}
+}
+
+// TestRevertibleLightKVS_Handle_SequentialNotWrapping verifies Handle shares
+// Update's panic-on-exhaustion contract rather than silently wrapping like the
+// promoted LightKVS.Handle would. Before Handle was overridden, this scenario
+// wrapped the ring buffer without error, which the doc comment on the type
+// does not promise.
+func TestRevertibleLightKVS_Handle_SequentialNotWrapping(t *testing.T) {
+	kvs := NewRevertibleLightKVS(NewLightKVS(2))
+	ctx := t.Context()
+
+	for i := uint64(1); i <= 2; i++ {
+		if err := kvs.Handle(ctx, mkBlock(i, 0, "tx", true, "ns1",
+			blocks.KVWrite{Key: "k", Value: []byte{byte(i)}})); err != nil {
+			t.Fatalf("Handle block %d: %v", i, err)
+		}
+	}
+
+	defer func() {
+		if recover() == nil {
+			t.Error("expected a panic once history (size 2) is exhausted, got none")
+		}
+	}()
+	_ = kvs.Handle(ctx, mkBlock(3, 0, "tx", true, "ns1", blocks.KVWrite{Key: "k", Value: []byte{3}}))
+	t.Error("Handle should have panicked before returning")
+}
+
+// TestRevertibleLightKVS_Handle_EmptyBlockAdvancesHeight verifies a block with
+// no writes still advances height when delivered through Handle. Update alone
+// cannot express this (it derives the block number from the batch's first
+// entry), which is why Handle passes it explicitly.
+func TestRevertibleLightKVS_Handle_EmptyBlockAdvancesHeight(t *testing.T) {
+	kvs := NewRevertibleLightKVS(NewLightKVS(4))
+	ctx := t.Context()
+
+	if err := kvs.Handle(ctx, mkBlock(1, 0, "tx1", true, "ns1",
+		blocks.KVWrite{Key: "k", Value: []byte("v1")})); err != nil {
+		t.Fatalf("Handle block 1: %v", err)
+	}
+	if err := kvs.Handle(ctx, blocks.Block{Number: 2, Transactions: nil}); err != nil {
+		t.Fatalf("Handle empty block 2: %v", err)
+	}
+
+	if n, err := kvs.BlockNumber(ctx); err != nil || n != 2 {
+		t.Errorf("expected height 2 after empty block, got %d (err %v)", n, err)
+	}
+}
+
+// TestRevertibleLightKVS_Handle_ReplayIsNoOp mirrors LightKVS's own replay
+// guard: re-delivering an already-applied block with identical content is a
+// no-op, and with differing content is a loud error — in both cases without
+// bumping versions again.
+func TestRevertibleLightKVS_Handle_ReplayIsNoOp(t *testing.T) {
+	kvs := NewRevertibleLightKVS(NewLightKVS(4))
+	ctx := t.Context()
+
+	if err := kvs.Handle(ctx, mkBlock(1, 0, "tx1", true, "ns1",
+		blocks.KVWrite{Key: "k", Value: []byte("v1")})); err != nil {
+		t.Fatalf("Handle block 1: %v", err)
+	}
+
+	if err := kvs.Handle(ctx, mkBlock(1, 0, "tx1", true, "ns1",
+		blocks.KVWrite{Key: "k", Value: []byte("v1")})); err != nil {
+		t.Fatalf("Handle identical replay of block 1: %v", err)
+	}
+	if rec := kvs.Current.Load().Data["ns1:k"]; rec == nil || string(rec.Value) != "v1" || rec.Version != 0 {
+		t.Errorf("identical replay changed state: expected v1 version 0, got %+v", rec)
+	}
+
+	if err := kvs.Handle(ctx, mkBlock(1, 0, "tx1-replay", true, "ns1",
+		blocks.KVWrite{Key: "k", Value: []byte("v2")})); err == nil {
+		t.Fatal("Handle differing replay of block 1: expected error, got nil")
+	}
+	if rec := kvs.Current.Load().Data["ns1:k"]; rec == nil || string(rec.Value) != "v1" || rec.Version != 0 {
+		t.Errorf("differing replay changed state: expected v1 version 0, got %+v", rec)
+	}
+}
+
+// TestRevertibleLightKVS_Handle_NewSnapshotFindsHistory verifies that blocks
+// delivered via Handle are findable through NewSnapshot within the history
+// window — the read side of the bug this type's Handle override closes: a
+// LightKVS.applyBlock-driven ring wrap and a NewSnapshot scan bounded by
+// NextIndex used to disagree about which slots held valid data.
+func TestRevertibleLightKVS_Handle_NewSnapshotFindsHistory(t *testing.T) {
+	kvs := NewRevertibleLightKVS(NewLightKVS(4))
+	ctx := t.Context()
+
+	for i := uint64(1); i <= 3; i++ {
+		if err := kvs.Handle(ctx, mkBlock(i, 0, "tx", true, "ns1",
+			blocks.KVWrite{Key: "k", Value: []byte{byte(i)}})); err != nil {
+			t.Fatalf("Handle block %d: %v", i, err)
+		}
+	}
+
+	for i := uint64(1); i <= 3; i++ {
+		bn := i
+		reader, err := kvs.NewSnapshot(&bn)
+		if err != nil {
+			t.Fatalf("NewSnapshot(%d): %v", i, err)
+		}
+		rec, err := reader.Get("ns1", "k")
+		reader.Close()
+		if err != nil {
+			t.Fatalf("Get at block %d: %v", i, err)
+		}
+		if rec == nil || rec.Value[0] != byte(i) {
+			t.Errorf("as of block %d: expected value %d, got %+v", i, i, rec)
+		}
 	}
 }
