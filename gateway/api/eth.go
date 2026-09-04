@@ -22,6 +22,7 @@ import (
 	"github.com/ethereum/go-ethereum/eth/filters"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
+	apifilters "github.com/hyperledger/fabric-x-evm/gateway/api/filters"
 	"github.com/hyperledger/fabric-x-evm/gateway/api/rpcerr"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 )
@@ -485,59 +486,21 @@ func (api *EthAPI) GetLogs(ctx context.Context, crit filters.FilterCriteria) ([]
 }
 
 func (api *EthAPI) filterCriteriaToLogFilter(ctx context.Context, crit filters.FilterCriteria) (domain.LogFilter, error) {
-	filter := domain.LogFilter{}
-
-	if crit.BlockHash != nil {
-		hash := crit.BlockHash.Bytes()
-		filter.BlockHash = &hash
-	} else {
-		from, err := api.resolveLogFilterFromBlock(ctx, crit.FromBlock)
+	head := uint64(0)
+	needHead := crit.BlockHash == nil && (crit.FromBlock == nil ||
+		(crit.FromBlock.Sign() < 0 && crit.FromBlock.Cmp(big.NewInt(int64(rpc.EarliestBlockNumber))) != 0))
+	if needHead {
+		h, err := api.b.BlockNumber(ctx)
 		if err != nil {
 			return domain.LogFilter{}, err
 		}
-		filter.FromBlock = from
-		filter.ToBlock = resolveLogFilterToBlock(crit.ToBlock)
+		head = h
 	}
-
-	if len(crit.Addresses) > 0 {
-		filter.Addresses = make([][]byte, len(crit.Addresses))
-		for i, addr := range crit.Addresses {
-			filter.Addresses[i] = addr.Bytes()
-		}
-	}
-
-	if len(crit.Topics) > 0 {
-		filter.Topics = make([][][]byte, len(crit.Topics))
-		for i, alternatives := range crit.Topics {
-			if len(alternatives) > 0 {
-				filter.Topics[i] = make([][]byte, len(alternatives))
-				for j, topic := range alternatives {
-					filter.Topics[i][j] = topic.Bytes()
-				}
-			}
-		}
-	}
-
-	return filter, nil
+	return apifilters.CriteriaToLogFilter(crit, head), nil
 }
 
 func domainLogToTypesLog(l domain.Log) *types.Log {
-	topics := make([]common.Hash, len(l.Topics))
-	for i, t := range l.Topics {
-		topics[i] = common.BytesToHash(t)
-	}
-
-	return &types.Log{
-		Address:        common.BytesToAddress(l.Address),
-		Topics:         topics,
-		Data:           l.Data,
-		BlockNumber:    l.BlockNumber,
-		BlockHash:      common.BytesToHash(l.BlockHash),
-		BlockTimestamp: uint64(l.Timestamp),
-		TxHash:         common.BytesToHash(l.TxHash),
-		TxIndex:        uint(l.TxIndex),
-		Index:          uint(l.LogIndex),
-	}
+	return apifilters.DomainLogToTypes(l)
 }
 
 // hexArg type-asserts a call argument, so a non-string (say a JSON number) is invalid params rather than a panic.
@@ -701,42 +664,4 @@ func blockNumberToUint64(num rpc.BlockNumber) uint64 {
 		return math.MaxUint64
 	}
 	return uint64(num)
-}
-
-// resolveLogFilterFromBlock resolves the lower bound of an eth_getLogs range.
-// An omitted bound defaults to "latest" per the JSON-RPC spec, so it — like "latest",
-// "pending", "safe" and "finalized" — resolves to the head block; "earliest" is block 0.
-// Resolving to nil would mean genesis and return the whole chain's logs.
-func (api *EthAPI) resolveLogFilterFromBlock(ctx context.Context, n *big.Int) (*uint64, error) {
-	if n != nil && n.Sign() >= 0 {
-		v := n.Uint64()
-		return &v, nil
-	}
-	if n != nil && n.Cmp(big.NewInt(int64(rpc.EarliestBlockNumber))) == 0 {
-		zero := uint64(0)
-		return &zero, nil
-	}
-	head, err := api.b.BlockNumber(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return &head, nil
-}
-
-// resolveLogFilterToBlock resolves the upper bound of an eth_getLogs range.
-// nil (omitted), "latest", "pending", "safe" and "finalized" all leave the bound
-// open, which the store reads as the head block; "earliest" resolves to block 0.
-func resolveLogFilterToBlock(n *big.Int) *uint64 {
-	if n == nil {
-		return nil
-	}
-	if n.Cmp(big.NewInt(int64(rpc.EarliestBlockNumber))) == 0 {
-		zero := uint64(0)
-		return &zero
-	}
-	if n.Sign() < 0 {
-		return nil
-	}
-	v := n.Uint64()
-	return &v
 }

@@ -16,6 +16,7 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -38,6 +39,7 @@ import (
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
 	"github.com/hyperledger/fabric-x-evm/endorser/storage"
 	gwapi "github.com/hyperledger/fabric-x-evm/gateway/api"
+	"github.com/hyperledger/fabric-x-evm/gateway/api/filters"
 	"github.com/hyperledger/fabric-x-evm/gateway/app"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
@@ -148,15 +150,17 @@ type HandlerChainFactory func(
 //     block the endorser's state already reflects it — this gives read-your-writes
 //     semantics for the test RPC's synchronous eth_sendRawTransaction.
 //
-//  2. Chain: persist the block and its Ethereum transactions to the SQLite store and
+//  2. BlockFeed: update eth_*Filter state synchronously for the committed block.
+//
+//  3. Chain: persist the block and its Ethereum transactions to the SQLite store and
 //     update the state-root trie. Must run before the gateway so that eth_getBlockBy*
 //     and eth_getTransactionReceipt are answerable the moment the gateway marks a
 //     transaction complete.
 //
-//  3. Gateway: call TxQueue.Handle to mark any pending Ethereum transactions whose
+//  4. Gateway: call TxQueue.Handle to mark any pending Ethereum transactions whose
 //     Fabric tx-ID appears in this block as complete, unblocking waiting callers.
 //
-//  4. Extra handlers (e.g. TxCompletionTracker in perf tests): any caller-supplied
+//  5. Extra handlers (e.g. TxCompletionTracker in perf tests): any caller-supplied
 //     handlers that observe committed blocks for their own purposes.
 func defaultHandlerChain(t *testing.T, ctx context.Context, cfg config.Config, ends []eapi.Service, gwSigner sdk.Signer, submitters []core.Submitter, txQueue core.TxQueueInterface, dbs []storage.KVS) (*core.Gateway, []blocks.BlockHandler, network.BlockHeightReader) {
 	chain, err := core.NewChain(cfg.Gateway.Database.ConnString, cfg.Gateway.Database.TriePath, false)
@@ -174,11 +178,16 @@ func defaultHandlerChain(t *testing.T, ctx context.Context, cfg config.Config, e
 		t.Fatalf("build gateway: %v", err)
 	}
 
-	handlers := make([]blocks.BlockHandler, 0, len(dbs)+2)
+	filterAPI := filters.NewFilterAPI(gw)
+	blockFeed := filters.NewBlockFeed(filterAPI)
+	t.Cleanup(blockFeed.Close)
+	registerIntegrationFilters(gw, filterAPI)
+
+	handlers := make([]blocks.BlockHandler, 0, len(dbs)+3)
 	for _, db := range dbs {
 		handlers = append(handlers, db)
 	}
-	handlers = append(handlers, chain, gw)
+	handlers = append(handlers, blockFeed, chain, gw)
 	return gw, handlers, chain
 }
 
@@ -640,9 +649,20 @@ func getEndorsedTxForSmartContractCall(t *testing.T, client *EthClient, addr eth
 	return processCommon(t, gw, false, tx)
 }
 
+// integrationFilters ties a FilterAPI to the gateway that owns the matching BlockFeed
+// in the synchronizer handler chain, so InProc RPC sees the same filter state.
+var integrationFilters sync.Map // *core.Gateway -> *filters.FilterAPI
+
+func registerIntegrationFilters(gw *core.Gateway, api *filters.FilterAPI) {
+	integrationFilters.Store(gw, api)
+}
+
 func NewNativeEthClient(gw *core.Gateway) (*ethclient.Client, error) {
-	// Create production RPC server (no test accounts needed for integration tests)
-	rpcServer, err := gwapi.NewServer(gw)
+	var filterAPI *filters.FilterAPI
+	if v, ok := integrationFilters.Load(gw); ok {
+		filterAPI = v.(*filters.FilterAPI)
+	}
+	rpcServer, err := gwapi.NewServer(gw, filterAPI)
 	if err != nil {
 		return nil, err
 	}
