@@ -40,8 +40,8 @@ type Service interface {
 	// The endorser validates it against a configured clock skew window.
 	//
 	// It returns a *peer.ProposalResponse because the gateway packages it into
-	// an sdk.Endorsement, and both SDK packagers require one. Dropping it
-	// depends on the fabricx.TxPackager change tracked for the client PR.
+	// an sdk.Endorsement. Fabric-X endorses the result rather than the proposal,
+	// so it sends no proposal hash.
 	Execute(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction, timestamp time.Time) (*peer.ProposalResponse, error)
 
 	// Call runs a read-only eth_call. On an EVM revert or a failed execution it

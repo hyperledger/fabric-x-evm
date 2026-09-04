@@ -416,6 +416,49 @@ func TestExecuteTransaction_Success(t *testing.T) {
 	}
 }
 
+// Only classic Fabric signs over the proposal, so only it gets a whole one.
+func TestExecuteTransaction_ProposalMatchesProtocol(t *testing.T) {
+	tests := []struct {
+		protocol    string
+		wantPayload bool
+	}{
+		{protocol: "", wantPayload: false},
+		{protocol: common.ProtocolFabricX, wantPayload: false},
+		{protocol: common.ProtocolFabric, wantPayload: true},
+	}
+
+	for _, tt := range tests {
+		t.Run("protocol="+tt.protocol, func(t *testing.T) {
+			pResp := &peer.ProposalResponse{Response: &peer.Response{Status: common.StatusOK}}
+			c, err := NewEndorsementClient([]api.Service{&stubEndorser{execResp: pResp}}, stubSigner{}, "ch", "ns", "1.0", tt.protocol)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			end, err := c.ExecuteTransaction(context.Background(), types.NewTx(&types.LegacyTx{Gas: 21000, GasPrice: big.NewInt(0)}))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if end.Proposal == nil {
+				t.Fatal("Proposal = nil, want at least a header")
+			}
+			if len(end.Proposal.Header) == 0 {
+				t.Error("Proposal.Header is empty")
+			}
+			if got := len(end.Proposal.Payload) > 0; got != tt.wantPayload {
+				t.Errorf("proposal carries a payload = %v, want %v", got, tt.wantPayload)
+			}
+		})
+	}
+}
+
+// An unrecognized protocol fails at construction, not at submission.
+func TestNewEndorsementClient_RejectsUnknownProtocol(t *testing.T) {
+	if _, err := NewEndorsementClient(nil, stubSigner{}, "ch", "ns", "1.0", "bogus"); err == nil {
+		t.Fatal("expected an error for an unknown protocol")
+	}
+}
+
 // Every endorser must see the same gateway-stamped timestamp.
 func TestExecuteTransaction_SameTimestampForAllEndorsers(t *testing.T) {
 	pResp := &peer.ProposalResponse{Response: &peer.Response{Status: common.StatusOK}}

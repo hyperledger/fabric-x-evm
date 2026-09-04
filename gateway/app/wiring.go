@@ -86,7 +86,7 @@ func NewSynchronizer(protocol string, db network.BlockHeightReader, channel, nam
 // of the rest of this wiring) and for creating and starting the synchronizer(s) that feed
 // committed blocks to chain/gateway/endorsers.
 func BuildGateway(ctx context.Context, endorsers []eapi.Service, gwSigner sdk.Signer, netCfg common.Network, chain core.Store, submitters []core.Submitter, submitterCount int, workerCount int, txQueue core.TxQueueInterface, endorsementChanSize int, txPerSec int) (*core.Gateway, error) {
-	ec, err := core.NewEndorsementClient(endorsers, gwSigner, netCfg.Channel, netCfg.Namespace, netCfg.NsVersion)
+	ec, err := core.NewEndorsementClient(endorsers, gwSigner, netCfg.Channel, netCfg.Namespace, netCfg.NsVersion, netCfg.Protocol)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create endorsement client: %w", err)
 	}

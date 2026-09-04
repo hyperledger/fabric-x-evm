@@ -10,6 +10,7 @@ import (
 	"fmt"
 
 	"github.com/hyperledger/fabric-x-evm/common"
+	evmfabx "github.com/hyperledger/fabric-x-evm/endorsement/fabricx"
 	"github.com/hyperledger/fabric-x-evm/endorser/config"
 	"github.com/hyperledger/fabric-x-evm/endorser/core"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
@@ -17,7 +18,6 @@ import (
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	efab "github.com/hyperledger/fabric-x-sdk/endorsement/fabric"
-	efabx "github.com/hyperledger/fabric-x-sdk/endorsement/fabricx"
 	sdknet "github.com/hyperledger/fabric-x-sdk/network"
 	nfab "github.com/hyperledger/fabric-x-sdk/network/fabric"
 	nfabx "github.com/hyperledger/fabric-x-sdk/network/fabricx"
@@ -85,7 +85,7 @@ func NewEndorserCore(
 	var monotonicVersions bool
 	switch protocol {
 	case common.ProtocolFabricX:
-		builder = efabx.NewEndorsementBuilder(signer)
+		builder = evmfabx.NewEndorsementBuilder(signer)
 		monotonicVersions = true
 	default: // "fabric"
 		builder = efab.NewEndorsementBuilder(signer)

@@ -20,6 +20,7 @@ import (
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 
 	"github.com/hyperledger/fabric-x-evm/common"
+	evmfabx "github.com/hyperledger/fabric-x-evm/endorsement/fabricx"
 	"github.com/hyperledger/fabric-x-evm/endorser/api"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	sdk "github.com/hyperledger/fabric-x-sdk"
@@ -28,24 +29,31 @@ import (
 
 // EndorsementClient forwards ethereum-style transactions and calls
 // to the endorsers and returns their signed fabric-style responses.
+// An empty protocol means fabric-x, as everywhere else.
 type EndorsementClient struct {
 	endorsers []api.Service
 	signer    Signer
 	channel   string
 	namespace string
 	nsVersion string
+	protocol  string
 }
 
 // NewEndorsementClient creates an EndorsementClient from api.Service instances.
 // This allows using concrete endorsers, wrapped endorsers (e.g., from testimpl package), remote
 // gRPC clients to other organizations' endorsers, or other implementations.
-func NewEndorsementClient(endorsers []api.Service, signer Signer, channel, namespace, nsVersion string) (*EndorsementClient, error) {
+func NewEndorsementClient(endorsers []api.Service, signer Signer, channel, namespace, nsVersion, protocol string) (*EndorsementClient, error) {
+	protocol, err := common.NormalizeProtocol(protocol)
+	if err != nil {
+		return nil, err
+	}
 	return &EndorsementClient{
 		endorsers: endorsers,
 		signer:    signer,
 		channel:   channel,
 		namespace: namespace,
 		nsVersion: nsVersion,
+		protocol:  protocol,
 	}, nil
 }
 
@@ -297,7 +305,11 @@ func (e *EndorsementClient) NonceAt(ctx context.Context, account ethcommon.Addre
 	return e.endorsers[0].NonceAt(ctx, account, blockNumber)
 }
 
-// createInvocation creates an endorsement.Invocation from the given parameters
+// createInvocation builds the invocation for the configured protocol; only
+// classic Fabric signs over the proposal, so only it pays for a whole one.
 func (e *EndorsementClient) createInvocation(args [][]byte) (endorsement.Invocation, error) {
-	return endorsement.NewInvocation(e.signer, e.channel, e.namespace, e.nsVersion, args)
+	if e.protocol == common.ProtocolFabric {
+		return endorsement.NewInvocation(e.signer, e.channel, e.namespace, e.nsVersion, args)
+	}
+	return evmfabx.NewInvocation(e.signer, e.channel, e.namespace, e.nsVersion, args)
 }

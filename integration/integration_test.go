@@ -270,12 +270,12 @@ func testGreeter(t *testing.T, th *TestHarness) {
 	querySmartContractExpect(t, ethA, addr, th, firstGreeting, "greet")
 
 	secondGreeting := "Hi 👋 this is a greeting with a special character and more bytes than can fit in a single slot"
-	env := getEndorsedTxForSmartContractCall(t, ethA, addr, node2, "setGreeting", secondGreeting)
+	tx, env := getEndorsedTxForSmartContractCall(t, ethA, addr, node2, "setGreeting", secondGreeting)
 
 	// not committed yet, expect to still be Hello
 	querySmartContractExpect(t, ethA, addr, th, firstGreeting, "greet")
 
-	submit(t, node1, env)
+	submit(t, node1, tx, env)
 
 	querySmartContractExpect(t, ethA, addr, th, secondGreeting, "greet")
 }
@@ -306,11 +306,11 @@ func testCounter(t *testing.T, th *TestHarness) {
 
 	querySmartContractExpect(t, ethOwner, addr, th, x, "getCount")
 
-	env := getEndorsedTxForSmartContractCall(t, ethOwner, addr, node2, "increment")
+	tx, env := getEndorsedTxForSmartContractCall(t, ethOwner, addr, node2, "increment")
 	querySmartContractExpect(t, ethOwner, addr, th, x, "getCount")
 
 	x.Add(x, big.NewInt(1))
-	submit(t, node2, env)
+	submit(t, node2, tx, env)
 
 	querySmartContractExpect(t, ethOwner, addr, th, x, "getCount")
 }
@@ -550,8 +550,8 @@ func testTetherTokenParallel(t *testing.T, th *TestHarness) {
 	// UserB transfers 30,000 USDT to UserD
 	toAC := big.NewInt(30_000)
 	toBD := big.NewInt(20_000)
-	env1 := getEndorsedTxForSmartContractCall(t, ethA, addr, node1, "transfer", ethC.Address(), toAC)
-	env2 := getEndorsedTxForSmartContractCall(t, ethB, addr, node2, "transfer", ethD.Address(), toBD)
+	tx1, env1 := getEndorsedTxForSmartContractCall(t, ethA, addr, node1, "transfer", ethC.Address(), toAC)
+	tx2, env2 := getEndorsedTxForSmartContractCall(t, ethB, addr, node2, "transfer", ethD.Address(), toBD)
 
 	// Commit the two transactions in parallel (in one block)
 	// Result:
@@ -562,8 +562,8 @@ func testTetherTokenParallel(t *testing.T, th *TestHarness) {
 	//   User D:  20,000 USDT (+20,000)
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go func() { defer wg.Done(); submit(t, node1, env1) }()
-	go func() { defer wg.Done(); submit(t, node2, env2) }()
+	go func() { defer wg.Done(); submit(t, node1, tx1, env1) }()
+	go func() { defer wg.Done(); submit(t, node2, tx2, env2) }()
 	wg.Wait()
 
 	toB = toB.Sub(toB, toBD)
