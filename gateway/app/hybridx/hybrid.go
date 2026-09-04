@@ -59,8 +59,6 @@ import (
 	"github.com/hyperledger/fabric-x-sdk/network"
 	nfabx "github.com/hyperledger/fabric-x-sdk/network/fabricx"
 	"github.com/hyperledger/fabric-x-sdk/notification"
-
-	evmcommon "github.com/hyperledger/fabric-x-evm/common"
 )
 
 // deliveryWaitPoll is how often the notification path re-reads dispatched while
@@ -160,7 +158,7 @@ func (h *HybridSynchronizer) Start(ctx context.Context) error {
 	// ── Notification service ────────────────────────────────────────────────
 	gate := &notifGate{
 		hybrid:     h,
-		dispatcher: evmcommon.NewAllTxBatchDispatcher(&hybridAdapter{h: h}),
+		dispatcher: NewAllTxBatchDispatcher(&hybridAdapter{h: h}),
 		logger:     h.logger,
 		// Safe to call only once the gate has seen dispatched reach the block
 		// before its own: this ctx reaches the store's BeginTx, so cancelling
@@ -290,7 +288,7 @@ func (s *deliveryShim) Handle(ctx context.Context, b blocks.Block) error {
 // sequentially from the single notification goroutine started in Start.
 type notifGate struct {
 	hybrid       *HybridSynchronizer
-	dispatcher   *evmcommon.AllTxBatchDispatcher
+	dispatcher   *AllTxBatchDispatcher
 	logger       sdk.Logger
 	stopDelivery func()
 	switched     bool

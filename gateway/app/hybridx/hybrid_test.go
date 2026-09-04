@@ -177,7 +177,7 @@ func newGate(h *HybridSynchronizer) (*notifGate, *bool) {
 	stopped := new(bool)
 	return &notifGate{
 		hybrid:       h,
-		dispatcher:   evmcommon.NewAllTxBatchDispatcher(&hybridAdapter{h: h}),
+		dispatcher:   NewAllTxBatchDispatcher(&hybridAdapter{h: h}),
 		logger:       sdk.NoOpLogger{},
 		stopDelivery: func() { *stopped = true },
 	}, stopped
