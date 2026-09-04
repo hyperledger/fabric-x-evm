@@ -163,6 +163,80 @@ func TestSetCode_ClearWithEmpty(t *testing.T) {
 	}
 }
 
+// storageFromRWS returns the storage word a read-write set writes for
+// addr/key, or nil when the set contains no such write.
+func storageFromRWS(rws blocks.ReadWriteSet, addr ethcommon.Address, key ethcommon.Hash) []byte {
+	k := "str:" + addr.Hex() + ":" + key.Hex()
+	for _, w := range rws.Writes {
+		if w.Key == k {
+			if w.IsDelete {
+				return []byte{}
+			}
+			return w.Value
+		}
+	}
+	return nil
+}
+
+func TestSetStorageAt_Set(t *testing.T) {
+	kvs := estorage.NewLightKVS(8)
+	b := &noopBuilder{}
+	d := NewDirectiveEndorser(nil, kvs, testNS, b, true)
+
+	key := ethcommon.HexToHash("0x1")
+	value := ethcommon.HexToHash("0x2a")
+	if _, err := d.SetStorageAt(context.Background(), testInvocation(), directiveTestAddr, key, value); err != nil {
+		t.Fatalf("SetStorageAt: %v", err)
+	}
+	got := storageFromRWS(b.lastRWS, directiveTestAddr, key)
+	if !bytes.Equal(got, value.Bytes()) {
+		t.Fatalf("storage write = %x, want %x", got, value.Bytes())
+	}
+}
+
+func TestSetStorageAt_Overwrite(t *testing.T) {
+	kvs := estorage.NewLightKVS(8)
+	b := &noopBuilder{}
+	d := NewDirectiveEndorser(nil, kvs, testNS, b, true)
+
+	key := ethcommon.HexToHash("0x1")
+	first := ethcommon.HexToHash("0x2a")
+	if _, err := d.SetStorageAt(context.Background(), testInvocation(), directiveTestAddr, key, first); err != nil {
+		t.Fatalf("seed SetStorageAt: %v", err)
+	}
+	commitRWS(t, kvs, testNS, b.lastRWS)
+
+	second := ethcommon.HexToHash("0x2b")
+	if _, err := d.SetStorageAt(context.Background(), testInvocation(), directiveTestAddr, key, second); err != nil {
+		t.Fatalf("SetStorageAt: %v", err)
+	}
+	got := storageFromRWS(b.lastRWS, directiveTestAddr, key)
+	if !bytes.Equal(got, second.Bytes()) {
+		t.Fatalf("storage write = %x, want %x", got, second.Bytes())
+	}
+}
+
+func TestSetStorageAt_ClearWithZero(t *testing.T) {
+	kvs := estorage.NewLightKVS(8)
+	b := &noopBuilder{}
+	d := NewDirectiveEndorser(nil, kvs, testNS, b, true)
+
+	key := ethcommon.HexToHash("0x1")
+	value := ethcommon.HexToHash("0x2a")
+	if _, err := d.SetStorageAt(context.Background(), testInvocation(), directiveTestAddr, key, value); err != nil {
+		t.Fatalf("seed SetStorageAt: %v", err)
+	}
+	commitRWS(t, kvs, testNS, b.lastRWS)
+
+	if _, err := d.SetStorageAt(context.Background(), testInvocation(), directiveTestAddr, key, ethcommon.Hash{}); err != nil {
+		t.Fatalf("SetStorageAt: %v", err)
+	}
+	got := storageFromRWS(b.lastRWS, directiveTestAddr, key)
+	if len(got) != 0 {
+		t.Fatalf("storage write after clear = %x, want empty", got)
+	}
+}
+
 func TestSetBalance_AmountOverflowsUint256(t *testing.T) {
 	kvs := estorage.NewLightKVS(2)
 	d := NewDirectiveEndorser(nil, kvs, testNS, &noopBuilder{}, true)

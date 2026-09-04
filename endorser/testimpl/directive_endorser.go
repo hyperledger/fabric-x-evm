@@ -101,3 +101,21 @@ func (d *DirectiveEndorser) SetCode(ctx context.Context, inv endorsement.Invocat
 	stateDB.SetCode(addr, code, tracing.CodeChangeUnspecified)
 	return d.builder.Endorse(inv, endorsement.Success(stateDB.Result(), nil, nil))
 }
+
+// SetStorageAt forces addr's storage slot key to value and endorses the
+// resulting read-write set.
+func (d *DirectiveEndorser) SetStorageAt(ctx context.Context, inv endorsement.Invocation, addr common.Address, key, value common.Hash) (*peer.ProposalResponse, error) {
+	reader, err := d.kvs.NewSnapshot(nil)
+	if err != nil {
+		return nil, fmt.Errorf("setStorageAt directive: snapshot: %w", err)
+	}
+	defer reader.Close()
+
+	stateDB, err := execution.NewStateDB(ctx, reader, d.namespace, 0, d.monotonicVersions)
+	if err != nil {
+		return nil, fmt.Errorf("setStorageAt directive: statedb: %w", err)
+	}
+
+	stateDB.SetState(addr, key, value)
+	return d.builder.Endorse(inv, endorsement.Success(stateDB.Result(), nil, nil))
+}
