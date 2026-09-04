@@ -159,7 +159,7 @@ func ConvertToDomain(b blocks.Block) domain.Block {
 			status = 1
 		}
 
-		etx, err := convertTransaction(tx.InputArgs[1], b.Hash, b.Number, tx.Number, tx.ID, status, tx.Status, tx.Events, &logIndex)
+		etx, err := convertTransaction(tx.InputArgs[1], b.Hash, b.Number, tx.Number, tx.ID, status, tx.Status, tx.Valid, tx.Events, &logIndex)
 		if err != nil {
 			panic(err) // we surface this for now instead of swallowing it
 		}
@@ -171,7 +171,7 @@ func ConvertToDomain(b blocks.Block) domain.Block {
 }
 
 // convertTransaction converts an Ethereum transaction to a domain.Transaction.
-func convertTransaction(ethTxBytes []byte, blockHash []byte, blockNumber uint64, txIndex int64, txID string, ethStatus uint8, validationCode int, events []byte, logIndex *int64) (domain.Transaction, error) {
+func convertTransaction(ethTxBytes []byte, blockHash []byte, blockNumber uint64, txIndex int64, txID string, ethStatus uint8, validationCode int, fabricValid bool, events []byte, logIndex *int64) (domain.Transaction, error) {
 	ethTx := &types.Transaction{}
 	if err := ethTx.UnmarshalBinary(ethTxBytes); err != nil {
 		return domain.Transaction{}, fmt.Errorf("invalid tx: %w", err)
@@ -234,6 +234,7 @@ func convertTransaction(ethTxBytes []byte, blockHash []byte, blockNumber uint64,
 		Status:          ethStatus,
 		FabricTxID:      txID,
 		FabricTxStatus:  validationCode,
+		FabricValid:     fabricValid,
 		Logs:            logs,
 	}, nil
 }

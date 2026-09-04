@@ -85,7 +85,7 @@ func NewSynchronizer(protocol string, db network.BlockHeightReader, channel, nam
 // responsible for creating the chain store (so they can register its cleanup independently
 // of the rest of this wiring) and for creating and starting the synchronizer(s) that feed
 // committed blocks to chain/gateway/endorsers.
-func BuildGateway(ctx context.Context, endorsers []eapi.Service, gwSigner sdk.Signer, netCfg common.Network, chain core.Store, submitters []core.Submitter, submitterCount int, workerCount int, txQueue core.TxQueueInterface, endorsementChanSize int, txPerSec int) (*core.Gateway, error) {
+func BuildGateway(ctx context.Context, endorsers []eapi.Service, gwSigner sdk.Signer, netCfg common.Network, chain core.Store, submitters []core.Submitter, submitterCount int, workerCount int, txQueue core.TxQueueInterface, endorsementChanSize int, txPerSec int, opts ...core.Option) (*core.Gateway, error) {
 	ec, err := core.NewEndorsementClient(endorsers, gwSigner, netCfg.Channel, netCfg.Namespace, netCfg.NsVersion)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create endorsement client: %w", err)
@@ -103,7 +103,7 @@ func BuildGateway(ctx context.Context, endorsers []eapi.Service, gwSigner sdk.Si
 	batchSubmitter := core.NewBatchSubmitter(submitters, endorsementChan, submitterCount, txPerSec, txQueue)
 	batchSubmitter.Start(ctx)
 
-	gw, err := core.New(ec, batchSubmitter, chain, netCfg.ChainID, workerCount, txQueue, endorsementChan)
+	gw, err := core.New(ec, batchSubmitter, chain, netCfg.ChainID, workerCount, txQueue, endorsementChan, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gateway: %w", err)
 	}

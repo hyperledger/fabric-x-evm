@@ -90,6 +90,8 @@ type Gateway struct {
 	ChainConfig     *params.ChainConfig
 	Signer          types.Signer
 	TxQueue         TxQueueInterface
+	nonceGate       NonceSequencer
+	wrapNonce       func(ResyncingSequencer) NonceSequencer // test-only gate wrapper
 	workerCount     int
 	wg              sync.WaitGroup
 	stopOnce        sync.Once
@@ -115,7 +117,7 @@ type Store interface {
 // If txQueue is nil, NewTxQueue() will be used as the default.
 // batchSubmitter handles all endorsement submissions and is owned by the Gateway.
 // endorsementChan is the channel to send endorsements to the BatchSubmitter.
-func New(ec *EndorsementClient, batchSubmitter *BatchSubmitter, store Store, chainID int64, workerCount int, txQueue TxQueueInterface, endorsementChan chan EndorsedTx) (*Gateway, error) {
+func New(ec *EndorsementClient, batchSubmitter *BatchSubmitter, store Store, chainID int64, workerCount int, txQueue TxQueueInterface, endorsementChan chan EndorsedTx, opts ...Option) (*Gateway, error) {
 	if workerCount <= 0 {
 		workerCount = 1
 	}
@@ -126,7 +128,7 @@ func New(ec *EndorsementClient, batchSubmitter *BatchSubmitter, store Store, cha
 	}
 
 	cid := big.NewInt(chainID)
-	return &Gateway{
+	g := &Gateway{
 		endorsers:       ec,
 		batchSubmitter:  batchSubmitter,
 		store:           store,
@@ -136,7 +138,29 @@ func New(ec *EndorsementClient, batchSubmitter *BatchSubmitter, store Store, cha
 		TxQueue:         txQueue,
 		workerCount:     workerCount,
 		endorsementChan: endorsementChan,
-	}, nil
+	}
+	for _, opt := range opts {
+		opt(g)
+	}
+	// Park future-nonce transactions and release them in nonce order as earlier
+	// nonces commit. A test-only wrapper may reconcile before admitting.
+	gate := newNonceGate(g, g.Signer, g.TxQueue)
+	if g.wrapNonce != nil {
+		g.nonceGate = g.wrapNonce(gate)
+	} else {
+		g.nonceGate = gate
+	}
+	return g, nil
+}
+
+// Option configures a Gateway at construction.
+type Option func(*Gateway)
+
+// WithNonceSequencer wraps the nonce gate at construction. The wrapper receives
+// the plain gate and returns the sequencer to use; the test backend supplies its
+// reconciling gate this way.
+func WithNonceSequencer(wrap func(ResyncingSequencer) NonceSequencer) Option {
+	return func(g *Gateway) { g.wrapNonce = wrap }
 }
 
 // Start initializes the worker pool to process transactions from the queue
@@ -183,14 +207,14 @@ func (g *Gateway) processTx(ctx context.Context, tx *types.Transaction) error {
 // SendTransaction runs geth-style pre-flight validation, then enqueues the tx
 // for async endorse/submit. Mirrors eth_sendRawTransaction's failure model.
 func (g *Gateway) SendTransaction(ctx context.Context, tx *types.Transaction) error {
-	if err := ValidateTx(ctx, tx, g.ChainConfig, g.Signer, g); err != nil {
+	if err := ValidateTx(tx, g.ChainConfig, g.Signer); err != nil {
 		return err
 	}
-	if g.TxQueue.IsPending(tx.Hash()) != nil {
+	// Reject a resubmission already in the queue or parked awaiting an earlier nonce.
+	if g.TxQueue.IsPending(tx.Hash()) != nil || g.nonceGate.IsPending(tx.Hash()) != nil {
 		return domain.ErrTransactionAlreadyPending
 	}
-	g.TxQueue.Enqueue(tx)
-	return nil
+	return g.nonceGate.Admit(ctx, tx)
 }
 
 // CallContract is a query. It doesn't require a signature of the end user and doesn't change the ledger or nonce.
@@ -411,8 +435,13 @@ func (g *Gateway) NonceAt(ctx context.Context, account common.Address, blockNumb
 //
 // The pending status is signaled by BlockNumber=0, which the API layer converts to null.
 func (g *Gateway) TransactionByHash(ctx context.Context, hash common.Hash) (*domain.Transaction, error) {
-	// Check if transaction is pending in the queue (either waiting or being processed)
-	if pendingTx := g.TxQueue.IsPending(hash); pendingTx != nil {
+	// Check if transaction is pending in the queue (either waiting or being
+	// processed) or parked awaiting an earlier nonce.
+	pendingTx := g.TxQueue.IsPending(hash)
+	if pendingTx == nil {
+		pendingTx = g.nonceGate.IsPending(hash)
+	}
+	if pendingTx != nil {
 		// Transaction is pending - return it with zero block fields
 		// The API layer will convert these to nil in the JSON response
 		rawTx, err := pendingTx.MarshalBinary()
@@ -512,6 +541,7 @@ func (g *Gateway) Stop() error {
 func (g *Gateway) Handle(ctx context.Context, b blocks.Block) error {
 	// Convert blocks.Block to domain.Block using the shared conversion function
 	domainBlock := ConvertToDomain(b)
-	err := g.TxQueue.Handle(ctx, &domainBlock)
-	return err
+	// Release parked work first, then let the queue feed workers.
+	g.nonceGate.Observe(domainBlock.Transactions)
+	return g.TxQueue.Handle(ctx, &domainBlock)
 }

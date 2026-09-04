@@ -173,8 +173,13 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 		return nil, fmt.Errorf("failed to create chain: %w", err)
 	}
 
+	var gwOpts []core.Option
+	if enableTestRPC {
+		// The test RPC's snapshot reverts move the ledger nonce out of band.
+		gwOpts = append(gwOpts, core.WithNonceSequencer(testimpl.NewReconcilingGate))
+	}
 	// Gateway owns the BatchSubmitter and will handle its lifecycle
-	gateway, err := BuildGateway(ctx, endorsers, gwSigner, cfg.Network, chain, submitters, cfg.Gateway.SubmitterCount, cfg.Gateway.WorkerCount, nil, cfg.Gateway.EndorsementChanSize, 0)
+	gateway, err := BuildGateway(ctx, endorsers, gwSigner, cfg.Network, chain, submitters, cfg.Gateway.SubmitterCount, cfg.Gateway.WorkerCount, nil, cfg.Gateway.EndorsementChanSize, 0, gwOpts...)
 	if err != nil {
 		return nil, err
 	}

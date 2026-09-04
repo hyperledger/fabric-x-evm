@@ -28,9 +28,10 @@ type Transaction struct {
 	FromAddress     []byte
 	ToAddress       []byte
 	ContractAddress []byte
-	Status          uint8
+	Status          uint8 // EVM receipt status: 1 is success, 0 is a revert or an invalid tx
 	FabricTxID      string
-	FabricTxStatus  int
+	FabricTxStatus  int   // from the SDK Transaction.Status, which is currently never set
+	FabricValid     bool  // Fabric-valid commit, so the nonce was consumed; true for reverts
 	Logs            []Log // populated for receipt queries
 }
 

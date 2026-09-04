@@ -7,9 +7,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package core
 
 import (
-	"context"
 	"crypto/ecdsa"
-	"errors"
 	"math/big"
 	"testing"
 
@@ -26,15 +24,6 @@ import (
 )
 
 const testChainID int64 = 4011
-
-type fakeState struct {
-	nonce    uint64
-	nonceErr error
-}
-
-func (f *fakeState) NonceAt(_ context.Context, _ common.Address, _ *big.Int) (uint64, error) {
-	return f.nonce, f.nonceErr
-}
 
 type validTxOpts struct {
 	nonce uint64
@@ -80,9 +69,7 @@ func TestValidateTx_Valid(t *testing.T) {
 	cfg, signer := chainCtx(t)
 
 	tx := newValidTx(t, key, validTxOpts{nonce: 5})
-	state := &fakeState{nonce: 5}
-
-	require.NoError(t, ValidateTx(context.Background(), tx, cfg, signer, state))
+	require.NoError(t, ValidateTx(tx, cfg, signer))
 }
 
 func TestValidateTx_UnprotectedRejected(t *testing.T) {
@@ -94,8 +81,7 @@ func TestValidateTx_UnprotectedRejected(t *testing.T) {
 	tx, err := types.SignTx(raw, types.HomesteadSigner{}, key) // pre-EIP-155 → unprotected
 	require.NoError(t, err)
 
-	err = ValidateTx(context.Background(), tx, cfg, signer, &fakeState{})
-	require.ErrorIs(t, err, errUnprotectedTx)
+	require.ErrorIs(t, ValidateTx(tx, cfg, signer), errUnprotectedTx)
 }
 
 func TestValidateTx_ChainIDMismatch(t *testing.T) {
@@ -107,8 +93,7 @@ func TestValidateTx_ChainIDMismatch(t *testing.T) {
 	tx, err := types.SignTx(raw, types.NewEIP155Signer(big.NewInt(testChainID+1)), key)
 	require.NoError(t, err)
 
-	err = ValidateTx(context.Background(), tx, cfg, signer, &fakeState{})
-	require.ErrorIs(t, err, txpool.ErrInvalidSender)
+	require.ErrorIs(t, ValidateTx(tx, cfg, signer), txpool.ErrInvalidSender)
 }
 
 func TestValidateTx_TipAboveFeeCap(t *testing.T) {
@@ -128,8 +113,7 @@ func TestValidateTx_TipAboveFeeCap(t *testing.T) {
 	tx, err := types.SignTx(raw, signer, key)
 	require.NoError(t, err)
 
-	err = ValidateTx(context.Background(), tx, cfg, signer, &fakeState{})
-	require.ErrorIs(t, err, ethcore.ErrTipAboveFeeCap)
+	require.ErrorIs(t, ValidateTx(tx, cfg, signer), ethcore.ErrTipAboveFeeCap)
 }
 
 func TestValidateTx_IntrinsicGasTooLow(t *testing.T) {
@@ -137,19 +121,7 @@ func TestValidateTx_IntrinsicGasTooLow(t *testing.T) {
 	cfg, signer := chainCtx(t)
 
 	tx := newValidTx(t, key, validTxOpts{gas: 20_000}) // below 21_000
-	err := ValidateTx(context.Background(), tx, cfg, signer, &fakeState{})
-	require.ErrorIs(t, err, ethcore.ErrIntrinsicGas)
-}
-
-func TestValidateTx_NonceTooLow(t *testing.T) {
-	key := newKey(t)
-	cfg, signer := chainCtx(t)
-
-	tx := newValidTx(t, key, validTxOpts{nonce: 3})
-	state := &fakeState{nonce: 7}
-
-	err := ValidateTx(context.Background(), tx, cfg, signer, state)
-	require.ErrorIs(t, err, ethcore.ErrNonceTooLow)
+	require.ErrorIs(t, ValidateTx(tx, cfg, signer), ethcore.ErrIntrinsicGas)
 }
 
 func TestValidateTx_InitCodeTooLarge(t *testing.T) {
@@ -161,8 +133,7 @@ func TestValidateTx_InitCodeTooLarge(t *testing.T) {
 	tx, err := types.SignTx(raw, types.NewEIP155Signer(big.NewInt(testChainID)), key)
 	require.NoError(t, err)
 
-	err = ValidateTx(context.Background(), tx, cfg, signer, &fakeState{nonce: 0})
-	require.ErrorIs(t, err, vm.ErrMaxInitCodeSizeExceeded)
+	require.ErrorIs(t, ValidateTx(tx, cfg, signer), vm.ErrMaxInitCodeSizeExceeded)
 }
 
 func TestValidateTx_BlobTxTypeRejected(t *testing.T) {
@@ -184,8 +155,7 @@ func TestValidateTx_BlobTxTypeRejected(t *testing.T) {
 	tx, err := types.SignTx(raw, signer, key)
 	require.NoError(t, err)
 
-	err = ValidateTx(context.Background(), tx, cfg, signer, &fakeState{})
-	require.ErrorIs(t, err, ethcore.ErrTxTypeNotSupported)
+	require.ErrorIs(t, ValidateTx(tx, cfg, signer), ethcore.ErrTxTypeNotSupported)
 }
 
 func TestValidateTx_NegativeValue(t *testing.T) {
@@ -207,18 +177,5 @@ func TestValidateTx_NegativeValue(t *testing.T) {
 		t.Skip("signer rejects negative value at sign time:", err)
 	}
 
-	err = ValidateTx(context.Background(), tx, cfg, signer, &fakeState{})
-	require.ErrorIs(t, err, txpool.ErrNegativeValue)
-}
-
-func TestValidateTx_StateLookupErrorPropagates(t *testing.T) {
-	key := newKey(t)
-	cfg, signer := chainCtx(t)
-
-	tx := newValidTx(t, key, validTxOpts{nonce: 0})
-	boom := errors.New("ledger unavailable")
-	state := &fakeState{nonceErr: boom}
-
-	err := ValidateTx(context.Background(), tx, cfg, signer, state)
-	require.ErrorIs(t, err, boom)
+	require.ErrorIs(t, ValidateTx(tx, cfg, signer), txpool.ErrNegativeValue)
 }

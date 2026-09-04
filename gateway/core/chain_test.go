@@ -140,7 +140,7 @@ func TestConvertTransaction_RegularTransfer(t *testing.T) {
 	ethb, _ := ethTx.MarshalBinary()
 
 	logIndex := int64(0)
-	domainTx, err := convertTransaction(ethb, []byte("block-hash"), 42, 5, "fabric-tx-123", 1, 0, nil, &logIndex)
+	domainTx, err := convertTransaction(ethb, []byte("block-hash"), 42, 5, "fabric-tx-123", 1, 0, true, nil, &logIndex)
 
 	require.NoError(t, err)
 	assert.Equal(t, ethTx.Hash().Bytes(), domainTx.TxHash)
@@ -152,6 +152,7 @@ func TestConvertTransaction_RegularTransfer(t *testing.T) {
 	assert.Equal(t, "fabric-tx-123", domainTx.FabricTxID)
 	assert.Equal(t, uint8(1), domainTx.Status)
 	assert.Equal(t, 0, domainTx.FabricTxStatus)
+	assert.True(t, domainTx.FabricValid)
 	assert.NotNil(t, domainTx.FromAddress)
 	assert.NotNil(t, domainTx.RawTx)
 }
@@ -167,7 +168,7 @@ func TestConvertTransaction_ContractCreation(t *testing.T) {
 	ethb, _ := signed.MarshalBinary()
 
 	logIndex := int64(0)
-	domainTx, err := convertTransaction(ethb, []byte("block-hash"), 42, 3, "fabric-tx-456", 1, 0, nil, &logIndex)
+	domainTx, err := convertTransaction(ethb, []byte("block-hash"), 42, 3, "fabric-tx-456", 1, 0, true, nil, &logIndex)
 
 	require.NoError(t, err)
 	assert.Nil(t, domainTx.ToAddress)
@@ -184,7 +185,7 @@ func TestConvertTransaction_InvalidSignature(t *testing.T) {
 	ethb, _ := ethTx.MarshalBinary()
 
 	logIndex := int64(0)
-	_, err := convertTransaction(ethb, []byte("block-hash"), 42, 1, "fabric-tx-789", 1, 0, nil, &logIndex)
+	_, err := convertTransaction(ethb, []byte("block-hash"), 42, 1, "fabric-tx-789", 1, 0, true, nil, &logIndex)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid sender")
@@ -200,19 +201,23 @@ func TestConvertTransaction_ValidationCodes(t *testing.T) {
 		name           string
 		ethStatus      uint8
 		validationCode int
+		fabricValid    bool
 	}{
-		{"valid", 1, 0},
-		{"mvcc_conflict", 0, 11},
-		{"endorsement_failure", 0, 8},
+		{"valid", 1, 0, true},
+		// A revert is Fabric-valid even though its EVM status is 0.
+		{"revert", 0, 0, true},
+		{"mvcc_conflict", 0, 11, false},
+		{"endorsement_failure", 0, 8, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			logIndex := int64(0)
-			domainTx, err := convertTransaction(ethb, []byte("bh"), 42, 1, "tx", tt.ethStatus, tt.validationCode, nil, &logIndex)
+			domainTx, err := convertTransaction(ethb, []byte("bh"), 42, 1, "tx", tt.ethStatus, tt.validationCode, tt.fabricValid, nil, &logIndex)
 			require.NoError(t, err)
 			assert.Equal(t, tt.ethStatus, domainTx.Status)
 			assert.Equal(t, tt.validationCode, domainTx.FabricTxStatus)
+			assert.Equal(t, tt.fabricValid, domainTx.FabricValid)
 		})
 	}
 }

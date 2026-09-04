@@ -14,7 +14,6 @@ import (
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
-	ethcore "github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/params"
@@ -34,15 +33,12 @@ const blockGasLimit uint64 = math.MaxUint64
 const acceptedTxTypes = (1 << types.LegacyTxType) | (1 << types.AccessListTxType) | (1 << types.DynamicFeeTxType)
 
 // ValidateTx delegates stateless checks to geth's txpool.ValidateTransaction so
-// the failure model tracks upstream. The only stateful check is nonce-too-low,
-// inlined from txpool.ValidateTransactionWithState to avoid building a per-tx
-// StateDB. Deviations are documented in docs/COMPATIBILITY.md.
+// the failure model tracks upstream. Nonce sequencing is stateful and lives in
+// the nonce gate, not here. Deviations are documented in docs/COMPATIBILITY.md.
 func ValidateTx(
-	ctx context.Context,
 	tx *types.Transaction,
 	chainConfig *params.ChainConfig,
 	signer types.Signer,
-	state stateReader,
 ) error {
 	// Geth rejects this in internal/ethapi.SubmitTransaction, above the txpool —
 	// the txpool's signer recovery accepts Frontier-style signatures.
@@ -67,17 +63,8 @@ func ValidateTx(
 		return err
 	}
 
-	from, err := types.Sender(signer, tx)
-	if err != nil {
+	if _, err := types.Sender(signer, tx); err != nil {
 		return fmt.Errorf("%w: %v", txpool.ErrInvalidSender, err)
-	}
-
-	nonce, err := state.NonceAt(ctx, from, nil)
-	if err != nil {
-		return fmt.Errorf("look up nonce: %w", err)
-	}
-	if nonce > tx.Nonce() {
-		return fmt.Errorf("%w: next nonce %d, tx nonce %d", ethcore.ErrNonceTooLow, nonce, tx.Nonce())
 	}
 	return nil
 }
