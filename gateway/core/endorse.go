@@ -109,6 +109,27 @@ func (e EndorsementClient) SetCode(ctx context.Context, addr ethcommon.Address, 
 	})
 }
 
+// storageSetter is implemented only by the test-only directive endorser.
+type storageSetter interface {
+	SetStorageAt(ctx context.Context, inv endorsement.Invocation, addr ethcommon.Address, key, value ethcommon.Hash) (*peer.ProposalResponse, error)
+}
+
+// SetStorageAt forwards a setStorageAt directive to every endorser.
+func (e EndorsementClient) SetStorageAt(ctx context.Context, addr ethcommon.Address, key, value ethcommon.Hash) (sdk.Endorsement, error) {
+	inv, err := e.createInvocation([][]byte{{byte(common.ProposalTypeSetStorageAt)}, addr.Bytes(), key.Bytes(), value.Bytes()})
+	if err != nil {
+		return sdk.Endorsement{}, err
+	}
+
+	return e.endorse(ctx, inv, "process setStorageAt directive", func(ctx context.Context, s api.Service, inv endorsement.Invocation, _ time.Time) (*peer.ProposalResponse, error) {
+		ss, ok := s.(storageSetter)
+		if !ok {
+			return nil, fmt.Errorf("endorser %T does not support setStorageAt directives", s)
+		}
+		return ss.SetStorageAt(ctx, inv, addr, key, value)
+	})
+}
+
 // endorse fans the invocation out to every endorser via call and assembles the
 // endorsement. label identifies the invocation kind in the error message.
 func (e EndorsementClient) endorse(ctx context.Context, inv endorsement.Invocation, label string,
