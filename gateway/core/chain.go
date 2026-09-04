@@ -198,7 +198,7 @@ func convertTransaction(ethTxBytes []byte, blockHash []byte, blockNumber uint64,
 	hash := ethTx.Hash().Bytes()
 
 	var logs []domain.Log
-	if len(events) > 0 && !fc.IsRevertEvent(events) {
+	if ethStatus == 1 && len(events) > 0 {
 		rawLogs, err := fc.UnmarshalLogs(events)
 		if err != nil {
 			// ?

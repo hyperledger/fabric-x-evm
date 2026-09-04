@@ -16,6 +16,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	co "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
+	sdkstate "github.com/hyperledger/fabric-x-sdk/state"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -90,6 +91,40 @@ func TestConvertToDomain_InvalidTxStatus(t *testing.T) {
 
 	require.Len(t, got.Transactions, 1)
 	assert.Equal(t, uint8(0), got.Transactions[0].Status)
+}
+
+// A Fabric-invalid tx can still carry events recorded during endorsement-time
+// simulation, before the later conflict was detected. Since those effects
+// were never committed, their logs must not be surfaced either. Examples: MVCC
+// conflict or endorsement policy error. Same for an invalid ethereum transaction.
+func TestConvertToDomain_InvalidTxDropsLogs(t *testing.T) {
+	key, err := crypto.GenerateKey()
+	require.NoError(t, err)
+
+	to := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	ethb := marshaledEthTx(t, key, to, big.NewInt(100))
+
+	events := resilienceEvents(t, "tx-bad", []sdkstate.Log{{
+		Address: to.Bytes(),
+		Topics:  [][]byte{resilienceHash(0xAA)},
+		Data:    []byte{0x01},
+	}})
+
+	b := blocks.Block{
+		Number: 1,
+		Transactions: []blocks.Transaction{{
+			ID:        "tx-bad",
+			Valid:     false, // invalid tx, but events survive from simulation
+			Events:    events,
+			InputArgs: [][]byte{{byte(co.ProposalTypeEVMTx)}, ethb},
+		}},
+	}
+
+	got := ConvertToDomain(b)
+
+	require.Len(t, got.Transactions, 1)
+	assert.Equal(t, uint8(0), got.Transactions[0].Status)
+	assert.Empty(t, got.Transactions[0].Logs)
 }
 
 func TestConvertToDomain_SkipsInsufficientInputArgs(t *testing.T) {
