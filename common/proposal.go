@@ -16,6 +16,9 @@ const (
 	// ProposalTypeSetCode marks a setCode invocation's first arg so
 	// ConvertToDomain can filter it out; it is not a discriminator.
 	ProposalTypeSetCode ProposalType = 0xf9
+	// ProposalTypeSetStorageAt marks a setStorageAt invocation's first arg so
+	// ConvertToDomain can filter it out; it is not a discriminator.
+	ProposalTypeSetStorageAt ProposalType = 0xf8
 )
 
 const (
