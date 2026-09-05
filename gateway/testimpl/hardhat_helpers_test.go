@@ -27,6 +27,8 @@ type stubDirectiveSubmitter struct {
 	lastAddr   common.Address
 	lastAmount *big.Int
 	lastCode   []byte
+	lastKey    common.Hash
+	lastValue  common.Hash
 	err        error
 }
 
@@ -39,6 +41,13 @@ func (s *stubDirectiveSubmitter) SetBalance(_ context.Context, addr common.Addre
 func (s *stubDirectiveSubmitter) SetCode(_ context.Context, addr common.Address, code []byte) error {
 	s.lastAddr = addr
 	s.lastCode = code
+	return s.err
+}
+
+func (s *stubDirectiveSubmitter) SetStorageAt(_ context.Context, addr common.Address, key, value common.Hash) error {
+	s.lastAddr = addr
+	s.lastKey = key
+	s.lastValue = value
 	return s.err
 }
 

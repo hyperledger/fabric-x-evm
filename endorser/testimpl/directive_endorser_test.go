@@ -163,6 +163,90 @@ func TestSetCode_ClearWithEmpty(t *testing.T) {
 	}
 }
 
+// storageFromRWS returns the storage word a read-write set writes for addr/key.
+// A cleared slot and an absent write both yield an empty word, so the second
+// result reports whether the write was there at all.
+func storageFromRWS(rws blocks.ReadWriteSet, addr ethcommon.Address, key ethcommon.Hash) ([]byte, bool) {
+	k := "str:" + addr.Hex() + ":" + key.Hex()
+	for _, w := range rws.Writes {
+		if w.Key == k {
+			if w.IsDelete {
+				return []byte{}, true
+			}
+			return w.Value, true
+		}
+	}
+	return nil, false
+}
+
+func TestSetStorageAt_Set(t *testing.T) {
+	kvs := estorage.NewLightKVS(8)
+	b := &noopBuilder{}
+	d := NewDirectiveEndorser(nil, kvs, testNS, b, true)
+
+	key := ethcommon.HexToHash("0x1")
+	value := ethcommon.HexToHash("0x2a")
+	if _, err := d.SetStorageAt(context.Background(), testInvocation(), directiveTestAddr, key, value); err != nil {
+		t.Fatalf("SetStorageAt: %v", err)
+	}
+	got, ok := storageFromRWS(b.lastRWS, directiveTestAddr, key)
+	if !ok {
+		t.Fatal("no storage write in the read-write set")
+	}
+	if !bytes.Equal(got, value.Bytes()) {
+		t.Fatalf("storage write = %x, want %x", got, value.Bytes())
+	}
+}
+
+func TestSetStorageAt_Overwrite(t *testing.T) {
+	kvs := estorage.NewLightKVS(8)
+	b := &noopBuilder{}
+	d := NewDirectiveEndorser(nil, kvs, testNS, b, true)
+
+	key := ethcommon.HexToHash("0x1")
+	first := ethcommon.HexToHash("0x2a")
+	if _, err := d.SetStorageAt(context.Background(), testInvocation(), directiveTestAddr, key, first); err != nil {
+		t.Fatalf("seed SetStorageAt: %v", err)
+	}
+	commitRWS(t, kvs, testNS, b.lastRWS)
+
+	second := ethcommon.HexToHash("0x2b")
+	if _, err := d.SetStorageAt(context.Background(), testInvocation(), directiveTestAddr, key, second); err != nil {
+		t.Fatalf("SetStorageAt: %v", err)
+	}
+	got, ok := storageFromRWS(b.lastRWS, directiveTestAddr, key)
+	if !ok {
+		t.Fatal("no storage write in the read-write set")
+	}
+	if !bytes.Equal(got, second.Bytes()) {
+		t.Fatalf("storage write = %x, want %x", got, second.Bytes())
+	}
+}
+
+func TestSetStorageAt_ClearWithZero(t *testing.T) {
+	kvs := estorage.NewLightKVS(8)
+	b := &noopBuilder{}
+	d := NewDirectiveEndorser(nil, kvs, testNS, b, true)
+
+	key := ethcommon.HexToHash("0x1")
+	value := ethcommon.HexToHash("0x2a")
+	if _, err := d.SetStorageAt(context.Background(), testInvocation(), directiveTestAddr, key, value); err != nil {
+		t.Fatalf("seed SetStorageAt: %v", err)
+	}
+	commitRWS(t, kvs, testNS, b.lastRWS)
+
+	if _, err := d.SetStorageAt(context.Background(), testInvocation(), directiveTestAddr, key, ethcommon.Hash{}); err != nil {
+		t.Fatalf("SetStorageAt: %v", err)
+	}
+	got, ok := storageFromRWS(b.lastRWS, directiveTestAddr, key)
+	if !ok {
+		t.Fatal("clear produced no storage write in the read-write set")
+	}
+	if len(got) != 0 {
+		t.Fatalf("storage write after clear = %x, want empty", got)
+	}
+}
+
 func TestSetBalance_AmountOverflowsUint256(t *testing.T) {
 	kvs := estorage.NewLightKVS(2)
 	d := NewDirectiveEndorser(nil, kvs, testNS, &noopBuilder{}, true)

@@ -173,8 +173,7 @@
     "cause": "execution reverted"
   },
   {
-    "id": "AccessManager #execute restrictions when the manager is open when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector \"before each\" hook: set _executionId flag from calldata and target for \"succeeds\"",
-    "cause": "hardhat_setStorageAt"
+    "id": "AccessManager #execute restrictions when the manager is open when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds"
   },
   {
     "id": "AccessManager #execute restrictions when the manager is open when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -222,8 +221,7 @@
     "cause": "execution reverted"
   },
   {
-    "id": "AccessManager access managed self operations when calling a restricted target function restrictions when the manager is open when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector \"before each\" hook: set _executionId flag from calldata and target for \"succeeds\"",
-    "cause": "hardhat_setStorageAt"
+    "id": "AccessManager access managed self operations when calling a restricted target function restrictions when the manager is open when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds"
   },
   {
     "id": "AccessManager access managed self operations when calling a restricted target function restrictions when the manager is open when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -258,8 +256,7 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager access managed target operations when calling a restricted target function restrictions when the manager is open when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector \"before each\" hook: set _executionId flag from calldata and target for \"succeeds\"",
-    "cause": "hardhat_setStorageAt"
+    "id": "AccessManager access managed target operations when calling a restricted target function restrictions when the manager is open when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds"
   },
   {
     "id": "AccessManager access managed target operations when calling a restricted target function restrictions when the manager is open when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -294,8 +291,7 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations not subject to a delay #setTargetClosed restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector \"before each\" hook: set _executionId flag from calldata and target for \"succeeds\"",
-    "cause": "hardhat_setStorageAt"
+    "id": "AccessManager admin operations not subject to a delay #setTargetClosed restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds"
   },
   {
     "id": "AccessManager admin operations not subject to a delay #setTargetClosed restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect with operation delay when operation delay is greater than execution delay when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -348,8 +344,7 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations not subject to a delay #setTargetFunctionRole restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector \"before each\" hook: set _executionId flag from calldata and target for \"succeeds\"",
-    "cause": "hardhat_setStorageAt"
+    "id": "AccessManager admin operations not subject to a delay #setTargetFunctionRole restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds"
   },
   {
     "id": "AccessManager admin operations not subject to a delay #setTargetFunctionRole restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect with operation delay when operation delay is greater than execution delay when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -402,8 +397,7 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations not subject to a delay #updateAuthority restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector \"before each\" hook: set _executionId flag from calldata and target for \"succeeds\"",
-    "cause": "hardhat_setStorageAt"
+    "id": "AccessManager admin operations not subject to a delay #updateAuthority restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds"
   },
   {
     "id": "AccessManager admin operations not subject to a delay #updateAuthority restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect with operation delay when operation delay is greater than execution delay when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -456,8 +450,7 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations not subject to a delay role admin operations #grantRole restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector \"before each\" hook: set _executionId flag from calldata and target for \"succeeds\"",
-    "cause": "hardhat_setStorageAt"
+    "id": "AccessManager admin operations not subject to a delay role admin operations #grantRole restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds"
   },
   {
     "id": "AccessManager admin operations not subject to a delay role admin operations #grantRole restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -512,8 +505,7 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations not subject to a delay role admin operations #revokeRole restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector \"before each\" hook: set _executionId flag from calldata and target for \"succeeds\"",
-    "cause": "hardhat_setStorageAt"
+    "id": "AccessManager admin operations not subject to a delay role admin operations #revokeRole restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds"
   },
   {
     "id": "AccessManager admin operations not subject to a delay role admin operations #revokeRole restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -553,8 +545,7 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations subject to a delay #labelRole restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector \"before each\" hook: set _executionId flag from calldata and target for \"succeeds\"",
-    "cause": "hardhat_setStorageAt"
+    "id": "AccessManager admin operations subject to a delay #labelRole restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds"
   },
   {
     "id": "AccessManager admin operations subject to a delay #labelRole restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect with operation delay when operation delay is greater than execution delay when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -607,8 +598,7 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations subject to a delay #setGrantDelay restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector \"before each\" hook: set _executionId flag from calldata and target for \"succeeds\"",
-    "cause": "hardhat_setStorageAt"
+    "id": "AccessManager admin operations subject to a delay #setGrantDelay restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds"
   },
   {
     "id": "AccessManager admin operations subject to a delay #setGrantDelay restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect with operation delay when operation delay is greater than execution delay when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -671,8 +661,7 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations subject to a delay #setRoleAdmin restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector \"before each\" hook: set _executionId flag from calldata and target for \"succeeds\"",
-    "cause": "hardhat_setStorageAt"
+    "id": "AccessManager admin operations subject to a delay #setRoleAdmin restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds"
   },
   {
     "id": "AccessManager admin operations subject to a delay #setRoleAdmin restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect with operation delay when operation delay is greater than execution delay when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -725,8 +714,7 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations subject to a delay #setRoleGuardian restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector \"before each\" hook: set _executionId flag from calldata and target for \"succeeds\"",
-    "cause": "hardhat_setStorageAt"
+    "id": "AccessManager admin operations subject to a delay #setRoleGuardian restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds"
   },
   {
     "id": "AccessManager admin operations subject to a delay #setRoleGuardian restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect with operation delay when operation delay is greater than execution delay when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -779,8 +767,7 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations subject to a delay #setTargetAdminDelay restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector \"before each\" hook: set _executionId flag from calldata and target for \"succeeds\"",
-    "cause": "hardhat_setStorageAt"
+    "id": "AccessManager admin operations subject to a delay #setTargetAdminDelay restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds"
   },
   {
     "id": "AccessManager admin operations subject to a delay #setTargetAdminDelay restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect with operation delay when operation delay is greater than execution delay when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -841,10 +828,6 @@
     "id": "AccessManager admin operations subject to a delay #setTargetAdminDelay when reducing the delay \"before each\" hook: sets old delay for \"increases the delay after minsetback\"",
     "cause": "hardhat-time-rpc",
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
-  },
-  {
-    "id": "AccessManager getters #canCall when the manager is open when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector \"before each\" hook: set _executionId flag from calldata and target for \"should return true and no delay\"",
-    "cause": "hardhat_setStorageAt"
   },
   {
     "id": "AccessManager getters #canCall when the manager is open when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect when operation is not scheduled should return false and execution delay",
@@ -1081,18 +1064,6 @@
     "id": "ERC1967Clones non-deterministic deployment (create) without initialization when sending some balance reverts",
     "cause": "subcall-effect-lost",
     "note": "Root-caused: gas estimation under-reports for calls routed through an EIP-1167 minimal-proxy delegatecall. A direct call to the implementation succeeds at its own estimate; the identical call through a clone fails at that estimate -- re-verifying doesn't catch it since eth_call itself under-reports here too (same broken oracle). A large explicit gas limit succeeds. Confirmed pre-existing (predates PR #321's gas-estimation work); not fixable by client-side padding -- likely endorser/execution/executor.go's delegatecall gas accounting. ERC1967Clones/Create2/Create3/ProxyAdmin/UUPSUpgradeable plausibly share this; SafeERC20/ERC4626/ERC20Wrapper/ERC20FlashMint/ERC721Wrapper/Context are tagged on symptom match only -- verify before assuming."
-  },
-  {
-    "id": "ERC1967Utils ADMIN_SLOT \"before each\" hook: set admin for \"returns current admin and matches admin slot value\"",
-    "cause": "hardhat_setStorageAt"
-  },
-  {
-    "id": "ERC1967Utils BEACON_SLOT \"before each\" hook: set beacon for \"returns current beacon and matches beacon slot value\"",
-    "cause": "hardhat_setStorageAt"
-  },
-  {
-    "id": "ERC1967Utils IMPLEMENTATION_SLOT \"before each\" hook: set v1 implementation for \"returns current implementation and matches implementation slot value\"",
-    "cause": "hardhat_setStorageAt"
   },
   {
     "id": "ERC20Crosschain bridge ERC20 like reconfiguration reject invalid gateway"

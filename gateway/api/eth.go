@@ -201,8 +201,9 @@ func (api *EthAPI) GetCode(ctx context.Context, addr common.Address, block rpc.B
 	return result, nil
 }
 
-// decodeStorageKey left-pads a quantity-encoded storage slot to 32 bytes, as geth does.
-func decodeStorageKey(s string) (common.Hash, error) {
+// DecodeStorageWord left-pads a quantity-encoded storage word to 32 bytes, as geth
+// does. what names the field in error messages.
+func DecodeStorageWord(what, s string) (common.Hash, error) {
 	key := s
 	if strings.HasPrefix(key, "0x") || strings.HasPrefix(key, "0X") {
 		key = key[2:]
@@ -211,11 +212,11 @@ func decodeStorageKey(s string) (common.Hash, error) {
 		key = "0" + key
 	}
 	if len(key) > 2*common.HashLength {
-		return common.Hash{}, rpcerr.InvalidParams("storage key too long (want at most 32 bytes): %q", s)
+		return common.Hash{}, rpcerr.InvalidParams("%s too long (want at most 32 bytes): %q", what, s)
 	}
 	b, err := hex.DecodeString(key)
 	if err != nil {
-		return common.Hash{}, rpcerr.InvalidParams("invalid hex in storage key: %q", s)
+		return common.Hash{}, rpcerr.InvalidParams("invalid hex in %s: %q", what, s)
 	}
 	return common.BytesToHash(b), nil
 }
@@ -223,7 +224,7 @@ func decodeStorageKey(s string) (common.Hash, error) {
 // eth_getStorageAt
 func (api *EthAPI) GetStorageAt(ctx context.Context, addr common.Address, hexSlot string, block rpc.BlockNumberOrHash) (hexutil.Bytes, error) {
 	logger.Debugf("EthAPI.GetStorageAt() called with addr=%s, slot=%s", addr.Hex(), hexSlot)
-	slot, err := decodeStorageKey(hexSlot)
+	slot, err := DecodeStorageWord("storage key", hexSlot)
 	if err != nil {
 		logger.Debugf("EthAPI.GetStorageAt() returning error: %v", err)
 		return nil, err
