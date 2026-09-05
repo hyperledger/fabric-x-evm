@@ -117,8 +117,8 @@ func TestTestNode_HardhatSetStorageAt(t *testing.T) {
 	}
 }
 
-// setStorageAt drives hardhat_setStorageAt over RPC the way Hardhat does:
-// slot and value are passed as "0x…" quantity-style hex strings.
+// setStorageAt drives hardhat_setStorageAt over RPC with fully padded 32-byte
+// slot and value; check 4 covers the quantity-style short form separately.
 func setStorageAt(t *testing.T, ctx context.Context, rc *rpc.Client, addr common.Address, slot, value common.Hash) {
 	t.Helper()
 	var ok bool

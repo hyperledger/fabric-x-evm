@@ -163,19 +163,20 @@ func TestSetCode_ClearWithEmpty(t *testing.T) {
 	}
 }
 
-// storageFromRWS returns the storage word a read-write set writes for
-// addr/key, or nil when the set contains no such write.
-func storageFromRWS(rws blocks.ReadWriteSet, addr ethcommon.Address, key ethcommon.Hash) []byte {
+// storageFromRWS returns the storage word a read-write set writes for addr/key.
+// A cleared slot and an absent write both yield an empty word, so the second
+// result reports whether the write was there at all.
+func storageFromRWS(rws blocks.ReadWriteSet, addr ethcommon.Address, key ethcommon.Hash) ([]byte, bool) {
 	k := "str:" + addr.Hex() + ":" + key.Hex()
 	for _, w := range rws.Writes {
 		if w.Key == k {
 			if w.IsDelete {
-				return []byte{}
+				return []byte{}, true
 			}
-			return w.Value
+			return w.Value, true
 		}
 	}
-	return nil
+	return nil, false
 }
 
 func TestSetStorageAt_Set(t *testing.T) {
@@ -188,7 +189,10 @@ func TestSetStorageAt_Set(t *testing.T) {
 	if _, err := d.SetStorageAt(context.Background(), testInvocation(), directiveTestAddr, key, value); err != nil {
 		t.Fatalf("SetStorageAt: %v", err)
 	}
-	got := storageFromRWS(b.lastRWS, directiveTestAddr, key)
+	got, ok := storageFromRWS(b.lastRWS, directiveTestAddr, key)
+	if !ok {
+		t.Fatal("no storage write in the read-write set")
+	}
 	if !bytes.Equal(got, value.Bytes()) {
 		t.Fatalf("storage write = %x, want %x", got, value.Bytes())
 	}
@@ -210,7 +214,10 @@ func TestSetStorageAt_Overwrite(t *testing.T) {
 	if _, err := d.SetStorageAt(context.Background(), testInvocation(), directiveTestAddr, key, second); err != nil {
 		t.Fatalf("SetStorageAt: %v", err)
 	}
-	got := storageFromRWS(b.lastRWS, directiveTestAddr, key)
+	got, ok := storageFromRWS(b.lastRWS, directiveTestAddr, key)
+	if !ok {
+		t.Fatal("no storage write in the read-write set")
+	}
 	if !bytes.Equal(got, second.Bytes()) {
 		t.Fatalf("storage write = %x, want %x", got, second.Bytes())
 	}
@@ -231,7 +238,10 @@ func TestSetStorageAt_ClearWithZero(t *testing.T) {
 	if _, err := d.SetStorageAt(context.Background(), testInvocation(), directiveTestAddr, key, ethcommon.Hash{}); err != nil {
 		t.Fatalf("SetStorageAt: %v", err)
 	}
-	got := storageFromRWS(b.lastRWS, directiveTestAddr, key)
+	got, ok := storageFromRWS(b.lastRWS, directiveTestAddr, key)
+	if !ok {
+		t.Fatal("clear produced no storage write in the read-write set")
+	}
 	if len(got) != 0 {
 		t.Fatalf("storage write after clear = %x, want empty", got)
 	}
