@@ -206,7 +206,7 @@ func (r *Reader) Close() error {
 	return nil
 }
 
-// Update atomically applies a batch of updates to the store.
+// update atomically applies a batch of updates to the store.
 // All updates are applied together in a single new snapshot.
 //
 // This operation:
@@ -218,7 +218,9 @@ func (r *Reader) Close() error {
 //
 // The block number comes from the batch's first entry; Handle passes it
 // explicitly instead, so an empty block still advances the checkpoint.
-func (kvs *LightKVS) Update(updates []KeyValueVersion) error {
+// Test only: unexported since nothing in production calls it (blocks only
+// ever arrive as blocks.Block, via Handle).
+func (kvs *LightKVS) update(updates []KeyValueVersion) error {
 	blockNum := uint64(0)
 	if len(updates) > 0 {
 		blockNum = updates[0].BlockNum
@@ -228,9 +230,8 @@ func (kvs *LightKVS) Update(updates []KeyValueVersion) error {
 
 // applyUpdates computes new snapshot data by applying updates on top of
 // oldData, assigning each write the existing version + 1 (or 0 for a new
-// key). Shared by LightKVS.applyBlock and
-// RevertibleLightKVS.applyBlockSequential, which only differ in how they
-// append the resulting snapshot to history.
+// key). Shared by LightKVS.applyBlock and RevertibleLightKVS.applyBlock,
+// which only differ in how they track the eviction floor when wrapping.
 func applyUpdates(oldData map[string]*ValueVersion, updates []KeyValueVersion) map[string]*ValueVersion {
 	// Nothing to apply: share the old map. Snapshots are immutable and every
 	// mutation path clones first.

@@ -14,6 +14,7 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
 	estorage "github.com/hyperledger/fabric-x-evm/endorser/storage"
+	"github.com/hyperledger/fabric-x-sdk/blocks"
 )
 
 const testNS = "basic"
@@ -125,14 +126,21 @@ func TestFundTestAccounts_SurvivesLaterUpdate(t *testing.T) {
 	}
 
 	// Simulate a later block write (unrelated key); funded balance must clone through.
-	if err := kvs.Update([]estorage.KeyValueVersion{{
-		Key:      testNS + ":str:" + addr.Hex() + ":0x00",
-		Value:    []byte{1},
-		BlockNum: 1,
-		TxNum:    0,
-		TxID:     "tx-1",
-	}}); err != nil {
-		t.Fatalf("Update: %v", err)
+	if err := kvs.Handle(t.Context(), blocks.Block{
+		Number: 1,
+		Transactions: []blocks.Transaction{{
+			ID:     "tx-1",
+			Number: 0,
+			Valid:  true,
+			NsRWS: []blocks.NsReadWriteSet{{
+				Namespace: testNS,
+				RWS: blocks.ReadWriteSet{Writes: []blocks.KVWrite{
+					{Key: "str:" + addr.Hex() + ":0x00", Value: []byte{1}},
+				}},
+			}},
+		}},
+	}); err != nil {
+		t.Fatalf("Handle: %v", err)
 	}
 
 	reader, err := kvs.NewSnapshot(nil)

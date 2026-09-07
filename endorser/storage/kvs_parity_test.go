@@ -860,7 +860,7 @@ func TestPebbleUpdateRejectsMultiBlockBatch(t *testing.T) {
 	}
 	defer kvs.Close()
 
-	err = kvs.Update([]KeyValueVersion{
+	err = kvs.update([]KeyValueVersion{
 		{Key: "ns1:a", BlockNum: 1, TxNum: 0, Value: []byte("a")},
 		{Key: "ns1:b", BlockNum: 2, TxNum: 0, Value: []byte("b")},
 	})

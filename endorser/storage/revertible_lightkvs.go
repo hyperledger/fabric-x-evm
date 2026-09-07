@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"sync/atomic"
 
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
@@ -27,20 +28,26 @@ type Revertible interface {
 }
 
 // RevertibleLightKVS extends LightKVS with snapshot/revert support for interactive
-// use (Hardhat's evm_snapshot/evm_revert on a testnode). It embeds the base LightKVS
-// and switches its history from a wrapping ring buffer to sequential, non-wrapping
-// storage. It can be rewound to any point in its bounded window, but (unlike plain
-// LightKVS) it panics once that window is exhausted, so it must never be used for a
-// long-running, continuously-committing endorser.
+// use (Hardhat's evm_snapshot/evm_revert on a testnode). Its History ring wraps
+// exactly like LightKVS's, but it additionally tracks the oldest block number
+// still guaranteed present: NewSnapshot and RevertToBlock refuse a request below
+// that floor instead of letting their nearest-older-snapshot fallback silently
+// return stale state for a block whose real entry was evicted.
 type RevertibleLightKVS struct {
 	*LightKVS
+
+	// oldestAvailable is the lowest block number still guaranteed retrievable
+	// from History. Bumped on every forward eviction (applyBlock); untouched
+	// by RevertToBlock, which only ever discards entries newer than the
+	// revert point — already-evicted blocks stay evicted regardless.
+	oldestAvailable atomic.Uint64
 }
 
 // NewRevertibleLightKVS wraps an existing LightKVS with revert support.
 // The lightKVS parameter must not be nil.
-// Resets NextIndex to 0 for sequential storage mode.
+// Resets NextIndex to 0 so this type's ring starts fresh regardless of
+// lightKVS's prior use.
 func NewRevertibleLightKVS(lightKVS *LightKVS) *RevertibleLightKVS {
-	// Reset NextIndex to 0 for sequential storage (not ring buffer)
 	lightKVS.NextIndex.Store(0)
 	return &RevertibleLightKVS{
 		LightKVS: lightKVS,
@@ -50,37 +57,34 @@ func NewRevertibleLightKVS(lightKVS *LightKVS) *RevertibleLightKVS {
 // NewSnapshot starts a new read transaction and returns a Reader for the specified block number.
 // nil means latest; a non-nil value is that exact height (including 0 for genesis).
 //
-// Historical lookups search history by block number (exact match, else the latest
-// preserved snapshot at or before the request). Hop-by-distance is wrong when
-// empty blocks leave no Update entry: Fabric block numbers then skip, and a
-// distance-based index misses snapshots that are still in the ring.
-// Readers must call Close() when done to allow garbage collection of old snapshots.
+// Historical lookups search history by block number (exact match, else the latest preserved
+// snapshot at or before the request). A request older than oldestAvailable is denied. Readers must
+// call Close() when done to allow garbage collection of old snapshots.
 func (kvs *RevertibleLightKVS) NewSnapshot(blockNumber *uint64) (execution.ReadStore, error) {
 	current := kvs.Current.Load()
-	count := int(kvs.NextIndex.Load())
 
 	if blockNumber == nil {
-		revertLogger.Debugf("RevertibleLightKVS.NewSnapshot() returning current snapshot: requested=latest returned=%d historyCount=%d",
-			current.BlockNumber, count)
+		revertLogger.Debugf("RevertibleLightKVS.NewSnapshot() returning current snapshot: requested=latest returned=%d",
+			current.BlockNumber)
 		return &Reader{Snapshot: current}, nil
 	}
 
 	bn := *blockNumber
 	if bn >= current.BlockNumber {
-		revertLogger.Debugf("RevertibleLightKVS.NewSnapshot() returning current snapshot: requested=%d returned=%d historyCount=%d",
-			bn, current.BlockNumber, count)
+		revertLogger.Debugf("RevertibleLightKVS.NewSnapshot() returning current snapshot: requested=%d returned=%d",
+			bn, current.BlockNumber)
 		return &Reader{Snapshot: current}, nil
+	}
+
+	if floor := kvs.oldestAvailable.Load(); bn < floor {
+		err := fmt.Errorf("snapshot for block %d has been evicted from history; oldest available is %d", bn, floor)
+		revertLogger.Debugf("RevertibleLightKVS.NewSnapshot() returning error: %v", err)
+		return nil, err
 	}
 
 	// Exact match on a preserved snapshot, else the nearest older one (state is
 	// unchanged across empty blocks that never called Update). Keep the LAST exact
 	// match in a block.
-	//
-	// Scans the whole array rather than [0, NextIndex): matches RevertToBlock's
-	// approach below, and doesn't rely on NextIndex being an exact populated-count
-	// rather than a ring position — a distinction that only holds because Handle
-	// now shares applyBlockSequential's panic-on-exhaustion behavior instead of
-	// silently wrapping.
 	var exact, best *Snapshot
 	for i := range kvs.History {
 		snap := kvs.History[i].Load()
@@ -106,8 +110,8 @@ func (kvs *RevertibleLightKVS) NewSnapshot(blockNumber *uint64) (execution.ReadS
 	}
 
 	err := fmt.Errorf("snapshot not found for block number %d", bn)
-	revertLogger.Debugf("RevertibleLightKVS.NewSnapshot() returning error: requested=%d current=%d historyCount=%d err=%v",
-		bn, current.BlockNumber, count, err)
+	revertLogger.Debugf("RevertibleLightKVS.NewSnapshot() returning error: requested=%d current=%d err=%v",
+		bn, current.BlockNumber, err)
 	return nil, err
 }
 
@@ -124,23 +128,21 @@ func (kvs *RevertibleLightKVS) Get(namespace, key string, lastBlock uint64) (*bl
 	return r.Get(namespace, key)
 }
 
-// Update atomically applies a batch of updates to the store, deriving the
-// block number from the batch's first entry (0 for an empty batch). Handle
-// passes the block number explicitly instead, so an empty block still
-// advances height correctly — see applyBlockSequential, which both share.
-func (kvs *RevertibleLightKVS) Update(updates []KeyValueVersion) error {
+// update (test only) atomically applies a batch of updates to the store, deriving the
+// block number from the batch's first entry (0 for an empty batch).
+func (kvs *RevertibleLightKVS) update(updates []KeyValueVersion) error {
 	blockNum := uint64(0)
 	if len(updates) > 0 {
 		blockNum = updates[0].BlockNum
 	}
-	return kvs.applyBlockSequential(blockNum, updates)
+	return kvs.applyBlock(blockNum, updates)
 }
 
 // Handle overrides the promoted LightKVS.Handle so synchronizer-delivered
-// blocks get the same sequential, non-wrapping history Update already gives
-// direct callers — LightKVS.Handle instead wraps the ring buffer, silently
-// losing old entries that NewSnapshot's bounded scan can no longer tell from
-// still-populated ones.
+// blocks share this type's own applyBlock — same ring wraparound as plain
+// LightKVS, but also maintaining the eviction floor that this type's
+// NewSnapshot/RevertToBlock need and LightKVS's don't (LightKVS's NewSnapshot
+// is exact-match only, so it never risks a stale nearest-older fallback).
 //
 // The replay guard itself mirrors LightKVS.Handle exactly: older blocks are
 // skipped unverified, and a tip redelivery goes through verifyReplay.
@@ -159,17 +161,16 @@ func (kvs *RevertibleLightKVS) Handle(ctx context.Context, b blocks.Block) error
 		return verifyReplay(current, updates)
 	}
 
-	return kvs.applyBlockSequential(b.Number, updates)
+	return kvs.applyBlock(b.Number, updates)
 }
 
-// applyBlockSequential computes a new snapshot at blockNum from updates,
-// using the same per-key version computation as LightKVS.applyBlock, but
-// appends to history sequentially instead of wrapping — panicking once the
-// window is exhausted rather than silently overwriting older entries, so
-// this type must never be used for a long-running, continuously-committing
-// endorser (see the type doc comment).
-func (kvs *RevertibleLightKVS) applyBlockSequential(blockNum uint64, updates []KeyValueVersion) error {
-	// Load current snapshot
+// applyBlock computes a new snapshot at blockNum from updates, using the same
+// per-key version computation as LightKVS.applyBlock, and wraps History the
+// same way. Before overwriting a slot it records the
+// evicted entry's block number in oldestAvailable, so NewSnapshot and
+// RevertToBlock can tell a genuinely-evicted request apart from one that's
+// merely unrecorded (an empty block).
+func (kvs *RevertibleLightKVS) applyBlock(blockNum uint64, updates []KeyValueVersion) error {
 	oldSnapshot := kvs.Current.Load()
 
 	newSnapshot := &Snapshot{
@@ -177,18 +178,15 @@ func (kvs *RevertibleLightKVS) applyBlockSequential(blockNum uint64, updates []K
 		Data:        applyUpdates(oldSnapshot.Data, updates),
 	}
 
-	// Sequential storage: append to history without wrapping
-	count := int(kvs.NextIndex.Load())
-	if count >= len(kvs.History) {
-		panic(fmt.Sprintf("snapshot history exhausted at block %d", blockNum))
+	if ringLen := uint32(len(kvs.History)); ringLen > 0 {
+		idx := kvs.NextIndex.Load()
+		if evicted := kvs.History[idx].Load(); evicted != nil {
+			kvs.oldestAvailable.Store(evicted.BlockNumber + 1)
+		}
+		kvs.History[idx].Store(oldSnapshot)
+		kvs.NextIndex.Store((idx + 1) % ringLen)
 	}
 
-	if len(kvs.History) > 0 {
-		kvs.History[count].Store(oldSnapshot)
-		kvs.NextIndex.Store(uint32(count + 1))
-	}
-
-	// Atomically swap in the new snapshot
 	kvs.Current.Store(newSnapshot)
 	kvs.hasCheckpoint.Store(true)
 
@@ -208,10 +206,10 @@ func (kvs *RevertibleLightKVS) applyBlockSequential(blockNum uint64, updates []K
 // will match the actual versions in the peer's ledger, avoiding MVCC conflicts.
 //
 // If the requested block number matches the current snapshot, it's a no-op and returns success.
-// Like NewSnapshot, falls back to the nearest older snapshot when there's no exact
-// match: an empty block never calls Update, so it never gets a history entry, but
-// state is unchanged since the last one that did. Returns an error only when no
-// snapshot at or before the requested block number exists in history or current.
+// Like NewSnapshot, falls back to the nearest older snapshot when there's no exact match: an empty
+// block never gets a history entry, but state is unchanged since the last one that did. Returns an
+// error when no snapshot at or before the requested block number exists, or when the request is
+// older than oldestAvailable.
 func (kvs *RevertibleLightKVS) RevertToBlock(blockNumber uint64) error {
 	revertLogger.Debugf("RevertibleLightKVS.RevertToBlock() called with blockNumber=%d", blockNumber)
 
@@ -223,6 +221,12 @@ func (kvs *RevertibleLightKVS) RevertToBlock(blockNumber uint64) error {
 		// Already at this block - no-op, return success
 		revertLogger.Debugf("RevertibleLightKVS.RevertToBlock() already at block %d, no-op", blockNumber)
 		return nil
+	}
+
+	if floor := kvs.oldestAvailable.Load(); blockNumber < floor {
+		err := fmt.Errorf("cannot revert: block %d has been evicted from history; oldest available is %d", blockNumber, floor)
+		revertLogger.Debugf("RevertibleLightKVS.RevertToBlock() returning error: %v", err)
+		return err
 	}
 
 	// Log available history snapshots
@@ -338,15 +342,33 @@ func (kvs *RevertibleLightKVS) RevertToBlock(blockNumber uint64) error {
 	// Atomically swap in the merged snapshot
 	kvs.Current.Store(mergedSnapshot)
 
-	// Drop all future snapshots after the revert point, but keep the past snapshots.
-	count := int(kvs.NextIndex.Load())
-	if targetIndex >= 0 {
-		for i := targetIndex; i < count; i++ {
-			kvs.History[i].Store(nil)
-		}
-		kvs.NextIndex.Store(uint32(targetIndex))
-	}
+	// Drop every ring slot at or after the revert point and rewind NextIndex to targetIndex.
+	// OldestAvailable is untouched: this only discards a now-abandoned future branch.
+	kvs.clearFromRingIndex(targetIndex)
 
 	revertLogger.Debugf("RevertibleLightKVS.RevertToBlock() successfully reverted to block %d with merged state and trimmed future history", blockNumber)
 	return nil
+}
+
+// clearFromRingIndex discards every History entry at or after targetIdx's
+// snapshot, so the next commit resumes writing from that point.
+func (kvs *RevertibleLightKVS) clearFromRingIndex(targetIdx int) {
+	ringLen := len(kvs.History)
+	if ringLen == 0 || targetIdx < 0 {
+		return
+	}
+	next := int(kvs.NextIndex.Load())
+	// next is both the oldest surviving slot and the next write target, so
+	// (slot - next) mod ringLen is that slot's age, oldest=0 to newest=ringLen-1 —
+	// a stable ordering regardless of how many times the ring has wrapped.
+	targetAge := (targetIdx - next + ringLen) % ringLen
+	for i := range kvs.History {
+		// Same age or newer than the target: written at or after it, discard.
+		if (i-next+ringLen)%ringLen >= targetAge {
+			kvs.History[i].Store(nil)
+		}
+	}
+	// Resume writing at targetIdx, overwriting the target's own now-redundant
+	// entry first (a fresh merged snapshot for that block lands there next).
+	kvs.NextIndex.Store(uint32(targetIdx))
 }

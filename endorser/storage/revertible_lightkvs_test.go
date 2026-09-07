@@ -36,14 +36,14 @@ func TestRevertibleLightKVS_RevertToBlock(t *testing.T) {
 	kvs := NewRevertibleLightKVS(NewLightKVS(4))
 
 	// Block 1: key1 = v1
-	if err := kvs.Update([]KeyValueVersion{
+	if err := kvs.update([]KeyValueVersion{
 		{Key: "ns1:key1", Value: []byte("v1"), BlockNum: 1, TxNum: 0, TxID: "tx1"},
 	}); err != nil {
 		t.Fatalf("Update block 1 failed: %v", err)
 	}
 
 	// Block 2: key1 = v2, key2 = vB (new key)
-	if err := kvs.Update([]KeyValueVersion{
+	if err := kvs.update([]KeyValueVersion{
 		{Key: "ns1:key1", Value: []byte("v2"), BlockNum: 2, TxNum: 0, TxID: "tx2"},
 		{Key: "ns1:key2", Value: []byte("vB"), BlockNum: 2, TxNum: 1, TxID: "tx2b"},
 	}); err != nil {
@@ -92,7 +92,7 @@ func TestRevertibleLightKVS_RevertToBlock(t *testing.T) {
 func TestRevertibleLightKVS_RevertToBlock_NoOp(t *testing.T) {
 	kvs := NewRevertibleLightKVS(NewLightKVS(2))
 
-	if err := kvs.Update([]KeyValueVersion{
+	if err := kvs.update([]KeyValueVersion{
 		{Key: "ns1:key1", Value: []byte("v1"), BlockNum: 1, TxNum: 0, TxID: "tx1"},
 	}); err != nil {
 		t.Fatalf("Update failed: %v", err)
@@ -107,7 +107,7 @@ func TestRevertibleLightKVS_RevertToBlock_NoOp(t *testing.T) {
 func TestRevertibleLightKVS_RevertToBlock_NotFound(t *testing.T) {
 	kvs := NewRevertibleLightKVS(NewLightKVS(2))
 
-	if err := kvs.Update([]KeyValueVersion{
+	if err := kvs.update([]KeyValueVersion{
 		{Key: "ns1:key1", Value: []byte("v1"), BlockNum: 1, TxNum: 0, TxID: "tx1"},
 	}); err != nil {
 		t.Fatalf("Update failed: %v", err)
@@ -120,18 +120,18 @@ func TestRevertibleLightKVS_RevertToBlock_NotFound(t *testing.T) {
 
 // TestRevertibleLightKVS_RevertToBlock_SkipsEmptyBlocks is the revert-path twin of
 // TestRevertibleLightKVS_NewSnapshot_SkipsEmptyBlocks: an empty block never calls
-// Update, so it never gets a history entry, but evm_revert to that exact block
+// update, so it never gets a history entry, but evm_revert to that exact block
 // number must still succeed by falling back to the nearest older snapshot.
 func TestRevertibleLightKVS_RevertToBlock_SkipsEmptyBlocks(t *testing.T) {
 	kvs := NewRevertibleLightKVS(NewLightKVS(8))
 
-	// Blocks 1 and 5 wrote; 2-4 were empty (no Update, so no history entry).
-	if err := kvs.Update([]KeyValueVersion{
+	// Blocks 1 and 5 wrote; 2-4 were empty (no update, so no history entry).
+	if err := kvs.update([]KeyValueVersion{
 		{Key: "ns1:key1", Value: []byte("v1"), BlockNum: 1, TxNum: 0, TxID: "tx1"},
 	}); err != nil {
 		t.Fatalf("Update block 1: %v", err)
 	}
-	if err := kvs.Update([]KeyValueVersion{
+	if err := kvs.update([]KeyValueVersion{
 		{Key: "ns1:key1", Value: []byte("v5"), BlockNum: 5, TxNum: 0, TxID: "tx5"},
 	}); err != nil {
 		t.Fatalf("Update block 5: %v", err)
@@ -171,7 +171,7 @@ func TestRevertibleLightKVS_RevertThenContinue(t *testing.T) {
 	kvs := NewRevertibleLightKVS(NewLightKVS(4))
 
 	for i, val := range []string{"v1", "v2", "v3"} {
-		if err := kvs.Update([]KeyValueVersion{
+		if err := kvs.update([]KeyValueVersion{
 			{Key: "ns1:key1", Value: []byte(val), BlockNum: uint64(i + 1), TxNum: 0, TxID: "tx"},
 		}); err != nil {
 			t.Fatalf("Update block %d failed: %v", i+1, err)
@@ -183,7 +183,7 @@ func TestRevertibleLightKVS_RevertThenContinue(t *testing.T) {
 	}
 
 	// Continue committing after the revert point.
-	if err := kvs.Update([]KeyValueVersion{
+	if err := kvs.update([]KeyValueVersion{
 		{Key: "ns1:key1", Value: []byte("v1-continued"), BlockNum: 5, TxNum: 0, TxID: "tx5"},
 	}); err != nil {
 		t.Fatalf("Update after revert failed: %v", err)
@@ -205,18 +205,18 @@ func TestRevertibleLightKVS_RevertThenContinue(t *testing.T) {
 }
 
 // TestRevertibleLightKVS_NewSnapshot_SkipsEmptyBlocks ensures historical reads
-// find state when Fabric block numbers advance without an Update for empty blocks
+// find state when Fabric block numbers advance without an update for empty blocks
 // (hop-by-distance lookup used to miss those snapshots).
 func TestRevertibleLightKVS_NewSnapshot_SkipsEmptyBlocks(t *testing.T) {
 	kvs := NewRevertibleLightKVS(NewLightKVS(8))
 
-	// Blocks 1 and 5 wrote; 2–4 were empty (no Update).
-	if err := kvs.Update([]KeyValueVersion{
+	// Blocks 1 and 5 wrote; 2–4 were empty (no update).
+	if err := kvs.update([]KeyValueVersion{
 		{Key: "ns1:key1", Value: []byte("v1"), BlockNum: 1, TxNum: 0, TxID: "tx1"},
 	}); err != nil {
 		t.Fatalf("Update block 1: %v", err)
 	}
-	if err := kvs.Update([]KeyValueVersion{
+	if err := kvs.update([]KeyValueVersion{
 		{Key: "ns1:key1", Value: []byte("v5"), BlockNum: 5, TxNum: 0, TxID: "tx5"},
 	}); err != nil {
 		t.Fatalf("Update block 5: %v", err)
@@ -272,7 +272,7 @@ func TestRevertibleLightKVS_NewSnapshot_SkipsEmptyBlocks(t *testing.T) {
 func TestRevertibleLightKVS_NewSnapshot_NotFound(t *testing.T) {
 	kvs := NewRevertibleLightKVS(NewLightKVS(4))
 
-	if err := kvs.Update([]KeyValueVersion{
+	if err := kvs.update([]KeyValueVersion{
 		{Key: "ns1:key1", Value: []byte("v10"), BlockNum: 10, TxNum: 0, TxID: "tx10"},
 	}); err != nil {
 		t.Fatalf("Update: %v", err)
@@ -287,29 +287,58 @@ func TestRevertibleLightKVS_NewSnapshot_NotFound(t *testing.T) {
 	}
 }
 
-// TestRevertibleLightKVS_HistoryExhaustedPanics documents the deliberate trade-off:
-// unlike plain LightKVS (which wraps forever), a revert-capable instance panics once
-// its bounded history window fills up, since a wrapping ring buffer can't guarantee
-// a stable index to revert to. This is why RevertibleLightKVS must never be used for
-// a long-running, continuously-committing endorser.
-func TestRevertibleLightKVS_HistoryExhaustedPanics(t *testing.T) {
-	kvs := NewRevertibleLightKVS(NewLightKVS(1))
+// TestRevertibleLightKVS_HistoryWrapsAndEvictsGracefully ensures the correct eviction of old blocks
+// when the history is full. A request for an evicted block gets an explicit error.
+func TestRevertibleLightKVS_HistoryWrapsAndEvictsGracefully(t *testing.T) {
+	kvs := NewRevertibleLightKVS(NewLightKVS(2))
 
-	if err := kvs.Update([]KeyValueVersion{
-		{Key: "ns1:key1", Value: []byte("v1"), BlockNum: 1, TxNum: 0, TxID: "tx1"},
-	}); err != nil {
-		t.Fatalf("first Update failed: %v", err)
+	for i, val := range []string{"v1", "v2", "v3", "v4"} {
+		if err := kvs.update([]KeyValueVersion{
+			{Key: "ns1:key1", Value: []byte(val), BlockNum: uint64(i + 1), TxNum: 0, TxID: "tx"},
+		}); err != nil {
+			t.Fatalf("Update block %d should wrap rather than error, got: %v", i+1, err)
+		}
 	}
 
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("expected panic once history window is exhausted, got none")
+	// The size-2 ring has evicted blocks 0 and 1 by now; either must error
+	// rather than silently returning some other block's state.
+	for _, bn := range []uint64{0, 1} {
+		if _, err := kvs.NewSnapshot(&bn); err == nil {
+			t.Errorf("expected error reading evicted block %d, got nil", bn)
 		}
-	}()
+	}
 
-	_ = kvs.Update([]KeyValueVersion{
-		{Key: "ns1:key1", Value: []byte("v2"), BlockNum: 2, TxNum: 0, TxID: "tx2"},
-	})
+	// Block 2 is still retained.
+	reader, err := kvs.NewSnapshot(new(uint64(2)))
+	if err != nil {
+		t.Fatalf("NewSnapshot(2) should still be available: %v", err)
+	}
+	if rec, err := reader.Get("ns1", "key1"); err != nil || rec == nil || string(rec.Value) != "v2" {
+		reader.Close()
+		t.Errorf("expected key1=v2 at block 2, got %+v (err %v)", rec, err)
+	}
+	reader.Close()
+
+	// One more commit: the ring keeps evicting correctly on a second lap.
+	// Block 2 is now evicted; block 3 (still retained before this commit) survives.
+	if err := kvs.update([]KeyValueVersion{
+		{Key: "ns1:key1", Value: []byte("v5"), BlockNum: 5, TxNum: 0, TxID: "tx"},
+	}); err != nil {
+		t.Fatalf("Update block 5 should wrap rather than error, got: %v", err)
+	}
+
+	if _, err := kvs.NewSnapshot(new(uint64(2))); err == nil {
+		t.Error("expected error reading now-evicted block 2, got nil")
+	}
+
+	reader, err = kvs.NewSnapshot(new(uint64(3)))
+	if err != nil {
+		t.Fatalf("NewSnapshot(3) should still be available: %v", err)
+	}
+	defer reader.Close()
+	if rec, err := reader.Get("ns1", "key1"); err != nil || rec == nil || string(rec.Value) != "v3" {
+		t.Errorf("expected key1=v3 at block 3, got %+v (err %v)", rec, err)
+	}
 }
 
 // TestRevertibleLightKVS_RevertToBlock_DuplicateBlockNumber pins which snapshot
@@ -326,12 +355,12 @@ func TestRevertibleLightKVS_RevertToBlock_DuplicateBlockNumber(t *testing.T) {
 
 	// Two writes both labelled block 0, the way startup funding lands on top of
 	// the initial state.
-	if err := kvs.Update([]KeyValueVersion{
+	if err := kvs.update([]KeyValueVersion{
 		{Key: "ns1:balance", Value: []byte("empty"), BlockNum: 0, TxNum: 0, TxID: "genesis"},
 	}); err != nil {
 		t.Fatalf("Update genesis failed: %v", err)
 	}
-	if err := kvs.Update([]KeyValueVersion{
+	if err := kvs.update([]KeyValueVersion{
 		{Key: "ns1:balance", Value: []byte("funded"), BlockNum: 0, TxNum: 0, TxID: "funding"},
 	}); err != nil {
 		t.Fatalf("Update funding failed: %v", err)
@@ -339,7 +368,7 @@ func TestRevertibleLightKVS_RevertToBlock_DuplicateBlockNumber(t *testing.T) {
 
 	// Then a real block, so the revert has to come out of history rather than
 	// being a no-op against current.
-	if err := kvs.Update([]KeyValueVersion{
+	if err := kvs.update([]KeyValueVersion{
 		{Key: "ns1:balance", Value: []byte("spent"), BlockNum: 1, TxNum: 0, TxID: "tx1"},
 	}); err != nil {
 		t.Fatalf("Update block 1 failed: %v", err)
@@ -371,13 +400,13 @@ func TestRevertibleLightKVS_NewSnapshot_DuplicateBlockNumber(t *testing.T) {
 	kvs := NewRevertibleLightKVS(NewLightKVS(4))
 
 	for _, w := range []struct{ value, txID string }{{"empty", "genesis"}, {"funded", "funding"}} {
-		if err := kvs.Update([]KeyValueVersion{
+		if err := kvs.update([]KeyValueVersion{
 			{Key: "ns1:balance", Value: []byte(w.value), BlockNum: 0, TxNum: 0, TxID: w.txID},
 		}); err != nil {
 			t.Fatalf("Update %s failed: %v", w.txID, err)
 		}
 	}
-	if err := kvs.Update([]KeyValueVersion{
+	if err := kvs.update([]KeyValueVersion{
 		{Key: "ns1:balance", Value: []byte("spent"), BlockNum: 1, TxNum: 0, TxID: "tx1"},
 	}); err != nil {
 		t.Fatalf("Update block 1 failed: %v", err)
@@ -398,33 +427,36 @@ func TestRevertibleLightKVS_NewSnapshot_DuplicateBlockNumber(t *testing.T) {
 	}
 }
 
-// TestRevertibleLightKVS_Handle_SequentialNotWrapping verifies Handle shares
-// Update's panic-on-exhaustion contract rather than silently wrapping like the
-// promoted LightKVS.Handle would. Before Handle was overridden, this scenario
-// wrapped the ring buffer without error, which the doc comment on the type
-// does not promise.
-func TestRevertibleLightKVS_Handle_SequentialNotWrapping(t *testing.T) {
+// TestRevertibleLightKVS_Handle_WrapsGracefully is Handle's counterpart to
+// TestRevertibleLightKVS_HistoryWrapsAndEvictsGracefully: the synchronizer
+// path wraps and evicts the same way update does, rather than panicking.
+func TestRevertibleLightKVS_Handle_WrapsGracefully(t *testing.T) {
 	kvs := NewRevertibleLightKVS(NewLightKVS(2))
 	ctx := t.Context()
 
-	for i := uint64(1); i <= 2; i++ {
+	for i := uint64(1); i <= 4; i++ {
 		if err := kvs.Handle(ctx, mkBlock(i, 0, "tx", true, "ns1",
 			blocks.KVWrite{Key: "k", Value: []byte{byte(i)}})); err != nil {
-			t.Fatalf("Handle block %d: %v", i, err)
+			t.Fatalf("Handle block %d should wrap rather than error, got: %v", i, err)
 		}
 	}
 
-	defer func() {
-		if recover() == nil {
-			t.Error("expected a panic once history (size 2) is exhausted, got none")
-		}
-	}()
-	_ = kvs.Handle(ctx, mkBlock(3, 0, "tx", true, "ns1", blocks.KVWrite{Key: "k", Value: []byte{3}}))
-	t.Error("Handle should have panicked before returning")
+	if _, err := kvs.NewSnapshot(new(uint64(1))); err == nil {
+		t.Error("expected error reading evicted block 1, got nil")
+	}
+
+	reader, err := kvs.NewSnapshot(new(uint64(2)))
+	if err != nil {
+		t.Fatalf("NewSnapshot(2) should still be available: %v", err)
+	}
+	defer reader.Close()
+	if rec, err := reader.Get("ns1", "k"); err != nil || rec == nil || rec.Value[0] != 2 {
+		t.Errorf("expected k=2 at block 2, got %+v (err %v)", rec, err)
+	}
 }
 
 // TestRevertibleLightKVS_Handle_EmptyBlockAdvancesHeight verifies a block with
-// no writes still advances height when delivered through Handle. Update alone
+// no writes still advances height when delivered through Handle. update alone
 // cannot express this (it derives the block number from the batch's first
 // entry), which is why Handle passes it explicitly.
 func TestRevertibleLightKVS_Handle_EmptyBlockAdvancesHeight(t *testing.T) {

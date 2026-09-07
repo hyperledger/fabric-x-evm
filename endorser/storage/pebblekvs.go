@@ -170,25 +170,15 @@ func (p *PebbleKVS) readMetaBlock() (uint64, bool, error) {
 	return binary.BigEndian.Uint64(raw), true, nil
 }
 
-// Update atomically applies a batch of writes for a single block. All writes
-// must carry the same block number (they come from the same block); the block's
-// data keys and the meta checkpoint are committed in one pebble batch, so a
-// crash either leaves the whole block applied or none of it.
-//
-// Blocks at or below the persisted checkpoint are not skipped outright:
-// commitBlock checks each write's exact (key, block, tx) coordinate and skips
-// only the ones already present verbatim, erroring on a content mismatch —
-// see commitBlock.
-func (p *PebbleKVS) Update(updates []KeyValueVersion) error {
+// update is a test-only entry point into commitBlock for a raw batch of
+// writes, not carrying any guarantee of its own: production always goes
+// through Handle, which calls commitBlock directly.
+func (p *PebbleKVS) update(updates []KeyValueVersion) error {
 	if len(updates) == 0 {
 		return nil
 	}
 
-	// A batch spanning several blocks would be committed under a single
-	// checkpoint, so a crash could leave the store claiming a height whose
-	// blocks are only partly applied. Both write paths group by block before
-	// calling Update, so this is a broken-invariant check, not a runtime
-	// condition.
+	// Sanity check to prevent incorrectly written tests.
 	blockNum := updates[0].BlockNum
 	for i := range updates {
 		if updates[i].BlockNum != blockNum {
@@ -208,7 +198,7 @@ func (p *PebbleKVS) Update(updates []KeyValueVersion) error {
 // Each write is keyed by (key, block, tx) — see dataKey — so a write already
 // present at that exact coordinate is a replay: it's verified against the
 // incoming write and skipped rather than re-versioned, erroring if the
-// content differs.
+// content differs or is not found.
 //
 // The checkpoint advances monotonically, independent of the per-write check:
 // a block at or below it may still be processed to verify its writes, but
@@ -235,21 +225,26 @@ func (p *PebbleKVS) commitBlock(blockNum uint64, updates []KeyValueVersion) erro
 		// sameness check on existing writes
 		if !advance {
 			existing, err := p.db.Get(key)
-			if err != nil && !errors.Is(err, pebble.ErrNotFound) {
+			if err != nil {
+				if errors.Is(err, pebble.ErrNotFound) {
+					// blockNum is at or below the persisted checkpoint, so if this write
+					// is not present, we have a consistency issue.
+					return fmt.Errorf(
+						"missing write for %q at block=%d tx=%d: block %d is already checkpointed but this write was never committed for it",
+						u.Key, u.BlockNum, u.TxNum, blockNum)
+				}
 				return fmt.Errorf("failed to check existing write for %q: %w", u.Key, err)
 			}
-			if err == nil {
-				rec, err := decodeRecord(existing)
-				if err != nil {
-					return fmt.Errorf("failed to decode existing write for %q: %w", u.Key, err)
-				}
-				if !bytes.Equal(rec.Value, u.Value) || rec.IsDelete != u.IsDelete || rec.TxID != u.TxID {
-					return fmt.Errorf(
-						"conflicting write for %q at block=%d tx=%d: existing (is_delete=%v tx_id=%s) differs from replayed (is_delete=%v tx_id=%s)",
-						u.Key, u.BlockNum, u.TxNum, rec.IsDelete, rec.TxID, u.IsDelete, u.TxID)
-				}
-				continue // identical replay: already stored, don't re-version it
+			rec, err := decodeRecord(existing)
+			if err != nil {
+				return fmt.Errorf("failed to decode existing write for %q: %w", u.Key, err)
 			}
+			if !bytes.Equal(rec.Value, u.Value) || rec.IsDelete != u.IsDelete || rec.TxID != u.TxID {
+				return fmt.Errorf(
+					"conflicting write for %q at block=%d tx=%d: existing (is_delete=%v tx_id=%s) differs from replayed (is_delete=%v tx_id=%s)",
+					u.Key, u.BlockNum, u.TxNum, rec.IsDelete, rec.TxID, u.IsDelete, u.TxID)
+			}
+			continue // identical replay: already stored, don't re-version it
 		}
 
 		version, seen := nextVersion[u.Key]

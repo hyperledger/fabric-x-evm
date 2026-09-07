@@ -43,7 +43,7 @@ func TestNewSnapshot_ExplicitZeroIsNotLatest(t *testing.T) {
 	key := "acc:0x1:bal"
 
 	// Genesis empty, then write at block 1 so tip != genesis.
-	if err := kvs.Update([]KeyValueVersion{{
+	if err := kvs.update([]KeyValueVersion{{
 		Key: ns + ":" + key, Value: []byte{0x2a}, BlockNum: 1, TxNum: 0, TxID: "tx1",
 	}}); err != nil {
 		t.Fatalf("Update: %v", err)
@@ -122,7 +122,7 @@ func TestReaderGet(t *testing.T) {
 			IsDelete: false,
 		},
 	}
-	err := kvs.Update(updates)
+	err := kvs.update(updates)
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestReaderGetNilValue(t *testing.T) {
 			IsDelete: false,
 		},
 	}
-	err := kvs.Update(updates)
+	err := kvs.update(updates)
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
@@ -265,7 +265,7 @@ func TestUpdate(t *testing.T) {
 		},
 	}
 
-	err := kvs.Update(updates)
+	err := kvs.update(updates)
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
@@ -315,7 +315,7 @@ func TestUpdateVersionIncrement(t *testing.T) {
 			IsDelete: false,
 		},
 	}
-	err := kvs.Update(updates1)
+	err := kvs.update(updates1)
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
@@ -336,7 +336,7 @@ func TestUpdateVersionIncrement(t *testing.T) {
 			IsDelete: false,
 		},
 	}
-	err = kvs.Update(updates2)
+	err = kvs.update(updates2)
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
@@ -357,7 +357,7 @@ func TestUpdateVersionIncrement(t *testing.T) {
 			IsDelete: false,
 		},
 	}
-	err = kvs.Update(updates3)
+	err = kvs.update(updates3)
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
@@ -383,7 +383,7 @@ func TestUpdateDelete(t *testing.T) {
 			IsDelete: false,
 		},
 	}
-	err := kvs.Update(updates1)
+	err := kvs.update(updates1)
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
@@ -404,7 +404,7 @@ func TestUpdateDelete(t *testing.T) {
 			TxID:     "tx2",
 		},
 	}
-	err = kvs.Update(updates2)
+	err = kvs.update(updates2)
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
@@ -420,7 +420,7 @@ func TestUpdateDelete(t *testing.T) {
 func TestUpdateEmptyBatch(t *testing.T) {
 	kvs := NewLightKVS(1)
 
-	err := kvs.Update([]KeyValueVersion{})
+	err := kvs.update([]KeyValueVersion{})
 	if err != nil {
 		t.Fatalf("Update with empty batch failed: %v", err)
 	}
@@ -446,7 +446,7 @@ func TestSnapshotIsolation(t *testing.T) {
 			IsDelete: false,
 		},
 	}
-	err := kvs.Update(updates1)
+	err := kvs.update(updates1)
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
@@ -469,7 +469,7 @@ func TestSnapshotIsolation(t *testing.T) {
 			IsDelete: false,
 		},
 	}
-	err = kvs.Update(updates2)
+	err = kvs.update(updates2)
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
@@ -515,7 +515,7 @@ func TestConcurrentReaders(t *testing.T) {
 			IsDelete: false,
 		},
 	}
-	err := kvs.Update(updates)
+	err := kvs.update(updates)
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
@@ -887,7 +887,7 @@ func TestBlockNumber(t *testing.T) {
 			IsDelete: false,
 		},
 	}
-	err = kvs.Update(updates)
+	err = kvs.update(updates)
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
@@ -927,7 +927,7 @@ func TestGetMethod(t *testing.T) {
 			IsDelete: false,
 		},
 	}
-	err := kvs.Update(updates)
+	err := kvs.update(updates)
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
@@ -976,7 +976,7 @@ func TestMultipleNamespaces(t *testing.T) {
 		},
 	}
 
-	err := kvs.Update(updates)
+	err := kvs.update(updates)
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
@@ -1038,7 +1038,7 @@ func TestStructuralSharing(t *testing.T) {
 			IsDelete: false,
 		},
 	}
-	err := kvs.Update(updates1)
+	err := kvs.update(updates1)
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
@@ -1057,7 +1057,7 @@ func TestStructuralSharing(t *testing.T) {
 			IsDelete: false,
 		},
 	}
-	err = kvs.Update(updates2)
+	err = kvs.update(updates2)
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
@@ -1093,7 +1093,7 @@ func TestConcurrentReadersWithUpdates(t *testing.T) {
 			IsDelete: false,
 		},
 	}
-	err := kvs.Update(updates)
+	err := kvs.update(updates)
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
@@ -1145,7 +1145,7 @@ func TestConcurrentReadersWithUpdates(t *testing.T) {
 				IsDelete: false,
 			},
 		}
-		err := kvs.Update(updates)
+		err := kvs.update(updates)
 		if err != nil {
 			t.Fatalf("Update %d failed: %v", i, err)
 		}
@@ -1169,7 +1169,7 @@ func TestSnapshotByBlockNumber(t *testing.T) {
 			IsDelete: false,
 		},
 	}
-	err := kvs.Update(updates1)
+	err := kvs.update(updates1)
 	if err != nil {
 		t.Fatalf("Update block 1 failed: %v", err)
 	}
@@ -1185,7 +1185,7 @@ func TestSnapshotByBlockNumber(t *testing.T) {
 			IsDelete: false,
 		},
 	}
-	err = kvs.Update(updates2)
+	err = kvs.update(updates2)
 	if err != nil {
 		t.Fatalf("Update block 2 failed: %v", err)
 	}
@@ -1253,7 +1253,7 @@ func TestSnapshotHistoryEviction(t *testing.T) {
 				IsDelete: false,
 			},
 		}
-		err := kvs.Update(updates)
+		err := kvs.update(updates)
 		if err != nil {
 			t.Fatalf("Update block %d failed: %v", i, err)
 		}
@@ -1330,7 +1330,7 @@ func TestSnapshotNonExistentBlock(t *testing.T) {
 			IsDelete: false,
 		},
 	}
-	err := kvs.Update(updates)
+	err := kvs.update(updates)
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
@@ -1374,7 +1374,7 @@ func TestSnapshotIsolationAcrossBlocks(t *testing.T) {
 			IsDelete: false,
 		},
 	}
-	err := kvs.Update(updates1)
+	err := kvs.update(updates1)
 	if err != nil {
 		t.Fatalf("Update block 1 failed: %v", err)
 	}
@@ -1397,7 +1397,7 @@ func TestSnapshotIsolationAcrossBlocks(t *testing.T) {
 			IsDelete: false,
 		},
 	}
-	err = kvs.Update(updates2)
+	err = kvs.update(updates2)
 	if err != nil {
 		t.Fatalf("Update block 2 failed: %v", err)
 	}
@@ -1438,7 +1438,7 @@ func TestSnapshotIsolationAcrossBlocks(t *testing.T) {
 			IsDelete: false,
 		},
 	}
-	err = kvs.Update(updates3)
+	err = kvs.update(updates3)
 	if err != nil {
 		t.Fatalf("Update block 3 failed: %v", err)
 	}
