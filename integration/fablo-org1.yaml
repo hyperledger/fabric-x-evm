@@ -29,3 +29,14 @@ endorser:
     msp-dir: ../testdata/fablo/fablo-target/fabric-config/crypto-config/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/msp
   database:
     database: memory
+  server:
+    endpoint:
+      host: 127.0.0.1
+      port: 0
+    tls:
+      mode: mtls
+      cert-path: ../testdata/fablo/fablo-target/fabric-config/crypto-config/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/server.crt
+      key-path: ../testdata/fablo/fablo-target/fabric-config/crypto-config/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/server.key
+      ca-cert-paths:
+        - ../testdata/fablo/fablo-target/fabric-config/crypto-config/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt
+        - ../testdata/fablo/fablo-target/fabric-config/crypto-config/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/tls/ca.crt

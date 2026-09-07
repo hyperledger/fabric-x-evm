@@ -9,7 +9,10 @@ package config
 import (
 	"errors"
 	"fmt"
+	"os"
 	"time"
+
+	"github.com/hyperledger/fabric-x-committer/utils/serve"
 
 	"github.com/hyperledger/fabric-x-evm/common"
 )
@@ -40,6 +43,9 @@ type Endorser struct {
 	// MaxTimestampPast is how far behind local time a request timestamp may be.
 	// Zero means DefaultTimestampPastSkew.
 	MaxTimestampPast time.Duration `mapstructure:"max-timestamp-past" yaml:"max-timestamp-past"`
+	// Server configures the gRPC server this endorser is reached on by other
+	// orgs' gateways. Nil means it is never served over gRPC.
+	Server *serve.ServerConfig `mapstructure:"server" yaml:"server"`
 }
 
 // TimestampFutureSkew returns the configured future skew, or the default.
@@ -118,6 +124,35 @@ func (cfg Endorser) Validate() error {
 	if cfg.Database.Database == DBPebble && cfg.Database.ConnString == "" {
 		errs = append(errs, errors.New("database.connection-string (data directory) is required for pebble"))
 	}
+	if cfg.Server != nil {
+		if err := validateServerConfig(cfg.Server); err != nil {
+			errs = append(errs, fmt.Errorf("server: %w", err))
+		}
+	}
 
+	return errors.Join(errs...)
+}
+
+// validateServerConfig checks that an endorser's gRPC server config, if
+// present, has an endpoint and that any configured TLS cert/key/CA paths
+// exist on disk.
+func validateServerConfig(cfg *serve.ServerConfig) error {
+	var errs []error
+	if cfg.Endpoint.Empty() {
+		errs = append(errs, errors.New("endpoint is required"))
+	}
+	checkFile := func(label, path string) {
+		if path == "" {
+			return
+		}
+		if _, err := os.Stat(path); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", label, err))
+		}
+	}
+	for _, path := range cfg.TLS.CACertPaths {
+		checkFile("tls.ca-cert-paths", path)
+	}
+	checkFile("tls.cert-path", cfg.TLS.CertPath)
+	checkFile("tls.key-path", cfg.TLS.KeyPath)
 	return errors.Join(errs...)
 }

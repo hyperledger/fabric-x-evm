@@ -8,14 +8,12 @@ package integration
 
 import (
 	"net"
-	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
 
 	ethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/hyperledger/fabric-x-committer/utils/connection"
 	"github.com/hyperledger/fabric-x-committer/utils/serve"
 	"github.com/hyperledger/fabric-x-evm/common"
 	eapi "github.com/hyperledger/fabric-x-evm/endorser/api"
@@ -33,26 +31,15 @@ import (
 	"github.com/hyperledger/fabric-x-sdk/identity"
 )
 
-// serveEndorser serves an endorser over mTLS gRPC on an ephemeral port and
-// returns the bound "host:port" address. It serves with the endorser's own
-// org's TLS material; trustedCAs are the CAs whose clients it accepts, which
-// is how one org's gateway is able to reach another org's endorser.
-func serveEndorser(t *testing.T, svc eapi.Service, ecfg econf.Endorser, trustedCAs []string) string {
+// serveEndorser serves an endorser over gRPC using the endpoint and mTLS
+// material from ecfg.Server, and returns the bound "host:port" address.
+func serveEndorser(t *testing.T, svc eapi.Service, ecfg econf.Endorser) string {
 	t.Helper()
 
-	// The endorser's peer identity carries TLS server material alongside its MSP.
-	tlsDir := filepath.Join(filepath.Dir(ecfg.Identity.MSPDir), "tls")
-	serverCfg := &eserver.Config{
-		GRPC: serve.ServerConfig{
-			Endpoint: connection.Endpoint{Host: "127.0.0.1", Port: 0},
-			TLS: connection.TLSConfig{
-				Mode:        connection.MutualTLSMode,
-				CertPath:    filepath.Join(tlsDir, "server.crt"),
-				KeyPath:     filepath.Join(tlsDir, "server.key"),
-				CACertPaths: trustedCAs,
-			},
-		},
+	if ecfg.Server == nil {
+		t.Fatalf("%s: no server configured", ecfg.Name)
 	}
+	serverCfg := &eserver.Config{GRPC: *ecfg.Server}
 	serve.PreAllocateListener(t, &serverCfg.GRPC)
 
 	ctx := t.Context()
@@ -73,7 +60,7 @@ func serveEndorser(t *testing.T, svc eapi.Service, ecfg econf.Endorser, trustedC
 //
 // No synchronizer is started here: the caller registers the returned KVS as a
 // block handler on the gateway's synchronizer, the same as an embedded endorser.
-func startServedEndorser(t *testing.T, configFile string, evmConfig execution.EVMConfig, trustedCAs []string, dialCfg *common.ClientConfig) (estorage.KVS, endorsement.Builder, *eclient.Client) {
+func startServedEndorser(t *testing.T, configFile string, evmConfig execution.EVMConfig, dialCfg *common.ClientConfig) (estorage.KVS, endorsement.Builder, *eclient.Client) {
 	t.Helper()
 
 	cfg, err := config.Load(configFile)
@@ -89,7 +76,7 @@ func startServedEndorser(t *testing.T, configFile string, evmConfig execution.EV
 	}
 
 	db, builder, end := NewEndorser(t, ecfg, cfg.Network.Channel, cfg.Network.Namespace, evmConfig, cfg.Network.Protocol)
-	setDialPort(t, dialCfg, serveEndorser(t, end, ecfg, trustedCAs))
+	setDialPort(t, dialCfg, serveEndorser(t, end, ecfg))
 
 	client, err := eclient.Dial(*dialCfg)
 	if err != nil {
@@ -104,7 +91,7 @@ func startServedEndorser(t *testing.T, configFile string, evmConfig execution.EV
 // standalone config file and serves it over mTLS gRPC, returning its bound
 // address. Unlike startServedEndorser this owns its synchronizer, for tests
 // that drive the real App rather than the harness.
-func startEndorserGRPCServer(t *testing.T, configFile string, trustedCAs []string) string {
+func startEndorserGRPCServer(t *testing.T, configFile string) string {
 	t.Helper()
 
 	cfg, err := config.Load(configFile)
@@ -142,7 +129,7 @@ func startEndorserGRPCServer(t *testing.T, configFile string, trustedCAs []strin
 		t.Fatalf("%s: sync: %v", ecfg.Name, err)
 	}
 
-	return serveEndorser(t, end, ecfg, trustedCAs)
+	return serveEndorser(t, end, ecfg)
 }
 
 // buildSplitGatewayApp loads a split-deployment gateway config, points its

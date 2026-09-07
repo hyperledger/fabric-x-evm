@@ -484,7 +484,7 @@ func newFileConfigHarness(t *testing.T, logger sdk.Logger, evmConfig execution.E
 // (which is what keeps their state current), and the builder is what the state
 // primer signs with. Only the gateway's own path to them is remote, which is
 // the part these tests exist to exercise.
-func newSplitFileConfigHarness(t *testing.T, logger sdk.Logger, evmConfig execution.EVMConfig, primeDbPath, gatewayConfigFile string, endorserConfigFiles []string, trustedCAs []string, configOverrides map[string]any) (*TestHarness, error) {
+func newSplitFileConfigHarness(t *testing.T, logger sdk.Logger, evmConfig execution.EVMConfig, primeDbPath, gatewayConfigFile string, endorserConfigFiles []string, configOverrides map[string]any) (*TestHarness, error) {
 	cfg, err := config.Load(gatewayConfigFile)
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
@@ -502,7 +502,7 @@ func newSplitFileConfigHarness(t *testing.T, logger sdk.Logger, evmConfig execut
 
 	endorsers := make([]EndorserComponents, len(endorserConfigFiles))
 	for i, ecfgFile := range endorserConfigFiles {
-		db, builder, client := startServedEndorser(t, ecfgFile, evmConfig, trustedCAs, &cfg.Gateway.Endorsers[i])
+		db, builder, client := startServedEndorser(t, ecfgFile, evmConfig, &cfg.Gateway.Endorsers[i])
 		endorsers[i] = EndorserComponents{KVS: db, Builder: builder, Service: client}
 	}
 

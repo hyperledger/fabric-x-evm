@@ -137,13 +137,6 @@ func TestLocalX(t *testing.T) {
 	}
 }
 
-// fabloPeerCAs are the CAs each Fablo endorser accepts callers from, so that
-// the gateway can reach either org's endorser.
-var fabloPeerCAs = []string{
-	"../testdata/fablo/fablo-target/fabric-config/crypto-config/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt",
-	"../testdata/fablo/fablo-target/fabric-config/crypto-config/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/tls/ca.crt",
-}
-
 // TestFablo requires a Fablo network to be running. org1 and org2 each run as
 // a standalone endorser reached over gRPC, and the chaincode is committed with
 // AND('Org1MSP.member','Org2MSP.member'), so both must endorse.
@@ -158,7 +151,7 @@ func TestFablo(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			th, err := newSplitFileConfigHarness(t, TestLogger{T: t}, evmConfig(tc.fork), tc.primeDbPath,
-				"fablo.yaml", endorserConfigs, fabloPeerCAs, tc.overrides)
+				"fablo.yaml", endorserConfigs, tc.overrides)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -205,14 +198,8 @@ func TestFabricX(t *testing.T) {
 // real processes reached over gRPC, and points a split-deployment gateway at
 // both.
 func testTwoOfTwoEndorsementGRPC(t *testing.T) {
-	org1Addr := startEndorserGRPCServer(t, "fabx-2of2-org1.yaml", []string{
-		"../testdata/crypto/peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem",
-		"../testdata/crypto/peerOrganizations/org2.example.com/tlsca/tlsca.org2.example.com-cert.pem",
-	})
-	org2Addr := startEndorserGRPCServer(t, "fabx-2of2-org2.yaml", []string{
-		"../testdata/crypto/peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem",
-		"../testdata/crypto/peerOrganizations/org2.example.com/tlsca/tlsca.org2.example.com-cert.pem",
-	})
+	org1Addr := startEndorserGRPCServer(t, "fabx-2of2-org1.yaml")
+	org2Addr := startEndorserGRPCServer(t, "fabx-2of2-org2.yaml")
 
 	application, chainConfig := buildSplitGatewayApp(t, "fabx-2of2.yaml", org1Addr, org2Addr)
 	gw := application.Gateway()
