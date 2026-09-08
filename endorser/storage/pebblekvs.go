@@ -12,6 +12,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 	"sync"
 	"sync/atomic"
 
@@ -120,6 +121,16 @@ type PebbleKVS struct {
 	// Written only under writeMu.
 	prunedTo uint64
 
+	// snapMu guards liveSnapshots.
+	snapMu sync.Mutex
+	// liveSnapshots counts open readers by the height each is pinned to. Prune must
+	// not delete history a live reader could still need: isolation here is
+	// re-derived per Get from the history entries, so unlike the old insert-only
+	// layout the data a reader depends on can otherwise be deleted underneath it.
+	// A reader pinned at H is served by entries indexed under blocks > H, so
+	// retaining index blocks above the lowest live pin is sufficient.
+	liveSnapshots map[uint64]int
+
 	// writeMu serializes Update calls. The KVS contract already assumes a
 	// single writer, but the per-key version lookup performs a read against
 	// committed state that must not interleave with a concurrent commit.
@@ -186,7 +197,7 @@ func NewPebbleKVS(dir string, historySize int) (*PebbleKVS, error) {
 		return nil, fmt.Errorf("failed to open pebble db at %q: %w", dir, err)
 	}
 
-	kvs := &PebbleKVS{db: db, historySize: uint64(historySize)}
+	kvs := &PebbleKVS{db: db, historySize: uint64(historySize), liveSnapshots: map[uint64]int{}}
 
 	// Recover the last committed block number from the atomic checkpoint.
 	block, found, err := kvs.readMetaBlock()
@@ -379,10 +390,20 @@ func (p *PebbleKVS) commitBlock(blockNum uint64, updates []KeyValueVersion) erro
 // Staged into the caller's batch so pruning is atomic with the commit — a crash
 // cannot leave the index describing entries that are already gone.
 func (p *PebbleKVS) pruneBlock(batch ethdb.Batch, blockNum uint64) error {
-	if blockNum < p.historySize {
+	// Retain historySize historical blocks plus the current one, so the readable
+	// range is [blockNum-historySize, blockNum] — the same count LightKVS keeps in
+	// its ring for the same historySize.
+	if blockNum < p.historySize+1 {
 		return nil // window not full yet; nothing has aged out
 	}
-	cutoff := blockNum - p.historySize // every index at or below this has aged out
+	cutoff := blockNum - p.historySize - 1 // every index at or below this has aged out
+
+	// Never prune below an open reader: its history entries are what make it
+	// isolated. A long-lived reader therefore holds history back, which is the
+	// usual cost of an MVCC read view.
+	if pin := p.lowestLivePin(); pin < cutoff {
+		cutoff = pin
+	}
 
 	// Sweep the index in ascending block order rather than probing the single
 	// block cutoff. Delivered block numbers are not guaranteed contiguous — a
@@ -420,11 +441,17 @@ func (p *PebbleKVS) pruneBlock(batch ethdb.Batch, blockNum uint64) error {
 	}
 
 	// Record how far history now reaches, in the same batch, so the bound survives
-	// a restart and a later change to historySize.
-	if err := batch.Put(metaOldestKey, u64be(cutoff+1)); err != nil {
+	// a restart and a later change to historySize. The marker only ever moves
+	// forward: enlarging historySize shrinks cutoff, and letting the marker follow
+	// it back down would re-accept reads whose versions are already gone.
+	oldest := cutoff + 1
+	if cur := p.oldestRetained.Load(); oldest <= cur {
+		return nil
+	}
+	if err := batch.Put(metaOldestKey, u64be(oldest)); err != nil {
 		return fmt.Errorf("failed to stage oldest-retained marker: %w", err)
 	}
-	p.prunedTo = cutoff + 1
+	p.prunedTo = oldest
 	return nil
 }
 
@@ -500,8 +527,13 @@ func (p *PebbleKVS) NewSnapshot(blockNumber *uint64) (execution.ReadStore, error
 			bn, oldest, head)
 	}
 
+	p.snapMu.Lock()
+	p.liveSnapshots[bn]++
+	p.snapMu.Unlock()
+
 	return &pebbleSnapshot{
 		db:        p.db,
+		owner:     p,
 		lastBlock: bn,
 	}, nil
 }
@@ -548,11 +580,18 @@ func (p *PebbleKVS) Close() error {
 }
 
 // pebbleSnapshot is a point-in-time read view pinned to a block number. It
-// implements execution.ReadStore. Isolation is inherent to the insert-only MVCC
-// model: existing records never mutate, and later commits have higher block
-// numbers that the descending-version seek skips.
+// implements execution.ReadStore.
+//
+// Isolation is not inherent to the storage layout: the current value is
+// overwritten in place, so it is re-derived per read (see Get — take the current
+// record only when it is not newer than the pinned height, else fall back to
+// history). The entries that fallback depends on are protected for the reader's
+// lifetime by the pin registered in NewSnapshot and dropped in Close, so a reader
+// that is never closed holds history back.
 type pebbleSnapshot struct {
 	db *gethpebble.Database
+	// owner is notified on Close so prune can resume below this view's height.
+	owner *PebbleKVS
 	// lastBlock is the height this view is pinned to.
 	lastBlock uint64
 	closed    bool
@@ -626,7 +665,13 @@ func (s *pebbleSnapshot) latest(namespace, key, fullKey string) (*blocks.WriteRe
 
 // Close releases the snapshot. After Close the snapshot cannot be used.
 func (s *pebbleSnapshot) Close() error {
+	if s.closed {
+		return nil
+	}
 	s.closed = true
+	if s.owner != nil {
+		s.owner.releaseSnapshot(s.lastBlock)
+	}
 	return nil
 }
 
@@ -641,6 +686,31 @@ type record struct {
 	TxID     string
 	IsDelete bool
 	Value    []byte
+}
+
+// releaseSnapshot drops a reader's pin, letting prune advance past its height.
+func (p *PebbleKVS) releaseSnapshot(bn uint64) {
+	p.snapMu.Lock()
+	defer p.snapMu.Unlock()
+	if n := p.liveSnapshots[bn]; n <= 1 {
+		delete(p.liveSnapshots, bn)
+	} else {
+		p.liveSnapshots[bn] = n - 1
+	}
+}
+
+// lowestLivePin returns the lowest height any open reader is pinned to, or
+// math.MaxUint64 when there are none.
+func (p *PebbleKVS) lowestLivePin() uint64 {
+	p.snapMu.Lock()
+	defer p.snapMu.Unlock()
+	lowest := uint64(math.MaxUint64)
+	for bn := range p.liveSnapshots {
+		if bn < lowest {
+			lowest = bn
+		}
+	}
+	return lowest
 }
 
 // readMetaUint64 reads an 8-byte big-endian meta value, returning 0 when absent.

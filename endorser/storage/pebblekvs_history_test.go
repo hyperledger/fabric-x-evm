@@ -235,3 +235,115 @@ func TestPebblePruneHandlesBlockGaps(t *testing.T) {
 		t.Errorf("history entries leaked across the block gap: %d retained, want at most %d", got, window)
 	}
 }
+
+// TestPebbleSnapshotSurvivesPrune holds a reader open while enough blocks commit to
+// prune past its pinned height. Isolation here is re-derived from history entries
+// rather than being inherent to the layout, so without a reader pin those entries
+// get deleted underneath the reader and keys it can see turn into "absent" —
+// the endorser holds one reader for a whole EVM simulation, and a wrong "absent"
+// makes it execute against a zero value and record a read-set with no version.
+func TestPebbleSnapshotSurvivesPrune(t *testing.T) {
+	const window = 2 // the production default
+	ctx := context.Background()
+	kvs, err := NewPebbleKVS(t.TempDir(), window)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer kvs.Close()
+
+	if err := kvs.Handle(ctx, mkBlock(1, 0, "tx1", true, "ns1",
+		blocks.KVWrite{Key: "k", Value: []byte("v1")})); err != nil {
+		t.Fatalf("Handle block 1: %v", err)
+	}
+
+	snap, err := kvs.NewSnapshot(nil)
+	if err != nil {
+		t.Fatalf("NewSnapshot: %v", err)
+	}
+	defer snap.Close()
+
+	// Commit well past the window while the reader is open.
+	for i := uint64(2); i <= 8; i++ {
+		if err := kvs.Handle(ctx, mkBlock(i, 0, fmt.Sprintf("tx%d", i), true, "ns1",
+			blocks.KVWrite{Key: "k", Value: []byte(fmt.Sprintf("v%d", i))})); err != nil {
+			t.Fatalf("Handle block %d: %v", i, err)
+		}
+		rec, err := snap.Get("ns1", "k")
+		if err != nil {
+			t.Fatalf("Get after block %d: %v", i, err)
+		}
+		if rec == nil || string(rec.Value) != "v1" {
+			t.Fatalf("after block %d the pinned reader lost its value: want v1, got %+v", i, rec)
+		}
+	}
+}
+
+// TestPebbleOldestMarkerIsMonotonic reopens with a larger window and then keeps
+// committing. The marker must not follow the widened window backwards, or reads
+// whose versions were already pruned get accepted again and answered as absent.
+func TestPebbleOldestMarkerIsMonotonic(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	kvs, err := NewPebbleKVS(dir, 2)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	for i := uint64(1); i <= 10; i++ {
+		if err := kvs.Handle(ctx, mkBlock(i, 0, fmt.Sprintf("tx%d", i), true, "ns1",
+			blocks.KVWrite{Key: "k", Value: []byte(fmt.Sprintf("v%d", i))})); err != nil {
+			t.Fatalf("Handle block %d: %v", i, err)
+		}
+	}
+	if err := kvs.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	reopened, err := NewPebbleKVS(dir, 100)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer reopened.Close()
+
+	// Keep committing under the larger window, which lowers the computed cutoff.
+	for i := uint64(11); i <= 20; i++ {
+		if err := reopened.Handle(ctx, mkBlock(i, 0, fmt.Sprintf("tx%d", i), true, "ns1",
+			blocks.KVWrite{Key: "k", Value: []byte(fmt.Sprintf("v%d", i))})); err != nil {
+			t.Fatalf("Handle block %d: %v", i, err)
+		}
+	}
+
+	if _, err := reopened.NewSnapshot(new(uint64(3))); err == nil {
+		t.Error("expected NewSnapshot(3) to fail: block 3's versions were pruned under the smaller window")
+	}
+}
+
+// TestPebbleWindowWidthMatchesLightKVS checks the retained range is
+// [head-historySize, head] — historySize historical blocks plus the current one —
+// which is what LightKVS keeps for the same setting. historySize=1 is used by
+// several integration configs, and must still serve head-1.
+func TestPebbleWindowWidthMatchesLightKVS(t *testing.T) {
+	const window = 1
+	ctx := context.Background()
+	kvs, err := NewPebbleKVS(t.TempDir(), window)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer kvs.Close()
+
+	for i := uint64(1); i <= 5; i++ {
+		if err := kvs.Handle(ctx, mkBlock(i, 0, fmt.Sprintf("tx%d", i), true, "ns1",
+			blocks.KVWrite{Key: "k", Value: []byte(fmt.Sprintf("v%d", i))})); err != nil {
+			t.Fatalf("Handle block %d: %v", i, err)
+		}
+	}
+
+	// head-1 must be readable with historySize=1.
+	rec, err := kvs.Get("ns1", "k", 4)
+	if err != nil {
+		t.Fatalf("Get as of block 4 (head-1): %v", err)
+	}
+	if rec == nil || string(rec.Value) != "v4" {
+		t.Errorf("as of block 4: want v4, got %+v", rec)
+	}
+}
