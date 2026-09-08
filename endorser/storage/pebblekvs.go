@@ -355,6 +355,11 @@ func (p *PebbleKVS) commitBlock(blockNum uint64, updates []KeyValueVersion) erro
 
 	// Drop the versions that just fell out of the window. This is what keeps the
 	// store from growing with rewrite count.
+	//
+	// snapMu is held from here through the marker publish below so that pruning and
+	// snapshot admission cannot interleave; see pruneBlock.
+	p.snapMu.Lock()
+	defer p.snapMu.Unlock()
 	if err := p.pruneBlock(batch, blockNum); err != nil {
 		return err
 	}
@@ -367,6 +372,8 @@ func (p *PebbleKVS) commitBlock(blockNum uint64, updates []KeyValueVersion) erro
 	}
 
 	if err := batch.Write(); err != nil {
+		// The staged marker never landed, so drop the pending in-memory update too.
+		p.prunedTo = 0
 		return fmt.Errorf("failed to commit block %d: %w", blockNum, err)
 	}
 
@@ -401,7 +408,12 @@ func (p *PebbleKVS) pruneBlock(batch ethdb.Batch, blockNum uint64) error {
 	// Never prune below an open reader: its history entries are what make it
 	// isolated. A long-lived reader therefore holds history back, which is the
 	// usual cost of an MVCC read view.
-	if pin := p.lowestLivePin(); pin < cutoff {
+	//
+	// The caller holds snapMu for the whole commit, so a reader cannot be admitted
+	// between this sample and the marker being published — otherwise it could pass
+	// NewSnapshot's check against a marker this commit is about to advance, and have
+	// its history deleted underneath it.
+	if pin := p.lowestLivePinLocked(); pin < cutoff {
 		cutoff = pin
 	}
 
@@ -517,17 +529,21 @@ func (p *PebbleKVS) NewSnapshot(blockNumber *uint64) (execution.ReadStore, error
 		bn = *blockNumber
 	}
 
+	// Register the pin and validate under the same lock a commit holds while it
+	// prunes, so a reader cannot be admitted against a marker that is concurrently
+	// being advanced past it.
+	//
 	// Reads older than what is still retained cannot be answered correctly: the
 	// versions they need have been pruned. Erroring matches LightKVS, which also
 	// refuses blocks evicted from its ring, rather than silently reporting a key as
 	// absent. The bound comes from the persisted marker, not from historySize, so
 	// reopening with a larger window does not start accepting unanswerable reads.
+	p.snapMu.Lock()
 	if oldest := p.oldestRetained.Load(); bn < head && bn < oldest {
+		p.snapMu.Unlock()
 		return nil, fmt.Errorf("snapshot not found for block number %d (retained history starts at %d, head is %d)",
 			bn, oldest, head)
 	}
-
-	p.snapMu.Lock()
 	p.liveSnapshots[bn]++
 	p.snapMu.Unlock()
 
@@ -594,14 +610,16 @@ type pebbleSnapshot struct {
 	owner *PebbleKVS
 	// lastBlock is the height this view is pinned to.
 	lastBlock uint64
-	closed    bool
+	// closed is atomic because Close may be called concurrently; releasing the pin
+	// twice would drop a pin another reader at the same height still holds.
+	closed atomic.Bool
 }
 
 // Get returns the record for (namespace, key) as of the snapshot's block, or
 // nil if none exists at or before it. Tombstone records are returned as-is
 // (IsDelete=true); the execution layer treats them as absent.
 func (s *pebbleSnapshot) Get(namespace, key string) (*blocks.WriteRecord, error) {
-	if s.closed {
+	if s.closed.Load() {
 		return nil, errors.New("reader is closed")
 	}
 
@@ -665,10 +683,9 @@ func (s *pebbleSnapshot) latest(namespace, key, fullKey string) (*blocks.WriteRe
 
 // Close releases the snapshot. After Close the snapshot cannot be used.
 func (s *pebbleSnapshot) Close() error {
-	if s.closed {
-		return nil
+	if !s.closed.CompareAndSwap(false, true) {
+		return nil // already closed; the pin was released exactly once
 	}
-	s.closed = true
 	if s.owner != nil {
 		s.owner.releaseSnapshot(s.lastBlock)
 	}
@@ -699,11 +716,9 @@ func (p *PebbleKVS) releaseSnapshot(bn uint64) {
 	}
 }
 
-// lowestLivePin returns the lowest height any open reader is pinned to, or
-// math.MaxUint64 when there are none.
-func (p *PebbleKVS) lowestLivePin() uint64 {
-	p.snapMu.Lock()
-	defer p.snapMu.Unlock()
+// lowestLivePinLocked returns the lowest height any open reader is pinned to, or
+// math.MaxUint64 when there are none. Caller must hold snapMu.
+func (p *PebbleKVS) lowestLivePinLocked() uint64 {
 	lowest := uint64(math.MaxUint64)
 	for bn := range p.liveSnapshots {
 		if bn < lowest {

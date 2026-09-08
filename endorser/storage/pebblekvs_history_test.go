@@ -9,6 +9,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/hyperledger/fabric-x-sdk/blocks"
@@ -345,5 +346,59 @@ func TestPebbleWindowWidthMatchesLightKVS(t *testing.T) {
 	}
 	if rec == nil || string(rec.Value) != "v4" {
 		t.Errorf("as of block 4: want v4, got %+v", rec)
+	}
+}
+
+// TestPebbleDoubleCloseKeepsOtherPin closes one reader twice while a second reader
+// is pinned at the same height. Releasing the pin twice for one reader would drop
+// the shared pin entirely and let prune delete the surviving reader's history.
+func TestPebbleDoubleCloseKeepsOtherPin(t *testing.T) {
+	const window = 2
+	ctx := context.Background()
+	kvs, err := NewPebbleKVS(t.TempDir(), window)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer kvs.Close()
+
+	if err := kvs.Handle(ctx, mkBlock(1, 0, "tx1", true, "ns1",
+		blocks.KVWrite{Key: "k", Value: []byte("v1")})); err != nil {
+		t.Fatalf("Handle block 1: %v", err)
+	}
+
+	first, err := kvs.NewSnapshot(nil)
+	if err != nil {
+		t.Fatalf("NewSnapshot first: %v", err)
+	}
+	survivor, err := kvs.NewSnapshot(nil) // same height
+	if err != nil {
+		t.Fatalf("NewSnapshot survivor: %v", err)
+	}
+	defer survivor.Close()
+
+	// Close the first reader twice, concurrently.
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = first.Close()
+		}()
+	}
+	wg.Wait()
+
+	for i := uint64(2); i <= 8; i++ {
+		if err := kvs.Handle(ctx, mkBlock(i, 0, fmt.Sprintf("tx%d", i), true, "ns1",
+			blocks.KVWrite{Key: "k", Value: []byte(fmt.Sprintf("v%d", i))})); err != nil {
+			t.Fatalf("Handle block %d: %v", i, err)
+		}
+	}
+
+	rec, err := survivor.Get("ns1", "k")
+	if err != nil {
+		t.Fatalf("survivor Get: %v", err)
+	}
+	if rec == nil || string(rec.Value) != "v1" {
+		t.Errorf("surviving reader lost its pinned value: want v1, got %+v", rec)
 	}
 }
