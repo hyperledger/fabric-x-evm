@@ -4,10 +4,9 @@ Copyright IBM Corp. All Rights Reserved.
 SPDX-License-Identifier: LGPL-3.0-or-later
 */
 
-package common
+package hybridx
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -23,26 +22,16 @@ import (
 
 var notifLogger = flogging.MustGetLogger("evm.notification")
 
-// BlockHandler defines the interface for handlers that
-// process committed blocks delivered via the AllTxStreamer path
-type BlockHandler interface {
-	Handle(ctx context.Context, b blocks.Block) error
-}
-
 // AllTxBatchDispatcher implements notification.AllTxHandler. It bridges AllTxStreamer
-// (which delivers every committed transaction) to the internal BlockHandler chain.
-//
-// For each committed block it:
-//  1. Filters out non-EVM transactions (those without Ethereum tx bytes in InputArgs).
-//  2. Assembles a blocks.Block from the remaining events.
-//  3. Dispatches the block to all registered BlockHandler.
+// (which delivers every committed transaction) to the internal BlockHandler chain,
+// assembling a blocks.Block from a batch's events and dispatching it.
 type AllTxBatchDispatcher struct {
-	handlers []BlockHandler
+	handlers []blocks.BlockHandler
 }
 
-// NewAllTxBatchDispatcher creates a dispatcher that filters EVM transactions from
-// AllTxStreamer events and dispatches them as a blocks.Block to the handler chain.
-func NewAllTxBatchDispatcher(handlers ...BlockHandler) *AllTxBatchDispatcher {
+// NewAllTxBatchDispatcher creates a dispatcher that assembles AllTxStreamer events
+// into a blocks.Block and dispatches it to the handler chain.
+func NewAllTxBatchDispatcher(handlers ...blocks.BlockHandler) *AllTxBatchDispatcher {
 	return &AllTxBatchDispatcher{handlers: handlers}
 }
 
@@ -63,12 +52,7 @@ func (d *AllTxBatchDispatcher) HandleBatch(ctx context.Context, batch notificati
 			continue
 		}
 
-		if !bytes.Equal(input.Args[0], []byte{byte(ProposalTypeEVMTx)}) {
-			notifLogger.Debugf("Skipping tx %s: not an EVM transaction", event.TxID)
-			continue
-		}
-
-		nsrws, _ := namespacesToNsRWS(event.Namespaces)
+		nsrws := namespacesToNsRWS(event.Namespaces)
 
 		// In fabric-x format, events are in Metadata[1] (not in BlindWrites).
 		var txEvents []byte
@@ -130,10 +114,8 @@ func blockNumberHash(n uint64) []byte {
 
 // namespacesToNsRWS converts applicationpb.TxNamespace slices (as delivered by
 // AllTxStreamer) into the blocks.NsReadWriteSet format used internally.
-// It also extracts the special _event_ key as raw event bytes.
-func namespacesToNsRWS(namespaces []*applicationpb.TxNamespace) ([]blocks.NsReadWriteSet, []byte) {
+func namespacesToNsRWS(namespaces []*applicationpb.TxNamespace) []blocks.NsReadWriteSet {
 	nsrws := make([]blocks.NsReadWriteSet, 0, len(namespaces))
-	var events []byte
 
 	for _, ns := range namespaces {
 		rws := blocks.ReadWriteSet{
@@ -162,19 +144,11 @@ func namespacesToNsRWS(namespaces []*applicationpb.TxNamespace) ([]blocks.NsRead
 		}
 
 		for _, w := range ns.BlindWrites {
-			key := string(w.Key)
-			switch key {
-			case "_event_":
-				events = w.Value
-			case "_input_":
-				// skip
-			default:
-				rws.Writes = append(rws.Writes, blocks.KVWrite{Key: key, Value: w.Value})
-			}
+			rws.Writes = append(rws.Writes, blocks.KVWrite{Key: string(w.Key), Value: w.Value})
 		}
 
 		nsrws = append(nsrws, blocks.NsReadWriteSet{Namespace: ns.NsId, RWS: rws})
 	}
 
-	return nsrws, events
+	return nsrws
 }
