@@ -111,3 +111,127 @@ func TestPebbleHistoryPruneBoundsGrowth(t *testing.T) {
 		t.Error("expected some retained history for in-window time travel")
 	}
 }
+
+// TestPebbleSnapshotIsolation pins a snapshot at head and then commits a newer
+// block. Because the current value is now overwritten in place rather than stored
+// under a versioned key, a snapshot that simply point-read the latest record would
+// observe the newer write — the endorser simulates while the synchronizer commits,
+// and the read-set it builds is MVCC-validated by the committer.
+func TestPebbleSnapshotIsolation(t *testing.T) {
+	ctx := context.Background()
+	kvs, err := NewPebbleKVS(t.TempDir(), 128)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer kvs.Close()
+
+	if err := kvs.Handle(ctx, mkBlock(1, 0, "tx1", true, "ns1",
+		blocks.KVWrite{Key: "k", Value: []byte("v1")})); err != nil {
+		t.Fatalf("Handle block 1: %v", err)
+	}
+
+	snap, err := kvs.NewSnapshot(nil) // pinned at head, the common case
+	if err != nil {
+		t.Fatalf("NewSnapshot: %v", err)
+	}
+	defer snap.Close()
+
+	if rec, err := snap.Get("ns1", "k"); err != nil {
+		t.Fatalf("first Get: %v", err)
+	} else if rec == nil || string(rec.Value) != "v1" {
+		t.Fatalf("first Get: want v1, got %+v", rec)
+	}
+
+	if err := kvs.Handle(ctx, mkBlock(2, 0, "tx2", true, "ns1",
+		blocks.KVWrite{Key: "k", Value: []byte("v2")})); err != nil {
+		t.Fatalf("Handle block 2: %v", err)
+	}
+
+	rec, err := snap.Get("ns1", "k")
+	if err != nil {
+		t.Fatalf("second Get: %v", err)
+	}
+	if rec == nil || string(rec.Value) != "v1" {
+		t.Errorf("snapshot pinned at block 1 observed a later commit: want v1, got %+v", rec)
+	}
+	if rec != nil && rec.BlockNum != 1 {
+		t.Errorf("want record from block 1, got block %d", rec.BlockNum)
+	}
+}
+
+// TestPebbleWindowBoundSurvivesLargerHistorySize reopens a store with a bigger
+// window than it was pruned under. The bound has to come from what was actually
+// pruned, not from the current historySize, or reads whose versions are gone get
+// accepted and answered as "key absent".
+func TestPebbleWindowBoundSurvivesLargerHistorySize(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	kvs, err := NewPebbleKVS(dir, 2)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	for i := uint64(1); i <= 10; i++ {
+		if err := kvs.Handle(ctx, mkBlock(i, 0, fmt.Sprintf("tx%d", i), true, "ns1",
+			blocks.KVWrite{Key: "k", Value: []byte(fmt.Sprintf("v%d", i))})); err != nil {
+			t.Fatalf("Handle block %d: %v", i, err)
+		}
+	}
+	if err := kvs.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	reopened, err := NewPebbleKVS(dir, 100) // much larger window than was in force
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer reopened.Close()
+
+	if _, err := reopened.NewSnapshot(new(uint64(3))); err == nil {
+		t.Error("expected NewSnapshot(3) to fail: its versions were pruned under the smaller window")
+	}
+}
+
+// TestPebblePruneHandlesBlockGaps commits a run of blocks, then jumps far ahead.
+// Pruning that probes only one block number would skip the gap and leak the early
+// blocks' history forever, defeating the bounded-growth goal.
+func TestPebblePruneHandlesBlockGaps(t *testing.T) {
+	const window = 3
+	ctx := context.Background()
+	kvs, err := NewPebbleKVS(t.TempDir(), window)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer kvs.Close()
+
+	write := func(block uint64) {
+		if err := kvs.Handle(ctx, mkBlock(block, 0, fmt.Sprintf("tx%d", block), true, "ns1",
+			blocks.KVWrite{Key: "k", Value: []byte(fmt.Sprintf("v%d", block))})); err != nil {
+			t.Fatalf("Handle block %d: %v", block, err)
+		}
+	}
+	for _, b := range []uint64{1, 2, 3, 50, 51, 52} {
+		write(b)
+	}
+
+	count := func(prefix byte) int {
+		it := kvs.db.NewIterator([]byte{prefix}, nil)
+		defer it.Release()
+		n := 0
+		for it.Next() {
+			n++
+		}
+		if err := it.Error(); err != nil {
+			t.Fatalf("iterate prefix %q: %v", prefix, err)
+		}
+		return n
+	}
+
+	// Blocks 1..3 are far outside the window at head 52 and must be gone.
+	if got := count(prefixBlockIndex); got > window {
+		t.Errorf("index entries leaked across the block gap: %d retained, want at most %d", got, window)
+	}
+	if got := count(prefixHistory); got > window {
+		t.Errorf("history entries leaked across the block gap: %d retained, want at most %d", got, window)
+	}
+}

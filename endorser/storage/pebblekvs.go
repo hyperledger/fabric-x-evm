@@ -111,6 +111,15 @@ type PebbleKVS struct {
 	// the store no longer grows without bound as keys are rewritten.
 	historySize uint64
 
+	// oldestRetained is the lowest block a historical read can still be answered
+	// for; everything below it has been pruned. Seeded from metaOldestKey on open.
+	oldestRetained atomic.Uint64
+
+	// prunedTo carries the new oldestRetained from pruneBlock to after the batch
+	// commits, so readers never see a tightened bound for a write that failed.
+	// Written only under writeMu.
+	prunedTo uint64
+
 	// writeMu serializes Update calls. The KVS contract already assumes a
 	// single writer, but the per-key version lookup performs a read against
 	// committed state that must not interleave with a concurrent commit.
@@ -147,6 +156,12 @@ const (
 // metaBlockKey holds the last committed block number.
 var metaBlockKey = []byte{prefixMeta, 'b', 'l', 'o', 'c', 'k'}
 
+// metaOldestKey holds the lowest block number still answerable by a historical
+// read. It is persisted rather than derived from historySize, because what has
+// actually been pruned depends on the historySize in force at the time — deriving
+// it would let a reopen with a larger window accept reads whose versions are gone.
+var metaOldestKey = []byte{prefixMeta, 'o', 'l', 'd', 'e', 's', 't'}
+
 // Compile-time assertion that PebbleKVS satisfies the KVS interface.
 var _ KVS = (*PebbleKVS)(nil)
 
@@ -181,6 +196,13 @@ func NewPebbleKVS(dir string, historySize int) (*PebbleKVS, error) {
 	}
 	kvs.currentBlock.Store(block)
 	kvs.hasCheckpoint.Store(found)
+
+	oldest, err := kvs.readMetaUint64(metaOldestKey)
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to read oldest-retained marker: %w", err)
+	}
+	kvs.oldestRetained.Store(oldest)
 	if found {
 		pebbleLogger.Infof("opened pebble kvs at %q, resuming from block %d", dir, block)
 	} else {
@@ -253,7 +275,7 @@ func (p *PebbleKVS) commitBlock(blockNum uint64, updates []KeyValueVersion) erro
 				// previous one; if it isn't, we have a consistency issue. Below
 				// the window it has been pruned, so nothing is left to verify the
 				// replay against and it is accepted as already applied.
-				if u.BlockNum >= p.oldestRetainedBlock() {
+				if u.BlockNum >= p.oldestRetained.Load() {
 					return fmt.Errorf(
 						"missing write for %q at block=%d tx=%d: block %d is already checkpointed but this write was never committed for it",
 						u.Key, u.BlockNum, u.TxNum, blockNum)
@@ -341,6 +363,10 @@ func (p *PebbleKVS) commitBlock(blockNum uint64, updates []KeyValueVersion) erro
 		p.currentBlock.Store(blockNum)
 		p.hasCheckpoint.Store(true)
 	}
+	if p.prunedTo > 0 {
+		p.oldestRetained.Store(p.prunedTo)
+		p.prunedTo = 0
+	}
 	return nil
 }
 
@@ -356,45 +382,56 @@ func (p *PebbleKVS) pruneBlock(batch ethdb.Batch, blockNum uint64) error {
 	if blockNum < p.historySize {
 		return nil // window not full yet; nothing has aged out
 	}
-	departing := blockNum - p.historySize
+	cutoff := blockNum - p.historySize // every index at or below this has aged out
 
-	raw, err := p.db.Get(blockIndexKey(departing))
-	if err != nil {
-		if errors.Is(err, pebble.ErrNotFound) {
-			return nil
+	// Sweep the index in ascending block order rather than probing the single
+	// block cutoff. Delivered block numbers are not guaranteed contiguous — a
+	// ledger reset, channel join or replay wrap-around leaves gaps — and probing
+	// one number would silently skip a gap and leak those entries forever.
+	// Index keys are prefixBlockIndex|be64(block), so ascending key order is
+	// ascending block order and the scan stops at the first live block.
+	it := p.db.NewIterator([]byte{prefixBlockIndex}, nil)
+	defer it.Release()
+
+	for it.Next() {
+		k := it.Key()
+		if len(k) != 1+8 {
+			return fmt.Errorf("corrupt block index key of length %d", len(k))
 		}
-		return fmt.Errorf("failed to read block index %d: %w", departing, err)
+		block := binary.BigEndian.Uint64(k[1:])
+		if block > cutoff {
+			break
+		}
+		histKeys, err := decodeKeyList(it.Value())
+		if err != nil {
+			return fmt.Errorf("block index %d: %w", block, err)
+		}
+		for _, hk := range histKeys {
+			if err := batch.Delete([]byte(hk)); err != nil {
+				return fmt.Errorf("failed to stage history delete for block %d: %w", block, err)
+			}
+		}
+		if err := batch.Delete(blockIndexKey(block)); err != nil {
+			return fmt.Errorf("failed to stage index delete for block %d: %w", block, err)
+		}
 	}
-	histKeys, err := decodeKeyList(raw)
-	if err != nil {
-		return fmt.Errorf("block index %d: %w", departing, err)
+	if err := it.Error(); err != nil {
+		return fmt.Errorf("failed to scan block index: %w", err)
 	}
 
-	for _, hk := range histKeys {
-		if err := batch.Delete([]byte(hk)); err != nil {
-			return fmt.Errorf("failed to stage history delete for block %d: %w", departing, err)
-		}
+	// Record how far history now reaches, in the same batch, so the bound survives
+	// a restart and a later change to historySize.
+	if err := batch.Put(metaOldestKey, u64be(cutoff+1)); err != nil {
+		return fmt.Errorf("failed to stage oldest-retained marker: %w", err)
 	}
-	if err := batch.Delete(blockIndexKey(departing)); err != nil {
-		return fmt.Errorf("failed to stage index delete for block %d: %w", departing, err)
-	}
+	p.prunedTo = cutoff + 1
 	return nil
-}
-
-// oldestRetainedBlock is the lowest block whose superseded values are still in
-// the store; everything below it has been pruned out of the history window.
-func (p *PebbleKVS) oldestRetainedBlock() uint64 {
-	head := p.currentBlock.Load()
-	if head < p.historySize {
-		return 0
-	}
-	return head - p.historySize + 1
 }
 
 // storedWrite returns the record this store holds for the write at (fullKey,
 // block, tx), looking first at the key's latest value and then at the history
 // window it is pushed into once superseded. found is false when neither holds
-// it, which for a coordinate below oldestRetainedBlock only means it was pruned.
+// it, which for a coordinate below oldestRetained only means it was pruned.
 func (p *PebbleKVS) storedWrite(fullKey string, block, tx uint64) (*blocks.WriteRecord, bool, error) {
 	raw, err := p.db.Get(dataKey(fullKey))
 	if err == nil {
@@ -453,19 +490,19 @@ func (p *PebbleKVS) NewSnapshot(blockNumber *uint64) (execution.ReadStore, error
 		bn = *blockNumber
 	}
 
-	// Reads older than the retained window cannot be answered correctly: the
-	// versions they would need have been pruned. Erroring matches LightKVS, which
-	// also refuses blocks evicted from its ring, rather than silently returning a
-	// newer value.
-	if bn < head && head >= p.historySize && bn < head-p.historySize+1 {
-		return nil, fmt.Errorf("snapshot not found for block number %d (history window is %d..%d)",
-			bn, head-p.historySize+1, head)
+	// Reads older than what is still retained cannot be answered correctly: the
+	// versions they need have been pruned. Erroring matches LightKVS, which also
+	// refuses blocks evicted from its ring, rather than silently reporting a key as
+	// absent. The bound comes from the persisted marker, not from historySize, so
+	// reopening with a larger window does not start accepting unanswerable reads.
+	if oldest := p.oldestRetained.Load(); bn < head && bn < oldest {
+		return nil, fmt.Errorf("snapshot not found for block number %d (retained history starts at %d, head is %d)",
+			bn, oldest, head)
 	}
 
 	return &pebbleSnapshot{
 		db:        p.db,
 		lastBlock: bn,
-		headBlock: head,
 	}, nil
 }
 
@@ -518,9 +555,6 @@ type pebbleSnapshot struct {
 	db *gethpebble.Database
 	// lastBlock is the height this view is pinned to.
 	lastBlock uint64
-	// headBlock is the store's committed height when the snapshot was taken. A
-	// lastBlock at or above it means "latest", which is the point-lookup fast path.
-	headBlock uint64
 	closed    bool
 }
 
@@ -534,37 +568,41 @@ func (s *pebbleSnapshot) Get(namespace, key string) (*blocks.WriteRecord, error)
 
 	fullKey := namespace + ":" + key
 
-	// Historical read: look for the newest retained version at or below the pinned
-	// block before falling back to the latest record.
-	if s.lastBlock < s.headBlock {
-		it := s.db.NewIterator(historyPrefix(fullKey), u64be(^s.lastBlock))
-		defer it.Release()
-		if it.Next() {
-			rec, err := decodeRecord(it.Value())
-			if err != nil {
-				return nil, err
-			}
-			rec.Namespace = namespace
-			rec.Key = key
-			return rec, nil
-		}
-		if err := it.Error(); err != nil {
-			return nil, err
-		}
-		// No retained version at or below lastBlock means the key was not rewritten
-		// since; the latest record is the value as of lastBlock, provided it was
-		// written at or before it.
-		rec, err := s.latest(namespace, key, fullKey)
-		if err != nil || rec == nil {
-			return rec, err
-		}
-		if rec.BlockNum > s.lastBlock {
-			return nil, nil
-		}
+	// Fast path: one point lookup. The latest record answers the read whenever it
+	// was written at or before the pinned block, which is the common case.
+	//
+	// The block check is not optional. Because a rewrite now overwrites in place,
+	// the record under dataKey can belong to a block committed *after* this
+	// snapshot was taken — the endorser simulates while the synchronizer commits.
+	// Without the check a snapshot would observe future writes, and the read-set it
+	// builds goes to the committer for MVCC validation.
+	rec, err := s.latest(namespace, key, fullKey)
+	if err != nil {
+		return nil, err
+	}
+	if rec != nil && rec.BlockNum <= s.lastBlock {
 		return rec, nil
 	}
 
-	return s.latest(namespace, key, fullKey)
+	// The current value is newer than this view (or the key is absent). Whichever
+	// block superseded it copied the previous record into history in the same
+	// atomic batch, so the value as of lastBlock is there if it exists at all.
+	it := s.db.NewIterator(historyPrefix(fullKey), u64be(^s.lastBlock))
+	defer it.Release()
+	if it.Next() {
+		hrec, err := decodeRecord(it.Value())
+		if err != nil {
+			return nil, err
+		}
+		hrec.Namespace = namespace
+		hrec.Key = key
+		return hrec, nil
+	}
+	if err := it.Error(); err != nil {
+		return nil, err
+	}
+	// Nothing at or below lastBlock: the key did not exist yet at that height.
+	return nil, nil
 }
 
 // latest reads the current record with a single point lookup — the common path,
@@ -603,6 +641,21 @@ type record struct {
 	TxID     string
 	IsDelete bool
 	Value    []byte
+}
+
+// readMetaUint64 reads an 8-byte big-endian meta value, returning 0 when absent.
+func (p *PebbleKVS) readMetaUint64(key []byte) (uint64, error) {
+	raw, err := p.db.Get(key)
+	if err != nil {
+		if errors.Is(err, pebble.ErrNotFound) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	if len(raw) != 8 {
+		return 0, fmt.Errorf("corrupt meta value for %q: got %d bytes, want 8", key, len(raw))
+	}
+	return binary.BigEndian.Uint64(raw), nil
 }
 
 // dataPrefix returns the unambiguous per-key prefix: 'd' | be32(len) | fullKey.
