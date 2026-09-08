@@ -170,28 +170,6 @@ func (p *PebbleKVS) readMetaBlock() (uint64, bool, error) {
 	return binary.BigEndian.Uint64(raw), true, nil
 }
 
-// update is a test-only entry point into commitBlock for a raw batch of
-// writes, not carrying any guarantee of its own: production always goes
-// through Handle, which calls commitBlock directly.
-func (p *PebbleKVS) update(updates []KeyValueVersion) error {
-	if len(updates) == 0 {
-		return nil
-	}
-
-	// Sanity check to prevent incorrectly written tests.
-	blockNum := updates[0].BlockNum
-	for i := range updates {
-		if updates[i].BlockNum != blockNum {
-			return fmt.Errorf(
-				"pebble kvs: update batch spans multiple blocks (%d at index 0, %d at index %d); "+
-					"writes must be grouped by block before committing",
-				blockNum, updates[i].BlockNum, i)
-		}
-	}
-
-	return p.commitBlock(blockNum, updates)
-}
-
 // commitBlock applies a single block's writes (possibly none) and advances
 // the persisted checkpoint to blockNum, in one atomic pebble batch.
 //

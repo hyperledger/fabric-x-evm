@@ -15,6 +15,19 @@ import (
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 )
 
+// update atomically applies a batch of updates to the store, deriving the
+// block number from the batch's first entry (0 for an empty batch). Test
+// only: nothing in production calls it (blocks only ever arrive as
+// blocks.Block, via Handle) — it exists so tests can drive applyBlock
+// directly with a flat batch instead of building a full blocks.Block.
+func (kvs *LightKVS) update(updates []KeyValueVersion) error {
+	blockNum := uint64(0)
+	if len(updates) > 0 {
+		blockNum = updates[0].BlockNum
+	}
+	return kvs.applyBlock(blockNum, updates)
+}
+
 // TestNewLightKVS tests the creation of a new LightKVS instance
 func TestNewLightKVS(t *testing.T) {
 	kvs := NewLightKVS(1)

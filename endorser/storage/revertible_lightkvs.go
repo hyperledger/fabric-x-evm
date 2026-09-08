@@ -128,16 +128,6 @@ func (kvs *RevertibleLightKVS) Get(namespace, key string, lastBlock uint64) (*bl
 	return r.Get(namespace, key)
 }
 
-// update (test only) atomically applies a batch of updates to the store, deriving the
-// block number from the batch's first entry (0 for an empty batch).
-func (kvs *RevertibleLightKVS) update(updates []KeyValueVersion) error {
-	blockNum := uint64(0)
-	if len(updates) > 0 {
-		blockNum = updates[0].BlockNum
-	}
-	return kvs.applyBlock(blockNum, updates)
-}
-
 // Handle overrides the promoted LightKVS.Handle so synchronizer-delivered
 // blocks share this type's own applyBlock — same ring wraparound as plain
 // LightKVS, but also maintaining the eviction floor that this type's

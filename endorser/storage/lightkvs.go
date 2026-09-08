@@ -206,28 +206,6 @@ func (r *Reader) Close() error {
 	return nil
 }
 
-// update atomically applies a batch of updates to the store.
-// All updates are applied together in a single new snapshot.
-//
-// This operation:
-// 1. Clones the current snapshot's map (shallow copy - shares unchanged value pointers)
-// 2. Updates only the changed entries with new ValueVersion structs or deletes them
-// 3. Atomically swaps in the new snapshot
-//
-// The single writer assumption means no locking is needed for the update itself.
-//
-// The block number comes from the batch's first entry; Handle passes it
-// explicitly instead, so an empty block still advances the checkpoint.
-// Test only: unexported since nothing in production calls it (blocks only
-// ever arrive as blocks.Block, via Handle).
-func (kvs *LightKVS) update(updates []KeyValueVersion) error {
-	blockNum := uint64(0)
-	if len(updates) > 0 {
-		blockNum = updates[0].BlockNum
-	}
-	return kvs.applyBlock(blockNum, updates)
-}
-
 // applyUpdates computes new snapshot data by applying updates on top of
 // oldData, assigning each write the existing version + 1 (or 0 for a new
 // key). Shared by LightKVS.applyBlock and RevertibleLightKVS.applyBlock,
