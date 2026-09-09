@@ -54,15 +54,9 @@ import (
 //
 //	'i' | be64(block)  ->  the history keys that block created
 //
-// so committing block N can delete the entries that fell out of the window at
-// block N-historySize without scanning the store. Reads older than the window are
-// refused rather than answered with a newer value (see NewSnapshot).
-//
-// This layout replaced an insert-only one that kept every version forever. That
-// design made the store grow without bound as keys were rewritten, and measurably
-// slowed reads as it grew: rewriting a fixed 100k-key set 50 times took reads from
-// 184K/s to 44K/s and the store from 16 MiB to 206 MiB, where this layout holds
-// ~212K/s and ~80 MiB.
+// so a commit can delete the entries that fell out of the window without scanning
+// the store. Reads older than the window are refused rather than answered with a
+// newer value (see NewSnapshot).
 //
 // A reserved meta key 'm'|"block" holds be64(lastCommittedBlock) and is written
 // in the same batch as the block's data keys, giving an atomic checkpoint for
@@ -82,9 +76,8 @@ import (
 //   - Time-travel reads: a snapshot at block N returns, for each key, the record
 //     with the highest version whose block <= N (mirroring the sqlite-backed
 //     VersionedDB, see fabric-x-sdk state.VersionedDB.Get), for any N inside the
-//     retained window. Outside it, NewSnapshot errors — the same behaviour as
-//     LightKVS, which also refuses blocks evicted from its ring. Serving arbitrary
-//     historical blocks (an archive node) is deliberately not supported.
+//     retained window. Outside it, NewSnapshot errors, as LightKVS does for blocks
+//     evicted from its ring. Arbitrary historical blocks are not supported.
 //   - Deletes are stored as tombstone records (IsDelete=true), matching the
 //     VersionedDB, rather than removing the key as LightKVS does. The execution
 //     layer already treats IsDelete=true records as absent (nil value, nil
@@ -123,12 +116,10 @@ type PebbleKVS struct {
 
 	// snapMu guards liveSnapshots.
 	snapMu sync.Mutex
-	// liveSnapshots counts open readers by the height each is pinned to. Prune must
-	// not delete history a live reader could still need: isolation here is
-	// re-derived per Get from the history entries, so unlike the old insert-only
-	// layout the data a reader depends on can otherwise be deleted underneath it.
-	// A reader pinned at H is served by entries indexed under blocks > H, so
-	// retaining index blocks above the lowest live pin is sufficient.
+	// liveSnapshots counts open readers by the height each is pinned to, so prune
+	// cannot delete history a reader still needs. A reader at H is served by entries
+	// indexed under blocks > H, so retaining index blocks above the lowest pin is
+	// sufficient.
 	liveSnapshots map[uint64]int
 
 	// writeMu serializes Update calls. The KVS contract already assumes a
@@ -168,9 +159,8 @@ const (
 var metaBlockKey = []byte{prefixMeta, 'b', 'l', 'o', 'c', 'k'}
 
 // metaOldestKey holds the lowest block number still answerable by a historical
-// read. It is persisted rather than derived from historySize, because what has
-// actually been pruned depends on the historySize in force at the time — deriving
-// it would let a reopen with a larger window accept reads whose versions are gone.
+// read. Persisted rather than derived from historySize, since what has been pruned
+// depends on the historySize that was in force at the time.
 var metaOldestKey = []byte{prefixMeta, 'o', 'l', 'd', 'e', 's', 't'}
 
 // Compile-time assertion that PebbleKVS satisfies the KVS interface.
@@ -267,8 +257,7 @@ func (p *PebbleKVS) commitBlock(blockNum uint64, updates []KeyValueVersion) erro
 	// key within this batch.
 	nextVersion := make(map[string]uint64, len(updates))
 
-	// touched collects the history keys this block created, so the prune that runs
-	// historySize blocks later can delete exactly those entries.
+	// touched collects the history keys this block created, for its later prune.
 	var touched []string
 
 	for i := range updates {
@@ -320,10 +309,9 @@ func (p *PebbleKVS) commitBlock(blockNum uint64, updates []KeyValueVersion) erro
 			Value:    u.Value,
 		})
 
-		// Before overwriting, retain the record this write supersedes so reads
-		// inside the history window can still see it. Only the first write to a
-		// key in this block needs to do so: later writes in the same block
-		// supersede a value that was itself created in this block.
+		// Retain the record this write supersedes. Only the first write to a key in
+		// a block does so: later ones supersede a value created in this block, and
+		// time travel is block-granular.
 		if !seen {
 			if prev, err := p.db.Get(dataKey(u.Key)); err == nil {
 				prevRec, derr := decodeRecord(prev)
@@ -345,18 +333,14 @@ func (p *PebbleKVS) commitBlock(blockNum uint64, updates []KeyValueVersion) erro
 		}
 	}
 
-	// Index the keys whose previous version this block pushed into history, so the
-	// prune below can find them again without scanning the store.
+	// Index what this block pushed into history, for the prune to find later.
 	if len(touched) > 0 {
 		if err := batch.Put(blockIndexKey(blockNum), encodeKeyList(touched)); err != nil {
 			return fmt.Errorf("failed to stage block index: %w", err)
 		}
 	}
 
-	// Drop the versions that just fell out of the window. This is what keeps the
-	// store from growing with rewrite count.
-	//
-	// snapMu is held from here through the marker publish below so that pruning and
+	// snapMu is held from here through the marker publish below so pruning and
 	// snapshot admission cannot interleave; see pruneBlock.
 	p.snapMu.Lock()
 	defer p.snapMu.Unlock()
@@ -397,32 +381,23 @@ func (p *PebbleKVS) commitBlock(blockNum uint64, updates []KeyValueVersion) erro
 // Staged into the caller's batch so pruning is atomic with the commit — a crash
 // cannot leave the index describing entries that are already gone.
 func (p *PebbleKVS) pruneBlock(batch ethdb.Batch, blockNum uint64) error {
-	// Retain historySize historical blocks plus the current one, so the readable
-	// range is [blockNum-historySize, blockNum] — the same count LightKVS keeps in
-	// its ring for the same historySize.
+	// Readable range is [blockNum-historySize, blockNum]: historySize historical
+	// blocks plus the current one, matching LightKVS for the same setting.
 	if blockNum < p.historySize+1 {
 		return nil // window not full yet; nothing has aged out
 	}
 	cutoff := blockNum - p.historySize - 1 // every index at or below this has aged out
 
-	// Never prune below an open reader: its history entries are what make it
-	// isolated. A long-lived reader therefore holds history back, which is the
-	// usual cost of an MVCC read view.
-	//
-	// The caller holds snapMu for the whole commit, so a reader cannot be admitted
-	// between this sample and the marker being published — otherwise it could pass
-	// NewSnapshot's check against a marker this commit is about to advance, and have
-	// its history deleted underneath it.
+	// Never prune below an open reader. The caller holds snapMu for the whole
+	// commit, so a reader cannot be admitted between this sample and the marker
+	// being published and then find its history gone.
 	if pin := p.lowestLivePinLocked(); pin < cutoff {
 		cutoff = pin
 	}
 
-	// Sweep the index in ascending block order rather than probing the single
-	// block cutoff. Delivered block numbers are not guaranteed contiguous — a
-	// ledger reset, channel join or replay wrap-around leaves gaps — and probing
-	// one number would silently skip a gap and leak those entries forever.
-	// Index keys are prefixBlockIndex|be64(block), so ascending key order is
-	// ascending block order and the scan stops at the first live block.
+	// Sweep in ascending block order rather than probing the cutoff alone: delivered
+	// block numbers are not guaranteed contiguous, and a gap would leak. Index keys
+	// are prefixBlockIndex|be64(block), so key order is block order.
 	it := p.db.NewIterator([]byte{prefixBlockIndex}, nil)
 	defer it.Release()
 
@@ -452,10 +427,9 @@ func (p *PebbleKVS) pruneBlock(batch ethdb.Batch, blockNum uint64) error {
 		return fmt.Errorf("failed to scan block index: %w", err)
 	}
 
-	// Record how far history now reaches, in the same batch, so the bound survives
-	// a restart and a later change to historySize. The marker only ever moves
-	// forward: enlarging historySize shrinks cutoff, and letting the marker follow
-	// it back down would re-accept reads whose versions are already gone.
+	// Record how far history reaches, in the same batch, so the bound survives a
+	// restart. It only moves forward: enlarging historySize shrinks cutoff, and
+	// following it back down would re-accept reads whose versions are gone.
 	oldest := cutoff + 1
 	if cur := p.oldestRetained.Load(); oldest <= cur {
 		return nil
@@ -529,15 +503,10 @@ func (p *PebbleKVS) NewSnapshot(blockNumber *uint64) (execution.ReadStore, error
 		bn = *blockNumber
 	}
 
-	// Register the pin and validate under the same lock a commit holds while it
-	// prunes, so a reader cannot be admitted against a marker that is concurrently
-	// being advanced past it.
-	//
-	// Reads older than what is still retained cannot be answered correctly: the
-	// versions they need have been pruned. Erroring matches LightKVS, which also
-	// refuses blocks evicted from its ring, rather than silently reporting a key as
-	// absent. The bound comes from the persisted marker, not from historySize, so
-	// reopening with a larger window does not start accepting unanswerable reads.
+	// Validate and register the pin under the same lock a commit holds while it
+	// prunes, so a reader cannot be admitted against a marker being advanced past
+	// it. Reads below the retained bound are refused rather than reported as absent,
+	// matching LightKVS.
 	p.snapMu.Lock()
 	if oldest := p.oldestRetained.Load(); bn < head && bn < oldest {
 		p.snapMu.Unlock()
@@ -598,12 +567,10 @@ func (p *PebbleKVS) Close() error {
 // pebbleSnapshot is a point-in-time read view pinned to a block number. It
 // implements execution.ReadStore.
 //
-// Isolation is not inherent to the storage layout: the current value is
-// overwritten in place, so it is re-derived per read (see Get — take the current
-// record only when it is not newer than the pinned height, else fall back to
-// history). The entries that fallback depends on are protected for the reader's
-// lifetime by the pin registered in NewSnapshot and dropped in Close, so a reader
-// that is never closed holds history back.
+// Because values are overwritten in place, isolation is re-derived per read rather
+// than being inherent to the layout (see Get). The history those reads fall back to
+// is held for the reader's lifetime by the pin taken in NewSnapshot and dropped in
+// Close, so a reader that is never closed holds history back.
 type pebbleSnapshot struct {
 	db *gethpebble.Database
 	// owner is notified on Close so prune can resume below this view's height.
@@ -625,14 +592,11 @@ func (s *pebbleSnapshot) Get(namespace, key string) (*blocks.WriteRecord, error)
 
 	fullKey := namespace + ":" + key
 
-	// Fast path: one point lookup. The latest record answers the read whenever it
-	// was written at or before the pinned block, which is the common case.
-	//
-	// The block check is not optional. Because a rewrite now overwrites in place,
-	// the record under dataKey can belong to a block committed *after* this
-	// snapshot was taken — the endorser simulates while the synchronizer commits.
-	// Without the check a snapshot would observe future writes, and the read-set it
-	// builds goes to the committer for MVCC validation.
+	// Fast path: one point lookup, taken whenever the current record is not newer
+	// than the pinned block. The check is required, not an optimisation: the record
+	// under dataKey is overwritten in place and can belong to a block committed
+	// after this snapshot was taken, and the read-set built here is MVCC-validated
+	// by the committer.
 	rec, err := s.latest(namespace, key, fullKey)
 	if err != nil {
 		return nil, err
@@ -641,9 +605,8 @@ func (s *pebbleSnapshot) Get(namespace, key string) (*blocks.WriteRecord, error)
 		return rec, nil
 	}
 
-	// The current value is newer than this view (or the key is absent). Whichever
-	// block superseded it copied the previous record into history in the same
-	// atomic batch, so the value as of lastBlock is there if it exists at all.
+	// The current value is newer than this view, or absent. Whichever block
+	// superseded it copied the previous record into history in the same batch.
 	it := s.db.NewIterator(historyPrefix(fullKey), u64be(^s.lastBlock))
 	defer it.Release()
 	if it.Next() {
@@ -754,9 +717,8 @@ func dataPrefix(fullKey string) []byte {
 	return b
 }
 
-// dataKey returns the key for a write. There is no version suffix: a key holds
-// exactly one record, so a rewrite overwrites it. This makes a read a point lookup
-// (see pebbleSnapshot.Get) and keeps the store from growing with rewrite count.
+// dataKey returns the key for a write. A key holds exactly one record, so a rewrite
+// overwrites it and a read is a point lookup.
 func dataKey(fullKey string) []byte {
 	return dataPrefix(fullKey)
 }
@@ -772,8 +734,7 @@ func historyPrefix(fullKey string) []byte {
 
 // historyKey returns the key for one retained version. (block, tx) are encoded
 // descending so a forward scan from be64(^wanted) lands on the highest version at
-// or below `wanted` — the same trick the single-record layout no longer needs, but
-// which still makes an in-window historical read one Next().
+// or below `wanted` in one Next().
 func historyKey(fullKey string, block, tx uint64) []byte {
 	b := historyPrefix(fullKey)
 	b = binary.BigEndian.AppendUint64(b, ^block)
@@ -781,9 +742,8 @@ func historyKey(fullKey string, block, tx uint64) []byte {
 	return b
 }
 
-// blockIndexKey returns the key holding the list of state keys written by a block.
-// Pruning needs to know which keys a departing block touched without scanning the
-// whole store.
+// blockIndexKey returns the key holding the history keys a block created, so
+// pruning can find them without scanning the store.
 func blockIndexKey(block uint64) []byte {
 	b := make([]byte, 0, 1+8)
 	b = append(b, prefixBlockIndex)

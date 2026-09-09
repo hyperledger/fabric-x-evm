@@ -114,10 +114,8 @@ func TestPebbleHistoryPruneBoundsGrowth(t *testing.T) {
 }
 
 // TestPebbleSnapshotIsolation pins a snapshot at head and then commits a newer
-// block. Because the current value is now overwritten in place rather than stored
-// under a versioned key, a snapshot that simply point-read the latest record would
-// observe the newer write — the endorser simulates while the synchronizer commits,
-// and the read-set it builds is MVCC-validated by the committer.
+// block. Values are overwritten in place, so a snapshot that only point-read the
+// current record would observe the later write.
 func TestPebbleSnapshotIsolation(t *testing.T) {
 	ctx := context.Background()
 	kvs, err := NewPebbleKVS(t.TempDir(), 128)
@@ -160,10 +158,9 @@ func TestPebbleSnapshotIsolation(t *testing.T) {
 	}
 }
 
-// TestPebbleWindowBoundSurvivesLargerHistorySize reopens a store with a bigger
-// window than it was pruned under. The bound has to come from what was actually
-// pruned, not from the current historySize, or reads whose versions are gone get
-// accepted and answered as "key absent".
+// TestPebbleWindowBoundSurvivesLargerHistorySize reopens with a bigger window than
+// the store was pruned under. The bound must come from what was pruned, not from the
+// configured historySize.
 func TestPebbleWindowBoundSurvivesLargerHistorySize(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -194,8 +191,7 @@ func TestPebbleWindowBoundSurvivesLargerHistorySize(t *testing.T) {
 }
 
 // TestPebblePruneHandlesBlockGaps commits a run of blocks, then jumps far ahead.
-// Pruning that probes only one block number would skip the gap and leak the early
-// blocks' history forever, defeating the bounded-growth goal.
+// Block numbers are not guaranteed contiguous, and a gap must not leak entries.
 func TestPebblePruneHandlesBlockGaps(t *testing.T) {
 	const window = 3
 	ctx := context.Background()
@@ -238,11 +234,9 @@ func TestPebblePruneHandlesBlockGaps(t *testing.T) {
 }
 
 // TestPebbleSnapshotSurvivesPrune holds a reader open while enough blocks commit to
-// prune past its pinned height. Isolation here is re-derived from history entries
-// rather than being inherent to the layout, so without a reader pin those entries
-// get deleted underneath the reader and keys it can see turn into "absent" —
-// the endorser holds one reader for a whole EVM simulation, and a wrong "absent"
-// makes it execute against a zero value and record a read-set with no version.
+// prune past its pinned height. The reader's pin must keep the history it falls back
+// to alive; otherwise keys it can see read as absent, and the endorser holds one
+// reader for a whole simulation.
 func TestPebbleSnapshotSurvivesPrune(t *testing.T) {
 	const window = 2 // the production default
 	ctx := context.Background()
@@ -320,9 +314,8 @@ func TestPebbleOldestMarkerIsMonotonic(t *testing.T) {
 }
 
 // TestPebbleWindowWidthMatchesLightKVS checks the retained range is
-// [head-historySize, head] — historySize historical blocks plus the current one —
-// which is what LightKVS keeps for the same setting. historySize=1 is used by
-// several integration configs, and must still serve head-1.
+// [head-historySize, head], matching LightKVS. historySize=1 is used by several
+// integration configs and must still serve head-1.
 func TestPebbleWindowWidthMatchesLightKVS(t *testing.T) {
 	const window = 1
 	ctx := context.Background()
@@ -349,9 +342,8 @@ func TestPebbleWindowWidthMatchesLightKVS(t *testing.T) {
 	}
 }
 
-// TestPebbleDoubleCloseKeepsOtherPin closes one reader twice while a second reader
-// is pinned at the same height. Releasing the pin twice for one reader would drop
-// the shared pin entirely and let prune delete the surviving reader's history.
+// TestPebbleDoubleCloseKeepsOtherPin closes one reader twice while a second is
+// pinned at the same height: the pin must be released exactly once.
 func TestPebbleDoubleCloseKeepsOtherPin(t *testing.T) {
 	const window = 2
 	ctx := context.Background()
