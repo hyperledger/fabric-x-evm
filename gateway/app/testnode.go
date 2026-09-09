@@ -12,6 +12,7 @@ import (
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/msp"
 	sdk "github.com/hyperledger/fabric-x-sdk"
+	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	"github.com/hyperledger/fabric-x-sdk/fabrictest"
 	"google.golang.org/protobuf/proto"
 
@@ -71,7 +72,7 @@ func NewTestNode(ctx context.Context, tcfg TestNodeConfig) (*App, error) {
 	// does not wrap, and loadFixture stretches can commit far more than 128 blocks
 	// between reverts. Undersizing panics or drops historical reads mid-suite.
 	endorserDB := econfig.DB{Database: "memory", HistorySize: 16384}
-	endorser, endorserKVS, _, err := eapp.NewEndorserCore(endorserDB, testNodeChannel, testNodeNamespace, protocol, signer, evmConfig, true, econfig.Endorser{})
+	endorser, endorserKVS, endorserBuilder, err := eapp.NewEndorserCore(endorserDB, testNodeChannel, testNodeNamespace, protocol, signer, evmConfig, true, econfig.Endorser{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create endorser: %w", err)
 	}
@@ -111,7 +112,9 @@ func NewTestNode(ctx context.Context, tcfg TestNodeConfig) (*App, error) {
 		},
 	}
 
-	application, err := buildApp(ctx, cfg, signer, logger, []eapi.Service{endorser}, endorserKVS, true, tcfg.TestAccountsPath, endorserKVS)
+	// One endorser, so one builder: enough for the test RPC's hardhat state
+	// directives to self-endorse their priming transactions.
+	application, err := buildApp(ctx, cfg, signer, logger, []eapi.Service{endorser}, endorserKVS, true, tcfg.TestAccountsPath, []endorsement.Builder{endorserBuilder}, endorserKVS)
 	if err != nil {
 		return nil, err
 	}

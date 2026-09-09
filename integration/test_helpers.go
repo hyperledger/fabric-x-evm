@@ -14,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -25,7 +24,6 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/ethereum/go-ethereum/rpc"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/msp"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
@@ -37,10 +35,10 @@ import (
 	ecore "github.com/hyperledger/fabric-x-evm/endorser/core"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
 	"github.com/hyperledger/fabric-x-evm/endorser/storage"
-	gwapi "github.com/hyperledger/fabric-x-evm/gateway/api"
 	"github.com/hyperledger/fabric-x-evm/gateway/app"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
+	"github.com/hyperledger/fabric-x-evm/testutil/priming"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	bfab "github.com/hyperledger/fabric-x-sdk/blocks/fabric"
@@ -640,17 +638,6 @@ func getEndorsedTxForSmartContractCall(t *testing.T, client *EthClient, addr eth
 	return processCommon(t, gw, false, tx)
 }
 
-func NewNativeEthClient(gw *core.Gateway) (*ethclient.Client, error) {
-	// Create production RPC server (no test accounts needed for integration tests)
-	rpcServer, err := gwapi.NewServer(gw)
-	if err != nil {
-		return nil, err
-	}
-
-	client := rpc.DialInProc(rpcServer)
-	return ethclient.NewClient(client), nil
-}
-
 func deploySmartContract(t *testing.T, gw *core.Gateway, client *EthClient, args ...any) ethcommon.Address {
 	t.Helper()
 
@@ -804,50 +791,10 @@ func extractEthTxFromProposal(proposal *peer.Proposal) (*types.Transaction, erro
 }
 
 func waitForCommitT(t *testing.T, ec *ethclient.Client, tx *types.Transaction) {
-	err := waitForCommit(t.Context(), ec, tx)
+	err := priming.WaitForCommit(t.Context(), ec, tx)
 	if err != nil {
 		t.Fatal(err)
 	}
-}
-
-func waitForCommit(ctx context.Context, ec *ethclient.Client, tx *types.Transaction) error {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	var err error
-
-	backoff := time.Duration(0)
-	iter := 0
-	step := 100
-
-	for pending := true; pending; {
-		_, pending, err = ec.TransactionByHash(ctx, tx.Hash())
-		if err != nil {
-			if !strings.Contains(err.Error(), "not found") {
-				return fmt.Errorf("waiting for tx %s to commit: %w", tx.Hash(), err)
-			}
-			pending = true
-		}
-
-		if pending {
-			if backoff == 0 {
-				runtime.Gosched()
-			} else {
-				time.Sleep(backoff)
-			}
-
-			iter++
-			if iter%step == 0 {
-				if backoff == 0 {
-					backoff = time.Millisecond
-				} else {
-					backoff *= 2
-				}
-			}
-		}
-	}
-
-	return nil
 }
 
 // decodeRawTransactionT decodes a raw Ethereum transaction and

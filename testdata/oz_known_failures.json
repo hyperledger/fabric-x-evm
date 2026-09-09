@@ -145,12 +145,27 @@
     "note": "block.timestamp is hardcoded (COMPATIBILITY.md); manifests as timestamp diffs, delay/schedule assertions, or vote undercounts since checkpoints never advance."
   },
   {
-    "id": "AccessManaged \"before each\" hook for \"sets authority and emits AuthorityUpdated event during construction\"",
-    "cause": "hardhat_setBalance"
+    "id": "AccessManaged isConsumingScheduledOp \"before each\" hook for \"returns bytes4(0) when not consuming operation\"",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
-    "id": "AccessManager #consumeScheduledOp \"before each\" hook: define scheduling parameters for \"reverts as AccessManagerUnauthorizedConsume\"",
-    "cause": "hardhat_setBalance"
+    "id": "AccessManaged restricted modifier panics in short calldata",
+    "cause": "estimate-gas-allowance-not-revert",
+    "note": "eth_estimateGas escalates to the 10M ceiling instead of surfacing the revert the test expects; the call is expected to fail, not to need more gas."
+  },
+  {
+    "id": "AccessManaged restricted modifier when role is granted with execution delay succeeds if the operation is scheduled"
+  },
+  {
+    "id": "AccessManaged setAuthority sets authority and emits AuthorityUpdated event",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
+  },
+  {
+    "id": "AccessManager #consumeScheduledOp when caller is consuming scheduled operation when operation is scheduled \"before each\" hook: schedule operation for \"reverts as AccessManagerNotReady\"",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "AccessManager #execute cannot execute a setAuthority call when a target admin delay is set",
@@ -166,8 +181,9 @@
     "cause": "execution reverted"
   },
   {
-    "id": "AccessManager #execute restrictions when the manager is open when the call comes from the manager (msg.sender == manager) \"before each\" hook: define caller as manager for \"succeeds\"",
-    "cause": "hardhat_setBalance"
+    "id": "AccessManager #execute restrictions when the manager is open when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "AccessManager #execute restrictions when the manager is open when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -211,16 +227,13 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager #schedule restrictions when the manager is open when the call comes from the manager (msg.sender == manager) \"before each\" hook: define caller as manager for \"reverts as AccessManagerUnauthorizedCall\"",
-    "cause": "hardhat_setBalance"
-  },
-  {
     "id": "AccessManager #schedule restrictions when the manager is open when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect succeeds",
     "cause": "execution reverted"
   },
   {
-    "id": "AccessManager access managed self operations when calling a restricted target function restrictions when the manager is open when the call comes from the manager (msg.sender == manager) \"before each\" hook: define caller as manager for \"succeeds\"",
-    "cause": "hardhat_setBalance"
+    "id": "AccessManager access managed self operations when calling a restricted target function restrictions when the manager is open when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "AccessManager access managed self operations when calling a restricted target function restrictions when the manager is open when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -255,8 +268,9 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager access managed target operations when calling a restricted target function restrictions when the manager is open when the call comes from the manager (msg.sender == manager) \"before each\" hook: define caller as manager for \"succeeds\"",
-    "cause": "hardhat_setBalance"
+    "id": "AccessManager access managed target operations when calling a restricted target function restrictions when the manager is open when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "AccessManager access managed target operations when calling a restricted target function restrictions when the manager is open when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -291,8 +305,9 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations not subject to a delay #setTargetClosed restrictions when the call comes from the manager (msg.sender == manager) \"before each\" hook: define caller as manager for \"succeeds\"",
-    "cause": "hardhat_setBalance"
+    "id": "AccessManager admin operations not subject to a delay #setTargetClosed restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "AccessManager admin operations not subject to a delay #setTargetClosed restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect with operation delay when operation delay is greater than execution delay when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -345,8 +360,9 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations not subject to a delay #setTargetFunctionRole restrictions when the call comes from the manager (msg.sender == manager) \"before each\" hook: define caller as manager for \"succeeds\"",
-    "cause": "hardhat_setBalance"
+    "id": "AccessManager admin operations not subject to a delay #setTargetFunctionRole restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "AccessManager admin operations not subject to a delay #setTargetFunctionRole restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect with operation delay when operation delay is greater than execution delay when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -399,8 +415,9 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations not subject to a delay #updateAuthority restrictions when the call comes from the manager (msg.sender == manager) \"before each\" hook: define caller as manager for \"succeeds\"",
-    "cause": "hardhat_setBalance"
+    "id": "AccessManager admin operations not subject to a delay #updateAuthority restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "AccessManager admin operations not subject to a delay #updateAuthority restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect with operation delay when operation delay is greater than execution delay when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -453,8 +470,9 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations not subject to a delay role admin operations #grantRole restrictions when the call comes from the manager (msg.sender == manager) \"before each\" hook: define caller as manager for \"succeeds\"",
-    "cause": "hardhat_setBalance"
+    "id": "AccessManager admin operations not subject to a delay role admin operations #grantRole restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "AccessManager admin operations not subject to a delay role admin operations #grantRole restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -509,8 +527,9 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations not subject to a delay role admin operations #revokeRole restrictions when the call comes from the manager (msg.sender == manager) \"before each\" hook: define caller as manager for \"succeeds\"",
-    "cause": "hardhat_setBalance"
+    "id": "AccessManager admin operations not subject to a delay role admin operations #revokeRole restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "AccessManager admin operations not subject to a delay role admin operations #revokeRole restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -550,8 +569,9 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations subject to a delay #labelRole restrictions when the call comes from the manager (msg.sender == manager) \"before each\" hook: define caller as manager for \"succeeds\"",
-    "cause": "hardhat_setBalance"
+    "id": "AccessManager admin operations subject to a delay #labelRole restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "AccessManager admin operations subject to a delay #labelRole restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect with operation delay when operation delay is greater than execution delay when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -604,8 +624,9 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations subject to a delay #setGrantDelay restrictions when the call comes from the manager (msg.sender == manager) \"before each\" hook: define caller as manager for \"succeeds\"",
-    "cause": "hardhat_setBalance"
+    "id": "AccessManager admin operations subject to a delay #setGrantDelay restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "AccessManager admin operations subject to a delay #setGrantDelay restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect with operation delay when operation delay is greater than execution delay when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -668,8 +689,9 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations subject to a delay #setRoleAdmin restrictions when the call comes from the manager (msg.sender == manager) \"before each\" hook: define caller as manager for \"succeeds\"",
-    "cause": "hardhat_setBalance"
+    "id": "AccessManager admin operations subject to a delay #setRoleAdmin restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "AccessManager admin operations subject to a delay #setRoleAdmin restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect with operation delay when operation delay is greater than execution delay when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -722,8 +744,9 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations subject to a delay #setRoleGuardian restrictions when the call comes from the manager (msg.sender == manager) \"before each\" hook: define caller as manager for \"succeeds\"",
-    "cause": "hardhat_setBalance"
+    "id": "AccessManager admin operations subject to a delay #setRoleGuardian restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "AccessManager admin operations subject to a delay #setRoleGuardian restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect with operation delay when operation delay is greater than execution delay when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -776,8 +799,9 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations subject to a delay #setTargetAdminDelay restrictions when the call comes from the manager (msg.sender == manager) \"before each\" hook: define caller as manager for \"succeeds\"",
-    "cause": "hardhat_setBalance"
+    "id": "AccessManager admin operations subject to a delay #setTargetAdminDelay restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "AccessManager admin operations subject to a delay #setTargetAdminDelay restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect with operation delay when operation delay is greater than execution delay when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -838,10 +862,6 @@
     "id": "AccessManager admin operations subject to a delay #setTargetAdminDelay when reducing the delay \"before each\" hook: sets old delay for \"increases the delay after minsetback\"",
     "cause": "hardhat-time-rpc",
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
-  },
-  {
-    "id": "AccessManager getters #canCall when the manager is open when the call comes from the manager (msg.sender == manager) \"before each\" hook: define caller as manager for \"should return true and no delay\"",
-    "cause": "hardhat_setBalance"
   },
   {
     "id": "AccessManager getters #canCall when the manager is open when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect when operation is not scheduled should return false and execution delay",
@@ -915,7 +935,9 @@
     "id": "Arrays uint256 sort [skip-on-coverage] uint256[] of length 384 \"after each\" hook for \"sort array for identical elements\""
   },
   {
-    "id": "BeaconProxy bad beacon is not accepted non-compliant beacon"
+    "id": "BeaconProxy bad beacon is not accepted non-compliant beacon",
+    "cause": "estimate-gas-allowance-not-revert",
+    "note": "eth_estimateGas escalates to the 10M ceiling instead of surfacing the revert the test expects; the call is expected to fail, not to need more gas."
   },
   {
     "id": "BlockHeader current block"
@@ -1025,16 +1047,19 @@
     "note": "Deploy/sub-call side effects (balance after a value-transfer deploy, upgraded-implementation address, nested-call event) don't land, even though the top-level tx succeeds. Confirmed via bisection to PR #321 (reproduces with or without the gas-estimation fix, and in full isolation); exact mechanism inside #321 not yet diagnosed."
   },
   {
-    "id": "CrosschainBridgeERC1155 \"before each\" hook for \"token getters\"",
-    "cause": "hardhat_setBalance"
+    "id": "CrosschainBridgeERC1155 bridge ERC1155 like reconfiguration reject invalid gateway",
+    "cause": "estimate-gas-allowance-not-revert",
+    "note": "eth_estimateGas escalates to the 10M ceiling instead of surfacing the revert the test expects; the call is expected to fail, not to need more gas."
   },
   {
-    "id": "CrosschainBridgeERC20 \"before each\" hook for \"token getters\"",
-    "cause": "hardhat_setBalance"
+    "id": "CrosschainBridgeERC20 bridge ERC20 like reconfiguration reject invalid gateway",
+    "cause": "estimate-gas-allowance-not-revert",
+    "note": "eth_estimateGas escalates to the 10M ceiling instead of surfacing the revert the test expects; the call is expected to fail, not to need more gas."
   },
   {
-    "id": "CrosschainBridgeERC721 \"before each\" hook for \"token getters\"",
-    "cause": "hardhat_setBalance"
+    "id": "CrosschainBridgeERC721 bridge ERC721 like reconfiguration reject invalid gateway",
+    "cause": "estimate-gas-allowance-not-revert",
+    "note": "eth_estimateGas escalates to the 10M ceiling instead of surfacing the revert the test expects; the call is expected to fail, not to need more gas."
   },
   {
     "id": "CrosschainRemoteController & CrosschainRemoteExecutor reconfigure with an invalid new gateway: revert",
@@ -1050,8 +1075,9 @@
     "messagePattern": "^Clock mismatch in timestamp mode: expected \\d+ to equal \\d+\\.$"
   },
   {
-    "id": "ERC1155Crosschain \"before each\" hook for \"bridge setup\"",
-    "cause": "hardhat_setBalance"
+    "id": "ERC1155Crosschain bridge ERC1155 like reconfiguration reject invalid gateway",
+    "cause": "estimate-gas-allowance-not-revert",
+    "note": "eth_estimateGas escalates to the 10M ceiling instead of surfacing the revert the test expects; the call is expected to fail, not to need more gas."
   },
   {
     "id": "ERC1967Clones deterministic deployment (create2) initialization with parameters non payable when sending some balance reverts",
@@ -1084,20 +1110,9 @@
     "note": "Root-caused: gas estimation under-reports for calls routed through an EIP-1167 minimal-proxy delegatecall. A direct call to the implementation succeeds at its own estimate; the identical call through a clone fails at that estimate -- re-verifying doesn't catch it since eth_call itself under-reports here too (same broken oracle). A large explicit gas limit succeeds. Confirmed pre-existing (predates PR #321's gas-estimation work); not fixable by client-side padding -- likely endorser/execution/executor.go's delegatecall gas accounting. ERC1967Clones/Create2/Create3/ProxyAdmin/UUPSUpgradeable plausibly share this; SafeERC20/ERC4626/ERC20Wrapper/ERC20FlashMint/ERC721Wrapper/Context are tagged on symptom match only -- verify before assuming."
   },
   {
-    "id": "ERC1967Utils ADMIN_SLOT \"before each\" hook: set admin for \"returns current admin and matches admin slot value\"",
-    "cause": "hardhat_setStorageAt"
-  },
-  {
-    "id": "ERC1967Utils BEACON_SLOT \"before each\" hook: set beacon for \"returns current beacon and matches beacon slot value\"",
-    "cause": "hardhat_setStorageAt"
-  },
-  {
-    "id": "ERC1967Utils IMPLEMENTATION_SLOT \"before each\" hook: set v1 implementation for \"returns current implementation and matches implementation slot value\"",
-    "cause": "hardhat_setStorageAt"
-  },
-  {
-    "id": "ERC20Crosschain \"before each\" hook for \"bridge setup\"",
-    "cause": "hardhat_setBalance"
+    "id": "ERC20Crosschain bridge ERC20 like reconfiguration reject invalid gateway",
+    "cause": "estimate-gas-allowance-not-revert",
+    "note": "eth_estimateGas escalates to the 10M ceiling instead of surfacing the revert the test expects; the call is expected to fail, not to need more gas."
   },
   {
     "id": "ERC20TransferAuthorization with blockNumber cancelAuthorization cancels the next nonce after consuming the previous one",
@@ -1350,8 +1365,14 @@
     "cause": "execution reverted"
   },
   {
-    "id": "ERC2771Context \"before each\" hook for \"recognize trusted forwarder\"",
-    "cause": "hardhat_setBalance"
+    "id": "ERC2771Context when receiving a relayed call msgSender returns the original sender when calldata length is less than 20 bytes (address length)",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
+  },
+  {
+    "id": "ERC2771Context when receiving a relayed call returns the full original data when calldata length is less than 20 bytes (address length)",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "ERC2771Forwarder execute bubbles out of gas",
@@ -1415,8 +1436,9 @@
     "flaky": true
   },
   {
-    "id": "ERC721Crosschain \"before each\" hook for \"bridge setup\"",
-    "cause": "hardhat_setBalance"
+    "id": "ERC721Crosschain bridge ERC721 like reconfiguration reject invalid gateway",
+    "cause": "estimate-gas-allowance-not-revert",
+    "note": "eth_estimateGas escalates to the 10M ceiling instead of surfacing the revert the test expects; the call is expected to fail, not to need more gas."
   },
   {
     "id": "ERC721Votes vote with blockNumber ERC-6372 behavior in blockNumber mode should have a correct clock value",
@@ -2465,12 +2487,20 @@
     "flaky": true
   },
   {
-    "id": "GovernorProposalGuardian using $ERC20Votes \"before each\" hook for \"deployment check\"",
-    "cause": "hardhat_setBalance"
+    "id": "GovernorProposalGuardian using $ERC20Votes cancel proposal during active state \"before each\" hook for \"from proposal guardian\""
   },
   {
-    "id": "GovernorProposalGuardian using $ERC20VotesTimestampMock \"before each\" hook for \"deployment check\"",
-    "cause": "hardhat_setBalance"
+    "id": "GovernorProposalGuardian using $ERC20Votes set proposal guardian from governance"
+  },
+  {
+    "id": "GovernorProposalGuardian using $ERC20VotesTimestampMock cancel proposal during active state \"before each\" hook for \"from proposal guardian\"",
+    "cause": "hardhat-block-rpc",
+    "note": "Reachable only once hardhat_setBalance works; the fixture then mines to a proposal deadline the gateway's block RPCs do not support."
+  },
+  {
+    "id": "GovernorProposalGuardian using $ERC20VotesTimestampMock set proposal guardian from governance",
+    "cause": "hardhat_impersonateAccount",
+    "note": "Reachable only once hardhat_setBalance works; the fixture then needs a governance signer that hardhat_impersonateAccount does not yet provide."
   },
   {
     "id": "GovernorSequentialProposalId using $ERC20Votes \"before each\" hook for \"sequential proposal ids\"",
@@ -3405,1066 +3435,6 @@
     "id": "MerkleTree push pushing to a full tree reverts"
   },
   {
-    "id": "Packing extract / replace extract bytes1 from bytes10",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes1 from bytes12",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes1 from bytes16",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes1 from bytes2",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes1 from bytes20",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes1 from bytes22",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes1 from bytes24",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes1 from bytes28",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes1 from bytes32",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes1 from bytes4",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes1 from bytes6",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes1 from bytes8",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes10 from bytes12",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes10 from bytes16",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes10 from bytes20",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes10 from bytes22",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes10 from bytes24",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes10 from bytes28",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes10 from bytes32",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes12 from bytes16",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes12 from bytes20",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes12 from bytes22",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes12 from bytes24",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes12 from bytes28",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes12 from bytes32",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes16 from bytes20",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes16 from bytes22",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes16 from bytes24",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes16 from bytes28",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes16 from bytes32",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes2 from bytes10",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes2 from bytes12",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes2 from bytes16",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes2 from bytes20",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes2 from bytes22",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes2 from bytes24",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes2 from bytes28",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes2 from bytes32",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes2 from bytes4",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes2 from bytes6",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes2 from bytes8",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes20 from bytes22",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes20 from bytes24",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes20 from bytes28",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes20 from bytes32",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes22 from bytes24",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes22 from bytes28",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes22 from bytes32",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes24 from bytes28",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes24 from bytes32",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes28 from bytes32",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes4 from bytes10",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes4 from bytes12",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes4 from bytes16",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes4 from bytes20",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes4 from bytes22",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes4 from bytes24",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes4 from bytes28",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes4 from bytes32",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes4 from bytes6",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes4 from bytes8",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes6 from bytes10",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes6 from bytes12",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes6 from bytes16",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes6 from bytes20",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes6 from bytes22",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes6 from bytes24",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes6 from bytes28",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes6 from bytes32",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes6 from bytes8",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes8 from bytes10",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes8 from bytes12",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes8 from bytes16",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes8 from bytes20",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes8 from bytes22",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes8 from bytes24",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes8 from bytes28",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace extract bytes8 from bytes32",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes1 from bytes10",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes1 from bytes12",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes1 from bytes16",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes1 from bytes2",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes1 from bytes20",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes1 from bytes22",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes1 from bytes24",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes1 from bytes28",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes1 from bytes32",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes1 from bytes4",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes1 from bytes6",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes1 from bytes8",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes10 from bytes12",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes10 from bytes16",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes10 from bytes20",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes10 from bytes22",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes10 from bytes24",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes10 from bytes28",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes10 from bytes32",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes12 from bytes16",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes12 from bytes20",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes12 from bytes22",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes12 from bytes24",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes12 from bytes28",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes12 from bytes32",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes16 from bytes20",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes16 from bytes22",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes16 from bytes24",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes16 from bytes28",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes16 from bytes32",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes2 from bytes10",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes2 from bytes12",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes2 from bytes16",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes2 from bytes20",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes2 from bytes22",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes2 from bytes24",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes2 from bytes28",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes2 from bytes32",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes2 from bytes4",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes2 from bytes6",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes2 from bytes8",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes20 from bytes22",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes20 from bytes24",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes20 from bytes28",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes20 from bytes32",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes22 from bytes24",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes22 from bytes28",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes22 from bytes32",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes24 from bytes28",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes24 from bytes32",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes28 from bytes32",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes4 from bytes10",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes4 from bytes12",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes4 from bytes16",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes4 from bytes20",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes4 from bytes22",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes4 from bytes24",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes4 from bytes28",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes4 from bytes32",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes4 from bytes6",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes4 from bytes8",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes6 from bytes10",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes6 from bytes12",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes6 from bytes16",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes6 from bytes20",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes6 from bytes22",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes6 from bytes24",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes6 from bytes28",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes6 from bytes32",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes6 from bytes8",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes8 from bytes10",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes8 from bytes12",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes8 from bytes16",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes8 from bytes20",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes8 from bytes22",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes8 from bytes24",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes8 from bytes28",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing extract / replace replace bytes8 from bytes32",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes1 + bytes1 => bytes2",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes10 + bytes10 => bytes20",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes10 + bytes12 => bytes22",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes10 + bytes2 => bytes12",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes10 + bytes22 => bytes32",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes10 + bytes6 => bytes16",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes12 + bytes10 => bytes22",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes12 + bytes12 => bytes24",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes12 + bytes16 => bytes28",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes12 + bytes20 => bytes32",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes12 + bytes4 => bytes16",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes12 + bytes8 => bytes20",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes16 + bytes12 => bytes28",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes16 + bytes16 => bytes32",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes16 + bytes4 => bytes20",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes16 + bytes6 => bytes22",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes16 + bytes8 => bytes24",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes2 + bytes10 => bytes12",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes2 + bytes2 => bytes4",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes2 + bytes20 => bytes22",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes2 + bytes22 => bytes24",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes2 + bytes4 => bytes6",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes2 + bytes6 => bytes8",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes2 + bytes8 => bytes10",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes20 + bytes12 => bytes32",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes20 + bytes2 => bytes22",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes20 + bytes4 => bytes24",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes20 + bytes8 => bytes28",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes22 + bytes10 => bytes32",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes22 + bytes2 => bytes24",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes22 + bytes6 => bytes28",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes24 + bytes4 => bytes28",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes24 + bytes8 => bytes32",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes28 + bytes4 => bytes32",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes4 + bytes12 => bytes16",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes4 + bytes16 => bytes20",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes4 + bytes2 => bytes6",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes4 + bytes20 => bytes24",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes4 + bytes24 => bytes28",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes4 + bytes28 => bytes32",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes4 + bytes4 => bytes8",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes4 + bytes6 => bytes10",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes4 + bytes8 => bytes12",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes6 + bytes10 => bytes16",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes6 + bytes16 => bytes22",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes6 + bytes2 => bytes8",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes6 + bytes22 => bytes28",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes6 + bytes4 => bytes10",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes6 + bytes6 => bytes12",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes8 + bytes12 => bytes20",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes8 + bytes16 => bytes24",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes8 + bytes2 => bytes10",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes8 + bytes20 => bytes28",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes8 + bytes24 => bytes32",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes8 + bytes4 => bytes12",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
-    "id": "Packing pack pack bytes8 + bytes8 => bytes16",
-    "cause": "max-code-size",
-    "note": "Symptom: 'could not decode result data' (empty call return); consistent with the oversized $Packing mock failing to deploy (EIP-170), not confirmed via a deploy-time error."
-  },
-  {
     "id": "RateLimiter RefillingBucket with some capacity consume consume one key does not affect another key",
     "cause": "hardhat-time-rpc",
     "note": "Bucket/window state depends on real elapsed wall-clock time between txs (evm_increaseTime/evm_setNextBlockTimestamp are no-ops, COMPATIBILITY.md); tests assuming zero/exact elapsed time pick up unintended refill/decay.",
@@ -4571,18 +3541,24 @@
     "flaky": true
   },
   {
-    "id": "RelayedCall default (zero) salt direct call to the relayer"
+    "id": "RelayedCall default (zero) salt direct call to the relayer",
+    "cause": "estimate-gas-allowance-not-revert",
+    "note": "eth_estimateGas escalates to the 10M ceiling instead of surfacing the revert the test expects; the call is expected to fail, not to need more gas."
   },
   {
     "id": "RelayedCall default (zero) salt relayer input format",
-    "cause": "hardhat_setBalance"
+    "cause": "hardhat_setBalance",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
-    "id": "RelayedCall random salt direct call to the relayer"
+    "id": "RelayedCall random salt direct call to the relayer",
+    "cause": "estimate-gas-allowance-not-revert",
+    "note": "eth_estimateGas escalates to the 10M ceiling instead of surfacing the revert the test expects; the call is expected to fail, not to need more gas."
   },
   {
     "id": "RelayedCall random salt input format",
-    "cause": "hardhat_setBalance"
+    "cause": "hardhat_setBalance",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "SafeERC20 with ERC1363 that returns no boolean values reverts on approveAndCallRelaxed",
@@ -4681,8 +3657,57 @@
     "id": "TimelockController usage scenario call throw"
   },
   {
-    "id": "TransparentUpgradeableProxy \"before each\" hook for \"cannot be initialized with a non-contract address\"",
-    "cause": "hardhat_setBalance"
+    "id": "TransparentUpgradeableProxy proxy admin can overwrite the admin by the implementation",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
+  },
+  {
+    "id": "TransparentUpgradeableProxy regression should add fallback function",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
+  },
+  {
+    "id": "TransparentUpgradeableProxy regression should add new function"
+  },
+  {
+    "id": "TransparentUpgradeableProxy regression should change function signature",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
+  },
+  {
+    "id": "TransparentUpgradeableProxy regression should remove fallback function",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
+  },
+  {
+    "id": "TransparentUpgradeableProxy regression should remove function",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
+  },
+  {
+    "id": "TransparentUpgradeableProxy transparent proxy when function names clash executes the proxy function if the sender is the admin",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
+  },
+  {
+    "id": "TransparentUpgradeableProxy upgradeToAndCall with migrations when the sender is not the admin reverts",
+    "cause": "estimate-gas-allowance-not-revert",
+    "note": "eth_estimateGas escalates to the 10M ceiling instead of surfacing the revert the test expects; the call is expected to fail, not to need more gas."
+  },
+  {
+    "id": "TransparentUpgradeableProxy upgradeToAndCall with migrations when the sender is the admin when upgrading to V1 \"before each\" hook for \"upgrades to the requested version and emits an event\"",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
+  },
+  {
+    "id": "TransparentUpgradeableProxy upgradeToAndCall without migrations when the call does not fail when the sender is not the admin reverts",
+    "cause": "estimate-gas-allowance-not-revert",
+    "note": "eth_estimateGas escalates to the 10M ceiling instead of surfacing the revert the test expects; the call is expected to fail, not to need more gas."
+  },
+  {
+    "id": "TransparentUpgradeableProxy upgradeToAndCall without migrations when the call does not fail when the sender is the admin \"before each\" hook for \"upgrades to the requested implementation\"",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "TrieProof process invalid proofs fails to process proof with invalid internal large hash",

@@ -18,6 +18,7 @@ import (
 	estorage "github.com/hyperledger/fabric-x-evm/endorser/storage"
 	"github.com/hyperledger/fabric-x-evm/gateway/api"
 	"github.com/hyperledger/fabric-x-evm/gateway/storage"
+	"github.com/hyperledger/fabric-x-evm/testutil/priming"
 )
 
 // NewTestServer creates an RPC server with test-only methods enabled.
@@ -29,7 +30,27 @@ import (
 // SECURITY WARNING: This server performs server-side transaction signing,
 // which is inherently insecure. Use ONLY for development and testing.
 // NEVER use in production environments.
-func NewTestServer(b api.Backend, testAccounts []common.Address, testAccountKeys map[common.Address]*ecdsa.PrivateKey, lightKVS estorage.Revertible, store storage.Revertible, pool TxPool) (*rpc.Server, error) {
+// TestServerOption configures optional test-server capabilities.
+type TestServerOption func(*testServerOpts)
+
+type testServerOpts struct {
+	primer *priming.StatePrimer
+}
+
+// WithStatePrimer backs hardhat_setBalance/setCode/setStorageAt with a real state
+// primer. The primer must be constructed with one endorsement.Builder per endorser
+// the network requires a signature from, so the priming transaction it self-endorses
+// is committable without involving those endorsers at all.
+func WithStatePrimer(p *priming.StatePrimer) TestServerOption {
+	return func(o *testServerOpts) { o.primer = p }
+}
+
+func NewTestServer(b api.Backend, testAccounts []common.Address, testAccountKeys map[common.Address]*ecdsa.PrivateKey, lightKVS estorage.Revertible, store storage.Revertible, pool TxPool, opts ...TestServerOption) (*rpc.Server, error) {
+	var o testServerOpts
+	for _, opt := range opts {
+		opt(&o)
+	}
+
 	srv := rpc.NewServer()
 
 	// Shared by the submit path and the snapshot/revert path; see txFence.
@@ -60,8 +81,13 @@ func NewTestServer(b api.Backend, testAccounts []common.Address, testAccountKeys
 		return nil, err
 	}
 
-	// Register Hardhat helper APIs for test compatibility
-	if err := srv.RegisterName("hardhat", NewHardhatAPI()); err != nil {
+	// Register Hardhat helper APIs for test compatibility. With a state primer the
+	// setBalance/setCode/setStorageAt methods are real; without one they refuse.
+	hardhatAPI := NewHardhatAPI()
+	if o.primer != nil {
+		hardhatAPI = NewHardhatStateAPI(o.primer, b)
+	}
+	if err := srv.RegisterName("hardhat", hardhatAPI); err != nil {
 		return nil, err
 	}
 	if err := srv.RegisterName("evm", NewEvmAPI(lightKVS, store, fence)); err != nil {

@@ -4,7 +4,7 @@ Copyright IBM Corp. All Rights Reserved.
 SPDX-License-Identifier: LGPL-3.0-or-later
 */
 
-package integration
+package priming
 
 import (
 	"context"
@@ -345,8 +345,25 @@ func (sp *StatePrimer) commitAndWait(end sdk.Endorsement, tx *types.Transaction,
 		// for commit loop unworkable. As soon as
 		// https://github.com/hyperledger/fabric-x-evm/issues/221
 		// is complete we will add the return again
-		waitForCommit(context.Background(), ec, tx)
+		WaitForCommit(context.Background(), ec, tx)
 	}
 
 	return nil
+}
+
+// ForceSetBalance drives addr's balance to exactly amount, unlike SetBalance which
+// only ever adds. There is no StateDB.SetBalance, so the target is reached by delta.
+func (sp *StatePrimer) ForceSetBalance(addr common.Address, amount *big.Int) *StatePrimer {
+	if amount == nil {
+		return sp
+	}
+	target := uint256.MustFromBig(amount)
+	current := sp.stateDB.GetBalance(addr)
+	switch target.Cmp(current) {
+	case 1: // raise to target
+		sp.stateDB.AddBalance(addr, new(uint256.Int).Sub(target, current), tracing.BalanceChangeUnspecified)
+	case -1: // lower to target
+		sp.stateDB.SubBalance(addr, new(uint256.Int).Sub(current, target), tracing.BalanceChangeUnspecified)
+	}
+	return sp
 }

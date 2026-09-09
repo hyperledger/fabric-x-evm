@@ -17,6 +17,7 @@ import (
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
+	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	"github.com/hyperledger/fabric-x-sdk/identity"
 	"github.com/hyperledger/fabric-x-sdk/network"
 	"golang.org/x/sync/errgroup"
@@ -33,6 +34,7 @@ import (
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
 	"github.com/hyperledger/fabric-x-evm/gateway/storage"
 	"github.com/hyperledger/fabric-x-evm/gateway/testimpl"
+	"github.com/hyperledger/fabric-x-evm/testutil/priming"
 )
 
 var appLogger = flogging.MustGetLogger("gateway.app")
@@ -50,6 +52,10 @@ type App struct {
 
 // Gateway returns the inner gateway, e.g. for use in tests.
 func (a *App) Gateway() *core.Gateway { return a.gateway }
+
+// RPCServer returns the app's RPC server, e.g. for tests that want to drive the
+// fully-wired test RPC surface in-process rather than over HTTP.
+func (a *App) RPCServer() *rpc.Server { return a.rpcServer }
 
 // EnsureGenesisBlock inserts an empty block 0 if the chain has no blocks yet.
 func (a *App) EnsureGenesisBlock(ctx context.Context) error {
@@ -113,12 +119,12 @@ func newApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, enableT
 		MaxTxGas:    cfg.Network.MaxTxGas,
 		DebugLogs:   ecfg.DebugLogs,
 	}
-	end, kvs, _, err := eapp.NewEndorserCore(ecfg.Database, cfg.Network.Channel, cfg.Network.Namespace, cfg.Network.Protocol, eSigner, evmConfig, enableTestRPC, ecfg)
+	end, kvs, builder, err := eapp.NewEndorserCore(ecfg.Database, cfg.Network.Channel, cfg.Network.Namespace, cfg.Network.Protocol, eSigner, evmConfig, enableTestRPC, ecfg)
 	if err != nil {
 		return nil, fmt.Errorf("endorser (%s): %w", ecfg.Name, err)
 	}
 
-	return buildApp(ctx, cfg, gwSigner, logger, []eapi.Service{end}, kvs, enableTestRPC, testAccountsPath, kvs)
+	return buildApp(ctx, cfg, gwSigner, logger, []eapi.Service{end}, kvs, enableTestRPC, testAccountsPath, []endorsement.Builder{builder}, kvs)
 }
 
 // newSplitApp builds the gateway in split-deployment mode: every endorsers is
@@ -145,7 +151,7 @@ func newSplitApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, lo
 		endorsers[i] = c
 	}
 
-	app, err := buildApp(ctx, cfg, gwSigner, logger, endorsers, nil, enableTestRPC, testAccountsPath)
+	app, err := buildApp(ctx, cfg, gwSigner, logger, endorsers, nil, enableTestRPC, testAccountsPath, nil)
 	if err != nil {
 		closeAll()
 		return nil, err
@@ -156,7 +162,11 @@ func newSplitApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, lo
 
 // buildApp wires up the gateway from pre-built endorsers.
 // extraHandlers are prepended to the synchronizer handler list, ahead of chain/gateway.
-func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorsers []eapi.Service, lightKVS estorage.KVS, enableTestRPC bool, testAccountsPath string, extraHandlers ...blocks.BlockHandler) (*App, error) {
+// builders carry one endorsement.Builder per endorser whose signature the network
+// requires. They are only used when enableTestRPC is set, to let the test RPC's
+// hardhat state directives self-endorse a priming transaction locally instead of
+// asking the endorsers to execute anything. Pass nil in production.
+func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorsers []eapi.Service, lightKVS estorage.KVS, enableTestRPC bool, testAccountsPath string, builders []endorsement.Builder, extraHandlers ...blocks.BlockHandler) (*App, error) {
 	orderers := make([]network.OrdererConf, len(cfg.Gateway.Orderers))
 	for i, o := range cfg.Gateway.Orderers {
 		orderers[i] = o.ToOrdererConf()
@@ -213,7 +223,24 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 		// Wrap the chain's store with SnapshotStore for snapshot/revert functionality
 		snapshotStore := storage.NewSnapshotStore(chain.Store)
 
-		rpcServer, err = testimpl.NewTestServer(gateway, testAccountMgr.Addresses, testAccountMgr.PrivateKeys, revertibleKVS, snapshotStore, gateway.TxQueue)
+		// A state primer lets hardhat_setBalance/setCode/setStorageAt commit real
+		// priming transactions. It needs a builder per endorser, so it is only
+		// available when the caller could supply them.
+		var serverOpts []testimpl.TestServerOption
+		if len(builders) > 0 {
+			normProtocol, err := common.NormalizeProtocol(cfg.Network.Protocol)
+			if err != nil {
+				return nil, fmt.Errorf("failed to normalize protocol: %w", err)
+			}
+			primer, err := priming.NewStatePrimer(gateway, submitters[0], lightKVS, cfg.Network.Namespace,
+				gwSigner, builders, cfg.Network.Channel, cfg.Network.NsVersion, normProtocol == common.ProtocolFabricX)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create state primer: %w", err)
+			}
+			serverOpts = append(serverOpts, testimpl.WithStatePrimer(primer))
+		}
+
+		rpcServer, err = testimpl.NewTestServer(gateway, testAccountMgr.Addresses, testAccountMgr.PrivateKeys, revertibleKVS, snapshotStore, gateway.TxQueue, serverOpts...)
 		if err != nil {
 			return nil, err
 		}
