@@ -46,10 +46,6 @@ type LightKVS struct {
 
 	// Next index in the ring buffer to write to
 	NextIndex atomic.Uint32
-
-	// hasCheckpoint distinguishes an applied block 0 from a fresh store, which
-	// Current.BlockNumber alone cannot.
-	hasCheckpoint atomic.Bool
 }
 
 // Snapshot represents an immutable point-in-time view of the key-value store.
@@ -60,6 +56,10 @@ type Snapshot struct {
 	// Data is the map from key to pointer to immutable value
 	// Multiple snapshots can share pointers to unchanged values
 	Data map[string]*ValueVersion
+
+	// Placeholder is true only for the pre-genesis Snapshot NewLightKVS
+	// constructs, distinguishing it from a real commit of block 0.
+	Placeholder bool
 }
 
 // ValueVersion represents a versioned value in the store.
@@ -110,6 +110,7 @@ func NewLightKVS(historySize int) *LightKVS {
 	initial := &Snapshot{
 		BlockNumber: 0,
 		Data:        make(map[string]*ValueVersion),
+		Placeholder: true,
 	}
 	kvs.Current.Store(initial)
 	// NextIndex starts at 0 - history slots are initially nil
@@ -274,7 +275,6 @@ func (kvs *LightKVS) applyBlock(blockNum uint64, updates []KeyValueVersion) erro
 	// Atomically swap in the new snapshot
 	// New readers will see this snapshot; existing readers keep their old snapshot
 	kvs.Current.Store(newSnapshot)
-	kvs.hasCheckpoint.Store(true)
 
 	return nil
 }
@@ -317,7 +317,7 @@ func collectWrites(updates *[]KeyValueVersion, nsrwsList []blocks.NsReadWriteSet
 // historySize recent snapshots, so there's nothing left to check it against.
 func (kvs *LightKVS) Handle(ctx context.Context, b blocks.Block) error {
 	current := kvs.Current.Load()
-	if kvs.hasCheckpoint.Load() && b.Number < current.BlockNumber {
+	if !current.Placeholder && b.Number < current.BlockNumber {
 		return nil
 	}
 
@@ -328,7 +328,7 @@ func (kvs *LightKVS) Handle(ctx context.Context, b blocks.Block) error {
 		collectWrites(&allUpdates, tx.NsRWS, b.Number, uint64(tx.Number), tx.ID, tx.Valid)
 	}
 
-	if kvs.hasCheckpoint.Load() && b.Number == current.BlockNumber {
+	if !current.Placeholder && b.Number == current.BlockNumber {
 		return verifyReplay(current, allUpdates)
 	}
 

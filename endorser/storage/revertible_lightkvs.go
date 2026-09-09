@@ -138,7 +138,7 @@ func (kvs *RevertibleLightKVS) Get(namespace, key string, lastBlock uint64) (*bl
 // skipped unverified, and a tip redelivery goes through verifyReplay.
 func (kvs *RevertibleLightKVS) Handle(ctx context.Context, b blocks.Block) error {
 	current := kvs.Current.Load()
-	if kvs.hasCheckpoint.Load() && b.Number < current.BlockNumber {
+	if !current.Placeholder && b.Number < current.BlockNumber {
 		return nil
 	}
 
@@ -147,7 +147,7 @@ func (kvs *RevertibleLightKVS) Handle(ctx context.Context, b blocks.Block) error
 		collectWrites(&updates, tx.NsRWS, b.Number, uint64(tx.Number), tx.ID, tx.Valid)
 	}
 
-	if kvs.hasCheckpoint.Load() && b.Number == current.BlockNumber {
+	if !current.Placeholder && b.Number == current.BlockNumber {
 		return verifyReplay(current, updates)
 	}
 
@@ -178,7 +178,6 @@ func (kvs *RevertibleLightKVS) applyBlock(blockNum uint64, updates []KeyValueVer
 	}
 
 	kvs.Current.Store(newSnapshot)
-	kvs.hasCheckpoint.Store(true)
 
 	return nil
 }
