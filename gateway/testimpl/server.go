@@ -12,7 +12,6 @@ package testimpl
 import (
 	"context"
 	"crypto/ecdsa"
-	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/rpc"
@@ -61,14 +60,8 @@ func NewTestServer(b api.Backend, testAccounts []common.Address, testAccountKeys
 		return nil, err
 	}
 
-	// Register Hardhat helper APIs for test compatibility. hardhat_setBalance,
-	// hardhat_setCode and hardhat_setStorageAt submit system directives, so the
-	// backend must be a StateSetter.
-	submitter, ok := b.(StateSetter)
-	if !ok {
-		return nil, fmt.Errorf("test RPC backend %T does not implement StateSetter", b)
-	}
-	if err := srv.RegisterName("hardhat", NewHardhatAPI(submitter)); err != nil {
+	// Register Hardhat helper APIs for test compatibility
+	if err := srv.RegisterName("hardhat", NewHardhatAPI()); err != nil {
 		return nil, err
 	}
 	if err := srv.RegisterName("evm", NewEvmAPI(lightKVS, store, fence)); err != nil {

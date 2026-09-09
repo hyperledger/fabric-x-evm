@@ -62,78 +62,6 @@ func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Tra
 		return sdk.Endorsement{}, err
 	}
 
-	return e.endorse(ctx, inv, "process EVM transaction", func(ctx context.Context, s api.Service, inv endorsement.Invocation, ts time.Time) (*peer.ProposalResponse, error) {
-		return s.Execute(ctx, inv, tx, ts)
-	})
-}
-
-// balanceSetter is implemented only by the test-only directive endorser.
-type balanceSetter interface {
-	SetBalance(ctx context.Context, inv endorsement.Invocation, addr ethcommon.Address, amount *big.Int) (*peer.ProposalResponse, error)
-}
-
-// SetBalance forwards a setBalance directive to every endorser.
-func (e EndorsementClient) SetBalance(ctx context.Context, addr ethcommon.Address, amount *big.Int) (sdk.Endorsement, error) {
-	inv, err := e.createInvocation([][]byte{{byte(common.ProposalTypeSetBalance)}, addr.Bytes(), amount.Bytes()})
-	if err != nil {
-		return sdk.Endorsement{}, err
-	}
-
-	return e.endorse(ctx, inv, "process setBalance directive", func(ctx context.Context, s api.Service, inv endorsement.Invocation, _ time.Time) (*peer.ProposalResponse, error) {
-		bs, ok := s.(balanceSetter)
-		if !ok {
-			return nil, fmt.Errorf("endorser %T does not support setBalance directives", s)
-		}
-		return bs.SetBalance(ctx, inv, addr, amount)
-	})
-}
-
-// codeSetter is implemented only by the test-only directive endorser.
-type codeSetter interface {
-	SetCode(ctx context.Context, inv endorsement.Invocation, addr ethcommon.Address, code []byte) (*peer.ProposalResponse, error)
-}
-
-// SetCode forwards a setCode directive to every endorser.
-func (e EndorsementClient) SetCode(ctx context.Context, addr ethcommon.Address, code []byte) (sdk.Endorsement, error) {
-	inv, err := e.createInvocation([][]byte{{byte(common.ProposalTypeSetCode)}, addr.Bytes(), code})
-	if err != nil {
-		return sdk.Endorsement{}, err
-	}
-
-	return e.endorse(ctx, inv, "process setCode directive", func(ctx context.Context, s api.Service, inv endorsement.Invocation, _ time.Time) (*peer.ProposalResponse, error) {
-		cs, ok := s.(codeSetter)
-		if !ok {
-			return nil, fmt.Errorf("endorser %T does not support setCode directives", s)
-		}
-		return cs.SetCode(ctx, inv, addr, code)
-	})
-}
-
-// storageSetter is implemented only by the test-only directive endorser.
-type storageSetter interface {
-	SetStorageAt(ctx context.Context, inv endorsement.Invocation, addr ethcommon.Address, key, value ethcommon.Hash) (*peer.ProposalResponse, error)
-}
-
-// SetStorageAt forwards a setStorageAt directive to every endorser.
-func (e EndorsementClient) SetStorageAt(ctx context.Context, addr ethcommon.Address, key, value ethcommon.Hash) (sdk.Endorsement, error) {
-	inv, err := e.createInvocation([][]byte{{byte(common.ProposalTypeSetStorageAt)}, addr.Bytes(), key.Bytes(), value.Bytes()})
-	if err != nil {
-		return sdk.Endorsement{}, err
-	}
-
-	return e.endorse(ctx, inv, "process setStorageAt directive", func(ctx context.Context, s api.Service, inv endorsement.Invocation, _ time.Time) (*peer.ProposalResponse, error) {
-		ss, ok := s.(storageSetter)
-		if !ok {
-			return nil, fmt.Errorf("endorser %T does not support setStorageAt directives", s)
-		}
-		return ss.SetStorageAt(ctx, inv, addr, key, value)
-	})
-}
-
-// endorse fans the invocation out to every endorser via call and assembles the
-// endorsement. label identifies the invocation kind in the error message.
-func (e EndorsementClient) endorse(ctx context.Context, inv endorsement.Invocation, label string,
-	call func(context.Context, api.Service, endorsement.Invocation, time.Time) (*peer.ProposalResponse, error)) (sdk.Endorsement, error) {
 	// Single timestamp for all endorsers so RWsets match.
 	reqTime := time.Now()
 
@@ -147,7 +75,7 @@ func (e EndorsementClient) endorse(ctx context.Context, inv endorsement.Invocati
 
 	for i, end := range e.endorsers {
 		processEndorsement := func(index int, endorser api.Service) {
-			pResp, err := call(ctx, endorser, inv, reqTime)
+			pResp, err := endorser.Execute(ctx, inv, tx, reqTime)
 			if err != nil {
 				// A Go error is a transport/delivery failure (e.g. gRPC), not a tx outcome.
 				errs[index] = fmt.Errorf("call endorser: %w", err)
@@ -162,7 +90,7 @@ func (e EndorsementClient) endorse(ctx context.Context, inv endorsement.Invocati
 			case common.StatusOK, common.StatusEVMRevert, common.StatusExecFailure:
 				res[index] = pResp
 			default:
-				errs[index] = fmt.Errorf("%s: %s", label, pResp.Response.Message)
+				errs[index] = fmt.Errorf("process EVM transaction: %s", pResp.Response.Message)
 				cancel()
 			}
 		}

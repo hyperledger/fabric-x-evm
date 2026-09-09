@@ -12,76 +12,38 @@ package testimpl
 import (
 	"context"
 	"fmt"
-	"math/big"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	estorage "github.com/hyperledger/fabric-x-evm/endorser/storage"
-	gwapi "github.com/hyperledger/fabric-x-evm/gateway/api"
 	"github.com/hyperledger/fabric-x-evm/gateway/storage"
 )
 
 var hardhatLogger = flogging.MustGetLogger("gateway.testimpl.hardhat")
 
-// StateSetter submits setBalance/setCode/setStorageAt directives and blocks
-// until each commits; satisfied by *core.Gateway.
-type StateSetter interface {
-	SetBalance(ctx context.Context, addr common.Address, amount *big.Int) error
-	SetCode(ctx context.Context, addr common.Address, code []byte) error
-	SetStorageAt(ctx context.Context, addr common.Address, key, value common.Hash) error
-}
-
 // HardhatAPI provides Hardhat-specific RPC methods for testing.
-// Most methods are stubs that let Hardhat tests run; SetBalance, SetCode and
-// SetStorageAt are backed by real system directives via the gateway.
+// These are stub implementations that allow Hardhat tests to run but don't
+// actually implement the full functionality.
 //
 // SECURITY WARNING: These methods are for testing only and should NEVER
 // be enabled in production environments.
-type HardhatAPI struct {
-	submit StateSetter
+type HardhatAPI struct{}
+
+// NewHardhatAPI creates a new Hardhat API instance.
+func NewHardhatAPI() *HardhatAPI {
+	return &HardhatAPI{}
 }
 
-// NewHardhatAPI creates a new Hardhat API instance backed by submit for state-modifying methods.
-func NewHardhatAPI(submit StateSetter) *HardhatAPI {
-	return &HardhatAPI{submit: submit}
-}
-
-// SetBalance sets an account's wei balance (hardhat_setBalance), blocking until committed
-// and reflected in reads of the account's balance.
-func (api *HardhatAPI) SetBalance(ctx context.Context, addr common.Address, balance hexutil.Big) error {
-	target := (*big.Int)(&balance)
-	hardhatLogger.Debugf("HardhatAPI.SetBalance() called with address=%s, balance=%s", addr.Hex(), target.String())
-	return api.submit.SetBalance(ctx, addr, target)
-}
-
-// SetCode sets an account's code (hardhat_setCode), blocking until committed
-// and reflected in reads of the account's code. Empty code clears it.
+// SetCode sets the code at a given address (hardhat_setCode).
+// This is a stub implementation that returns success but doesn't actually modify state.
+// TODO: Implement proper code modification if needed for specific test scenarios.
 func (api *HardhatAPI) SetCode(ctx context.Context, address common.Address, code hexutil.Bytes) (bool, error) {
 	hardhatLogger.Debugf("HardhatAPI.SetCode() called with address=%s, code length=%d", address.Hex(), len(code))
-	if err := api.submit.SetCode(ctx, address, code); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-// SetStorageAt sets an account's storage slot (hardhat_setStorageAt), blocking
-// until committed and reflected in reads of the slot. Hardhat sends slot and
-// value as quantity-style hex strings, so both are decoded like eth_getStorageAt.
-func (api *HardhatAPI) SetStorageAt(ctx context.Context, address common.Address, slot string, value string) (bool, error) {
-	hardhatLogger.Debugf("HardhatAPI.SetStorageAt() called with address=%s, slot=%s, value=%s", address.Hex(), slot, value)
-	key, err := gwapi.DecodeStorageWord("storage key", slot)
-	if err != nil {
-		return false, err
-	}
-	val, err := gwapi.DecodeStorageWord("storage value", value)
-	if err != nil {
-		return false, err
-	}
-	if err := api.submit.SetStorageAt(ctx, address, key, val); err != nil {
-		return false, err
-	}
+	// Stub: return success without actually modifying state
+	// In a full implementation, this would modify the account's code in the state DB
+	hardhatLogger.Debugf("HardhatAPI.SetCode() returning: true")
 	return true, nil
 }
 
