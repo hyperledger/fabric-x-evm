@@ -19,7 +19,7 @@ func (kvs *RevertibleLightKVS) update(updates []KeyValueVersion) error {
 	if len(updates) > 0 {
 		blockNum = updates[0].BlockNum
 	}
-	return kvs.applyBlock(blockNum, updates)
+	return kvs.applyBlockSequential(blockNum, updates)
 }
 
 func TestNewRevertibleLightKVS(t *testing.T) {
@@ -297,58 +297,29 @@ func TestRevertibleLightKVS_NewSnapshot_NotFound(t *testing.T) {
 	}
 }
 
-// TestRevertibleLightKVS_HistoryWrapsAndEvictsGracefully ensures the correct eviction of old blocks
-// when the history is full. A request for an evicted block gets an explicit error.
-func TestRevertibleLightKVS_HistoryWrapsAndEvictsGracefully(t *testing.T) {
-	kvs := NewRevertibleLightKVS(NewLightKVS(2))
+// TestRevertibleLightKVS_HistoryExhaustedPanics documents the deliberate trade-off:
+// unlike plain LightKVS (which wraps forever), a revert-capable instance panics once
+// its bounded history window fills up, since a wrapping ring buffer can't guarantee
+// a stable index to revert to. This is why RevertibleLightKVS must never be used for
+// a long-running, continuously-committing endorser.
+func TestRevertibleLightKVS_HistoryExhaustedPanics(t *testing.T) {
+	kvs := NewRevertibleLightKVS(NewLightKVS(1))
 
-	for i, val := range []string{"v1", "v2", "v3", "v4"} {
-		if err := kvs.update([]KeyValueVersion{
-			{Key: "ns1:key1", Value: []byte(val), BlockNum: uint64(i + 1), TxNum: 0, TxID: "tx"},
-		}); err != nil {
-			t.Fatalf("Update block %d should wrap rather than error, got: %v", i+1, err)
-		}
-	}
-
-	// The size-2 ring has evicted blocks 0 and 1 by now; either must error
-	// rather than silently returning some other block's state.
-	for _, bn := range []uint64{0, 1} {
-		if _, err := kvs.NewSnapshot(&bn); err == nil {
-			t.Errorf("expected error reading evicted block %d, got nil", bn)
-		}
-	}
-
-	// Block 2 is still retained.
-	reader, err := kvs.NewSnapshot(new(uint64(2)))
-	if err != nil {
-		t.Fatalf("NewSnapshot(2) should still be available: %v", err)
-	}
-	if rec, err := reader.Get("ns1", "key1"); err != nil || rec == nil || string(rec.Value) != "v2" {
-		reader.Close()
-		t.Errorf("expected key1=v2 at block 2, got %+v (err %v)", rec, err)
-	}
-	reader.Close()
-
-	// One more commit: the ring keeps evicting correctly on a second lap.
-	// Block 2 is now evicted; block 3 (still retained before this commit) survives.
 	if err := kvs.update([]KeyValueVersion{
-		{Key: "ns1:key1", Value: []byte("v5"), BlockNum: 5, TxNum: 0, TxID: "tx"},
+		{Key: "ns1:key1", Value: []byte("v1"), BlockNum: 1, TxNum: 0, TxID: "tx1"},
 	}); err != nil {
-		t.Fatalf("Update block 5 should wrap rather than error, got: %v", err)
+		t.Fatalf("first Update failed: %v", err)
 	}
 
-	if _, err := kvs.NewSnapshot(new(uint64(2))); err == nil {
-		t.Error("expected error reading now-evicted block 2, got nil")
-	}
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic once history window is exhausted, got none")
+		}
+	}()
 
-	reader, err = kvs.NewSnapshot(new(uint64(3)))
-	if err != nil {
-		t.Fatalf("NewSnapshot(3) should still be available: %v", err)
-	}
-	defer reader.Close()
-	if rec, err := reader.Get("ns1", "key1"); err != nil || rec == nil || string(rec.Value) != "v3" {
-		t.Errorf("expected key1=v3 at block 3, got %+v (err %v)", rec, err)
-	}
+	_ = kvs.update([]KeyValueVersion{
+		{Key: "ns1:key1", Value: []byte("v2"), BlockNum: 2, TxNum: 0, TxID: "tx2"},
+	})
 }
 
 // TestRevertibleLightKVS_RevertToBlock_DuplicateBlockNumber pins which snapshot
@@ -437,32 +408,29 @@ func TestRevertibleLightKVS_NewSnapshot_DuplicateBlockNumber(t *testing.T) {
 	}
 }
 
-// TestRevertibleLightKVS_Handle_WrapsGracefully is Handle's counterpart to
-// TestRevertibleLightKVS_HistoryWrapsAndEvictsGracefully: the synchronizer
-// path wraps and evicts the same way update does, rather than panicking.
-func TestRevertibleLightKVS_Handle_WrapsGracefully(t *testing.T) {
+// TestRevertibleLightKVS_Handle_SequentialNotWrapping verifies Handle shares
+// Update's panic-on-exhaustion contract rather than silently wrapping like the
+// promoted LightKVS.Handle would. Before Handle was overridden, this scenario
+// wrapped the ring buffer without error, which the doc comment on the type
+// does not promise.
+func TestRevertibleLightKVS_Handle_SequentialNotWrapping(t *testing.T) {
 	kvs := NewRevertibleLightKVS(NewLightKVS(2))
 	ctx := t.Context()
 
-	for i := uint64(1); i <= 4; i++ {
+	for i := uint64(1); i <= 2; i++ {
 		if err := kvs.Handle(ctx, mkBlock(i, 0, "tx", true, "ns1",
 			blocks.KVWrite{Key: "k", Value: []byte{byte(i)}})); err != nil {
-			t.Fatalf("Handle block %d should wrap rather than error, got: %v", i, err)
+			t.Fatalf("Handle block %d: %v", i, err)
 		}
 	}
 
-	if _, err := kvs.NewSnapshot(new(uint64(1))); err == nil {
-		t.Error("expected error reading evicted block 1, got nil")
-	}
-
-	reader, err := kvs.NewSnapshot(new(uint64(2)))
-	if err != nil {
-		t.Fatalf("NewSnapshot(2) should still be available: %v", err)
-	}
-	defer reader.Close()
-	if rec, err := reader.Get("ns1", "k"); err != nil || rec == nil || rec.Value[0] != 2 {
-		t.Errorf("expected k=2 at block 2, got %+v (err %v)", rec, err)
-	}
+	defer func() {
+		if recover() == nil {
+			t.Error("expected a panic once history (size 2) is exhausted, got none")
+		}
+	}()
+	_ = kvs.Handle(ctx, mkBlock(3, 0, "tx", true, "ns1", blocks.KVWrite{Key: "k", Value: []byte{3}}))
+	t.Error("Handle should have panicked before returning")
 }
 
 // TestRevertibleLightKVS_Handle_EmptyBlockAdvancesHeight verifies a block with
