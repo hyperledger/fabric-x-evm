@@ -11,6 +11,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hyperledger/fabric-x-committer/utils/connection"
+	"github.com/hyperledger/fabric-x-committer/utils/serve"
+
 	"github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/endorser/config"
 )
@@ -46,6 +49,34 @@ func validEndorser(t *testing.T) config.Endorser {
 	}
 }
 
+func validServerConfig(t *testing.T) *serve.ServerConfig {
+	t.Helper()
+	cert, err := os.CreateTemp(t.TempDir(), "*.crt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert.Close()
+	key, err := os.CreateTemp(t.TempDir(), "*.key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key.Close()
+	ca, err := os.CreateTemp(t.TempDir(), "*.pem")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ca.Close()
+	return &serve.ServerConfig{
+		Endpoint: connection.Endpoint{Host: "127.0.0.1", Port: 9001},
+		TLS: connection.TLSConfig{
+			Mode:        connection.MutualTLSMode,
+			CertPath:    cert.Name(),
+			KeyPath:     key.Name(),
+			CACertPaths: []string{ca.Name()},
+		},
+	}
+}
+
 func TestEndorserValidate(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -64,6 +95,25 @@ func TestEndorserValidate(t *testing.T) {
 			e.Database.Database = ""
 			e.Database.ConnString = ""
 		}, "database"},
+		{"valid with server", func(e *config.Endorser) {
+			e.Server = validServerConfig(t)
+		}, ""},
+		{"server missing endpoint", func(e *config.Endorser) {
+			e.Server = validServerConfig(t)
+			e.Server.Endpoint = connection.Endpoint{}
+		}, "endpoint"},
+		{"server cert-path not exist", func(e *config.Endorser) {
+			e.Server = validServerConfig(t)
+			e.Server.TLS.CertPath = "/no/such/cert.pem"
+		}, "tls.cert-path"},
+		{"server key-path not exist", func(e *config.Endorser) {
+			e.Server = validServerConfig(t)
+			e.Server.TLS.KeyPath = "/no/such/key.pem"
+		}, "tls.key-path"},
+		{"server ca-cert-path not exist", func(e *config.Endorser) {
+			e.Server = validServerConfig(t)
+			e.Server.TLS.CACertPaths = []string{"/no/such/ca.pem"}
+		}, "tls.ca-cert-paths"},
 	}
 
 	for _, tt := range tests {
