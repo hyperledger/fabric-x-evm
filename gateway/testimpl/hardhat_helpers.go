@@ -74,6 +74,13 @@ func NewHardhatStateAPI(sp *primer.StatePrimer, backend gwapi.Backend) *HardhatA
 //
 // It short-circuits when confirm already holds: Hardhat replays the same value
 // often, and an empty read-write set is not worth a round through consensus.
+//
+// confirm must report a change that is merely not visible yet as (false, nil) and
+// reserve a non-nil error for a broken read path — the account reads underneath it
+// return zero values for accounts that do not exist, rather than failing. prime
+// therefore treats any error from confirm as terminal and returns it instead of
+// polling on: retrying a read that cannot succeed only defers the failure to the
+// timeout and hides its cause.
 func (api *HardhatAPI) prime(
 	ctx context.Context,
 	what string,
@@ -84,7 +91,11 @@ func (api *HardhatAPI) prime(
 		return fmt.Errorf("%s: test RPC server was built without a state primer", what)
 	}
 
-	if ok, err := confirm(ctx); err == nil && ok {
+	ok, err := confirm(ctx)
+	if err != nil {
+		return fmt.Errorf("%s: confirm current value: %w", what, err)
+	}
+	if ok {
 		return nil
 	}
 
@@ -110,8 +121,19 @@ func (api *HardhatAPI) prime(
 	defer ticker.Stop()
 
 	for {
-		if ok, err := confirm(waitCtx); err == nil && ok {
+		ok, err := confirm(waitCtx)
+		if ok && err == nil {
 			return nil
+		}
+		if err != nil {
+			// A read that fails once will keep failing, so this is the end of the
+			// road either way. Which error to report depends on why: once waitCtx
+			// is done, confirm's error is a symptom of the deadline rather than
+			// its own failure, and the timeout is the more useful diagnosis.
+			if waitCtx.Err() != nil {
+				return fmt.Errorf("%s: change did not become observable: %w", what, waitCtx.Err())
+			}
+			return fmt.Errorf("%s: confirm change: %w", what, err)
 		}
 		select {
 		case <-waitCtx.Done():
@@ -131,7 +153,10 @@ func (api *HardhatAPI) SetBalance(ctx context.Context, address common.Address, b
 		func(p *primer.StatePrimer) { p.SetBalance(address, target) },
 		func(ctx context.Context) (bool, error) {
 			got, err := api.backend.BalanceAt(ctx, address, nil)
-			return err == nil && got.Cmp(target) == 0, err
+			if err != nil {
+				return false, err
+			}
+			return got.Cmp(target) == 0, nil
 		})
 }
 
@@ -147,7 +172,10 @@ func (api *HardhatAPI) SetCode(ctx context.Context, address common.Address, code
 		func(p *primer.StatePrimer) { p.SetCode(address, code) },
 		func(ctx context.Context) (bool, error) {
 			got, err := api.backend.CodeAt(ctx, address, nil)
-			return err == nil && bytes.Equal(got, code), err
+			if err != nil {
+				return false, err
+			}
+			return bytes.Equal(got, code), nil
 		}); err != nil {
 		return false, err
 	}
@@ -175,7 +203,10 @@ func (api *HardhatAPI) SetStorageAt(ctx context.Context, address common.Address,
 		},
 		func(ctx context.Context) (bool, error) {
 			got, err := api.backend.StorageAt(ctx, address, key, nil)
-			return err == nil && common.BytesToHash(got) == val, err
+			if err != nil {
+				return false, err
+			}
+			return common.BytesToHash(got) == val, nil
 		}); err != nil {
 		return false, err
 	}
