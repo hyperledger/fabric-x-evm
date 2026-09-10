@@ -13,6 +13,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
+	apifilters "github.com/hyperledger/fabric-x-evm/gateway/api/filters"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 )
 
@@ -63,7 +64,7 @@ func receipt(r *domain.Transaction) *rpcReceipt {
 
 	logs := make([]*types.Log, len(r.Logs))
 	for i, l := range r.Logs {
-		logs[i] = domainLogToTypesLog(l)
+		logs[i] = apifilters.DomainLogToTypes(l)
 	}
 
 	return &rpcReceipt{

@@ -3387,6 +3387,12 @@
     "id": "MerkleTree push pushing to a full tree reverts"
   },
   {
+    "id": "RateLimiter RefillingBucket with some capacity consume consume reduces available and increases used",
+    "cause": "hardhat-time-rpc",
+    "note": "Bucket/window state depends on real elapsed wall-clock time between txs (evm_increaseTime/evm_setNextBlockTimestamp are no-ops, COMPATIBILITY.md); tests assuming zero/exact elapsed time pick up unintended refill/decay.",
+    "flaky": true
+  },
+  {
     "id": "RateLimiter RefillingBucket with some capacity consume consume one key does not affect another key",
     "cause": "hardhat-time-rpc",
     "note": "Bucket/window state depends on real elapsed wall-clock time between txs (evm_increaseTime/evm_setNextBlockTimestamp are no-ops, COMPATIBILITY.md); tests assuming zero/exact elapsed time pick up unintended refill/decay.",
