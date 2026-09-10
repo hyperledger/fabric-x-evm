@@ -259,7 +259,7 @@ func (sp *StatePrimer) Commit(ctx context.Context, wait bool) error {
 		presps = append(presps, presp)
 	}
 
-	return sp.commitAndWait(sdk.Endorsement{
+	return sp.commitAndWait(ctx, sdk.Endorsement{
 		Responses: presps,
 		Proposal:  inv.Proposal,
 	}, tx, wait)
@@ -326,7 +326,7 @@ func (sp *StatePrimer) fakeEthTx() (*types.Transaction, []byte, error) {
 	return signedTx, ethTxBytes, nil
 }
 
-func (sp *StatePrimer) commitAndWait(end sdk.Endorsement, tx *types.Transaction, wait bool) error {
+func (sp *StatePrimer) commitAndWait(ctx context.Context, end sdk.Endorsement, tx *types.Transaction, wait bool) error {
 	if wait {
 		// submit through the gateway (asynchronous)
 		if err := sp.gw.SubmitFabricTx(context.Background(), tx.Hash(), end); err != nil {
@@ -352,7 +352,10 @@ func (sp *StatePrimer) commitAndWait(end sdk.Endorsement, tx *types.Transaction,
 		// for commit loop unworkable. As soon as
 		// https://github.com/hyperledger/fabric-x-evm/issues/221
 		// is complete we will add the return again
-		WaitForCommit(context.Background(), ec, tx)
+		//
+		// ctx is the caller's, so a client that gives up on the RPC also ends
+		// the wait rather than leaving it polling until its own 10s bound.
+		WaitForCommit(ctx, ec, tx)
 	}
 
 	return nil
