@@ -104,7 +104,7 @@ func TestTestNode_HardhatSetBalance(t *testing.T) {
 		t.Fatalf("balance = %s, want %s", got, want)
 	}
 
-	// Lower it: the delta path. ForceSetBalance must subtract, not add.
+	// Lower it: the delta path. SetBalance must subtract, not add.
 	lower := big.NewInt(5_000)
 	setBalance(t, ctx, rc, addr, lower)
 	if got, err := ec.BalanceAt(ctx, addr, nil); err != nil {

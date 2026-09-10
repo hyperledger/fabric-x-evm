@@ -69,9 +69,9 @@ func newTestPrimer(t *testing.T, builders ...endorsement.Builder) *StatePrimer {
 	return sp
 }
 
-func TestForceSetBalance_RaiseFromZero(t *testing.T) {
+func TestSetBalance_RaiseFromZero(t *testing.T) {
 	sp := newTestPrimer(t)
-	sp.ForceSetBalance(primerTestAddr, big.NewInt(1_000))
+	sp.SetBalance(primerTestAddr, big.NewInt(1_000))
 
 	got := balFromRWS(sp.Writes(), primerTestAddr)
 	if got == nil {
@@ -82,19 +82,19 @@ func TestForceSetBalance_RaiseFromZero(t *testing.T) {
 	}
 }
 
-// TestForceSetBalance_LowerExisting is the case plain SetBalance gets wrong: it only
-// ever adds, so lowering a balance needs the subtract branch.
-func TestForceSetBalance_LowerExisting(t *testing.T) {
+// TestSetBalance_LowerExisting is the case an add-only setter gets wrong: reaching a
+// lower target needs the subtract branch.
+func TestSetBalance_LowerExisting(t *testing.T) {
 	sp := newTestPrimer(t)
 
 	// Seed a balance, then drive it down.
-	sp.ForceSetBalance(primerTestAddr, big.NewInt(1_000))
+	sp.SetBalance(primerTestAddr, big.NewInt(1_000))
 	seeded := balFromRWS(sp.Writes(), primerTestAddr)
 	if seeded == nil || seeded.Cmp(big.NewInt(1_000)) != 0 {
 		t.Fatalf("seed balance = %v, want 1000", seeded)
 	}
 
-	sp.ForceSetBalance(primerTestAddr, big.NewInt(250))
+	sp.SetBalance(primerTestAddr, big.NewInt(250))
 	got := balFromRWS(sp.Writes(), primerTestAddr)
 	if got == nil {
 		t.Fatal("no balance write after lowering")
@@ -104,9 +104,26 @@ func TestForceSetBalance_LowerExisting(t *testing.T) {
 	}
 }
 
-func TestForceSetBalance_NilAmountIsNoOp(t *testing.T) {
+// TestSetBalance_ZeroDrains pins that zero is a target like any other, and not the
+// "nothing to add" no-op an add-only setter would treat it as.
+func TestSetBalance_ZeroDrains(t *testing.T) {
 	sp := newTestPrimer(t)
-	sp.ForceSetBalance(primerTestAddr, nil)
+
+	sp.SetBalance(primerTestAddr, big.NewInt(1_000))
+	sp.SetBalance(primerTestAddr, big.NewInt(0))
+
+	got := balFromRWS(sp.Writes(), primerTestAddr)
+	if got == nil {
+		t.Fatal("no balance write after draining")
+	}
+	if got.Sign() != 0 {
+		t.Fatalf("balance after draining = %s, want 0", got)
+	}
+}
+
+func TestSetBalance_NilAmountIsNoOp(t *testing.T) {
+	sp := newTestPrimer(t)
+	sp.SetBalance(primerTestAddr, nil)
 	if got := balFromRWS(sp.Writes(), primerTestAddr); got != nil {
 		t.Fatalf("nil amount wrote balance %s, want no write", got)
 	}
@@ -122,7 +139,7 @@ func TestEndorsesWithEveryBuilder(t *testing.T) {
 	b3 := &countingBuilder{name: "org3"}
 	sp := newTestPrimer(t, b1, b2, b3)
 
-	sp.ForceSetBalance(primerTestAddr, big.NewInt(42))
+	sp.SetBalance(primerTestAddr, big.NewInt(42))
 
 	// Collect endorsements exactly as Commit does, without needing a gateway or
 	// submitter to carry the result anywhere.
@@ -159,7 +176,7 @@ func TestEndorsesWithEveryBuilder(t *testing.T) {
 // primer accumulates earlier writes and re-commits them.
 func TestResetDiscardsQueuedWrites(t *testing.T) {
 	sp := newTestPrimer(t)
-	sp.ForceSetBalance(primerTestAddr, big.NewInt(500))
+	sp.SetBalance(primerTestAddr, big.NewInt(500))
 	if balFromRWS(sp.Writes(), primerTestAddr) == nil {
 		t.Fatal("expected a queued balance write before reset")
 	}

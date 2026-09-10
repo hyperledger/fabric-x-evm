@@ -128,7 +128,7 @@ func (api *HardhatAPI) SetBalance(ctx context.Context, address common.Address, b
 	hardhatLogger.Debugf("HardhatAPI.SetBalance() called with address=%s, balance=%s", address.Hex(), target.String())
 
 	return api.prime(ctx, "setBalance",
-		func(p *primer.StatePrimer) { p.ForceSetBalance(address, target) },
+		func(p *primer.StatePrimer) { p.SetBalance(address, target) },
 		func(ctx context.Context) (bool, error) {
 			got, err := api.backend.BalanceAt(ctx, address, nil)
 			return err == nil && got.Cmp(target) == 0, err

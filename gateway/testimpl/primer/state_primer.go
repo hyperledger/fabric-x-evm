@@ -97,7 +97,7 @@ func NewStatePrimer(
 	}, nil
 }
 
-// SetNonce sets the nonce for an address immediately in the simulation store.
+// CreateAccount creates an account for an address immediately in the simulation store.
 func (sp *StatePrimer) CreateAccount(addr common.Address) *StatePrimer {
 	sp.stateDB.CreateAccount(addr)
 	return sp
@@ -116,12 +116,21 @@ func (sp *StatePrimer) SetCode(addr common.Address, code []byte) *StatePrimer {
 	return sp
 }
 
-// SetBalance sets the balance for an address immediately in the simulation store.
+// SetBalance drives addr's balance to exactly balance in the simulation store.
+// vm.StateDB has no SetBalance, so the target is reached by applying the delta from
+// the current balance — which means it also lowers a balance, not just raises one.
+// A nil or negative balance is a no-op.
 func (sp *StatePrimer) SetBalance(addr common.Address, balance *big.Int) *StatePrimer {
-	if balance != nil && balance.Sign() > 0 {
-		// Use AddBalance to set the balance (SnapshotDB doesn't have SetBalance)
-		// This works because accounts start with zero balance
-		sp.stateDB.AddBalance(addr, uint256.MustFromBig(balance), tracing.BalanceChangeUnspecified)
+	if balance == nil || balance.Sign() < 0 {
+		return sp
+	}
+	target := uint256.MustFromBig(balance)
+	current := sp.stateDB.GetBalance(addr)
+	switch target.Cmp(current) {
+	case 1: // raise to target
+		sp.stateDB.AddBalance(addr, new(uint256.Int).Sub(target, current), tracing.BalanceChangeUnspecified)
+	case -1: // lower to target
+		sp.stateDB.SubBalance(addr, new(uint256.Int).Sub(current, target), tracing.BalanceChangeUnspecified)
 	}
 	return sp
 }
@@ -143,10 +152,8 @@ func (sp *StatePrimer) SetAccount(addr common.Address, nonce *uint64, code []byt
 	}
 
 	sp.SetCode(addr, code)
+	sp.SetBalance(addr, balance)
 
-	if balance != nil {
-		sp.SetBalance(addr, balance)
-	}
 	if len(storage) > 0 {
 		sp.SetStorage(addr, storage)
 	}
@@ -349,21 +356,4 @@ func (sp *StatePrimer) commitAndWait(end sdk.Endorsement, tx *types.Transaction,
 	}
 
 	return nil
-}
-
-// ForceSetBalance drives addr's balance to exactly amount, unlike SetBalance which
-// only ever adds. There is no StateDB.SetBalance, so the target is reached by delta.
-func (sp *StatePrimer) ForceSetBalance(addr common.Address, amount *big.Int) *StatePrimer {
-	if amount == nil {
-		return sp
-	}
-	target := uint256.MustFromBig(amount)
-	current := sp.stateDB.GetBalance(addr)
-	switch target.Cmp(current) {
-	case 1: // raise to target
-		sp.stateDB.AddBalance(addr, new(uint256.Int).Sub(target, current), tracing.BalanceChangeUnspecified)
-	case -1: // lower to target
-		sp.stateDB.SubBalance(addr, new(uint256.Int).Sub(current, target), tracing.BalanceChangeUnspecified)
-	}
-	return sp
 }
