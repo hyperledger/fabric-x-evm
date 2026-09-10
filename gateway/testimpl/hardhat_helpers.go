@@ -101,7 +101,7 @@ func (api *HardhatAPI) prime(
 	}
 	apply(api.primer)
 
-	if err := api.primer.Commit(ctx, true); err != nil {
+	if err := api.primer.Commit(ctx, false); err != nil {
 		return fmt.Errorf("%s: commit priming transaction: %w", what, err)
 	}
 
