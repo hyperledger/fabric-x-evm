@@ -18,7 +18,7 @@ import (
 	estorage "github.com/hyperledger/fabric-x-evm/endorser/storage"
 	"github.com/hyperledger/fabric-x-evm/gateway/api"
 	"github.com/hyperledger/fabric-x-evm/gateway/storage"
-	"github.com/hyperledger/fabric-x-evm/testutil/priming"
+	"github.com/hyperledger/fabric-x-evm/gateway/testimpl/primer"
 )
 
 // NewTestServer creates an RPC server with test-only methods enabled.
@@ -34,14 +34,14 @@ import (
 type TestServerOption func(*testServerOpts)
 
 type testServerOpts struct {
-	primer *priming.StatePrimer
+	primer *primer.StatePrimer
 }
 
 // WithStatePrimer backs hardhat_setBalance/setCode/setStorageAt with a real state
 // primer. The primer must be constructed with one endorsement.Builder per endorser
 // the network requires a signature from, so the priming transaction it self-endorses
 // is committable without involving those endorsers at all.
-func WithStatePrimer(p *priming.StatePrimer) TestServerOption {
+func WithStatePrimer(p *primer.StatePrimer) TestServerOption {
 	return func(o *testServerOpts) { o.primer = p }
 }
 

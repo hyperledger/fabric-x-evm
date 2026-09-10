@@ -22,6 +22,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/hyperledger/fabric-x-evm/gateway/testimpl/primer"
 	"github.com/hyperledger/fabric-x-evm/integration"
 	"github.com/hyperledger/fabric-x-evm/integration/contracts"
 )
@@ -149,7 +150,7 @@ func fetchContract(rpcURL, outputFile string) error {
 	log.Printf("USDC implementation bytecode length: %d bytes", len(code))
 	hexCode = hex.EncodeToString(code)
 
-	alloc := map[string]integration.AllocEntry{
+	alloc := map[string]primer.AllocEntry{
 		usdcAddress.Hex(): {
 			Code: usdcCode,
 			Storage: map[string]string{

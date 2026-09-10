@@ -34,7 +34,7 @@ import (
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
 	"github.com/hyperledger/fabric-x-evm/gateway/storage"
 	"github.com/hyperledger/fabric-x-evm/gateway/testimpl"
-	"github.com/hyperledger/fabric-x-evm/testutil/priming"
+	"github.com/hyperledger/fabric-x-evm/gateway/testimpl/primer"
 )
 
 var appLogger = flogging.MustGetLogger("gateway.app")
@@ -232,12 +232,12 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 			if err != nil {
 				return nil, fmt.Errorf("failed to normalize protocol: %w", err)
 			}
-			primer, err := priming.NewStatePrimer(gateway, submitters[0], lightKVS, cfg.Network.Namespace,
+			sp, err := primer.NewStatePrimer(gateway, submitters[0], lightKVS, cfg.Network.Namespace,
 				gwSigner, builders, cfg.Network.Channel, cfg.Network.NsVersion, normProtocol == common.ProtocolFabricX)
 			if err != nil {
 				return nil, fmt.Errorf("failed to create state primer: %w", err)
 			}
-			serverOpts = append(serverOpts, testimpl.WithStatePrimer(primer))
+			serverOpts = append(serverOpts, testimpl.WithStatePrimer(sp))
 		}
 
 		rpcServer, err = testimpl.NewTestServer(gateway, testAccountMgr.Addresses, testAccountMgr.PrivateKeys, revertibleKVS, snapshotStore, gateway.TxQueue, serverOpts...)

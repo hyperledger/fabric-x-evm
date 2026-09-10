@@ -38,7 +38,7 @@ import (
 	"github.com/hyperledger/fabric-x-evm/gateway/app"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
-	"github.com/hyperledger/fabric-x-evm/testutil/priming"
+	"github.com/hyperledger/fabric-x-evm/gateway/testimpl/primer"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	bfab "github.com/hyperledger/fabric-x-sdk/blocks/fabric"
@@ -77,9 +77,9 @@ func (localSigner) Serialize() ([]byte, error) {
 //
 // Example usage:
 //
-//	primer, err := th.NewStatePrimer()
-//	err = primer.SetNonce(addr1, 5).SetCode(addr2, contractCode).Commit(ctx)
-func (th *TestHarness) NewStatePrimer() (*StatePrimer, error) {
+//	sp, err := th.NewStatePrimer()
+//	err = sp.SetNonce(addr1, 5).SetCode(addr2, contractCode).Commit(ctx)
+func (th *TestHarness) NewStatePrimer() (*primer.StatePrimer, error) {
 	return th.Primer.Reset()
 }
 
@@ -95,15 +95,15 @@ func (th *TestHarness) PrimeStateFromJSON(ctx context.Context, jsonFilePath stri
 		return nil
 	}
 
-	primer, err := th.NewStatePrimer()
+	sp, err := th.NewStatePrimer()
 	if err != nil {
 		return err
 	}
-	primer, err = primer.LoadFromJSON(jsonFilePath)
+	sp, err = sp.LoadFromJSON(jsonFilePath)
 	if err != nil {
 		return err
 	}
-	return primer.Commit(ctx, wait)
+	return sp.Commit(ctx, wait)
 }
 
 // HandlerChainFactory builds the gateway and the complete synchronizer handler
@@ -268,7 +268,7 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 	t.Cleanup(func() { gw.Stop() })
 
 	// Create state primer (use first submitter)
-	primer, err := NewStatePrimer(gw, submitters[0], dbs[0], cfg.Network.Namespace, gwSigner, builders, cfg.Network.Channel, cfg.Network.NsVersion, cfg.Network.Protocol == "fabric-x")
+	sp, err := primer.NewStatePrimer(gw, submitters[0], dbs[0], cfg.Network.Namespace, gwSigner, builders, cfg.Network.Channel, cfg.Network.NsVersion, cfg.Network.Protocol == "fabric-x")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -277,7 +277,7 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 		Gateways:       []*core.Gateway{gw},
 		endorsers:      ends,
 		ethChainConfig: evmConfig.ChainConfig,
-		Primer:         primer,
+		Primer:         sp,
 		DBs:            dbs,
 	}
 
@@ -591,7 +591,7 @@ type TestHarness struct {
 	Gateways       []*core.Gateway
 	endorsers      []eapi.Service
 	ethChainConfig *params.ChainConfig
-	Primer         *StatePrimer
+	Primer         *primer.StatePrimer
 }
 
 func (th *TestHarness) Stop() error {
@@ -617,7 +617,7 @@ func processCommon(t *testing.T, gw *core.Gateway, commit bool, tx *types.Transa
 			t.Fatal(err)
 		}
 
-		ec, err := NewNativeEthClient(gw)
+		ec, err := primer.NewNativeEthClient(gw)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -641,7 +641,7 @@ func getEndorsedTxForSmartContractCall(t *testing.T, client *EthClient, addr eth
 func deploySmartContract(t *testing.T, gw *core.Gateway, client *EthClient, args ...any) ethcommon.Address {
 	t.Helper()
 
-	ec, err := NewNativeEthClient(gw)
+	ec, err := primer.NewNativeEthClient(gw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -664,7 +664,7 @@ func deploySmartContract(t *testing.T, gw *core.Gateway, client *EthClient, args
 func callSmartContract(t *testing.T, client *EthClient, addr ethcommon.Address, gw *core.Gateway, method string, args ...any) {
 	t.Helper()
 
-	ec, err := NewNativeEthClient(gw)
+	ec, err := primer.NewNativeEthClient(gw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -685,7 +685,7 @@ func callSmartContract(t *testing.T, client *EthClient, addr ethcommon.Address, 
 func querySmartContract(t *testing.T, gw *core.Gateway, client *EthClient, addr ethcommon.Address, method string, params ...any) []any {
 	t.Helper()
 
-	ec, err := NewNativeEthClient(gw)
+	ec, err := primer.NewNativeEthClient(gw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -748,7 +748,7 @@ func submit(t *testing.T, gw *core.Gateway, end sdk.Endorsement) {
 		t.Error(err)
 	}
 
-	ec, err := NewNativeEthClient(gw)
+	ec, err := primer.NewNativeEthClient(gw)
 	if err != nil {
 		t.Error(err)
 	}
@@ -791,7 +791,7 @@ func extractEthTxFromProposal(proposal *peer.Proposal) (*types.Transaction, erro
 }
 
 func waitForCommitT(t *testing.T, ec *ethclient.Client, tx *types.Transaction) {
-	err := priming.WaitForCommit(t.Context(), ec, tx)
+	err := primer.WaitForCommit(t.Context(), ec, tx)
 	if err != nil {
 		t.Fatal(err)
 	}

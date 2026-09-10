@@ -23,7 +23,7 @@ import (
 	estorage "github.com/hyperledger/fabric-x-evm/endorser/storage"
 	gwapi "github.com/hyperledger/fabric-x-evm/gateway/api"
 	"github.com/hyperledger/fabric-x-evm/gateway/storage"
-	"github.com/hyperledger/fabric-x-evm/testutil/priming"
+	"github.com/hyperledger/fabric-x-evm/gateway/testimpl/primer"
 )
 
 var hardhatLogger = flogging.MustGetLogger("gateway.testimpl.hardhat")
@@ -47,7 +47,7 @@ const primePollInterval = 50 * time.Millisecond
 type HardhatAPI struct {
 	// primer is nil when the server was built without WithStatePrimer; the three
 	// state-changing methods then refuse rather than silently doing nothing.
-	primer  *priming.StatePrimer
+	primer  *primer.StatePrimer
 	backend gwapi.Backend
 
 	// StatePrimer wraps a single mutable StateDB, so one priming transaction must
@@ -64,8 +64,8 @@ func NewHardhatAPI() *HardhatAPI {
 // NewHardhatStateAPI creates a Hardhat API whose setBalance/setCode/setStorageAt
 // commit real priming transactions through primer, confirming each change against
 // backend before returning.
-func NewHardhatStateAPI(primer *priming.StatePrimer, backend gwapi.Backend) *HardhatAPI {
-	return &HardhatAPI{primer: primer, backend: backend}
+func NewHardhatStateAPI(sp *primer.StatePrimer, backend gwapi.Backend) *HardhatAPI {
+	return &HardhatAPI{primer: sp, backend: backend}
 }
 
 // prime resets the primer, lets apply queue its writes, commits the resulting
@@ -77,7 +77,7 @@ func NewHardhatStateAPI(primer *priming.StatePrimer, backend gwapi.Backend) *Har
 func (api *HardhatAPI) prime(
 	ctx context.Context,
 	what string,
-	apply func(*priming.StatePrimer),
+	apply func(*primer.StatePrimer),
 	confirm func(context.Context) (bool, error),
 ) error {
 	if api.primer == nil {
@@ -128,7 +128,7 @@ func (api *HardhatAPI) SetBalance(ctx context.Context, address common.Address, b
 	hardhatLogger.Debugf("HardhatAPI.SetBalance() called with address=%s, balance=%s", address.Hex(), target.String())
 
 	return api.prime(ctx, "setBalance",
-		func(p *priming.StatePrimer) { p.ForceSetBalance(address, target) },
+		func(p *primer.StatePrimer) { p.ForceSetBalance(address, target) },
 		func(ctx context.Context) (bool, error) {
 			got, err := api.backend.BalanceAt(ctx, address, nil)
 			return err == nil && got.Cmp(target) == 0, err
@@ -144,7 +144,7 @@ func (api *HardhatAPI) SetCode(ctx context.Context, address common.Address, code
 	hardhatLogger.Debugf("HardhatAPI.SetCode() called with address=%s, code length=%d", address.Hex(), len(code))
 
 	if err := api.prime(ctx, "setCode",
-		func(p *priming.StatePrimer) { p.SetCode(address, code) },
+		func(p *primer.StatePrimer) { p.SetCode(address, code) },
 		func(ctx context.Context) (bool, error) {
 			got, err := api.backend.CodeAt(ctx, address, nil)
 			return err == nil && bytes.Equal(got, code), err
@@ -170,7 +170,7 @@ func (api *HardhatAPI) SetStorageAt(ctx context.Context, address common.Address,
 	}
 
 	if err := api.prime(ctx, "setStorageAt",
-		func(p *priming.StatePrimer) {
+		func(p *primer.StatePrimer) {
 			p.SetStorage(address, map[common.Hash]common.Hash{key: val})
 		},
 		func(ctx context.Context) (bool, error) {
