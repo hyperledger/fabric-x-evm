@@ -114,7 +114,12 @@ func NewTestNode(ctx context.Context, tcfg TestNodeConfig) (*App, error) {
 
 	// One endorser, so one builder: enough for the test RPC's hardhat state
 	// directives to self-endorse their priming transactions.
-	application, err := buildApp(ctx, cfg, signer, logger, []eapi.Service{endorser}, endorserKVS, true, tcfg.TestAccountsPath, []endorsement.Builder{endorserBuilder}, endorserKVS)
+	test := &testRPCDeps{
+		kvs:          endorserKVS,
+		builders:     []endorsement.Builder{endorserBuilder},
+		accountsPath: tcfg.TestAccountsPath,
+	}
+	application, err := buildApp(ctx, cfg, signer, logger, []eapi.Service{endorser}, test, endorserKVS)
 	if err != nil {
 		return nil, err
 	}

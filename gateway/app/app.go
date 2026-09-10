@@ -95,7 +95,7 @@ func newApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, enableT
 		if enableTestRPC {
 			return nil, fmt.Errorf("test RPC is not supported with split deployment (gateway.endorsers configured)")
 		}
-		return newSplitApp(ctx, cfg, gwSigner, logger, enableTestRPC, testAccountsPath)
+		return newSplitApp(ctx, cfg, gwSigner, logger)
 	}
 
 	if cfg.Endorser == nil {
@@ -124,13 +124,22 @@ func newApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, enableT
 		return nil, fmt.Errorf("endorser (%s): %w", ecfg.Name, err)
 	}
 
-	return buildApp(ctx, cfg, gwSigner, logger, []eapi.Service{end}, kvs, enableTestRPC, testAccountsPath, []endorsement.Builder{builder}, kvs)
+	// One in-process endorser, so one builder: enough for the test RPC's hardhat state
+	// directives to self-endorse their priming transactions.
+	var test *testRPCDeps
+	if enableTestRPC {
+		test = &testRPCDeps{kvs: kvs, builders: []endorsement.Builder{builder}, accountsPath: testAccountsPath}
+	}
+
+	return buildApp(ctx, cfg, gwSigner, logger, []eapi.Service{end}, test, kvs)
 }
 
 // newSplitApp builds the gateway in split-deployment mode: every endorsers is
 // dialed over gRPC (co-located ones on localhost, remote ones on their configured address)
-// instead of built in-process
-func newSplitApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, enableTestRPC bool, testAccountsPath string) (*App, error) {
+// instead of built in-process. Test RPC is never available here — newApp rejects the
+// combination before we get this far — because there is no in-process endorser KVS to
+// prime, fund or rewind.
+func newSplitApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger) (*App, error) {
 	conns := make([]*eclient.Client, 0, len(cfg.Gateway.Endorsers))
 	closeAll := func() {
 		for _, c := range conns {
@@ -151,7 +160,7 @@ func newSplitApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, lo
 		endorsers[i] = c
 	}
 
-	app, err := buildApp(ctx, cfg, gwSigner, logger, endorsers, nil, enableTestRPC, testAccountsPath, nil)
+	app, err := buildApp(ctx, cfg, gwSigner, logger, endorsers, nil)
 	if err != nil {
 		closeAll()
 		return nil, err
@@ -160,13 +169,30 @@ func newSplitApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, lo
 	return app, nil
 }
 
+// testRPCDeps carries everything the unsafe test RPC surface needs, and nothing
+// production needs. Passing it to buildApp is what enables that surface.
+type testRPCDeps struct {
+	// kvs is the in-process endorser's KVS: the test RPC pre-funds accounts and primes
+	// state through it, and rewinds it for evm_revert. It must implement
+	// estorage.Revertible, which only the test-mode KVS does — hence the assertion in
+	// buildApp rather than a stricter field type, since NewEndorserCore hands back the
+	// plain estorage.KVS interface.
+	kvs estorage.KVS
+
+	// builders carry one endorsement.Builder per endorser whose signature the network
+	// requires, letting the hardhat state directives self-endorse a priming transaction
+	// locally instead of asking the endorsers to execute anything. Without them the
+	// setBalance/setCode/setStorageAt methods refuse.
+	builders []endorsement.Builder
+
+	// accountsPath is the file the server-side signing keys are loaded from.
+	accountsPath string
+}
+
 // buildApp wires up the gateway from pre-built endorsers.
 // extraHandlers are prepended to the synchronizer handler list, ahead of chain/gateway.
-// builders carry one endorsement.Builder per endorser whose signature the network
-// requires. They are only used when enableTestRPC is set, to let the test RPC's
-// hardhat state directives self-endorse a priming transaction locally instead of
-// asking the endorsers to execute anything. Pass nil in production.
-func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorsers []eapi.Service, lightKVS estorage.KVS, enableTestRPC bool, testAccountsPath string, builders []endorsement.Builder, extraHandlers ...blocks.BlockHandler) (*App, error) {
+// test enables the test RPC surface; pass nil in production.
+func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorsers []eapi.Service, test *testRPCDeps, extraHandlers ...blocks.BlockHandler) (*App, error) {
 	orderers := make([]network.OrdererConf, len(cfg.Gateway.Orderers))
 	for i, o := range cfg.Gateway.Orderers {
 		orderers[i] = o.ToOrdererConf()
@@ -198,26 +224,26 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 
 	// Create RPC server - use test server if explicitly enabled
 	var rpcServer *rpc.Server
-	if enableTestRPC {
+	if test != nil {
 		// UNSAFE: Test RPC methods enabled - load test accounts
 		appLogger.Warn("Test RPC methods enabled (eth_accounts, eth_sendTransaction)")
 		appLogger.Warn("Server-side signing is unsafe and should never be used in production")
 
-		testAccountMgr, err := testimpl.LoadTestAccounts(testAccountsPath)
+		testAccountMgr, err := testimpl.LoadTestAccounts(test.accountsPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load test accounts: %w", err)
 		}
 
 		// Pre-fund known Hardhat test EOAs so value transfers pass the balance
 		// check (issue #254). Test RPC / testnode only. Production accounts stay at zero.
-		if err := testimpl.FundTestAccounts(ctx, lightKVS, cfg.Network.Namespace, testAccountMgr.Addresses, testimpl.DefaultTestAccountBalance); err != nil {
+		if err := testimpl.FundTestAccounts(ctx, test.kvs, cfg.Network.Namespace, testAccountMgr.Addresses, testimpl.DefaultTestAccountBalance); err != nil {
 			return nil, fmt.Errorf("failed to fund test accounts: %w", err)
 		}
 		appLogger.Infof("Funded %d test accounts with %s wei each", len(testAccountMgr.Addresses), testimpl.DefaultTestAccountBalance.String())
 
-		revertibleKVS, ok := lightKVS.(estorage.Revertible)
+		revertibleKVS, ok := test.kvs.(estorage.Revertible)
 		if !ok {
-			return nil, fmt.Errorf("test RPC enabled but lightKVS is not Revertible")
+			return nil, fmt.Errorf("test RPC enabled but the endorser KVS is not Revertible")
 		}
 
 		// Wrap the chain's store with SnapshotStore for snapshot/revert functionality
@@ -226,21 +252,20 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 		// A state primer lets hardhat_setBalance/setCode/setStorageAt commit real
 		// priming transactions. It needs a builder per endorser, so it is only
 		// available when the caller could supply them.
-		var serverOpts []testimpl.TestServerOption
-		if len(builders) > 0 {
+		var statePrimer *primer.StatePrimer
+		if len(test.builders) > 0 {
 			normProtocol, err := common.NormalizeProtocol(cfg.Network.Protocol)
 			if err != nil {
 				return nil, fmt.Errorf("failed to normalize protocol: %w", err)
 			}
-			sp, err := primer.NewStatePrimer(gateway, submitters[0], lightKVS, cfg.Network.Namespace,
-				gwSigner, builders, cfg.Network.Channel, cfg.Network.NsVersion, normProtocol == common.ProtocolFabricX)
+			statePrimer, err = primer.NewStatePrimer(gateway, submitters[0], test.kvs, cfg.Network.Namespace,
+				gwSigner, test.builders, cfg.Network.Channel, cfg.Network.NsVersion, normProtocol == common.ProtocolFabricX)
 			if err != nil {
 				return nil, fmt.Errorf("failed to create state primer: %w", err)
 			}
-			serverOpts = append(serverOpts, testimpl.WithStatePrimer(sp))
 		}
 
-		rpcServer, err = testimpl.NewTestServer(gateway, testAccountMgr.Addresses, testAccountMgr.PrivateKeys, revertibleKVS, snapshotStore, gateway.TxQueue, serverOpts...)
+		rpcServer, err = testimpl.NewTestServer(gateway, testAccountMgr.Addresses, testAccountMgr.PrivateKeys, revertibleKVS, snapshotStore, gateway.TxQueue, statePrimer)
 		if err != nil {
 			return nil, err
 		}

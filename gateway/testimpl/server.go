@@ -27,30 +27,17 @@ import (
 // The lightKVS parameter is required for snapshot/revert functionality.
 // The store parameter is required for database snapshot/revert functionality.
 //
+// statePrimer backs hardhat_setBalance/setCode/setStorageAt with real priming
+// transactions; it may be nil, in which case those three methods refuse rather than
+// silently doing nothing. A non-nil primer must be constructed with one
+// endorsement.Builder per endorser the network requires a signature from, so the
+// priming transaction it self-endorses is committable without involving those
+// endorsers at all.
+//
 // SECURITY WARNING: This server performs server-side transaction signing,
 // which is inherently insecure. Use ONLY for development and testing.
 // NEVER use in production environments.
-// TestServerOption configures optional test-server capabilities.
-type TestServerOption func(*testServerOpts)
-
-type testServerOpts struct {
-	primer *primer.StatePrimer
-}
-
-// WithStatePrimer backs hardhat_setBalance/setCode/setStorageAt with a real state
-// primer. The primer must be constructed with one endorsement.Builder per endorser
-// the network requires a signature from, so the priming transaction it self-endorses
-// is committable without involving those endorsers at all.
-func WithStatePrimer(p *primer.StatePrimer) TestServerOption {
-	return func(o *testServerOpts) { o.primer = p }
-}
-
-func NewTestServer(b api.Backend, testAccounts []common.Address, testAccountKeys map[common.Address]*ecdsa.PrivateKey, lightKVS estorage.Revertible, store storage.Revertible, pool TxPool, opts ...TestServerOption) (*rpc.Server, error) {
-	var o testServerOpts
-	for _, opt := range opts {
-		opt(&o)
-	}
-
+func NewTestServer(b api.Backend, testAccounts []common.Address, testAccountKeys map[common.Address]*ecdsa.PrivateKey, lightKVS estorage.Revertible, store storage.Revertible, pool TxPool, statePrimer *primer.StatePrimer) (*rpc.Server, error) {
 	srv := rpc.NewServer()
 
 	// Shared by the submit path and the snapshot/revert path; see txFence.
@@ -84,8 +71,8 @@ func NewTestServer(b api.Backend, testAccounts []common.Address, testAccountKeys
 	// Register Hardhat helper APIs for test compatibility. With a state primer the
 	// setBalance/setCode/setStorageAt methods are real; without one they refuse.
 	hardhatAPI := NewHardhatAPI()
-	if o.primer != nil {
-		hardhatAPI = NewHardhatStateAPI(o.primer, b)
+	if statePrimer != nil {
+		hardhatAPI = NewHardhatStateAPI(statePrimer, b)
 	}
 	if err := srv.RegisterName("hardhat", hardhatAPI); err != nil {
 		return nil, err
