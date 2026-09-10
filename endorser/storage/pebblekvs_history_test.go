@@ -394,3 +394,66 @@ func TestPebbleDoubleCloseKeepsOtherPin(t *testing.T) {
 		t.Errorf("surviving reader lost its pinned value: want v1, got %+v", rec)
 	}
 }
+
+// TestPebbleReplayAgainstHistoryWindow covers the interaction between the
+// per-write idempotency check and pruning. A replayed write is verified against
+// whatever the store still holds for its (key, block, tx) coordinate — the key's
+// latest value, or a previous one retained in the window — so a divergent replay
+// inside the window is still rejected. Below the window the record has been
+// pruned, leaving nothing to verify against, so the replay is accepted rather
+// than reported as a missing write.
+func TestPebbleReplayAgainstHistoryWindow(t *testing.T) {
+	const window = 2
+	const blockCount = 10
+	ctx := context.Background()
+	kvs, err := NewPebbleKVS(t.TempDir(), window)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer kvs.Close()
+
+	for i := uint64(1); i <= blockCount; i++ {
+		if err := kvs.Handle(ctx, mkBlock(i, 0, fmt.Sprintf("tx%d", i), true, "ns1",
+			blocks.KVWrite{Key: "k", Value: []byte(fmt.Sprintf("v%d", i))})); err != nil {
+			t.Fatalf("Handle block %d: %v", i, err)
+		}
+	}
+
+	if oldest := kvs.oldestRetained.Load(); oldest != blockCount-window {
+		t.Fatalf("oldest retained block: got %d, want %d", oldest, blockCount-window)
+	}
+
+	// Inside the window, the retained record still catches a divergent replay.
+	if err := kvs.Handle(ctx, mkBlock(blockCount-1, 0, fmt.Sprintf("tx%d", blockCount-1), true, "ns1",
+		blocks.KVWrite{Key: "k", Value: []byte("divergent")})); err == nil {
+		t.Errorf("expected a divergent replay of in-window block %d to be rejected", blockCount-1)
+	}
+
+	// An identical replay inside the window is a no-op.
+	if err := kvs.Handle(ctx, mkBlock(blockCount-1, 0, fmt.Sprintf("tx%d", blockCount-1), true, "ns1",
+		blocks.KVWrite{Key: "k", Value: []byte(fmt.Sprintf("v%d", blockCount-1))})); err != nil {
+		t.Errorf("identical replay of in-window block %d: %v", blockCount-1, err)
+	}
+
+	// Below the window the record is gone, so the replay is accepted unverified
+	// rather than mistaken for a write that never landed.
+	if err := kvs.Handle(ctx, mkBlock(2, 0, "tx2", true, "ns1",
+		blocks.KVWrite{Key: "k", Value: []byte("v2")})); err != nil {
+		t.Errorf("replay of pruned block 2: %v", err)
+	}
+
+	// None of the replays re-versioned the key or disturbed its latest value.
+	rec, err := kvs.Get("ns1", "k", 0)
+	if err != nil {
+		t.Fatalf("Get latest: %v", err)
+	}
+	if want := fmt.Sprintf("v%d", blockCount); rec == nil || string(rec.Value) != want {
+		t.Errorf("latest value: want %q, got %+v", want, rec)
+	}
+	if rec.Version != blockCount-1 {
+		t.Errorf("latest version: got %d, want %d", rec.Version, blockCount-1)
+	}
+	if bn, err := kvs.BlockNumber(ctx); err != nil || bn != blockCount {
+		t.Errorf("checkpoint after replays: got %d (err %v), want %d", bn, err, blockCount)
+	}
+}
