@@ -29,6 +29,7 @@ import (
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
 	estorage "github.com/hyperledger/fabric-x-evm/endorser/storage"
 	"github.com/hyperledger/fabric-x-evm/gateway/api"
+	"github.com/hyperledger/fabric-x-evm/gateway/api/filters"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
 	"github.com/hyperledger/fabric-x-evm/gateway/storage"
@@ -44,6 +45,7 @@ type App struct {
 	synchronizer  Synchronizer
 	gateway       *core.Gateway
 	chain         *core.Chain
+	filterAPI     *filters.FilterAPI
 	rpcServer     *rpc.Server
 	httpServer    *http.Server
 }
@@ -179,8 +181,17 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 		return nil, err
 	}
 
+	filterAPI := filters.NewFilterAPI(gateway)
+	ok := false
+	defer func() {
+		if !ok {
+			filterAPI.Close()
+		}
+	}()
+
 	// Chain must be called before gateway, to persist blocks before marking transactions complete.
-	handlers := append(extraHandlers, chain, gateway)
+	// FilterAPI runs after chain so newHeads can load the stored block (stateRoot etc.).
+	handlers := append(extraHandlers, chain, filterAPI, gateway)
 	synchronizer, err := NewSynchronizer(cfg.Network.Protocol, chain, cfg.Network.Channel, cfg.Network.Namespace, cfg.Committer.ToPeerConf(), gwSigner, logger, handlers...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create synchronizer: %w", err)
@@ -205,31 +216,33 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 		}
 		appLogger.Infof("Funded %d test accounts with %s wei each", len(testAccountMgr.Addresses), testimpl.DefaultTestAccountBalance.String())
 
-		revertibleKVS, ok := lightKVS.(estorage.Revertible)
-		if !ok {
+		revertibleKVS, okKVS := lightKVS.(estorage.Revertible)
+		if !okKVS {
 			return nil, fmt.Errorf("test RPC enabled but lightKVS is not Revertible")
 		}
 
 		// Wrap the chain's store with SnapshotStore for snapshot/revert functionality
 		snapshotStore := storage.NewSnapshotStore(chain.Store)
 
-		rpcServer, err = testimpl.NewTestServer(gateway, testAccountMgr.Addresses, testAccountMgr.PrivateKeys, revertibleKVS, snapshotStore, gateway.TxQueue)
+		rpcServer, err = testimpl.NewTestServer(gateway, testAccountMgr.Addresses, testAccountMgr.PrivateKeys, revertibleKVS, snapshotStore, gateway.TxQueue, filterAPI)
 		if err != nil {
 			return nil, err
 		}
 	} else {
 		// Production server without test methods
-		rpcServer, err = api.NewServer(gateway)
+		rpcServer, err = api.NewServer(gateway, filterAPI)
 		if err != nil {
 			return nil, err
 		}
 	}
 
+	ok = true
 	return &App{
 		cfg:          cfg,
 		synchronizer: synchronizer,
 		gateway:      gateway,
 		chain:        chain,
+		filterAPI:    filterAPI,
 		rpcServer:    rpcServer,
 	}, nil
 }
@@ -299,6 +312,12 @@ func (a *App) Shutdown() error {
 		appLogger.Warnf("chain close error: %v", err)
 	} else {
 		appLogger.Debug("chain closed")
+	}
+
+	if a.filterAPI != nil {
+		appLogger.Debug("closing filter API...")
+		a.filterAPI.Close()
+		appLogger.Debug("filter API closed")
 	}
 
 	// Close dialed endorser connections (split deployment only)

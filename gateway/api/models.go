@@ -188,6 +188,11 @@ func rpcTransaction(tx *domain.Transaction) *RPCTransaction {
 	return rpcTx
 }
 
+// RPCBlockFromDomain is the eth_getBlockByNumber / newHeads payload for a stored block.
+func RPCBlockFromDomain(b *domain.Block) *RPCBlock {
+	return rpcBlock(b, false)
+}
+
 // rpcBlock returns a block in the form the RPC API can return. Some values are mocked.
 // If b.Transactions is populated, it includes full transaction objects (when full=true).
 // If b.Transactions is empty, it returns an empty array (when full=false or no transactions).
