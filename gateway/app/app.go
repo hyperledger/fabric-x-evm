@@ -181,8 +181,8 @@ type testRPCDeps struct {
 
 	// builders carry one endorsement.Builder per endorser whose signature the network
 	// requires, letting the hardhat state directives self-endorse a priming transaction
-	// locally instead of asking the endorsers to execute anything. Without them the
-	// setBalance/setCode/setStorageAt methods refuse.
+	// locally instead of asking the endorsers to execute anything. At least one is
+	// required; buildApp rejects an empty set.
 	builders []endorsement.Builder
 
 	// accountsPath is the file the server-side signing keys are loaded from.
@@ -249,20 +249,20 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 		// Wrap the chain's store with SnapshotStore for snapshot/revert functionality
 		snapshotStore := storage.NewSnapshotStore(chain.Store)
 
-		// A state primer lets hardhat_setBalance/setCode/setStorageAt commit real
-		// priming transactions. It needs a builder per endorser, so it is only
-		// available when the caller could supply them.
-		var statePrimer *primer.StatePrimer
-		if len(test.builders) > 0 {
-			normProtocol, err := common.NormalizeProtocol(cfg.Network.Protocol)
-			if err != nil {
-				return nil, fmt.Errorf("failed to normalize protocol: %w", err)
-			}
-			statePrimer, err = primer.NewStatePrimer(gateway, submitters[0], test.kvs, cfg.Network.Namespace,
-				gwSigner, test.builders, cfg.Network.Channel, cfg.Network.NsVersion, normProtocol == common.ProtocolFabricX)
-			if err != nil {
-				return nil, fmt.Errorf("failed to create state primer: %w", err)
-			}
+		// The state primer backs hardhat_setBalance/setCode/setStorageAt. It is part
+		// of the test RPC surface rather than an option on it, so a testRPCDeps
+		// without the builders it needs is a wiring bug, not a reduced mode.
+		if len(test.builders) == 0 {
+			return nil, fmt.Errorf("test RPC enabled but no endorsement builders were supplied")
+		}
+		normProtocol, err := common.NormalizeProtocol(cfg.Network.Protocol)
+		if err != nil {
+			return nil, fmt.Errorf("failed to normalize protocol: %w", err)
+		}
+		statePrimer, err := primer.NewStatePrimer(gateway, submitters[0], test.kvs, cfg.Network.Namespace,
+			gwSigner, test.builders, cfg.Network.Channel, cfg.Network.NsVersion, normProtocol == common.ProtocolFabricX)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create state primer: %w", err)
 		}
 
 		rpcServer, err = testimpl.NewTestServer(gateway, testAccountMgr.Addresses, testAccountMgr.PrivateKeys, revertibleKVS, snapshotStore, gateway.TxQueue, statePrimer)

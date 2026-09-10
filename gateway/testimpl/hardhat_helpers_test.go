@@ -23,7 +23,9 @@ import (
 func dialHardhat(t *testing.T) *rpc.Client {
 	t.Helper()
 	srv := rpc.NewServer()
-	if err := srv.RegisterName("hardhat", NewHardhatAPI()); err != nil {
+	// Only the stub methods are exercised here, so neither the primer nor the backend
+	// is reached; the state-changing methods are covered by the integration suite.
+	if err := srv.RegisterName("hardhat", NewHardhatAPI(nil, nil)); err != nil {
 		t.Fatalf("RegisterName hardhat: %v", err)
 	}
 	client := rpc.DialInProc(srv)
@@ -117,10 +119,13 @@ func (m *mockRevertibleStore) Snapshot(context.Context) (uint64, error)    { ret
 func (m *mockRevertibleStore) RevertToBlock(context.Context, uint64) error { return nil }
 
 // TestEvmAPI_RevertWaitsForInFlightTransaction pins the invariant the txFence
-// exists for: a transaction the test RPC has accepted must finish committing
-// before evm_revert rewinds the ledger. Without the fence the revert lands
-// first and the transaction commits into the state the next test believes it
-// just reset.
+// exists for: a transaction the test RPC has accepted must reach a block before
+// evm_revert rewinds the ledger. Without the fence the revert lands first and the
+// transaction commits into the state the next test believes it just reset.
+//
+// The fence orders the rewind against the queue draining, not against the RPC
+// handler returning — the wait for a block is deliberately outside it — so that
+// draining is what the recorded events compare.
 func TestEvmAPI_RevertWaitsForInFlightTransaction(t *testing.T) {
 	testAccountMgr := testSigner(t)
 	from := testAccountMgr.Addresses[0]
@@ -134,6 +139,14 @@ func TestEvmAPI_RevertWaitsForInFlightTransaction(t *testing.T) {
 	var polledOnce sync.Once
 	var committedOnce sync.Once
 
+	var mu sync.Mutex
+	var events []string
+	record := func(what string) {
+		mu.Lock()
+		defer mu.Unlock()
+		events = append(events, what)
+	}
+
 	backend := &mockBackend{
 		sendTxFunc: func(*types.Transaction) error {
 			pool.enqueue()
@@ -143,21 +156,21 @@ func TestEvmAPI_RevertWaitsForInFlightTransaction(t *testing.T) {
 			polledOnce.Do(func() { close(polled) })
 			select {
 			case <-commit:
-				committedOnce.Do(pool.commit)
+				committedOnce.Do(func() {
+					// Record the commit here, at the point it leaves the queue, rather
+					// than when SendTransaction returns: leaving the queue is what
+					// releases the fence's drain, while the handler's return to its
+					// caller happens outside the fence (see awaitCommit) and so races
+					// the rewind rather than preceding it.
+					record("committed")
+					pool.commit()
+				})
 				return &domain.Transaction{BlockNumber: 1}, nil
 			default:
 				time.Sleep(time.Millisecond) // keep the poll loop off a hot spin
 				return &domain.Transaction{BlockNumber: 0}, nil
 			}
 		},
-	}
-
-	var mu sync.Mutex
-	var events []string
-	record := func(what string) {
-		mu.Lock()
-		defer mu.Unlock()
-		events = append(events, what)
 	}
 
 	fence := &txFence{pool: pool}
@@ -173,7 +186,6 @@ func TestEvmAPI_RevertWaitsForInFlightTransaction(t *testing.T) {
 	sent := make(chan error, 1)
 	go func() {
 		_, err := testAPI.SendTransaction(context.Background(), TransactionArgs{From: &from, To: &to})
-		record("committed")
 		sent <- err
 	}()
 

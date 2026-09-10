@@ -45,8 +45,6 @@ const primePollInterval = 50 * time.Millisecond
 // SECURITY WARNING: These methods are for testing only and should NEVER
 // be enabled in production environments.
 type HardhatAPI struct {
-	// primer is nil when the server was built without WithStatePrimer; the three
-	// state-changing methods then refuse rather than silently doing nothing.
 	primer  *primer.StatePrimer
 	backend gwapi.Backend
 
@@ -55,16 +53,14 @@ type HardhatAPI struct {
 	primeMu sync.Mutex
 }
 
-// NewHardhatAPI creates a new Hardhat API instance whose state-changing methods are
-// stubs. Use NewHardhatStateAPI to back them with a real state primer.
-func NewHardhatAPI() *HardhatAPI {
-	return &HardhatAPI{}
-}
-
-// NewHardhatStateAPI creates a Hardhat API whose setBalance/setCode/setStorageAt
-// commit real priming transactions through primer, confirming each change against
-// backend before returning.
-func NewHardhatStateAPI(sp *primer.StatePrimer, backend gwapi.Backend) *HardhatAPI {
+// NewHardhatAPI creates a Hardhat API whose setBalance/setCode/setStorageAt commit
+// real priming transactions through sp, confirming each change against backend
+// before returning.
+//
+// Both arguments are required: the state-changing methods are part of the surface
+// Hardhat expects, not an opt-in extra, so there is no half-built variant of this
+// API to keep working.
+func NewHardhatAPI(sp *primer.StatePrimer, backend gwapi.Backend) *HardhatAPI {
 	return &HardhatAPI{primer: sp, backend: backend}
 }
 
@@ -87,10 +83,6 @@ func (api *HardhatAPI) prime(
 	apply func(*primer.StatePrimer),
 	confirm func(context.Context) (bool, error),
 ) error {
-	if api.primer == nil {
-		return fmt.Errorf("%s: test RPC server was built without a state primer", what)
-	}
-
 	ok, err := confirm(ctx)
 	if err != nil {
 		return fmt.Errorf("%s: confirm current value: %w", what, err)

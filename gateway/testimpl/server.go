@@ -12,6 +12,7 @@ package testimpl
 import (
 	"context"
 	"crypto/ecdsa"
+	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/rpc"
@@ -28,11 +29,9 @@ import (
 // The store parameter is required for database snapshot/revert functionality.
 //
 // statePrimer backs hardhat_setBalance/setCode/setStorageAt with real priming
-// transactions; it may be nil, in which case those three methods refuse rather than
-// silently doing nothing. A non-nil primer must be constructed with one
-// endorsement.Builder per endorser the network requires a signature from, so the
-// priming transaction it self-endorses is committable without involving those
-// endorsers at all.
+// transactions and is required. It must be constructed with one endorsement.Builder
+// per endorser the network requires a signature from, so the priming transaction it
+// self-endorses is committable without involving those endorsers at all.
 //
 // SECURITY WARNING: This server performs server-side transaction signing,
 // which is inherently insecure. Use ONLY for development and testing.
@@ -68,13 +67,11 @@ func NewTestServer(b api.Backend, testAccounts []common.Address, testAccountKeys
 		return nil, err
 	}
 
-	// Register Hardhat helper APIs for test compatibility. With a state primer the
-	// setBalance/setCode/setStorageAt methods are real; without one they refuse.
-	hardhatAPI := NewHardhatAPI()
-	if statePrimer != nil {
-		hardhatAPI = NewHardhatStateAPI(statePrimer, b)
+	// Register Hardhat helper APIs for test compatibility.
+	if statePrimer == nil {
+		return nil, fmt.Errorf("test RPC server requires a state primer")
 	}
-	if err := srv.RegisterName("hardhat", hardhatAPI); err != nil {
+	if err := srv.RegisterName("hardhat", NewHardhatAPI(statePrimer, b)); err != nil {
 		return nil, err
 	}
 	if err := srv.RegisterName("evm", NewEvmAPI(lightKVS, store, fence)); err != nil {
