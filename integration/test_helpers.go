@@ -14,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -25,7 +24,6 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/ethereum/go-ethereum/rpc"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/msp"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
@@ -37,10 +35,10 @@ import (
 	ecore "github.com/hyperledger/fabric-x-evm/endorser/core"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
 	"github.com/hyperledger/fabric-x-evm/endorser/storage"
-	gwapi "github.com/hyperledger/fabric-x-evm/gateway/api"
 	"github.com/hyperledger/fabric-x-evm/gateway/app"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
+	"github.com/hyperledger/fabric-x-evm/gateway/testimpl/primer"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	bfab "github.com/hyperledger/fabric-x-sdk/blocks/fabric"
@@ -79,9 +77,9 @@ func (localSigner) Serialize() ([]byte, error) {
 //
 // Example usage:
 //
-//	primer, err := th.NewStatePrimer()
-//	err = primer.SetNonce(addr1, 5).SetCode(addr2, contractCode).Commit(ctx)
-func (th *TestHarness) NewStatePrimer() (*StatePrimer, error) {
+//	sp, err := th.NewStatePrimer()
+//	err = sp.SetNonce(addr1, 5).SetCode(addr2, contractCode).Commit(ctx)
+func (th *TestHarness) NewStatePrimer() (*primer.StatePrimer, error) {
 	return th.Primer.Reset()
 }
 
@@ -97,15 +95,15 @@ func (th *TestHarness) PrimeStateFromJSON(ctx context.Context, jsonFilePath stri
 		return nil
 	}
 
-	primer, err := th.NewStatePrimer()
+	sp, err := th.NewStatePrimer()
 	if err != nil {
 		return err
 	}
-	primer, err = primer.LoadFromJSON(jsonFilePath)
+	sp, err = sp.LoadFromJSON(jsonFilePath)
 	if err != nil {
 		return err
 	}
-	return primer.Commit(ctx, wait)
+	return sp.Commit(ctx, wait)
 }
 
 // HandlerChainFactory builds the gateway and the complete synchronizer handler
@@ -270,7 +268,7 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 	t.Cleanup(func() { gw.Stop() })
 
 	// Create state primer (use first submitter)
-	primer, err := NewStatePrimer(gw, submitters[0], dbs[0], cfg.Network.Namespace, gwSigner, builders, cfg.Network.Channel, cfg.Network.NsVersion, cfg.Network.Protocol == "fabric-x")
+	sp, err := primer.NewStatePrimer(gw, submitters[0], dbs[0], cfg.Network.Namespace, gwSigner, builders, cfg.Network.Channel, cfg.Network.NsVersion, cfg.Network.Protocol == "fabric-x")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -279,7 +277,7 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 		Gateways:       []*core.Gateway{gw},
 		endorsers:      ends,
 		ethChainConfig: evmConfig.ChainConfig,
-		Primer:         primer,
+		Primer:         sp,
 		DBs:            dbs,
 	}
 
@@ -593,7 +591,7 @@ type TestHarness struct {
 	Gateways       []*core.Gateway
 	endorsers      []eapi.Service
 	ethChainConfig *params.ChainConfig
-	Primer         *StatePrimer
+	Primer         *primer.StatePrimer
 }
 
 func (th *TestHarness) Stop() error {
@@ -619,7 +617,7 @@ func processCommon(t *testing.T, gw *core.Gateway, commit bool, tx *types.Transa
 			t.Fatal(err)
 		}
 
-		ec, err := NewNativeEthClient(gw)
+		ec, err := primer.NewNativeEthClient(gw)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -640,21 +638,10 @@ func getEndorsedTxForSmartContractCall(t *testing.T, client *EthClient, addr eth
 	return processCommon(t, gw, false, tx)
 }
 
-func NewNativeEthClient(gw *core.Gateway) (*ethclient.Client, error) {
-	// Create production RPC server (no test accounts needed for integration tests)
-	rpcServer, err := gwapi.NewServer(gw)
-	if err != nil {
-		return nil, err
-	}
-
-	client := rpc.DialInProc(rpcServer)
-	return ethclient.NewClient(client), nil
-}
-
 func deploySmartContract(t *testing.T, gw *core.Gateway, client *EthClient, args ...any) ethcommon.Address {
 	t.Helper()
 
-	ec, err := NewNativeEthClient(gw)
+	ec, err := primer.NewNativeEthClient(gw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -677,7 +664,7 @@ func deploySmartContract(t *testing.T, gw *core.Gateway, client *EthClient, args
 func callSmartContract(t *testing.T, client *EthClient, addr ethcommon.Address, gw *core.Gateway, method string, args ...any) {
 	t.Helper()
 
-	ec, err := NewNativeEthClient(gw)
+	ec, err := primer.NewNativeEthClient(gw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -698,7 +685,7 @@ func callSmartContract(t *testing.T, client *EthClient, addr ethcommon.Address, 
 func querySmartContract(t *testing.T, gw *core.Gateway, client *EthClient, addr ethcommon.Address, method string, params ...any) []any {
 	t.Helper()
 
-	ec, err := NewNativeEthClient(gw)
+	ec, err := primer.NewNativeEthClient(gw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -761,7 +748,7 @@ func submit(t *testing.T, gw *core.Gateway, end sdk.Endorsement) {
 		t.Error(err)
 	}
 
-	ec, err := NewNativeEthClient(gw)
+	ec, err := primer.NewNativeEthClient(gw)
 	if err != nil {
 		t.Error(err)
 	}
@@ -804,50 +791,10 @@ func extractEthTxFromProposal(proposal *peer.Proposal) (*types.Transaction, erro
 }
 
 func waitForCommitT(t *testing.T, ec *ethclient.Client, tx *types.Transaction) {
-	err := waitForCommit(t.Context(), ec, tx)
+	err := primer.WaitForCommit(t.Context(), ec, tx)
 	if err != nil {
 		t.Fatal(err)
 	}
-}
-
-func waitForCommit(ctx context.Context, ec *ethclient.Client, tx *types.Transaction) error {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	var err error
-
-	backoff := time.Duration(0)
-	iter := 0
-	step := 100
-
-	for pending := true; pending; {
-		_, pending, err = ec.TransactionByHash(ctx, tx.Hash())
-		if err != nil {
-			if !strings.Contains(err.Error(), "not found") {
-				return fmt.Errorf("waiting for tx %s to commit: %w", tx.Hash(), err)
-			}
-			pending = true
-		}
-
-		if pending {
-			if backoff == 0 {
-				runtime.Gosched()
-			} else {
-				time.Sleep(backoff)
-			}
-
-			iter++
-			if iter%step == 0 {
-				if backoff == 0 {
-					backoff = time.Millisecond
-				} else {
-					backoff *= 2
-				}
-			}
-		}
-	}
-
-	return nil
 }
 
 // decodeRawTransactionT decodes a raw Ethereum transaction and

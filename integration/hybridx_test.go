@@ -15,6 +15,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/core/types"
 
+	"github.com/hyperledger/fabric-x-evm/gateway/testimpl/primer"
 	"github.com/hyperledger/fabric-x-evm/integration/contracts"
 )
 
@@ -103,7 +104,7 @@ func testHybridRevertAfterSwitch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ec, err := NewNativeEthClient(node)
+	ec, err := primer.NewNativeEthClient(node)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -145,19 +145,27 @@
     "note": "block.timestamp is hardcoded (COMPATIBILITY.md); manifests as timestamp diffs, delay/schedule assertions, or vote undercounts since checkpoints never advance."
   },
   {
-    "id": "AccessManaged isConsumingScheduledOp \"before each\" hook for \"returns bytes4(0) when not consuming operation\""
+    "id": "AccessManaged isConsumingScheduledOp \"before each\" hook for \"returns bytes4(0) when not consuming operation\"",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
-    "id": "AccessManaged restricted modifier panics in short calldata"
+    "id": "AccessManaged restricted modifier panics in short calldata",
+    "cause": "estimate-gas-allowance-not-revert",
+    "note": "eth_estimateGas escalates to the 10M ceiling instead of surfacing the revert the test expects; the call is expected to fail, not to need more gas."
   },
   {
     "id": "AccessManaged restricted modifier when role is granted with execution delay succeeds if the operation is scheduled"
   },
   {
-    "id": "AccessManaged setAuthority sets authority and emits AuthorityUpdated event"
+    "id": "AccessManaged setAuthority sets authority and emits AuthorityUpdated event",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
-    "id": "AccessManager #consumeScheduledOp when caller is consuming scheduled operation when operation is scheduled \"before each\" hook: schedule operation for \"reverts as AccessManagerNotReady\""
+    "id": "AccessManager #consumeScheduledOp when caller is consuming scheduled operation when operation is scheduled \"before each\" hook: schedule operation for \"reverts as AccessManagerNotReady\"",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "AccessManager #execute cannot execute a setAuthority call when a target admin delay is set",
@@ -173,7 +181,9 @@
     "cause": "execution reverted"
   },
   {
-    "id": "AccessManager #execute restrictions when the manager is open when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds"
+    "id": "AccessManager #execute restrictions when the manager is open when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "AccessManager #execute restrictions when the manager is open when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -221,7 +231,9 @@
     "cause": "execution reverted"
   },
   {
-    "id": "AccessManager access managed self operations when calling a restricted target function restrictions when the manager is open when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds"
+    "id": "AccessManager access managed self operations when calling a restricted target function restrictions when the manager is open when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "AccessManager access managed self operations when calling a restricted target function restrictions when the manager is open when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -256,7 +268,9 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager access managed target operations when calling a restricted target function restrictions when the manager is open when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds"
+    "id": "AccessManager access managed target operations when calling a restricted target function restrictions when the manager is open when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "AccessManager access managed target operations when calling a restricted target function restrictions when the manager is open when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -291,7 +305,9 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations not subject to a delay #setTargetClosed restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds"
+    "id": "AccessManager admin operations not subject to a delay #setTargetClosed restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "AccessManager admin operations not subject to a delay #setTargetClosed restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect with operation delay when operation delay is greater than execution delay when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -344,7 +360,9 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations not subject to a delay #setTargetFunctionRole restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds"
+    "id": "AccessManager admin operations not subject to a delay #setTargetFunctionRole restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "AccessManager admin operations not subject to a delay #setTargetFunctionRole restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect with operation delay when operation delay is greater than execution delay when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -397,7 +415,9 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations not subject to a delay #updateAuthority restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds"
+    "id": "AccessManager admin operations not subject to a delay #updateAuthority restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "AccessManager admin operations not subject to a delay #updateAuthority restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect with operation delay when operation delay is greater than execution delay when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -450,7 +470,9 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations not subject to a delay role admin operations #grantRole restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds"
+    "id": "AccessManager admin operations not subject to a delay role admin operations #grantRole restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "AccessManager admin operations not subject to a delay role admin operations #grantRole restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -505,7 +527,9 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations not subject to a delay role admin operations #revokeRole restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds"
+    "id": "AccessManager admin operations not subject to a delay role admin operations #revokeRole restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "AccessManager admin operations not subject to a delay role admin operations #revokeRole restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -545,7 +569,9 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations subject to a delay #labelRole restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds"
+    "id": "AccessManager admin operations subject to a delay #labelRole restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "AccessManager admin operations subject to a delay #labelRole restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect with operation delay when operation delay is greater than execution delay when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -598,7 +624,9 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations subject to a delay #setGrantDelay restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds"
+    "id": "AccessManager admin operations subject to a delay #setGrantDelay restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "AccessManager admin operations subject to a delay #setGrantDelay restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect with operation delay when operation delay is greater than execution delay when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -661,7 +689,9 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations subject to a delay #setRoleAdmin restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds"
+    "id": "AccessManager admin operations subject to a delay #setRoleAdmin restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "AccessManager admin operations subject to a delay #setRoleAdmin restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect with operation delay when operation delay is greater than execution delay when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -714,7 +744,9 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations subject to a delay #setRoleGuardian restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds"
+    "id": "AccessManager admin operations subject to a delay #setRoleGuardian restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "AccessManager admin operations subject to a delay #setRoleGuardian restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect with operation delay when operation delay is greater than execution delay when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -767,7 +799,9 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
-    "id": "AccessManager admin operations subject to a delay #setTargetAdminDelay restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds"
+    "id": "AccessManager admin operations subject to a delay #setTargetAdminDelay restrictions when the call comes from the manager (msg.sender == manager) when _executionId is in storage for target and selector succeeds",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "AccessManager admin operations subject to a delay #setTargetAdminDelay restrictions when the call does not come from the manager (msg.sender != manager) when the function requires the caller to be granted with a role other than PUBLIC_ROLE when the required role is granted to the caller when role granting is delayed when caller has an execution delay when grant delay has taken effect with operation delay when operation delay is greater than execution delay when operation is not scheduled reverts as AccessManagerNotScheduled",
@@ -901,7 +935,9 @@
     "id": "Arrays uint256 sort [skip-on-coverage] uint256[] of length 384 \"after each\" hook for \"sort array for identical elements\""
   },
   {
-    "id": "BeaconProxy bad beacon is not accepted non-compliant beacon"
+    "id": "BeaconProxy bad beacon is not accepted non-compliant beacon",
+    "cause": "estimate-gas-allowance-not-revert",
+    "note": "eth_estimateGas escalates to the 10M ceiling instead of surfacing the revert the test expects; the call is expected to fail, not to need more gas."
   },
   {
     "id": "BlockHeader current block"
@@ -1011,13 +1047,19 @@
     "note": "Deploy/sub-call side effects (balance after a value-transfer deploy, upgraded-implementation address, nested-call event) don't land, even though the top-level tx succeeds. Confirmed via bisection to PR #321 (reproduces with or without the gas-estimation fix, and in full isolation); exact mechanism inside #321 not yet diagnosed."
   },
   {
-    "id": "CrosschainBridgeERC1155 bridge ERC1155 like reconfiguration reject invalid gateway"
+    "id": "CrosschainBridgeERC1155 bridge ERC1155 like reconfiguration reject invalid gateway",
+    "cause": "estimate-gas-allowance-not-revert",
+    "note": "eth_estimateGas escalates to the 10M ceiling instead of surfacing the revert the test expects; the call is expected to fail, not to need more gas."
   },
   {
-    "id": "CrosschainBridgeERC20 bridge ERC20 like reconfiguration reject invalid gateway"
+    "id": "CrosschainBridgeERC20 bridge ERC20 like reconfiguration reject invalid gateway",
+    "cause": "estimate-gas-allowance-not-revert",
+    "note": "eth_estimateGas escalates to the 10M ceiling instead of surfacing the revert the test expects; the call is expected to fail, not to need more gas."
   },
   {
-    "id": "CrosschainBridgeERC721 bridge ERC721 like reconfiguration reject invalid gateway"
+    "id": "CrosschainBridgeERC721 bridge ERC721 like reconfiguration reject invalid gateway",
+    "cause": "estimate-gas-allowance-not-revert",
+    "note": "eth_estimateGas escalates to the 10M ceiling instead of surfacing the revert the test expects; the call is expected to fail, not to need more gas."
   },
   {
     "id": "CrosschainRemoteController & CrosschainRemoteExecutor reconfigure with an invalid new gateway: revert",
@@ -1033,7 +1075,9 @@
     "messagePattern": "^Clock mismatch in timestamp mode: expected \\d+ to equal \\d+\\.$"
   },
   {
-    "id": "ERC1155Crosschain bridge ERC1155 like reconfiguration reject invalid gateway"
+    "id": "ERC1155Crosschain bridge ERC1155 like reconfiguration reject invalid gateway",
+    "cause": "estimate-gas-allowance-not-revert",
+    "note": "eth_estimateGas escalates to the 10M ceiling instead of surfacing the revert the test expects; the call is expected to fail, not to need more gas."
   },
   {
     "id": "ERC1967Clones deterministic deployment (create2) initialization with parameters non payable when sending some balance reverts",
@@ -1066,7 +1110,9 @@
     "note": "Root-caused: gas estimation under-reports for calls routed through an EIP-1167 minimal-proxy delegatecall. A direct call to the implementation succeeds at its own estimate; the identical call through a clone fails at that estimate -- re-verifying doesn't catch it since eth_call itself under-reports here too (same broken oracle). A large explicit gas limit succeeds. Confirmed pre-existing (predates PR #321's gas-estimation work); not fixable by client-side padding -- likely endorser/execution/executor.go's delegatecall gas accounting. ERC1967Clones/Create2/Create3/ProxyAdmin/UUPSUpgradeable plausibly share this; SafeERC20/ERC4626/ERC20Wrapper/ERC20FlashMint/ERC721Wrapper/Context are tagged on symptom match only -- verify before assuming."
   },
   {
-    "id": "ERC20Crosschain bridge ERC20 like reconfiguration reject invalid gateway"
+    "id": "ERC20Crosschain bridge ERC20 like reconfiguration reject invalid gateway",
+    "cause": "estimate-gas-allowance-not-revert",
+    "note": "eth_estimateGas escalates to the 10M ceiling instead of surfacing the revert the test expects; the call is expected to fail, not to need more gas."
   },
   {
     "id": "ERC20TransferAuthorization with blockNumber cancelAuthorization cancels the next nonce after consuming the previous one",
@@ -1319,10 +1365,14 @@
     "cause": "execution reverted"
   },
   {
-    "id": "ERC2771Context when receiving a relayed call msgSender returns the original sender when calldata length is less than 20 bytes (address length)"
+    "id": "ERC2771Context when receiving a relayed call msgSender returns the original sender when calldata length is less than 20 bytes (address length)",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
-    "id": "ERC2771Context when receiving a relayed call returns the full original data when calldata length is less than 20 bytes (address length)"
+    "id": "ERC2771Context when receiving a relayed call returns the full original data when calldata length is less than 20 bytes (address length)",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "ERC2771Forwarder execute bubbles out of gas",
@@ -1386,7 +1436,9 @@
     "flaky": true
   },
   {
-    "id": "ERC721Crosschain bridge ERC721 like reconfiguration reject invalid gateway"
+    "id": "ERC721Crosschain bridge ERC721 like reconfiguration reject invalid gateway",
+    "cause": "estimate-gas-allowance-not-revert",
+    "note": "eth_estimateGas escalates to the 10M ceiling instead of surfacing the revert the test expects; the call is expected to fail, not to need more gas."
   },
   {
     "id": "ERC721Votes vote with blockNumber ERC-6372 behavior in blockNumber mode should have a correct clock value",
@@ -2435,14 +2487,10 @@
     "flaky": true
   },
   {
-    "id": "GovernorProposalGuardian using $ERC20Votes cancel proposal during active state \"before each\" hook for \"from proposal guardian\"",
-    "cause": "hardhat-block-rpc",
-    "note": "Reachable only once hardhat_setBalance works; the fixture then mines to a proposal deadline the gateway's block RPCs do not support."
+    "id": "GovernorProposalGuardian using $ERC20Votes cancel proposal during active state \"before each\" hook for \"from proposal guardian\""
   },
   {
-    "id": "GovernorProposalGuardian using $ERC20Votes set proposal guardian from governance",
-    "cause": "hardhat_impersonateAccount",
-    "note": "Reachable only once hardhat_setBalance works; the fixture then needs a governance signer that hardhat_impersonateAccount does not yet provide."
+    "id": "GovernorProposalGuardian using $ERC20Votes set proposal guardian from governance"
   },
   {
     "id": "GovernorProposalGuardian using $ERC20VotesTimestampMock cancel proposal during active state \"before each\" hook for \"from proposal guardian\"",
@@ -3493,18 +3541,24 @@
     "flaky": true
   },
   {
-    "id": "RelayedCall default (zero) salt direct call to the relayer"
+    "id": "RelayedCall default (zero) salt direct call to the relayer",
+    "cause": "estimate-gas-allowance-not-revert",
+    "note": "eth_estimateGas escalates to the 10M ceiling instead of surfacing the revert the test expects; the call is expected to fail, not to need more gas."
   },
   {
     "id": "RelayedCall default (zero) salt relayer input format",
-    "cause": "hardhat_setBalance"
+    "cause": "hardhat_setBalance",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
-    "id": "RelayedCall random salt direct call to the relayer"
+    "id": "RelayedCall random salt direct call to the relayer",
+    "cause": "estimate-gas-allowance-not-revert",
+    "note": "eth_estimateGas escalates to the 10M ceiling instead of surfacing the revert the test expects; the call is expected to fail, not to need more gas."
   },
   {
     "id": "RelayedCall random salt input format",
-    "cause": "hardhat_setBalance"
+    "cause": "hardhat_setBalance",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "SafeERC20 with ERC1363 that returns no boolean values reverts on approveAndCallRelaxed",
@@ -3603,37 +3657,57 @@
     "id": "TimelockController usage scenario call throw"
   },
   {
-    "id": "TransparentUpgradeableProxy proxy admin can overwrite the admin by the implementation"
+    "id": "TransparentUpgradeableProxy proxy admin can overwrite the admin by the implementation",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
-    "id": "TransparentUpgradeableProxy regression should add fallback function"
+    "id": "TransparentUpgradeableProxy regression should add fallback function",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "TransparentUpgradeableProxy regression should add new function"
   },
   {
-    "id": "TransparentUpgradeableProxy regression should change function signature"
+    "id": "TransparentUpgradeableProxy regression should change function signature",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
-    "id": "TransparentUpgradeableProxy regression should remove fallback function"
+    "id": "TransparentUpgradeableProxy regression should remove fallback function",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
-    "id": "TransparentUpgradeableProxy regression should remove function"
+    "id": "TransparentUpgradeableProxy regression should remove function",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
-    "id": "TransparentUpgradeableProxy transparent proxy when function names clash executes the proxy function if the sender is the admin"
+    "id": "TransparentUpgradeableProxy transparent proxy when function names clash executes the proxy function if the sender is the admin",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
-    "id": "TransparentUpgradeableProxy upgradeToAndCall with migrations when the sender is not the admin reverts"
+    "id": "TransparentUpgradeableProxy upgradeToAndCall with migrations when the sender is not the admin reverts",
+    "cause": "estimate-gas-allowance-not-revert",
+    "note": "eth_estimateGas escalates to the 10M ceiling instead of surfacing the revert the test expects; the call is expected to fail, not to need more gas."
   },
   {
-    "id": "TransparentUpgradeableProxy upgradeToAndCall with migrations when the sender is the admin when upgrading to V1 \"before each\" hook for \"upgrades to the requested version and emits an event\""
+    "id": "TransparentUpgradeableProxy upgradeToAndCall with migrations when the sender is the admin when upgrading to V1 \"before each\" hook for \"upgrades to the requested version and emits an event\"",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
-    "id": "TransparentUpgradeableProxy upgradeToAndCall without migrations when the call does not fail when the sender is not the admin reverts"
+    "id": "TransparentUpgradeableProxy upgradeToAndCall without migrations when the call does not fail when the sender is not the admin reverts",
+    "cause": "estimate-gas-allowance-not-revert",
+    "note": "eth_estimateGas escalates to the 10M ceiling instead of surfacing the revert the test expects; the call is expected to fail, not to need more gas."
   },
   {
-    "id": "TransparentUpgradeableProxy upgradeToAndCall without migrations when the call does not fail when the sender is the admin \"before each\" hook for \"upgrades to the requested implementation\""
+    "id": "TransparentUpgradeableProxy upgradeToAndCall without migrations when the call does not fail when the sender is the admin \"before each\" hook for \"upgrades to the requested implementation\"",
+    "cause": "hardhat_impersonateAccount",
+    "note": "hardhat_impersonateAccount is a no-op stub (COMPATIBILITY.md), so the test RPC holds no key for the address the test impersonates. Newly visible now that setBalance/setCode/setStorageAt let these suites past their fixture hooks."
   },
   {
     "id": "TrieProof process invalid proofs fails to process proof with invalid internal large hash",

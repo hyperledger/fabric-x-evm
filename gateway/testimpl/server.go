@@ -19,6 +19,7 @@ import (
 	estorage "github.com/hyperledger/fabric-x-evm/endorser/storage"
 	"github.com/hyperledger/fabric-x-evm/gateway/api"
 	"github.com/hyperledger/fabric-x-evm/gateway/storage"
+	"github.com/hyperledger/fabric-x-evm/gateway/testimpl/primer"
 )
 
 // NewTestServer creates an RPC server with test-only methods enabled.
@@ -27,10 +28,15 @@ import (
 // The lightKVS parameter is required for snapshot/revert functionality.
 // The store parameter is required for database snapshot/revert functionality.
 //
+// statePrimer backs hardhat_setBalance/setCode/setStorageAt with real priming
+// transactions and is required. It must be constructed with one endorsement.Builder
+// per endorser the network requires a signature from, so the priming transaction it
+// self-endorses is committable without involving those endorsers at all.
+//
 // SECURITY WARNING: This server performs server-side transaction signing,
 // which is inherently insecure. Use ONLY for development and testing.
 // NEVER use in production environments.
-func NewTestServer(b api.Backend, testAccounts []common.Address, testAccountKeys map[common.Address]*ecdsa.PrivateKey, lightKVS estorage.Revertible, store storage.Revertible, pool TxPool) (*rpc.Server, error) {
+func NewTestServer(b api.Backend, testAccounts []common.Address, testAccountKeys map[common.Address]*ecdsa.PrivateKey, lightKVS estorage.Revertible, store storage.Revertible, pool TxPool, statePrimer *primer.StatePrimer) (*rpc.Server, error) {
 	srv := rpc.NewServer()
 
 	// Shared by the submit path and the snapshot/revert path; see txFence.
@@ -61,14 +67,11 @@ func NewTestServer(b api.Backend, testAccounts []common.Address, testAccountKeys
 		return nil, err
 	}
 
-	// Register Hardhat helper APIs for test compatibility. hardhat_setBalance,
-	// hardhat_setCode and hardhat_setStorageAt submit system directives, so the
-	// backend must be a StateSetter.
-	submitter, ok := b.(StateSetter)
-	if !ok {
-		return nil, fmt.Errorf("test RPC backend %T does not implement StateSetter", b)
+	// Register Hardhat helper APIs for test compatibility.
+	if statePrimer == nil {
+		return nil, fmt.Errorf("test RPC server requires a state primer")
 	}
-	if err := srv.RegisterName("hardhat", NewHardhatAPI(submitter)); err != nil {
+	if err := srv.RegisterName("hardhat", NewHardhatAPI(statePrimer, b)); err != nil {
 		return nil, err
 	}
 	if err := srv.RegisterName("evm", NewEvmAPI(lightKVS, store, fence)); err != nil {
