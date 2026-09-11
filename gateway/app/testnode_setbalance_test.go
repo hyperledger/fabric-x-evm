@@ -166,7 +166,7 @@ func TestTestNode_HardhatSetBalance(t *testing.T) {
 // setBalance calls hardhat_setBalance the way Hardhat does, passing wei as a hex quantity.
 func setBalance(t *testing.T, ctx context.Context, rc *rpc.Client, addr common.Address, amount *big.Int) {
 	t.Helper()
-	var result interface{}
+	var result any
 	if err := rc.CallContext(ctx, &result, "hardhat_setBalance", addr, (*hexutil.Big)(amount)); err != nil {
 		t.Fatalf("hardhat_setBalance(%s, %s): %v", addr.Hex(), amount, err)
 	}
