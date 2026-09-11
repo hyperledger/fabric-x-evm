@@ -7,16 +7,13 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package integration
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"math/big"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/tests"
@@ -35,15 +32,6 @@ type transactionTestFile map[string]struct {
 	Result  map[string]struct {
 		Exception string `json:"exception"`
 	} `json:"result"`
-}
-
-// txNonceReader is a stub nonce source for the admission check: transaction_tests
-// carry no pre-state, and every fixture that reaches the nonce check is rejected
-// earlier on tx-type grounds, so a constant zero nonce is sufficient.
-type txNonceReader struct{}
-
-func (txNonceReader) NonceAt(context.Context, common.Address, *big.Int) (uint64, error) {
-	return 0, nil
 }
 
 // TestTransactionTests runs the execution-specs transaction_tests through the gateway's
@@ -120,5 +108,5 @@ func admissionRejects(t *testing.T, raw []byte, fork string) bool {
 	}
 
 	signer := types.LatestSignerForChainID(config.ChainID)
-	return core.ValidateTx(t.Context(), &tx, config, signer, txNonceReader{}) != nil
+	return core.ValidateTx(&tx, config, signer) != nil
 }

@@ -206,6 +206,8 @@ func TestConvertTransaction_ValidationCodes(t *testing.T) {
 		fabricValid    bool
 	}{
 		{"valid", 1, 0, true},
+		// A revert is Fabric-valid even though its EVM status is 0.
+		{"revert", 0, 0, true},
 		{"mvcc_conflict", 0, 11, false},
 		{"endorsement_failure", 0, 8, false},
 	}

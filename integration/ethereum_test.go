@@ -235,15 +235,6 @@ func runStateTestSubtests(t *testing.T, stateTest *StateTest, forkAllowlist map[
 	}
 }
 
-type nonceReader struct {
-	db *state.StateDB
-}
-
-func (n *nonceReader) NonceAt(ctx context.Context, account common.Address, blockNumber *big.Int) (uint64, error) {
-	nonce := n.db.GetNonce(account)
-	return nonce, nil
-}
-
 // runEthereumTestConfig executes a specific test configuration
 func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubtest, snapshotter bool, scheme string) {
 	// Get the post-state to extract the correct indices and expected results
@@ -298,7 +289,7 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 	defer th.Stop()
 
 	// run the tx through the pre-execution validation steps
-	preExecErr := core.ValidateTx(t.Context(), tx, config, signerForTx(tx), &nonceReader{th.endorsers[0].(*testimpl.EndorserWrapper).GetEthStateDB()})
+	preExecErr := core.ValidateTx(tx, config, signerForTx(tx))
 
 	// Execute transaction through gateway
 	env, execErr := th.Gateways[0].ExecuteEthTx(t.Context(), tx)
