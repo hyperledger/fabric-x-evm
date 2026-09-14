@@ -28,8 +28,8 @@ type errHandleQueue struct {
 func (q *errHandleQueue) Handle(context.Context, *domain.Block) error { return q.err }
 
 func TestNew_InitializesNonceGate(t *testing.T) {
-	// workerCount 0 and a nil queue exercise both constructor defaults.
-	g, err := New(nil, nil, nil, testChainID, 0, nil, nil)
+	// workerCount 0, a nil queue and a nil gate exercise all constructor defaults.
+	g, err := New(nil, nil, nil, testChainID, 0, nil, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, g.nonceGate)
 	require.NotNil(t, g.TxQueue)
@@ -101,10 +101,10 @@ func TestSendTransaction_ParkedResubmissionRejected(t *testing.T) {
 }
 
 // A supplied sequencer replaces the default gate instead of being wrapped by it.
-func TestWithNonceSequencer_ReplacesDefaultGate(t *testing.T) {
+func TestNew_SuppliedNonceGateReplacesDefault(t *testing.T) {
 	supplied := &countingSequencer{}
 
-	g, err := New(nil, nil, nil, testChainID, 1, nil, nil, WithNonceSequencer(supplied))
+	g, err := New(nil, nil, nil, testChainID, 1, nil, supplied, nil)
 	require.NoError(t, err)
 	require.Same(t, supplied, g.nonceGate)
 

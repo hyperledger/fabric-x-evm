@@ -33,6 +33,7 @@ type TxQueue struct {
 	mu            sync.RWMutex                       // Protects all fields below
 	cond          *sync.Cond                         // Signals when new transactions arrive
 	pendingQueue  []*types.Transaction               // FIFO queue of transactions waiting to be processed
+	queuedMap     map[common.Hash]*types.Transaction // Mirrors pendingQueue by hash, for O(1) dedup and lookup
 	inProgressMap map[common.Hash]*types.Transaction // Transactions currently being processed by workers
 	done          bool                               // Shutdown flag
 
@@ -45,6 +46,7 @@ type TxQueue struct {
 func NewTxQueue() *TxQueue {
 	q := &TxQueue{
 		pendingQueue:  make([]*types.Transaction, 0),
+		queuedMap:     make(map[common.Hash]*types.Transaction),
 		inProgressMap: make(map[common.Hash]*types.Transaction),
 	}
 	// sync.Cond requires a Locker; RWMutex implements Locker interface
@@ -52,13 +54,27 @@ func NewTxQueue() *TxQueue {
 	return q
 }
 
-// Enqueue adds a transaction to the queue.
+// Enqueue adds a transaction to the queue, ignoring one already queued or in
+// progress. The IsPending pre-check in SendTransaction is not atomic with this
+// insert, so two concurrent submissions of the same transaction can both reach
+// here; dropping the second saves an endorse/submit round that MVCC would
+// reject at commit anyway.
 // This method uses a write lock to ensure exclusive access when modifying the queue.
 func (q *TxQueue) Enqueue(tx *types.Transaction) {
+	txHash := tx.Hash()
+
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
+	if _, tracked := q.queuedMap[txHash]; tracked {
+		return
+	}
+	if _, tracked := q.inProgressMap[txHash]; tracked {
+		return
+	}
+
 	q.pendingQueue = append(q.pendingQueue, tx)
+	q.queuedMap[txHash] = tx
 	q.cond.Signal() // Wake up one waiting worker
 }
 
@@ -81,7 +97,8 @@ func (q *TxQueue) Dequeue() (*types.Transaction, bool) {
 	tx := q.pendingQueue[0]
 	q.pendingQueue[0] = nil // Prevent memory leak
 	q.pendingQueue = q.pendingQueue[1:]
-	q.inProgressMap[tx.Hash()] = tx // Track as in-progress
+	delete(q.queuedMap, tx.Hash())  // No longer queued...
+	q.inProgressMap[tx.Hash()] = tx // ...now tracked as in-progress
 	return tx, true
 }
 
@@ -110,11 +127,9 @@ func (q *TxQueue) IsPending(txHash common.Hash) *types.Transaction {
 		return tx
 	}
 
-	// Check if transaction is in the pending queue (O(n) lookup)
-	for _, tx := range q.pendingQueue {
-		if tx.Hash() == txHash {
-			return tx
-		}
+	// Check if transaction is still queued (O(1) lookup via the pendingQueue mirror)
+	if tx, exists := q.queuedMap[txHash]; exists {
+		return tx
 	}
 
 	return nil
@@ -131,6 +146,9 @@ func (q *TxQueue) InFlight() int {
 // This should be called by the Gateway's callback when a block containing the transaction
 // is committed to the ledger. This method is idempotent - safe to call multiple times.
 // This method uses a write lock to ensure exclusive access when modifying the map.
+// It deliberately leaves queuedMap alone: that map mirrors pendingQueue, which
+// Complete does not touch either, so a hash completing before a worker dequeues it
+// stays in both until Dequeue moves it on.
 func (q *TxQueue) Complete(hash common.Hash) {
 	q.mu.Lock()
 	defer q.mu.Unlock()

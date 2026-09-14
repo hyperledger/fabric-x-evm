@@ -105,9 +105,12 @@ type Store interface {
 
 // New creates a new Ethereum Gateway.
 // If txQueue is nil, NewTxQueue() will be used as the default.
+// If nonceGate is nil, the default nonce gate will be used: it parks future-nonce
+// transactions and releases them in nonce order as earlier nonces commit. The test
+// backend supplies a passthrough instead; production leaves it nil.
 // batchSubmitter handles all endorsement submissions and is owned by the Gateway.
 // endorsementChan is the channel to send endorsements to the BatchSubmitter.
-func New(ec *EndorsementClient, batchSubmitter *BatchSubmitter, store Store, chainID int64, workerCount int, txQueue TxQueueInterface, endorsementChan chan EndorsedTx, opts ...Option) (*Gateway, error) {
+func New(ec *EndorsementClient, batchSubmitter *BatchSubmitter, store Store, chainID int64, workerCount int, txQueue TxQueueInterface, nonceGate NonceSequencer, endorsementChan chan EndorsedTx) (*Gateway, error) {
 	if workerCount <= 0 {
 		workerCount = 1
 	}
@@ -126,27 +129,16 @@ func New(ec *EndorsementClient, batchSubmitter *BatchSubmitter, store Store, cha
 		ChainConfig:     cmn.BuildChainConfig(chainID),
 		Signer:          types.LatestSignerForChainID(cid),
 		TxQueue:         txQueue,
+		nonceGate:       nonceGate,
 		workerCount:     workerCount,
 		endorsementChan: endorsementChan,
 	}
-	for _, opt := range opts {
-		opt(g)
-	}
-	// Park future-nonce transactions and release them in nonce order as earlier
-	// nonces commit. An option may have supplied one already.
+	// Use the default nonce gate if none provided. It needs the gateway itself, so
+	// it can only be built once g exists.
 	if g.nonceGate == nil {
 		g.nonceGate = newNonceGate(g, g.Signer, g.TxQueue)
 	}
 	return g, nil
-}
-
-// Option configures a Gateway at construction.
-type Option func(*Gateway)
-
-// WithNonceSequencer replaces the nonce gate at construction. The test backend
-// supplies a passthrough this way; production leaves it unset.
-func WithNonceSequencer(seq NonceSequencer) Option {
-	return func(g *Gateway) { g.nonceGate = seq }
 }
 
 // Start initializes the worker pool to process transactions from the queue

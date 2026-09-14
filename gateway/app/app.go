@@ -209,16 +209,16 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 		return nil, fmt.Errorf("failed to create chain: %w", err)
 	}
 
-	var gwOpts []core.Option
 	var txQueue core.TxQueueInterface
+	var nonceGate core.NonceSequencer
 	if test != nil {
 		// The test RPC's snapshot reverts move the ledger nonce out of band, so
 		// the test backend keeps no cached nonce and parks nothing.
 		txQueue = core.NewTxQueue()
-		gwOpts = append(gwOpts, core.WithNonceSequencer(testimpl.NewPassthroughGate(txQueue)))
+		nonceGate = testimpl.NewPassthroughGate(txQueue)
 	}
 	// Gateway owns the BatchSubmitter and will handle its lifecycle
-	gateway, err := BuildGateway(ctx, endorsers, gwSigner, cfg.Network, chain, submitters, cfg.Gateway.SubmitterCount, cfg.Gateway.WorkerCount, txQueue, cfg.Gateway.EndorsementChanSize, 0, gwOpts...)
+	gateway, err := BuildGateway(ctx, endorsers, gwSigner, cfg.Network, chain, submitters, cfg.Gateway.SubmitterCount, cfg.Gateway.WorkerCount, txQueue, nonceGate, cfg.Gateway.EndorsementChanSize, 0)
 	if err != nil {
 		return nil, err
 	}

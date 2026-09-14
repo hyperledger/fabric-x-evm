@@ -51,6 +51,47 @@ func TestTxQueue_EnqueueAddsToPendingQueue(t *testing.T) {
 	assert.Len(t, q.inProgressMap, 0)
 }
 
+// A resubmission that races past the IsPending pre-check in SendTransaction must
+// not be queued twice.
+func TestTxQueue_EnqueueIgnoresDuplicateOfQueuedTx(t *testing.T) {
+	q := NewTxQueue()
+	tx := testTx(1)
+
+	q.Enqueue(tx)
+	q.Enqueue(tx)
+
+	assert.Len(t, q.pendingQueue, 1)
+	assert.Len(t, q.queuedMap, 1)
+	assert.Equal(t, 1, q.InFlight())
+}
+
+// Same for a duplicate arriving after a worker has picked the transaction up:
+// it is no longer queued, but it is still in flight.
+func TestTxQueue_EnqueueIgnoresDuplicateOfInProgressTx(t *testing.T) {
+	q := NewTxQueue()
+	tx := testTx(1)
+	q.Enqueue(tx)
+	_, ok := q.Dequeue()
+	require.True(t, ok)
+
+	q.Enqueue(tx)
+
+	assert.Len(t, q.pendingQueue, 0)
+	assert.Len(t, q.inProgressMap, 1)
+	assert.Equal(t, 1, q.InFlight())
+}
+
+// A distinct transaction from the same sender is not a duplicate.
+func TestTxQueue_EnqueueAdmitsDistinctTxs(t *testing.T) {
+	q := NewTxQueue()
+
+	q.Enqueue(testTx(1))
+	q.Enqueue(testTx(2))
+
+	assert.Len(t, q.pendingQueue, 2)
+	assert.Equal(t, 2, q.InFlight())
+}
+
 func TestTxQueue_DequeueMovesTxToInProgressMap(t *testing.T) {
 	q := NewTxQueue()
 	tx := testTx(1)

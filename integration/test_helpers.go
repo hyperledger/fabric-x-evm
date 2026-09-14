@@ -172,7 +172,7 @@ func defaultHandlerChain(t *testing.T, ctx context.Context, cfg config.Config, e
 	if txQueue == nil {
 		txQueue = core.NewTxQueue()
 	}
-	gw, err := app.BuildGateway(ctx, ends, gwSigner, cfg.Network, chain, submitters, cfg.Gateway.SubmitterCount, cfg.Gateway.WorkerCount, txQueue, cfg.Gateway.EndorsementChanSize, txPerSec, core.WithNonceSequencer(testimpl.NewPassthroughGate(txQueue)))
+	gw, err := app.BuildGateway(ctx, ends, gwSigner, cfg.Network, chain, submitters, cfg.Gateway.SubmitterCount, cfg.Gateway.WorkerCount, txQueue, testimpl.NewPassthroughGate(txQueue), cfg.Gateway.EndorsementChanSize, txPerSec)
 	if err != nil {
 		t.Fatalf("build gateway: %v", err)
 	}

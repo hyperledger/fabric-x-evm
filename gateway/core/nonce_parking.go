@@ -72,7 +72,8 @@ func (e expectedNonce) value() (uint64, bool) { return e.nonce, e.known }
 
 func (e *expectedNonce) raise(n uint64) {
 	if !e.known || n > e.nonce {
-		e.nonce, e.known = n, true
+		e.nonce = n
+		e.known = true
 	}
 }
 

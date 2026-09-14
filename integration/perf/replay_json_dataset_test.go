@@ -121,7 +121,10 @@ func perfHandlerChain(completionTracker *TxCompletionTracker) integration.Handle
 		if cfg.Network.Namespace == "synthetic" {
 			txPerSec = 10000
 		}
-		gw, err := app.BuildGateway(ctx, ends, gwSigner, cfg.Network, tracker, submitters, cfg.Gateway.SubmitterCount, cfg.Gateway.WorkerCount, txQueue, cfg.Gateway.EndorsementChanSize, txPerSec)
+		// Perf replay submits through NonceBypassGateway, which enqueues straight
+		// past the sequencer, so a real nonce gate would only add per-sender
+		// bookkeeping on every commit without ever gating a submission.
+		gw, err := app.BuildGateway(ctx, ends, gwSigner, cfg.Network, tracker, submitters, cfg.Gateway.SubmitterCount, cfg.Gateway.WorkerCount, txQueue, gwtestimpl.NewPassthroughGate(txQueue), cfg.Gateway.EndorsementChanSize, txPerSec)
 		if err != nil {
 			t.Fatalf("build gateway: %v", err)
 		}
