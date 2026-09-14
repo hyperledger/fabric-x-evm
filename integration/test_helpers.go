@@ -320,7 +320,16 @@ func applyConfigOverrides(cfg *config.Config, overrides map[string]any) error {
 				}
 				field.Set(val)
 			} else {
-				// Intermediate part - navigate deeper
+				// Intermediate part - navigate deeper, dereferencing optional fields.
+				if field.Kind() == reflect.Pointer {
+					if field.IsNil() {
+						if !field.CanSet() {
+							return fmt.Errorf("cannot allocate nil config field: %s", key)
+						}
+						field.Set(reflect.New(field.Type().Elem()))
+					}
+					field = field.Elem()
+				}
 				if field.Kind() != reflect.Struct {
 					return fmt.Errorf("cannot navigate through non-struct field: %s", key)
 				}
