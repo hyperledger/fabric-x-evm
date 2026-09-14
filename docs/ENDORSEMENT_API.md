@@ -124,8 +124,8 @@ the result carries the outcome. Status codes are defined in
 | ------ | --------------------------------------------------------------------------------------- |
 | `200`  | Success                                                                                 |
 | `201`  | EVM reverted; still endorsed and committed, receipt records `status=0`                  |
+| `202`  | Valid tx whose EVM execution failed without reverting (out of gas, invalid opcode, ...); still endorsed and committed, receipt records `status=0` |
 | `400`  | Invalid transaction, rejected before execution (nonce, funds, intrinsic gas, signature) |
-| `460`  | Valid transaction whose EVM execution failed (out of gas, invalid opcode)               |
 | `500`  | Server-side fault, such as a signing failure                                            |
 
 **Everything else** travels as a gRPC status error, and only these ever surface

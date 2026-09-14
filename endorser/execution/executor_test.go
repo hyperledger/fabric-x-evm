@@ -15,10 +15,14 @@ import (
 	ethcommon "github.com/ethereum/go-ethereum/common"
 	gethcore "github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/tracing"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/holiman/uint256"
+	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/state"
+	"google.golang.org/protobuf/proto"
 	_ "modernc.org/sqlite"
 )
 
@@ -293,5 +297,53 @@ func TestCall_ReportsPreRefundGasNotPostRefund(t *testing.T) {
 	const want = 26_006
 	if gotGas != want {
 		t.Errorf("gas = %d, want %d (the pre-refund figure)", gotGas, want)
+	}
+}
+
+// TestEVMEngineExecute_NonRevertFailureIsCommittedNotRejected verifies that a
+// valid tx whose EVM execution faults without reverting (an invalid opcode,
+// here) is endorsed as a committed outcome carrying an RWS and an exec-failure
+// event, the same shape a revert gets - not returned as a bare Go error the
+// way a pre-execution rejection (bad nonce, bad signature, ...) is.
+func TestEVMEngineExecute_NonRevertFailureIsCommittedNotRejected(t *testing.T) {
+	backend, err := state.NewWriteDB(Channel, "file:exec_nonrevert_failure?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	kvs := &testVersionedDBSnapshotter{db: backend}
+	cfg := EVMConfig{ChainConfig: common.BuildChainConfig(4011)}
+	eng := NewEVMEngine(Namespace, kvs, cfg, false)
+
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Contract creation whose init code is a single INVALID opcode (0xfe):
+	// intrinsic gas is paid, then execution faults without reverting.
+	tx := types.NewContractCreation(0, big.NewInt(0), 100_000, big.NewInt(1), []byte{0xfe})
+	signed, err := types.SignTx(tx, types.NewEIP155Signer(big.NewInt(4011)), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := eng.Execute(t.Context(), signed, uint64(1_700_000_000))
+	if err != nil {
+		t.Fatalf("expected a committed outcome, got error: %v", err)
+	}
+	if res.Status != common.StatusExecFailure {
+		t.Errorf("Status = %d, want %d (StatusExecFailure)", res.Status, common.StatusExecFailure)
+	}
+	if len(res.RWS.Writes) == 0 {
+		t.Error("expected RWS to record the sender's nonce increment, got no writes")
+	}
+	// res.Event is the inner event; the SDK Endorse builder wraps it in an
+	// outer ChaincodeEvent (EventName "log") before it is committed - mirror
+	// that here to check it the same way IsExecFailureEvent reads it back.
+	outer, err := proto.Marshal(&peer.ChaincodeEvent{Payload: res.Event, EventName: "log"})
+	if err != nil {
+		t.Fatalf("wrap event: %v", err)
+	}
+	if !common.IsExecFailureEvent(outer) {
+		t.Error("expected Event to be a marked exec-failure event")
 	}
 }

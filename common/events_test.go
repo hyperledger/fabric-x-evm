@@ -270,3 +270,75 @@ func TestIsRevertEvent_WithoutRevertPrefixReturnsFalse(t *testing.T) {
 		t.Error("non-revert event should be false")
 	}
 }
+
+// ---- MarshalExecFailure / IsExecFailureEvent ----
+
+func TestMarshalExecFailure_SetsEventNameWithTxID(t *testing.T) {
+	txID := "tx-abc"
+	payload := []byte("")
+	out, err := MarshalExecFailure(payload, "cc", txID)
+	if err != nil {
+		t.Fatalf("MarshalExecFailure err: %v", err)
+	}
+	var got peer.ChaincodeEvent
+	if err := proto.Unmarshal(out, &got); err != nil {
+		t.Fatalf("unmarshal roundtrip: %v", err)
+	}
+	if got.EventName != "execfail:"+txID {
+		t.Errorf("EventName = %q, want %q", got.EventName, "execfail:"+txID)
+	}
+	if got.TxId != txID {
+		t.Errorf("TxId = %q, want %q", got.TxId, txID)
+	}
+}
+
+func TestIsExecFailureEvent_EmptyReturnsFalse(t *testing.T) {
+	if IsExecFailureEvent(nil) {
+		t.Error("nil should be false")
+	}
+	if IsExecFailureEvent([]byte{}) {
+		t.Error("empty slice should be false")
+	}
+}
+
+func TestIsExecFailureEvent_WithExecFailurePrefixReturnsTrue(t *testing.T) {
+	inner, err := MarshalExecFailure(nil, "cc", "tx-1")
+	if err != nil {
+		t.Fatalf("MarshalExecFailure: %v", err)
+	}
+	outer, err := proto.Marshal(&peer.ChaincodeEvent{Payload: inner, EventName: "log"})
+	if err != nil {
+		t.Fatalf("outer marshal: %v", err)
+	}
+	if !IsExecFailureEvent(outer) {
+		t.Error("expected exec-failure event detected")
+	}
+}
+
+func TestIsExecFailureEvent_RevertEventReturnsFalse(t *testing.T) {
+	inner, err := MarshalRevert([]byte("payload"), "cc", "tx-1")
+	if err != nil {
+		t.Fatalf("MarshalRevert: %v", err)
+	}
+	outer, err := proto.Marshal(&peer.ChaincodeEvent{Payload: inner, EventName: "log"})
+	if err != nil {
+		t.Fatalf("outer marshal: %v", err)
+	}
+	if IsExecFailureEvent(outer) {
+		t.Error("revert event should not be an exec-failure event")
+	}
+}
+
+func TestIsRevertEvent_ExecFailureEventReturnsFalse(t *testing.T) {
+	inner, err := MarshalExecFailure(nil, "cc", "tx-1")
+	if err != nil {
+		t.Fatalf("MarshalExecFailure: %v", err)
+	}
+	outer, err := proto.Marshal(&peer.ChaincodeEvent{Payload: inner, EventName: "log"})
+	if err != nil {
+		t.Fatalf("outer marshal: %v", err)
+	}
+	if IsRevertEvent(outer) {
+		t.Error("exec-failure event should not be a revert event")
+	}
+}

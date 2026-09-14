@@ -17,7 +17,7 @@ const (
 const (
 	StatusOK          int32 = 200
 	StatusEVMRevert   int32 = 201
+	StatusExecFailure int32 = 202 // valid tx whose EVM execution failed (out of gas, invalid opcode, ...); mined with a failed receipt, like StatusEVMRevert
 	StatusTxRejected  int32 = 400 // invalid tx, rejected before execution (nonce, funds, intrinsic gas, ...)
-	StatusExecFailure int32 = 460 // valid tx whose EVM execution failed (out of gas, invalid opcode, ...); should be mined (not yet)
 	StatusServerError int32 = 500
 )
