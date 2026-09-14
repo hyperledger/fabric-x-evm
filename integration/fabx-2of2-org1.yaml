@@ -30,3 +30,14 @@ endorser:
     msp-dir: ../testdata/crypto/peerOrganizations/org1.example.com/peers/endorser.org1.example.com/msp
   database:
     database: memory
+  server:
+    endpoint:
+      host: 127.0.0.1
+      port: 0
+    tls:
+      mode: mtls
+      cert-path: ../testdata/crypto/peerOrganizations/org1.example.com/peers/endorser.org1.example.com/tls/server.crt
+      key-path: ../testdata/crypto/peerOrganizations/org1.example.com/peers/endorser.org1.example.com/tls/server.key
+      ca-cert-paths:
+        - ../testdata/crypto/peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem
+        - ../testdata/crypto/peerOrganizations/org2.example.com/tlsca/tlsca.org2.example.com-cert.pem
