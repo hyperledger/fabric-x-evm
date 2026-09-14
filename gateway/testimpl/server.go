@@ -18,6 +18,7 @@ import (
 	"github.com/ethereum/go-ethereum/rpc"
 	estorage "github.com/hyperledger/fabric-x-evm/endorser/storage"
 	"github.com/hyperledger/fabric-x-evm/gateway/api"
+	"github.com/hyperledger/fabric-x-evm/gateway/api/filters"
 	"github.com/hyperledger/fabric-x-evm/gateway/storage"
 	"github.com/hyperledger/fabric-x-evm/gateway/testimpl/primer"
 )
@@ -33,10 +34,12 @@ import (
 // per endorser the network requires a signature from, so the priming transaction it
 // self-endorses is committable without involving those endorsers at all.
 //
+// filterAPI may be nil to skip eth_*Filter methods.
+//
 // SECURITY WARNING: This server performs server-side transaction signing,
 // which is inherently insecure. Use ONLY for development and testing.
 // NEVER use in production environments.
-func NewTestServer(b api.Backend, testAccounts []common.Address, testAccountKeys map[common.Address]*ecdsa.PrivateKey, lightKVS estorage.Revertible, store storage.Revertible, pool TxPool, statePrimer *primer.StatePrimer) (*rpc.Server, error) {
+func NewTestServer(b api.Backend, testAccounts []common.Address, testAccountKeys map[common.Address]*ecdsa.PrivateKey, lightKVS estorage.Revertible, store storage.Revertible, pool TxPool, statePrimer *primer.StatePrimer, filterAPI *filters.FilterAPI) (*rpc.Server, error) {
 	srv := rpc.NewServer()
 
 	// Shared by the submit path and the snapshot/revert path; see txFence.
@@ -51,6 +54,14 @@ func NewTestServer(b api.Backend, testAccounts []common.Address, testAccountKeys
 	// Register the test-enabled API
 	if err := srv.RegisterName("eth", testAPI); err != nil {
 		return nil, err
+	}
+	if filterAPI != nil {
+		if err := srv.RegisterName("eth", filterAPI); err != nil {
+			return nil, err
+		}
+		if err := srv.RegisterName("eth", api.NewHeadsAPI(filterAPI)); err != nil {
+			return nil, err
+		}
 	}
 
 	// Register other standard APIs

@@ -22,6 +22,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/eth/filters"
 	"github.com/ethereum/go-ethereum/rpc"
+	apifilters "github.com/hyperledger/fabric-x-evm/gateway/api/filters"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 )
 
@@ -868,10 +869,10 @@ func TestArgsToCallMsg_DataAliasWhenInputAbsent(t *testing.T) {
 	}
 }
 
-func TestDomainLogToTypesLog_MultipleTopics(t *testing.T) {
+func TestDomainLogToTypes_MultipleTopics(t *testing.T) {
 	t1 := common.HexToHash("0xaa").Bytes()
 	t2 := common.HexToHash("0xbb").Bytes()
-	got := domainLogToTypesLog(domain.Log{
+	got := apifilters.DomainLogToTypes(domain.Log{
 		BlockHash: make([]byte, 32),
 		TxHash:    make([]byte, 32),
 		Address:   make([]byte, 20),

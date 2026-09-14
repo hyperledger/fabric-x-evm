@@ -20,6 +20,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/eth/filters"
 	"github.com/ethereum/go-ethereum/rpc"
+	apifilters "github.com/hyperledger/fabric-x-evm/gateway/api/filters"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 )
 
@@ -78,22 +79,23 @@ func TestBlockNumberToUint64(t *testing.T) {
 	}
 }
 
-// TestFilterCriteriaToLogFilter_LatestToBlock reproduces issue #192: eth_getLogs
-// with toBlock: "latest" must leave the upper bound unset, not resolve it to
+// TestGetLogs_LatestToBlock reproduces issue #192: eth_getLogs with
+// toBlock: "latest" must leave the upper bound unset, not resolve it to
 // block 1. It unmarshals real JSON-RPC input so go-ethereum's own sentinel
 // encoding (rpc.LatestBlockNumber, a negative constant) is exercised.
-func TestFilterCriteriaToLogFilter_LatestToBlock(t *testing.T) {
+func TestGetLogs_LatestToBlock(t *testing.T) {
 	var crit filters.FilterCriteria
 	if err := json.Unmarshal([]byte(`{"fromBlock":"0x1","toBlock":"latest"}`), &crit); err != nil {
 		t.Fatalf("unmarshal FilterCriteria: %v", err)
 	}
 
-	api := NewEthAPI(&stubBackend{blockNum: 7})
-	got, err := api.filterCriteriaToLogFilter(context.Background(), crit)
-	if err != nil {
-		t.Fatalf("filterCriteriaToLogFilter() error = %v", err)
+	backend := &stubBackend{blockNum: 7}
+	api := NewEthAPI(backend)
+	if _, err := api.GetLogs(context.Background(), crit); err != nil {
+		t.Fatalf("GetLogs() error = %v", err)
 	}
 
+	got := backend.lastFilter
 	if got.FromBlock == nil || *got.FromBlock != 1 {
 		t.Errorf("FromBlock = %v, want 1", got.FromBlock)
 	}
@@ -102,7 +104,7 @@ func TestFilterCriteriaToLogFilter_LatestToBlock(t *testing.T) {
 	}
 }
 
-func TestFilterCriteriaToLogFilter_BlockBounds(t *testing.T) {
+func TestGetLogs_BlockBounds(t *testing.T) {
 	tests := []struct {
 		name     string
 		json     string
@@ -120,8 +122,6 @@ func TestFilterCriteriaToLogFilter_BlockBounds(t *testing.T) {
 		{"finalized from", `{"fromBlock":"finalized"}`, new(uint64(7)), nil},
 	}
 
-	api := NewEthAPI(&stubBackend{blockNum: 7})
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var crit filters.FilterCriteria
@@ -129,11 +129,13 @@ func TestFilterCriteriaToLogFilter_BlockBounds(t *testing.T) {
 				t.Fatalf("unmarshal FilterCriteria: %v", err)
 			}
 
-			got, err := api.filterCriteriaToLogFilter(context.Background(), crit)
-			if err != nil {
-				t.Fatalf("filterCriteriaToLogFilter() error = %v", err)
+			backend := &stubBackend{blockNum: 7}
+			api := NewEthAPI(backend)
+			if _, err := api.GetLogs(context.Background(), crit); err != nil {
+				t.Fatalf("GetLogs() error = %v", err)
 			}
 
+			got := backend.lastFilter
 			if (got.FromBlock == nil) != (tt.wantFrom == nil) || (got.FromBlock != nil && *got.FromBlock != *tt.wantFrom) {
 				t.Errorf("FromBlock = %v, want %v", got.FromBlock, tt.wantFrom)
 			}
@@ -600,8 +602,8 @@ func TestCall_NonRevertBackendErrorIsInternal(t *testing.T) {
 	}
 }
 
-func TestDomainLogToTypesLog_SetsBlockTimestamp(t *testing.T) {
-	got := domainLogToTypesLog(domain.Log{
+func TestDomainLogToTypes_SetsBlockTimestamp(t *testing.T) {
+	got := apifilters.DomainLogToTypes(domain.Log{
 		Timestamp: 1234,
 		BlockHash: make([]byte, 32),
 		TxHash:    make([]byte, 32),

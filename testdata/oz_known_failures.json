@@ -2205,6 +2205,14 @@
     "messagePattern": "^transaction 0x[0-9a-fA-F]+ was dropped before it committed$"
   },
   {
+    "id": "Votes-family before-each-hook dropped-tx race",
+    "cause": "concurrent-tx-race",
+    "note": "Same dropped-before-commit race as the Governor-family before-each entry, observed on ERC20Votes/Votes Compound workflow fixtures where the before-each hook submits txs that can be dropped instead of getting a failed receipt. Matched by signature because which exact Votes variant flakes is not deterministic.",
+    "flaky": true,
+    "idPattern": "^(ERC20Votes|ERC721Votes|Votes|VotesExtended)\\b.*\"before each\" hook for \"",
+    "messagePattern": "^transaction 0x[0-9a-fA-F]+ was dropped before it committed$"
+  },
+  {
     "id": "GovernorCountingFractional using $ERC20Votes \"before each\" hook for \"deployment check\"",
     "cause": "concurrent-tx-race",
     "note": "Predicted, not yet observed failing: this fixture uses the same vulnerable pattern confirmed racy elsewhere (GovernorHelper.delegate()'s Promise.all of dependent writes, no confirmation wait -- the endorsement-time read snapshot goes stale before commit).",
@@ -3433,6 +3441,12 @@
   },
   {
     "id": "MerkleTree push pushing to a full tree reverts"
+  },
+  {
+    "id": "RateLimiter RefillingBucket with some capacity consume consume reduces available and increases used",
+    "cause": "hardhat-time-rpc",
+    "note": "Bucket/window state depends on real elapsed wall-clock time between txs (evm_increaseTime/evm_setNextBlockTimestamp are no-ops, COMPATIBILITY.md); tests assuming zero/exact elapsed time pick up unintended refill/decay.",
+    "flaky": true
   },
   {
     "id": "RateLimiter RefillingBucket with some capacity consume consume one key does not affect another key",

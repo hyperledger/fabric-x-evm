@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/ethereum/go-ethereum/rpc"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/msp"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
@@ -35,6 +37,8 @@ import (
 	ecore "github.com/hyperledger/fabric-x-evm/endorser/core"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
 	"github.com/hyperledger/fabric-x-evm/endorser/storage"
+	gwapi "github.com/hyperledger/fabric-x-evm/gateway/api"
+	"github.com/hyperledger/fabric-x-evm/gateway/api/filters"
 	"github.com/hyperledger/fabric-x-evm/gateway/app"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
@@ -147,15 +151,17 @@ type HandlerChainFactory func(
 //     block the endorser's state already reflects it — this gives read-your-writes
 //     semantics for the test RPC's synchronous eth_sendRawTransaction.
 //
-//  2. Chain: persist the block and its Ethereum transactions to the SQLite store and
+//  2. FilterAPI: update eth_*Filter state synchronously for the committed block.
+//
+//  3. Chain: persist the block and its Ethereum transactions to the SQLite store and
 //     update the state-root trie. Must run before the gateway so that eth_getBlockBy*
 //     and eth_getTransactionReceipt are answerable the moment the gateway marks a
 //     transaction complete.
 //
-//  3. Gateway: call TxQueue.Handle to mark any pending Ethereum transactions whose
+//  4. Gateway: call TxQueue.Handle to mark any pending Ethereum transactions whose
 //     Fabric tx-ID appears in this block as complete, unblocking waiting callers.
 //
-//  4. Extra handlers (e.g. TxCompletionTracker in perf tests): any caller-supplied
+//  5. Extra handlers (e.g. TxCompletionTracker in perf tests): any caller-supplied
 //     handlers that observe committed blocks for their own purposes.
 func defaultHandlerChain(t *testing.T, ctx context.Context, cfg config.Config, ends []eapi.Service, gwSigner sdk.Signer, submitters []core.Submitter, txQueue core.TxQueueInterface, dbs []storage.KVS) (*core.Gateway, []blocks.BlockHandler, network.BlockHeightReader) {
 	chain, err := core.NewChain(cfg.Gateway.Database.ConnString, cfg.Gateway.Database.TriePath, false)
@@ -177,11 +183,18 @@ func defaultHandlerChain(t *testing.T, ctx context.Context, cfg config.Config, e
 		t.Fatalf("build gateway: %v", err)
 	}
 
-	handlers := make([]blocks.BlockHandler, 0, len(dbs)+2)
+	filterAPI := filters.NewFilterAPI(gw)
+	t.Cleanup(func() {
+		filterAPI.Close()
+		integrationFilters.Delete(gw)
+	})
+	registerIntegrationFilters(gw, filterAPI)
+
+	handlers := make([]blocks.BlockHandler, 0, len(dbs)+3)
 	for _, db := range dbs {
 		handlers = append(handlers, db)
 	}
-	handlers = append(handlers, chain, gw)
+	handlers = append(handlers, chain, filterAPI, gw)
 	return gw, handlers, chain
 }
 
@@ -622,7 +635,7 @@ func processCommon(t *testing.T, gw *core.Gateway, commit bool, tx *types.Transa
 			t.Fatal(err)
 		}
 
-		ec, err := primer.NewNativeEthClient(gw)
+		ec, err := NewNativeEthClient(gw)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -643,10 +656,36 @@ func getEndorsedTxForSmartContractCall(t *testing.T, client *EthClient, addr eth
 	return processCommon(t, gw, false, tx)
 }
 
+// integrationFilters ties a FilterAPI to the gateway that owns it in the
+// synchronizer handler chain, so InProc RPC sees the same filter state.
+var integrationFilters sync.Map // *core.Gateway -> *filters.FilterAPI
+
+func registerIntegrationFilters(gw *core.Gateway, api *filters.FilterAPI) {
+	integrationFilters.Store(gw, api)
+}
+
+// NewNativeEthClient dials the gateway in-process with the FilterAPI from the
+// handler chain when one was registered for this gateway.
+func NewNativeEthClient(gw *core.Gateway) (*ethclient.Client, error) {
+	var filterAPI *filters.FilterAPI
+	if v, ok := integrationFilters.Load(gw); ok {
+		if api, ok := v.(*filters.FilterAPI); ok {
+			filterAPI = api
+		}
+	}
+	rpcServer, err := gwapi.NewServer(gw, filterAPI)
+	if err != nil {
+		return nil, err
+	}
+
+	client := rpc.DialInProc(rpcServer)
+	return ethclient.NewClient(client), nil
+}
+
 func deploySmartContract(t *testing.T, gw *core.Gateway, client *EthClient, args ...any) ethcommon.Address {
 	t.Helper()
 
-	ec, err := primer.NewNativeEthClient(gw)
+	ec, err := NewNativeEthClient(gw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -669,7 +708,7 @@ func deploySmartContract(t *testing.T, gw *core.Gateway, client *EthClient, args
 func callSmartContract(t *testing.T, client *EthClient, addr ethcommon.Address, gw *core.Gateway, method string, args ...any) {
 	t.Helper()
 
-	ec, err := primer.NewNativeEthClient(gw)
+	ec, err := NewNativeEthClient(gw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -690,7 +729,7 @@ func callSmartContract(t *testing.T, client *EthClient, addr ethcommon.Address, 
 func querySmartContract(t *testing.T, gw *core.Gateway, client *EthClient, addr ethcommon.Address, method string, params ...any) []any {
 	t.Helper()
 
-	ec, err := primer.NewNativeEthClient(gw)
+	ec, err := NewNativeEthClient(gw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -753,7 +792,7 @@ func submit(t *testing.T, gw *core.Gateway, end sdk.Endorsement) {
 		t.Error(err)
 	}
 
-	ec, err := primer.NewNativeEthClient(gw)
+	ec, err := NewNativeEthClient(gw)
 	if err != nil {
 		t.Error(err)
 	}

@@ -23,8 +23,9 @@ import (
 // NewNativeEthClient dials gw in-process over the production RPC surface, so
 // callers can read committed state back through the same API a real client uses.
 func NewNativeEthClient(gw *core.Gateway) (*ethclient.Client, error) {
-	// Create production RPC server (no test accounts needed for integration tests)
-	rpcServer, err := gwapi.NewServer(gw)
+	// Create production RPC server (no test accounts needed for integration tests).
+	// Filters are optional and wired separately by callers that need eth_*Filter.
+	rpcServer, err := gwapi.NewServer(gw, nil)
 	if err != nil {
 		return nil, err
 	}

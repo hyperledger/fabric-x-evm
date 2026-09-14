@@ -13,6 +13,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
+	apifilters "github.com/hyperledger/fabric-x-evm/gateway/api/filters"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 )
 
@@ -63,7 +64,7 @@ func receipt(r *domain.Transaction) *rpcReceipt {
 
 	logs := make([]*types.Log, len(r.Logs))
 	for i, l := range r.Logs {
-		logs[i] = domainLogToTypesLog(l)
+		logs[i] = apifilters.DomainLogToTypes(l)
 	}
 
 	return &rpcReceipt{
@@ -186,6 +187,11 @@ func rpcTransaction(tx *domain.Transaction) *RPCTransaction {
 	// else: leave BlockHash, BlockNumber, TransactionIndex as nil (pending transaction)
 
 	return rpcTx
+}
+
+// RPCBlockFromDomain is the eth_getBlockByNumber / newHeads payload for a stored block.
+func RPCBlockFromDomain(b *domain.Block) *RPCBlock {
+	return rpcBlock(b, false)
 }
 
 // rpcBlock returns a block in the form the RPC API can return. Some values are mocked.
