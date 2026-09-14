@@ -4,7 +4,7 @@ Copyright IBM Corp. All Rights Reserved.
 SPDX-License-Identifier: LGPL-3.0-or-later
 */
 
-package common
+package hybridx
 
 import (
 	"context"
@@ -19,6 +19,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
+
+	"github.com/hyperledger/fabric-x-evm/common"
 )
 
 // stubHandler captures every block delivered to it and lets tests inject
@@ -36,7 +38,7 @@ func (s *stubHandler) Handle(_ context.Context, b blocks.Block) error {
 // makeMetadata builds the wire-format Metadata[0] entry the dispatcher expects:
 // a marshalled ChaincodeInput whose Args[0] is the proposal-type byte and
 // Args[1] is the raw ethereum-tx bytes (opaque to the dispatcher).
-func makeMetadata(t *testing.T, propType ProposalType, ethTxBytes []byte) [][]byte {
+func makeMetadata(t *testing.T, propType common.ProposalType, ethTxBytes []byte) [][]byte {
 	t.Helper()
 	input := &peer.ChaincodeInput{Args: [][]byte{{byte(propType)}, ethTxBytes}}
 	b, err := proto.Marshal(input)
@@ -46,7 +48,7 @@ func makeMetadata(t *testing.T, propType ProposalType, ethTxBytes []byte) [][]by
 
 // makeMetadataWithEvent is like makeMetadata but also appends eventBytes as
 // Metadata[1], mirroring the fabric-x builder which stores events there.
-func makeMetadataWithEvent(t *testing.T, propType ProposalType, ethTxBytes, eventBytes []byte) [][]byte {
+func makeMetadataWithEvent(t *testing.T, propType common.ProposalType, ethTxBytes, eventBytes []byte) [][]byte {
 	t.Helper()
 	meta := makeMetadata(t, propType, ethTxBytes)
 	return append(meta, eventBytes)
@@ -105,7 +107,7 @@ func TestHandleBatch_SkipsEventWithMalformedProtobuf(t *testing.T) {
 
 func TestHandleBatch_SkipsEventWithInsufficientArgs(t *testing.T) {
 	// A ChaincodeInput with only one arg fails the `len(input.Args) < 2` check.
-	input := &peer.ChaincodeInput{Args: [][]byte{{byte(ProposalTypeEVMTx)}}}
+	input := &peer.ChaincodeInput{Args: [][]byte{{byte(common.ProposalTypeEVMTx)}}}
 	metaBytes, err := proto.Marshal(input)
 	require.NoError(t, err)
 
@@ -122,13 +124,13 @@ func TestHandleBatch_SkipsEventWithInsufficientArgs(t *testing.T) {
 }
 
 func TestHandleBatch_SkipsNonEVMTx(t *testing.T) {
-	// Args[0] is a made-up proposal type, not ProposalTypeEVMTx.
+	// Args[0] is a made-up proposal type, not evmcommon.ProposalTypeEVMTx.
 	h := &stubHandler{}
 	d := NewAllTxBatchDispatcher(h)
 	err := d.HandleBatch(context.Background(), notification.AllTxBatch{
 		BlockNumber: 1,
 		Events: []notification.CommittedTxEvent{
-			{TxID: "tx-not-evm", Metadata: makeMetadata(t, ProposalType(0x01), []byte{0xde, 0xad})},
+			{TxID: "tx-not-evm", Metadata: makeMetadata(t, common.ProposalType(0x01), []byte{0xde, 0xad})},
 		},
 	})
 	require.NoError(t, err)
@@ -142,11 +144,11 @@ func TestHandleBatch_DispatchesOnlyEVMTxsFromMixedBatch(t *testing.T) {
 		BlockNumber: 42,
 		Events: []notification.CommittedTxEvent{
 			{TxID: "evm-1", TxNum: 0, Status: notification.StatusCommitted,
-				Metadata: makeMetadata(t, ProposalTypeEVMTx, []byte{0xaa})},
+				Metadata: makeMetadata(t, common.ProposalTypeEVMTx, []byte{0xaa})},
 			{TxID: "non-evm", TxNum: 1, Status: notification.StatusCommitted,
-				Metadata: makeMetadata(t, ProposalType(0x01), []byte{0xbb})},
+				Metadata: makeMetadata(t, common.ProposalType(0x01), []byte{0xbb})},
 			{TxID: "evm-2", TxNum: 2, Status: notification.StatusMVCCConflict,
-				Metadata: makeMetadata(t, ProposalTypeEVMTx, []byte{0xcc})},
+				Metadata: makeMetadata(t, common.ProposalTypeEVMTx, []byte{0xcc})},
 		},
 	})
 	require.NoError(t, err)
@@ -180,7 +182,7 @@ func TestHandleBatch_BlockZeroParentHashDoesNotUnderflow(t *testing.T) {
 		BlockNumber: 0,
 		Events: []notification.CommittedTxEvent{
 			{TxID: "evm-1", Status: notification.StatusCommitted,
-				Metadata: makeMetadata(t, ProposalTypeEVMTx, []byte{0xaa})},
+				Metadata: makeMetadata(t, common.ProposalTypeEVMTx, []byte{0xaa})},
 		},
 	})
 	require.NoError(t, err)
@@ -196,7 +198,7 @@ func TestHandleBatch_MultipleHandlersAllReceive(t *testing.T) {
 		BlockNumber: 7,
 		Events: []notification.CommittedTxEvent{
 			{TxID: "evm-1", Status: notification.StatusCommitted,
-				Metadata: makeMetadata(t, ProposalTypeEVMTx, []byte{0xaa})},
+				Metadata: makeMetadata(t, common.ProposalTypeEVMTx, []byte{0xaa})},
 		},
 	})
 	require.NoError(t, err)
@@ -220,10 +222,10 @@ func TestHandleBatch_EventsFromMetadata1(t *testing.T) {
 		Events: []notification.CommittedTxEvent{
 			// tx with event in Metadata[1]
 			{TxID: "evm-with-event", Status: notification.StatusCommitted,
-				Metadata: makeMetadataWithEvent(t, ProposalTypeEVMTx, []byte{0xaa}, eventPayload)},
+				Metadata: makeMetadataWithEvent(t, common.ProposalTypeEVMTx, []byte{0xaa}, eventPayload)},
 			// tx with no event (only Metadata[0])
 			{TxID: "evm-no-event", Status: notification.StatusCommitted,
-				Metadata: makeMetadata(t, ProposalTypeEVMTx, []byte{0xbb})},
+				Metadata: makeMetadata(t, common.ProposalTypeEVMTx, []byte{0xbb})},
 		},
 	})
 	require.NoError(t, err)
@@ -253,7 +255,7 @@ func TestHandleBatch_HandlerErrorPanics(t *testing.T) {
 		BlockNumber: 1,
 		Events: []notification.CommittedTxEvent{
 			{TxID: "evm-1", Status: notification.StatusCommitted,
-				Metadata: makeMetadata(t, ProposalTypeEVMTx, []byte{0xaa})},
+				Metadata: makeMetadata(t, common.ProposalTypeEVMTx, []byte{0xaa})},
 		},
 	})
 	t.Fatal("expected panic, HandleBatch returned normally")

@@ -15,11 +15,13 @@ import (
 	endorser "github.com/hyperledger/fabric-x-evm/endorser/config"
 )
 
-// Config is the top-level configuration for a gateway deployment.
+// Config is the top-level configuration for a process: either a gateway (with
+// its own embedded endorser or dialing remote ones) or a standalone endorser.
 //
-// Exactly one of Endorser and Gateway.Endorsers is set: Endorser runs this
-// process's own endorser embedded, Gateway.Endorsers dials other processes'
-// endorsers over gRPC. Setting both is rejected.
+// Gateway is optional — nil means an endorser-only process. Exactly one of
+// Endorser and Gateway.Endorsers is set: Endorser runs this process's own
+// endorser embedded, Gateway.Endorsers dials other processes' endorsers over
+// gRPC. Setting both is rejected.
 type Config struct {
 	Logging Logging        `mapstructure:"logging"   yaml:"logging"`
 	Network common.Network `mapstructure:"network"   yaml:"network"`
@@ -34,7 +36,9 @@ type Config struct {
 	// and the gateway.
 	Synchronizer Synchronizer `mapstructure:"synchronizer" yaml:"synchronizer"`
 
-	Gateway Gateway `mapstructure:"gateway"   yaml:"gateway"`
+	// Gateway configures the gateway component. Nil means this process runs
+	// only a standalone endorser.
+	Gateway *Gateway `mapstructure:"gateway" yaml:"gateway"`
 
 	// Endorser configures this process's own, embedded endorser. A real
 	// deployment never embeds more than one.
@@ -118,37 +122,50 @@ func (cfg Config) Validate() error {
 	if err := cfg.Committer.Validate(); err != nil {
 		errs = append(errs, fmt.Errorf("committer: %w", err))
 	}
-	if cfg.Gateway.Listen == "" {
-		errs = append(errs, errors.New("gateway.listen is required"))
-	} else if err := common.ValidateListenAddress(cfg.Gateway.Listen); err != nil {
-		errs = append(errs, err)
-	}
-	if err := cfg.Gateway.Identity.Validate(); err != nil {
-		errs = append(errs, fmt.Errorf("gateway.identity: %w", err))
-	}
-	if cfg.Gateway.Database.ConnString == "" {
-		errs = append(errs, errors.New("gateway.database.connection-string is required"))
-	}
-	if len(cfg.Gateway.Orderers) == 0 {
-		errs = append(errs, errors.New("gateway.orderers must have at least one entry"))
-	}
-	for i, o := range cfg.Gateway.Orderers {
-		if err := o.Validate(); err != nil {
-			errs = append(errs, fmt.Errorf("gateway.orderers[%d]: %w", i, err))
+
+	var hasGatewayEndorsers bool
+	if cfg.Gateway != nil {
+		hasGatewayEndorsers = len(cfg.Gateway.Endorsers) > 0
+
+		if cfg.Gateway.Listen == "" {
+			errs = append(errs, errors.New("gateway.listen is required"))
+		} else if err := common.ValidateListenAddress(cfg.Gateway.Listen); err != nil {
+			errs = append(errs, err)
+		}
+		if err := cfg.Gateway.Identity.Validate(); err != nil {
+			errs = append(errs, fmt.Errorf("gateway.identity: %w", err))
+		}
+		if cfg.Gateway.Database.ConnString == "" {
+			errs = append(errs, errors.New("gateway.database.connection-string is required"))
+		}
+		if len(cfg.Gateway.Orderers) == 0 {
+			errs = append(errs, errors.New("gateway.orderers must have at least one entry"))
+		}
+		for i, o := range cfg.Gateway.Orderers {
+			if err := o.Validate(); err != nil {
+				errs = append(errs, fmt.Errorf("gateway.orderers[%d]: %w", i, err))
+			}
 		}
 	}
 
 	// The two deployment modes are mutually exclusive. Mixing an embedded
 	// endorser with remote ones is not supported yet.
 	switch {
-	case cfg.Endorser != nil && len(cfg.Gateway.Endorsers) > 0:
+	case cfg.Endorser != nil && hasGatewayEndorsers:
 		errs = append(errs, errors.New("endorser and gateway.endorsers are mutually exclusive: set endorser to embed this process's own endorser, or gateway.endorsers to dial remote ones"))
 
-	case cfg.Endorser == nil && len(cfg.Gateway.Endorsers) == 0:
+	case cfg.Endorser == nil && !hasGatewayEndorsers:
 		errs = append(errs, errors.New("one of endorser or gateway.endorsers is required"))
 
 	case cfg.Endorser != nil:
 		errs = append(errs, cfg.Endorser.Validate())
+		// A standalone endorser (no gateway) is unreachable, and therefore
+		// pointless, without a gRPC server. A gateway's own embedded endorser
+		// has no such requirement — serving it is optional, config-gated on
+		// whether another org needs to reach it.
+		if cfg.Gateway == nil && cfg.Endorser.Server == nil {
+			errs = append(errs, errors.New("endorser.server is required when running as a standalone endorser (no gateway configured)"))
+		}
 
 	default:
 		for i, e := range cfg.Gateway.Endorsers {

@@ -23,7 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 
-	evmcommon "github.com/hyperledger/fabric-x-evm/common"
+	"github.com/hyperledger/fabric-x-evm/common"
 )
 
 // ── fakes ────────────────────────────────────────────────────────────────────
@@ -176,7 +176,7 @@ func newGate(h *HybridSynchronizer) (*notifGate, *bool) {
 	stopped := new(bool)
 	return &notifGate{
 		hybrid:       h,
-		dispatcher:   evmcommon.NewAllTxBatchDispatcher(&hybridAdapter{h: h}),
+		dispatcher:   NewAllTxBatchDispatcher(&hybridAdapter{h: h}),
 		logger:       sdk.NoOpLogger{},
 		stopDelivery: func() { *stopped = true },
 	}, stopped
@@ -186,7 +186,7 @@ func newGate(h *HybridSynchronizer) (*notifGate, *bool) {
 // drops batches whose events carry no EVM proposal metadata.
 func evmBatch(t *testing.T, blockNum uint64) notification.AllTxBatch {
 	t.Helper()
-	input := &peer.ChaincodeInput{Args: [][]byte{{byte(evmcommon.ProposalTypeEVMTx)}, {0xaa}}}
+	input := &peer.ChaincodeInput{Args: [][]byte{{byte(common.ProposalTypeEVMTx)}, {0xaa}}}
 	raw, err := proto.Marshal(input)
 	require.NoError(t, err)
 	return notification.AllTxBatch{
