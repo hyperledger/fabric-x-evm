@@ -18,18 +18,14 @@ import (
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	efab "github.com/hyperledger/fabric-x-sdk/endorsement/fabric"
 	efabx "github.com/hyperledger/fabric-x-sdk/endorsement/fabricx"
-	sdknet "github.com/hyperledger/fabric-x-sdk/network"
-	nfab "github.com/hyperledger/fabric-x-sdk/network/fabric"
-	nfabx "github.com/hyperledger/fabric-x-sdk/network/fabricx"
 	"github.com/hyperledger/fabric-x-sdk/state"
 )
 
 // NewEndorserCore builds the endorser engine, its KVS, and its endorsement builder —
-// the construction shared by a self-syncing production endorser (see NewEndorser) and a
-// sync-less endorser whose state is instead kept current by an external synchronizer
-// (e.g. a single gateway-level synchronizer feeding multiple endorsers, as used by the
-// in-process test harness and testnode). It does not create a synchronizer or resolve a
-// signer from MSP; callers own both.
+// the construction shared by every endorser this process embeds, gateway or
+// standalone (see gateway/app.newApp and endorser/app.New). It does not
+// create a synchronizer or resolve a signer from MSP; callers own both, then
+// feed the returned KVS into synchronizer.New themselves.
 func NewEndorserCore(
 	dbCfg config.DB,
 	channel, namespace, protocol string,
@@ -41,11 +37,24 @@ func NewEndorserCore(
 ) (*core.Endorser, storage.KVS, endorsement.Builder, error) {
 	// An unset protocol means fabric-x, matching the documented default
 	// (common.Network.Protocol) and the gateway wiring (NewNetworkSubmitters,
-	// NewSynchronizer). Normalize once so the KVS and builder choices
+	// synchronizer.New). Normalize once so the KVS and builder choices
 	// below cannot disagree about what "" means.
 	protocol, err := common.NormalizeProtocol(protocol)
 	if err != nil {
 		return nil, nil, nil, err
+	}
+
+	// Zero means unset, not "no history": an in-memory KVS with a zero-length
+	// history window can't even serve the current tip. Test RPC needs a large
+	// sequential window (loadFixture/snapshot stretches can commit far more
+	// than a small window between reverts); production only needs a couple of
+	// snapshots for the synchronizer to redeliver into.
+	if dbCfg.HistorySize == 0 {
+		if testImpl {
+			dbCfg.HistorySize = 16384
+		} else {
+			dbCfg.HistorySize = 2
+		}
 	}
 
 	var kvs storage.KVS
@@ -76,11 +85,13 @@ func NewEndorserCore(
 	var builder endorsement.Builder
 	var monotonicVersions bool
 	switch protocol {
+	case common.ProtocolFabric:
+		builder = efab.NewEndorsementBuilder(signer)
 	case common.ProtocolFabricX:
 		builder = efabx.NewEndorsementBuilder(signer)
 		monotonicVersions = true
-	default: // "fabric"
-		builder = efab.NewEndorsementBuilder(signer)
+	default:
+		return nil, nil, nil, fmt.Errorf("unsupported protocol: %q", protocol)
 	}
 
 	end, err := core.New(
@@ -93,41 +104,4 @@ func NewEndorserCore(
 	}
 
 	return end, kvs, builder, nil
-}
-
-// NewEndorser creates a single embedded, self-syncing endorser instance: it resolves an
-// MSP-based signer and owns a synchronizer that keeps its KVS current from the committer.
-// This is the canonical way to create a production endorser.
-// Returns the endorser, synchronizer, and the LightKVS instance (or extended version) for state management.
-func NewEndorser(
-	cfg config.Endorser,
-	network common.Network,
-	committer common.ClientConfig,
-	signer sdk.Signer,
-	logger sdk.Logger,
-	testImpl bool,
-) (*core.Endorser, *sdknet.Synchronizer, storage.KVS, error) {
-	evmConfig := execution.EVMConfig{
-		ChainConfig: common.BuildChainConfig(network.ChainID),
-		MaxTxGas:    network.MaxTxGas,
-		DebugLogs:   cfg.DebugLogs,
-	}
-
-	end, kvs, _, err := NewEndorserCore(cfg.Database, network.Channel, network.Namespace, network.Protocol, signer, evmConfig, testImpl, cfg)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
-	var sync *sdknet.Synchronizer
-	switch network.Protocol {
-	case common.ProtocolFabric:
-		sync, err = nfab.NewSynchronizer(kvs, network.Channel, committer.ToPeerConf(), signer, logger, kvs)
-	default: // "fabric-x" or "" (the default)
-		sync, err = nfabx.NewSynchronizer(kvs, network.Channel, committer.ToPeerConf(), signer, logger, kvs)
-	}
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to create synchronizer: %w", err)
-	}
-
-	return end, sync, kvs, nil
 }

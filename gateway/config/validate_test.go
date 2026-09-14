@@ -11,6 +11,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hyperledger/fabric-x-committer/utils/connection"
+	"github.com/hyperledger/fabric-x-committer/utils/serve"
+
 	"github.com/hyperledger/fabric-x-evm/common"
 	endorsercfg "github.com/hyperledger/fabric-x-evm/endorser/config"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
@@ -53,7 +56,7 @@ func validConfig(t *testing.T) config.Config {
 	return config.Config{
 		Network:   common.Network{Channel: "mychannel", Namespace: "basic"},
 		Committer: client,
-		Gateway: config.Gateway{
+		Gateway: &config.Gateway{
 			Listen:   "0.0.0.0:8545",
 			Identity: identity,
 			Database: config.DB{ConnString: "file:gw.db"},
@@ -107,6 +110,17 @@ func TestConfigValidate(t *testing.T) {
 		{"both endorser and gateway.endorsers set", func(c *config.Config) {
 			c.Gateway.Endorsers = []common.ClientConfig{c.Committer}
 		}, "mutually exclusive"},
+		{"standalone endorser: no gateway, server set is valid", func(c *config.Config) {
+			c.Gateway = nil
+			c.Endorser.Server = &serve.ServerConfig{Endpoint: connection.Endpoint{Host: "127.0.0.1", Port: 9001}}
+		}, ""},
+		{"standalone endorser: no gateway, no server is rejected", func(c *config.Config) {
+			c.Gateway = nil
+		}, "endorser.server is required"},
+		{"neither gateway nor endorser", func(c *config.Config) {
+			c.Gateway = nil
+			c.Endorser = nil
+		}, "one of endorser or gateway.endorsers"},
 	}
 
 	for _, tt := range tests {

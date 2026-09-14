@@ -4,7 +4,7 @@ Copyright IBM Corp. All Rights Reserved.
 SPDX-License-Identifier: LGPL-3.0-or-later
 */
 
-package common
+package hybridx
 
 import (
 	"context"
@@ -15,6 +15,8 @@ import (
 	"github.com/hyperledger/fabric-x-sdk/notification"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyperledger/fabric-x-evm/common"
 )
 
 // stubHandler captures every block delivered to it and lets tests inject
@@ -32,7 +34,7 @@ func (s *stubHandler) Handle(_ context.Context, b blocks.Block) error {
 // evmEvent builds a committed event as the SDK delivers it: the ChaincodeInput has
 // already been decoded at the network boundary, so InputArgs holds the proposal-type
 // byte in Args[0] and the raw ethereum-tx bytes (opaque to the dispatcher) in Args[1].
-func evmEvent(txID string, txNum int64, status blocks.Status, propType ProposalType, ethTxBytes []byte) notification.CommittedTxEvent {
+func evmEvent(txID string, txNum int64, status blocks.Status, propType common.ProposalType, ethTxBytes []byte) notification.CommittedTxEvent {
 	return notification.CommittedTxEvent{
 		Transaction: blocks.Transaction{
 			ID:        txID,
@@ -45,7 +47,7 @@ func evmEvent(txID string, txNum int64, status blocks.Status, propType ProposalT
 
 // committedEVMEvent is evmEvent for the common case: a committed EVM transaction.
 func committedEVMEvent(txID string) notification.CommittedTxEvent {
-	return evmEvent(txID, 0, blocks.StatusCommitted, ProposalTypeEVMTx, []byte{0xaa})
+	return evmEvent(txID, 0, blocks.StatusCommitted, common.ProposalTypeEVMTx, []byte{0xaa})
 }
 
 // ---- NewAllTxBatchDispatcher ----
@@ -84,7 +86,7 @@ func TestHandleBatch_SkipsEventWithoutEthTx(t *testing.T) {
 	}{
 		{"no metadata or undecodable metadata", nil},
 		{"empty args", [][]byte{}},
-		{"proposal type but no eth tx", [][]byte{{byte(ProposalTypeEVMTx)}}},
+		{"proposal type but no eth tx", [][]byte{{byte(common.ProposalTypeEVMTx)}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := &stubHandler{}
@@ -102,13 +104,13 @@ func TestHandleBatch_SkipsEventWithoutEthTx(t *testing.T) {
 }
 
 func TestHandleBatch_SkipsNonEVMTx(t *testing.T) {
-	// Args[0] is a made-up proposal type, not ProposalTypeEVMTx.
+	// Args[0] is a made-up proposal type, not common.ProposalTypeEVMTx.
 	h := &stubHandler{}
 	d := NewAllTxBatchDispatcher(h)
 	err := d.HandleBatch(context.Background(), notification.AllTxBatch{
 		BlockNumber: 1,
 		Events: []notification.CommittedTxEvent{
-			evmEvent("tx-not-evm", 0, blocks.StatusCommitted, ProposalType(0x01), []byte{0xde, 0xad}),
+			evmEvent("tx-not-evm", 0, blocks.StatusCommitted, common.ProposalType(0x01), []byte{0xde, 0xad}),
 		},
 	})
 	require.NoError(t, err)
@@ -121,9 +123,9 @@ func TestHandleBatch_DispatchesOnlyEVMTxsFromMixedBatch(t *testing.T) {
 	err := d.HandleBatch(context.Background(), notification.AllTxBatch{
 		BlockNumber: 42,
 		Events: []notification.CommittedTxEvent{
-			evmEvent("evm-1", 0, blocks.StatusCommitted, ProposalTypeEVMTx, []byte{0xaa}),
-			evmEvent("non-evm", 1, blocks.StatusCommitted, ProposalType(0x01), []byte{0xbb}),
-			evmEvent("evm-2", 2, blocks.StatusMVCCConflict, ProposalTypeEVMTx, []byte{0xcc}),
+			evmEvent("evm-1", 0, blocks.StatusCommitted, common.ProposalTypeEVMTx, []byte{0xaa}),
+			evmEvent("non-evm", 1, blocks.StatusCommitted, common.ProposalType(0x01), []byte{0xbb}),
+			evmEvent("evm-2", 2, blocks.StatusMVCCConflict, common.ProposalTypeEVMTx, []byte{0xcc}),
 		},
 	})
 	require.NoError(t, err)

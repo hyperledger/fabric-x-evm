@@ -43,8 +43,9 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 // Failures are fatal by design: a block that cannot be applied leaves a hole in
 // the store that neither path will ever fill.
 //
-// HybridSynchronizer satisfies the app.Synchronizer interface (Start + Ready)
-// and plugs directly into app.NewSynchronizer as the fabric-x implementation.
+// HybridSynchronizer satisfies the synchronizer.Synchronizer interface
+// (Start + Ready) and plugs directly into synchronizer.New as the fabric-x
+// implementation.
 package hybridx
 
 import (
@@ -59,8 +60,6 @@ import (
 	"github.com/hyperledger/fabric-x-sdk/network"
 	nfabx "github.com/hyperledger/fabric-x-sdk/network/fabricx"
 	"github.com/hyperledger/fabric-x-sdk/notification"
-
-	evmcommon "github.com/hyperledger/fabric-x-evm/common"
 )
 
 // deliveryWaitPoll is how often the notification path re-reads dispatched while
@@ -160,7 +159,7 @@ func (h *HybridSynchronizer) Start(ctx context.Context) error {
 	// ── Notification service ────────────────────────────────────────────────
 	gate := &notifGate{
 		hybrid:     h,
-		dispatcher: evmcommon.NewAllTxBatchDispatcher(&hybridAdapter{h: h}),
+		dispatcher: NewAllTxBatchDispatcher(&hybridAdapter{h: h}),
 		logger:     h.logger,
 		// Safe to call only once the gate has seen dispatched reach the block
 		// before its own: this ctx reaches the store's BeginTx, so cancelling
@@ -293,13 +292,13 @@ func (s *deliveryShim) Handle(ctx context.Context, b blocks.Block) error {
 // each Stream call's first HandleBatch after the previous call's last one.
 type notifGate struct {
 	hybrid       *HybridSynchronizer
-	dispatcher   *evmcommon.AllTxBatchDispatcher
+	dispatcher   *AllTxBatchDispatcher
 	logger       sdk.Logger
 	stopDelivery func()
 	switched     bool
 }
 
-// hybridAdapter adapts HybridSynchronizer.dispatch to evmcommon.BlockHandler.
+// hybridAdapter adapts HybridSynchronizer.dispatch to BlockHandler.
 type hybridAdapter struct{ h *HybridSynchronizer }
 
 func (a *hybridAdapter) Handle(ctx context.Context, b blocks.Block) error {

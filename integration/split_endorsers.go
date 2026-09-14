@@ -26,7 +26,6 @@ import (
 	"github.com/hyperledger/fabric-x-evm/gateway/app"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
-	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	"github.com/hyperledger/fabric-x-sdk/identity"
 )
@@ -88,7 +87,8 @@ func startServedEndorser(t *testing.T, configFile string, evmConfig execution.EV
 }
 
 // startEndorserGRPCServer builds a real, independently synced endorser from a
-// standalone config file and serves it over mTLS gRPC, returning its bound
+// standalone config file using the production standalone-endorser path
+// (endorser/app.New + Run), and serves it over mTLS gRPC, returning its bound
 // address. Unlike startServedEndorser this owns its synchronizer, for tests
 // that drive the real App rather than the harness.
 func startEndorserGRPCServer(t *testing.T, configFile string) string {
@@ -98,38 +98,26 @@ func startEndorserGRPCServer(t *testing.T, configFile string) string {
 	if err != nil {
 		t.Fatalf("load %s: %v", configFile, err)
 	}
-	if cfg.Endorser == nil {
-		t.Fatalf("%s: no endorser configured", configFile)
+	if cfg.Endorser == nil || cfg.Endorser.Server == nil {
+		t.Fatalf("%s: no endorser.server configured", configFile)
 	}
-	ecfg := *cfg.Endorser
-	if ecfg.Database.HistorySize == 0 {
-		ecfg.Database.HistorySize = 1
-	}
+	serve.PreAllocateListener(t, cfg.Endorser.Server)
 
-	signer, err := identity.SignerFromMSP(ecfg.Identity.MSPDir, ecfg.Identity.MspID)
+	application, err := eapp.New(t.Context(), cfg)
 	if err != nil {
-		t.Fatalf("%s: signer: %v", ecfg.Name, err)
-	}
-
-	// A plain logger, not TestLogger: the synchronizer logs from goroutines
-	// that outlive the test, and t.Logf panics once the test has finished.
-	logger := sdk.NewStdLogger("endorser-" + ecfg.Name)
-	end, sync, _, err := eapp.NewEndorser(ecfg, cfg.Network, cfg.Committer, signer, logger, false)
-	if err != nil {
-		t.Fatalf("%s: NewEndorser: %v", ecfg.Name, err)
+		t.Fatalf("%s: build endorser app: %v", configFile, err)
 	}
 
 	ctx := t.Context()
 	go func() {
-		if err := sync.Start(ctx); err != nil && ctx.Err() == nil {
-			t.Logf("%s: sync exited: %v", ecfg.Name, err)
+		if err := application.Run(ctx); err != nil && ctx.Err() == nil {
+			t.Logf("%s: endorser app exited: %v", configFile, err)
 		}
 	}()
-	if err := app.WaitUntilSynced(ctx, sync, 10*time.Second); err != nil {
-		t.Fatalf("%s: sync: %v", ecfg.Name, err)
-	}
 
-	return serveEndorser(t, end, ecfg)
+	addr := cfg.Endorser.Server.Endpoint.Address()
+	waitForTCP(t, addr)
+	return addr
 }
 
 // buildSplitGatewayApp loads a split-deployment gateway config, points its
@@ -191,22 +179,14 @@ func buildSplitGatewayApp(t *testing.T, configFile, org1Addr, org2Addr string) (
 // read then sees pre-transaction state: a stale nonce, which gets the next
 // transaction rejected with "nonce too low", or stale contract storage.
 //
-// Before hybridx hands over, both sides are on the delivery pipeline and happen
-// to stay roughly level. After the handover the gap becomes structural rather
-// than incidental: the gateway is fed by the committer's notification push, while
-// an endorser only ever runs a plain delivery synchronizer (see the nfabx
-// synchronizer in endorser/app.NewEndorser -- endorsers never switch to
-// notification), so the gateway is systematically ahead from then on.
-//
-// That is working as designed -- getting ahead of delivery is the whole purpose
-// of hybridx. The gateway is not a replica of the endorsers and promises no
+// The gateway is not a replica of the endorsers and promises no
 // read-your-writes across them, so any client of a split deployment that reads
 // straight after a commit has to tolerate the lag. Tests driving one must too.
 //
 // The single-process harness tests need none of this. They register
 // [endorser KVS..., chain, gateway] on one synchronizer, so endorser state is
 // always applied before the gateway marks a transaction complete -- see
-// app.NewSynchronizer.
+// synchronizer.New.
 //
 // The account nonce is used as the marker because an endorser applies a block's
 // state in one step: once the nonce reflects the transaction, that same

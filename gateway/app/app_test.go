@@ -20,7 +20,7 @@ import (
 
 func splitModeConfig() config.Config {
 	return config.Config{
-		Gateway: config.Gateway{
+		Gateway: &config.Gateway{
 			Endorsers: []common.ClientConfig{
 				{
 					Endpoint: &common.Endpoint{Host: "127.0.0.1", Port: 1234},
@@ -77,7 +77,7 @@ func TestNewSplitApp_DialFailureReturnsError(t *testing.T) {
 // ones must be closed rather than leaked.
 func TestNewSplitApp_ClosesEarlierConnsOnLaterFailure(t *testing.T) {
 	cfg := config.Config{
-		Gateway: config.Gateway{
+		Gateway: &config.Gateway{
 			Endorsers: []common.ClientConfig{
 				// Dials successfully: no TLS, no live server needed (lazy dial).
 				{Endpoint: &common.Endpoint{Host: "127.0.0.1", Port: 1}},
@@ -116,7 +116,7 @@ func splitAppConfig(t *testing.T, dbConnString string) config.Config {
 	return config.Config{
 		Network:   common.Network{Protocol: "fabric-x", Channel: "mychannel", Namespace: "basic", NsVersion: "1.0", ChainID: 4011},
 		Committer: endpoint(2),
-		Gateway: config.Gateway{
+		Gateway: &config.Gateway{
 			Database:       config.DB{ConnString: dbConnString},
 			Orderers:       []common.ClientConfig{endpoint(1)},
 			Endorsers:      []common.ClientConfig{endpoint(3)},

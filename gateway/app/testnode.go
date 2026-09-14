@@ -10,8 +10,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-protos-go-apiv2/msp"
-	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	"github.com/hyperledger/fabric-x-sdk/fabrictest"
 	"google.golang.org/protobuf/proto"
@@ -56,7 +56,7 @@ const (
 // one gateway-level synchronizer feeds the endorser's KVS before chain/gateway, so the
 // test RPC's synchronous eth_sendRawTransaction always has read-your-writes.
 func NewTestNode(ctx context.Context, tcfg TestNodeConfig) (*App, error) {
-	logger := sdk.NewStdLogger("testnode")
+	logger := flogging.MustGetLogger("testnode")
 	signer := localSigner{}
 
 	protocol := tcfg.Protocol
@@ -98,7 +98,7 @@ func NewTestNode(ctx context.Context, tcfg TestNodeConfig) (*App, error) {
 				Port: nw.PeerPort,
 			},
 		},
-		Gateway: config.Gateway{
+		Gateway: &config.Gateway{
 			Listen: tcfg.Listen,
 			Database: config.DB{
 				ConnString: ":memory:",
