@@ -24,6 +24,7 @@ import (
 	"github.com/ethereum/go-ethereum/tests"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
+	"github.com/hyperledger/fabric-x-evm/gateway/testimpl/primer"
 	"github.com/hyperledger/fabric-x-evm/integration/contracts"
 	"google.golang.org/grpc/grpclog"
 	_ "modernc.org/sqlite"
@@ -846,7 +847,7 @@ func testUniswapFactory(t *testing.T, th *TestHarness) {
 // testQueryValidation asserts every read endpoint returns coherent data after a deploy + call.
 func testQueryValidation(t *testing.T, th *TestHarness) {
 	node := th.Gateways[0]
-	ec, err := NewNativeEthClient(node)
+	ec, err := primer.NewNativeEthClient(node)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -978,7 +979,7 @@ func testQueryValidation(t *testing.T, th *TestHarness) {
 // Via eth_sendRawTransaction the tx must commit with receipt.Status=0.
 func testRevertHandling(t *testing.T, th *TestHarness) {
 	node := th.Gateways[0]
-	ec, err := NewNativeEthClient(node)
+	ec, err := primer.NewNativeEthClient(node)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1050,7 +1051,7 @@ func testRevertHandling(t *testing.T, th *TestHarness) {
 // by submitting it and immediately querying in a tight loop.
 func testPendingTransactionStatus(t *testing.T, th *TestHarness) {
 	node := th.Gateways[0]
-	ec, err := NewNativeEthClient(node)
+	ec, err := primer.NewNativeEthClient(node)
 	if err != nil {
 		t.Fatal(err)
 	}

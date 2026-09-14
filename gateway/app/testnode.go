@@ -12,6 +12,7 @@ import (
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/msp"
 	sdk "github.com/hyperledger/fabric-x-sdk"
+	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	"github.com/hyperledger/fabric-x-sdk/fabrictest"
 	"google.golang.org/protobuf/proto"
 
@@ -20,7 +21,6 @@ import (
 	eapp "github.com/hyperledger/fabric-x-evm/endorser/app"
 	econfig "github.com/hyperledger/fabric-x-evm/endorser/config"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
-	"github.com/hyperledger/fabric-x-evm/endorser/testimpl"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
 )
 
@@ -64,14 +64,6 @@ func NewTestNode(ctx context.Context, tcfg TestNodeConfig) (*App, error) {
 		protocol = "fabric-x"
 	}
 
-	// Must mirror how NewEndorserCore derives monotonicVersions, so the
-	// DirectiveEndorser reads state the way the wrapped engine wrote it.
-	normProtocol, err := common.NormalizeProtocol(protocol)
-	if err != nil {
-		return nil, fmt.Errorf("failed to normalize protocol: %w", err)
-	}
-	monotonicVersions := normProtocol == common.ProtocolFabricX
-
 	evmConfig := execution.EVMConfig{
 		ChainConfig: common.BuildChainConfig(tcfg.ChainID),
 	}
@@ -84,10 +76,6 @@ func NewTestNode(ctx context.Context, tcfg TestNodeConfig) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create endorser: %w", err)
 	}
-
-	// Test-only wrapper: the core endorser refuses directives, so hardhat_setBalance
-	// is only endorsable here.
-	directiveEndorser := testimpl.NewDirectiveEndorser(endorser, endorserKVS, testNodeNamespace, endorserBuilder, monotonicVersions)
 
 	// endorserKVS makes fabrictest's MVCC validation read the same DB the endorser reads.
 	nw, err := fabrictest.Start(ctx, testNodeNamespace, protocol, fabrictest.Config{}, endorserKVS)
@@ -124,7 +112,14 @@ func NewTestNode(ctx context.Context, tcfg TestNodeConfig) (*App, error) {
 		},
 	}
 
-	application, err := buildApp(ctx, cfg, signer, logger, []eapi.Service{directiveEndorser}, endorserKVS, true, tcfg.TestAccountsPath, endorserKVS)
+	// One endorser, so one builder: enough for the test RPC's hardhat state
+	// directives to self-endorse their priming transactions.
+	test := &testRPCDeps{
+		kvs:          endorserKVS,
+		builders:     []endorsement.Builder{endorserBuilder},
+		accountsPath: tcfg.TestAccountsPath,
+	}
+	application, err := buildApp(ctx, cfg, signer, logger, []eapi.Service{endorser}, test, endorserKVS)
 	if err != nil {
 		return nil, err
 	}

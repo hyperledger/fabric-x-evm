@@ -64,7 +64,7 @@ func TestNewApp_RoutesToSplitMode(t *testing.T) {
 // reaching buildApp (no chain/db/network setup should be attempted).
 func TestNewSplitApp_DialFailureReturnsError(t *testing.T) {
 	logger := sdk.NewStdLogger("gateway")
-	_, err := newSplitApp(context.Background(), splitModeConfig(), nil, logger, false, "")
+	_, err := newSplitApp(context.Background(), splitModeConfig(), nil, logger)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -96,7 +96,7 @@ func TestNewSplitApp_ClosesEarlierConnsOnLaterFailure(t *testing.T) {
 	}
 	logger := sdk.NewStdLogger("gateway")
 
-	_, err := newSplitApp(context.Background(), cfg, nil, logger, false, "")
+	_, err := newSplitApp(context.Background(), cfg, nil, logger)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -135,7 +135,7 @@ func TestNewSplitApp_Success(t *testing.T) {
 	cfg := splitAppConfig(t, dbPath)
 	logger := sdk.NewStdLogger("gateway")
 
-	app, err := newSplitApp(context.Background(), cfg, nil, logger, false, "")
+	app, err := newSplitApp(context.Background(), cfg, nil, logger)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestNewSplitApp_BuildAppFailureClosesConns(t *testing.T) {
 	cfg := splitAppConfig(t, "file:/no/such/directory/gw.db")
 	logger := sdk.NewStdLogger("gateway")
 
-	_, err := newSplitApp(context.Background(), cfg, nil, logger, false, "")
+	_, err := newSplitApp(context.Background(), cfg, nil, logger)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -173,7 +173,7 @@ func TestApp_Shutdown_ToleratesEndorserCloseError(t *testing.T) {
 	cfg := splitAppConfig(t, dbPath)
 	logger := sdk.NewStdLogger("gateway")
 
-	app, err := newSplitApp(context.Background(), cfg, nil, logger, false, "")
+	app, err := newSplitApp(context.Background(), cfg, nil, logger)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

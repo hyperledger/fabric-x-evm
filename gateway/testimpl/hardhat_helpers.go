@@ -10,10 +10,12 @@ DO NOT use in production environments.
 package testimpl
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math/big"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -21,56 +23,163 @@ import (
 	estorage "github.com/hyperledger/fabric-x-evm/endorser/storage"
 	gwapi "github.com/hyperledger/fabric-x-evm/gateway/api"
 	"github.com/hyperledger/fabric-x-evm/gateway/storage"
+	"github.com/hyperledger/fabric-x-evm/gateway/testimpl/primer"
 )
 
 var hardhatLogger = flogging.MustGetLogger("gateway.testimpl.hardhat")
 
-// StateSetter submits setBalance/setCode/setStorageAt directives and blocks
-// until each commits; satisfied by *core.Gateway.
-type StateSetter interface {
-	SetBalance(ctx context.Context, addr common.Address, amount *big.Int) error
-	SetCode(ctx context.Context, addr common.Address, code []byte) error
-	SetStorageAt(ctx context.Context, addr common.Address, key, value common.Hash) error
-}
+// primeCommitTimeout bounds how long a state-changing hardhat RPC waits for its
+// priming transaction to become observable through the gateway's read path.
+const primeCommitTimeout = 30 * time.Second
+
+// primePollInterval is how often that wait re-reads the value.
+const primePollInterval = 50 * time.Millisecond
 
 // HardhatAPI provides Hardhat-specific RPC methods for testing.
-// Most methods are stubs that let Hardhat tests run; SetBalance, SetCode and
-// SetStorageAt are backed by real system directives via the gateway.
+// Most methods are stubs that let Hardhat tests run. The three state-changing ones
+// (setBalance, setCode, setStorageAt) are real: each commits a priming transaction
+// via StatePrimer, which endorses locally with every endorser's key and submits
+// through the normal commit flow. The endorsers themselves are never asked to
+// execute anything, so this works unchanged against remote/served endorsers.
 //
 // SECURITY WARNING: These methods are for testing only and should NEVER
 // be enabled in production environments.
 type HardhatAPI struct {
-	submit StateSetter
+	primer  *primer.StatePrimer
+	backend gwapi.Backend
+
+	// StatePrimer wraps a single mutable StateDB, so one priming transaction must
+	// finish before the next resets it.
+	primeMu sync.Mutex
 }
 
-// NewHardhatAPI creates a new Hardhat API instance backed by submit for state-modifying methods.
-func NewHardhatAPI(submit StateSetter) *HardhatAPI {
-	return &HardhatAPI{submit: submit}
+// NewHardhatAPI creates a Hardhat API whose setBalance/setCode/setStorageAt commit
+// real priming transactions through sp, confirming each change against backend
+// before returning.
+//
+// Both arguments are required: the state-changing methods are part of the surface
+// Hardhat expects, not an opt-in extra, so there is no half-built variant of this
+// API to keep working.
+func NewHardhatAPI(sp *primer.StatePrimer, backend gwapi.Backend) *HardhatAPI {
+	return &HardhatAPI{primer: sp, backend: backend}
 }
 
-// SetBalance sets an account's wei balance (hardhat_setBalance), blocking until committed
-// and reflected in reads of the account's balance.
-func (api *HardhatAPI) SetBalance(ctx context.Context, addr common.Address, balance hexutil.Big) error {
+// prime resets the primer, lets apply queue its writes, commits the resulting
+// priming transaction, and returns once confirm agrees the change is readable.
+// what names the operation in error messages.
+//
+// It short-circuits when confirm already holds: Hardhat replays the same value
+// often, and an empty read-write set is not worth a round through consensus.
+//
+// confirm must report a change that is merely not visible yet as (false, nil) and
+// reserve a non-nil error for a broken read path — the account reads underneath it
+// return zero values for accounts that do not exist, rather than failing. prime
+// therefore treats any error from confirm as terminal and returns it instead of
+// polling on: retrying a read that cannot succeed only defers the failure to the
+// timeout and hides its cause.
+func (api *HardhatAPI) prime(
+	ctx context.Context,
+	what string,
+	apply func(*primer.StatePrimer),
+	confirm func(context.Context) (bool, error),
+) error {
+	ok, err := confirm(ctx)
+	if err != nil {
+		return fmt.Errorf("%s: confirm current value: %w", what, err)
+	}
+	if ok {
+		return nil
+	}
+
+	api.primeMu.Lock()
+	defer api.primeMu.Unlock()
+
+	// Reset discards anything a previous call left queued, so this transaction
+	// carries only the write we are about to make.
+	if _, err := api.primer.Reset(); err != nil {
+		return fmt.Errorf("%s: reset primer: %w", what, err)
+	}
+	apply(api.primer)
+
+	if err := api.primer.Commit(ctx, false); err != nil {
+		return fmt.Errorf("%s: commit priming transaction: %w", what, err)
+	}
+
+	// Commit returns once the priming tx is no longer pending, but the gateway's
+	// state reads can still trail it by a block; poll until they agree.
+	waitCtx, cancel := context.WithTimeout(ctx, primeCommitTimeout)
+	defer cancel()
+	ticker := time.NewTicker(primePollInterval)
+	defer ticker.Stop()
+
+	for {
+		ok, err := confirm(waitCtx)
+		if ok && err == nil {
+			return nil
+		}
+		if err != nil {
+			// A read that fails once will keep failing, so this is the end of the
+			// road either way. Which error to report depends on why: once waitCtx
+			// is done, confirm's error is a symptom of the deadline rather than
+			// its own failure, and the timeout is the more useful diagnosis.
+			if waitCtx.Err() != nil {
+				return fmt.Errorf("%s: change did not become observable: %w", what, waitCtx.Err())
+			}
+			return fmt.Errorf("%s: confirm change: %w", what, err)
+		}
+		select {
+		case <-waitCtx.Done():
+			return fmt.Errorf("%s: change did not become observable: %w", what, waitCtx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+// SetBalance sets an account's wei balance (hardhat_setBalance), blocking until the
+// change is committed and reflected in reads of the account's balance.
+func (api *HardhatAPI) SetBalance(ctx context.Context, address common.Address, balance hexutil.Big) error {
 	target := (*big.Int)(&balance)
-	hardhatLogger.Debugf("HardhatAPI.SetBalance() called with address=%s, balance=%s", addr.Hex(), target.String())
-	return api.submit.SetBalance(ctx, addr, target)
+	hardhatLogger.Debugf("HardhatAPI.SetBalance() called with address=%s, balance=%s", address.Hex(), target.String())
+
+	return api.prime(ctx, "setBalance",
+		func(p *primer.StatePrimer) { p.SetBalance(address, target) },
+		func(ctx context.Context) (bool, error) {
+			got, err := api.backend.BalanceAt(ctx, address, nil)
+			if err != nil {
+				return false, err
+			}
+			return got.Cmp(target) == 0, nil
+		})
 }
 
-// SetCode sets an account's code (hardhat_setCode), blocking until committed
-// and reflected in reads of the account's code. Empty code clears it.
+// SetCode sets an account's code (hardhat_setCode), blocking until the change is
+// committed and reflected in reads of the account's code. Empty code clears it.
+//
+// CreateAccount is deliberately not called: it blind-writes a zero balance and
+// nonce, and a code write alone already makes the account exist.
 func (api *HardhatAPI) SetCode(ctx context.Context, address common.Address, code hexutil.Bytes) (bool, error) {
 	hardhatLogger.Debugf("HardhatAPI.SetCode() called with address=%s, code length=%d", address.Hex(), len(code))
-	if err := api.submit.SetCode(ctx, address, code); err != nil {
+
+	if err := api.prime(ctx, "setCode",
+		func(p *primer.StatePrimer) { p.SetCode(address, code) },
+		func(ctx context.Context) (bool, error) {
+			got, err := api.backend.CodeAt(ctx, address, nil)
+			if err != nil {
+				return false, err
+			}
+			return bytes.Equal(got, code), nil
+		}); err != nil {
 		return false, err
 	}
 	return true, nil
 }
 
-// SetStorageAt sets an account's storage slot (hardhat_setStorageAt), blocking
-// until committed and reflected in reads of the slot. Hardhat sends slot and
+// SetStorageAt sets an account's storage slot (hardhat_setStorageAt), blocking until
+// the change is committed and reflected in reads of the slot. Hardhat sends slot and
 // value as quantity-style hex strings, so both are decoded like eth_getStorageAt.
 func (api *HardhatAPI) SetStorageAt(ctx context.Context, address common.Address, slot string, value string) (bool, error) {
 	hardhatLogger.Debugf("HardhatAPI.SetStorageAt() called with address=%s, slot=%s, value=%s", address.Hex(), slot, value)
+
 	key, err := gwapi.DecodeStorageWord("storage key", slot)
 	if err != nil {
 		return false, err
@@ -79,7 +188,18 @@ func (api *HardhatAPI) SetStorageAt(ctx context.Context, address common.Address,
 	if err != nil {
 		return false, err
 	}
-	if err := api.submit.SetStorageAt(ctx, address, key, val); err != nil {
+
+	if err := api.prime(ctx, "setStorageAt",
+		func(p *primer.StatePrimer) {
+			p.SetStorage(address, map[common.Hash]common.Hash{key: val})
+		},
+		func(ctx context.Context) (bool, error) {
+			got, err := api.backend.StorageAt(ctx, address, key, nil)
+			if err != nil {
+				return false, err
+			}
+			return common.BytesToHash(got) == val, nil
+		}); err != nil {
 		return false, err
 	}
 	return true, nil
