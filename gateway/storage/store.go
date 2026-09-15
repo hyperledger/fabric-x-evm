@@ -11,6 +11,7 @@ import (
 	"database/sql"
 	_ "embed"
 	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 
@@ -453,6 +454,73 @@ func (s *Store) GetLogs(ctx context.Context, filter domain.LogFilter) ([]domain.
 	}
 
 	return logs, nil
+}
+
+// TruncateBlockBatchSize bounds how many block numbers one truncation transaction
+// covers. The store runs on a single database connection, so an unbounded DELETE
+// would hold it — and stall every concurrent JSON-RPC query — for as long as the
+// delete takes. Committing per batch releases the connection in between.
+const TruncateBlockBatchSize = 1000
+
+// TruncateBlocks deletes every block numbered upTo or lower, together with its
+// transactions and logs. Work is committed in batches of TruncateBlockBatchSize
+// block numbers, so an interrupted truncation leaves fewer blocks pruned rather
+// than a partially pruned block. Within each batch, logs go first and blocks last,
+// since logs reference transactions and both reference blocks without ON DELETE
+// CASCADE.
+func (s *Store) TruncateBlocks(ctx context.Context, upTo uint64) error {
+	// Start from the oldest surviving block so the batches cover only block numbers
+	// that exist, rather than walking up from 0 on an already-pruned store.
+	var oldest sql.NullInt64
+	if err := s.DB.QueryRowContext(ctx,
+		`SELECT MIN(block_number) FROM blocks WHERE block_number <= ?`, int64(upTo),
+	).Scan(&oldest); err != nil {
+		return fmt.Errorf("find oldest block to prune: %w", err)
+	}
+	if !oldest.Valid {
+		return nil // nothing at or below upTo
+	}
+
+	// Batches partition by block_number, and every transaction and log of a block
+	// carries that block's own number (ConvertToDomain stamps b.Number onto all of
+	// them), so a block's rows always fall entirely within one batch. No batch can
+	// delete a transaction whose logs a later batch still holds, which would abort
+	// that batch against the logs.tx_hash foreign key.
+	for from := uint64(oldest.Int64); ; {
+		to := upTo
+		if upTo-from >= TruncateBlockBatchSize {
+			to = from + TruncateBlockBatchSize - 1
+		}
+		if err := s.truncateBlockRange(ctx, from, to); err != nil {
+			return fmt.Errorf("prune blocks %d-%d: %w", from, to, err)
+		}
+		// Advance past `to` rather than by a fixed step, so the loop terminates
+		// instead of wrapping when upTo sits near the top of the uint64 range.
+		if to >= upTo {
+			return nil
+		}
+		from = to + 1
+	}
+}
+
+// truncateBlockRange deletes blocks from..to inclusive in one transaction.
+func (s *Store) truncateBlockRange(ctx context.Context, from, to uint64) error {
+	sqlTx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer sqlTx.Rollback() //nolint:errcheck
+
+	for _, stmt := range []string{
+		`DELETE FROM logs WHERE block_number BETWEEN ? AND ?`,
+		`DELETE FROM transactions WHERE block_number BETWEEN ? AND ?`,
+		`DELETE FROM blocks WHERE block_number BETWEEN ? AND ?`,
+	} {
+		if _, err := sqlTx.ExecContext(ctx, stmt, int64(from), int64(to)); err != nil {
+			return err
+		}
+	}
+	return sqlTx.Commit()
 }
 
 // GetLogsByTxHash retrieves all logs for a specific transaction.

@@ -868,3 +868,167 @@ func TestGetLogsByTxHash(t *testing.T) {
 		t.Errorf("expected 0 logs for non-existent tx, got %d", len(logs))
 	}
 }
+
+func TestTruncateBlocks(t *testing.T) {
+	store := setupTestDB(t)
+
+	// Blocks 1..5, each with one transaction carrying one log.
+	for i := uint64(1); i <= 5; i++ {
+		insertTestBlock(t, store, i, makeHash(byte(i)))
+		insertTestLog(t, store, i, makeHash(byte(0xa0+i)), makeAddress(0x11), 0, nil)
+	}
+
+	// Keeping the 2 most recent of 5 blocks prunes everything up to and including 3.
+	if err := store.TruncateBlocks(t.Context(), 3); err != nil {
+		t.Fatalf("TruncateBlocks: %v", err)
+	}
+
+	for _, tc := range []struct {
+		table string
+		want  int
+	}{
+		{"blocks", 2},
+		{"transactions", 2},
+		{"logs", 2},
+	} {
+		var got int
+		if err := store.DB.QueryRowContext(t.Context(),
+			"SELECT COUNT(*) FROM "+tc.table).Scan(&got); err != nil {
+			t.Fatalf("count %s: %v", tc.table, err)
+		}
+		if got != tc.want {
+			t.Errorf("%s: got %d rows after truncation, want %d", tc.table, got, tc.want)
+		}
+	}
+
+	// The surviving rows must be exactly the most recent blocks, not an arbitrary two.
+	for i := uint64(1); i <= 5; i++ {
+		blk, err := store.GetBlockByNumber(t.Context(), i, false)
+		switch {
+		case i <= 3 && err == nil && blk != nil:
+			t.Errorf("block %d survived truncation", i)
+		case i > 3 && (err != nil || blk == nil):
+			t.Errorf("block %d was pruned but should have been kept (err=%v)", i, err)
+		}
+	}
+}
+
+func TestTruncateBlocks_NoBlocksInRange(t *testing.T) {
+	store := setupTestDB(t)
+	for i := uint64(4); i <= 5; i++ {
+		insertTestBlock(t, store, i, makeHash(byte(i)))
+	}
+
+	// Nothing at or below 3: a no-op, not an error.
+	if err := store.TruncateBlocks(t.Context(), 3); err != nil {
+		t.Fatalf("TruncateBlocks on empty range: %v", err)
+	}
+
+	var got int
+	if err := store.DB.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM blocks").Scan(&got); err != nil {
+		t.Fatalf("count blocks: %v", err)
+	}
+	if got != 2 {
+		t.Errorf("got %d blocks, want 2 — truncation removed rows outside its range", got)
+	}
+}
+
+func TestTruncateBlocks_LatestBlockAfterPruning(t *testing.T) {
+	store := setupTestDB(t)
+	for i := uint64(1); i <= 5; i++ {
+		insertTestBlock(t, store, i, makeHash(byte(i)))
+	}
+	if err := store.TruncateBlocks(t.Context(), 4); err != nil {
+		t.Fatalf("TruncateBlocks: %v", err)
+	}
+
+	// Chain.prevHash is seeded from the latest block on startup, so pruning must
+	// leave the head intact and reachable.
+	blk, err := store.LatestBlock(t.Context(), false)
+	if err != nil {
+		t.Fatalf("LatestBlock after truncation: %v", err)
+	}
+	if blk == nil {
+		t.Fatal("LatestBlock returned nil after truncation")
+	}
+	if blk.BlockNumber != 5 {
+		t.Errorf("latest block is %d after truncation, want 5", blk.BlockNumber)
+	}
+}
+
+// TruncateBlocks commits in batches of TruncateBlockBatchSize block numbers, so a
+// range wider than one batch must still be pruned completely.
+func TestTruncateBlocks_SpansMultipleBatches(t *testing.T) {
+	store := setupTestDB(t)
+
+	// Sparse numbers spanning several batch windows, which is also what a real
+	// chain looks like: only EVM-bearing blocks are stored.
+	nums := []uint64{1, 999, 1000, 1001, 2500, 3999, 4000, 4500}
+	for _, n := range nums {
+		insertTestBlock(t, store, n, makeHash(byte(n%251)))
+	}
+
+	// Spans four batch windows starting from block 1.
+	if err := store.TruncateBlocks(t.Context(), 4000); err != nil {
+		t.Fatalf("TruncateBlocks across batches: %v", err)
+	}
+
+	var got int
+	if err := store.DB.QueryRowContext(t.Context(),
+		"SELECT COUNT(*) FROM blocks WHERE block_number <= 4000").Scan(&got); err != nil {
+		t.Fatalf("count pruned range: %v", err)
+	}
+	if got != 0 {
+		t.Errorf("%d blocks at or below 4000 survived; batching stopped early", got)
+	}
+
+	blk, err := store.GetBlockByNumber(t.Context(), 4500, false)
+	if err != nil || blk == nil {
+		t.Errorf("block 4500 above the range was pruned (err=%v)", err)
+	}
+}
+
+// Row counts alone would not catch pruning the wrong rows; assert what an RPC
+// client actually observes for a pruned versus a surviving transaction.
+func TestTruncateBlocks_PrunedRowsUnreachableByHash(t *testing.T) {
+	store := setupTestDB(t)
+
+	prunedTx, survivingTx := makeHash(0xb1), makeHash(0xb2)
+	insertTestBlock(t, store, 1, makeHash(0x01))
+	insertTestLog(t, store, 1, prunedTx, makeAddress(0x11), 0, nil)
+	insertTestBlock(t, store, 2, makeHash(0x02))
+	insertTestLog(t, store, 2, survivingTx, makeAddress(0x11), 0, nil)
+
+	if err := store.TruncateBlocks(t.Context(), 1); err != nil {
+		t.Fatalf("TruncateBlocks: %v", err)
+	}
+
+	// The pruned transaction and its log are simply absent, not an error.
+	tx, err := store.GetTransactionByHash(t.Context(), prunedTx)
+	if err != nil {
+		t.Errorf("lookup of a pruned tx returned an error rather than nothing: %v", err)
+	}
+	if tx != nil {
+		t.Error("pruned transaction is still retrievable by hash")
+	}
+	logs, err := store.GetLogsByTxHash(t.Context(), prunedTx)
+	if err != nil {
+		t.Errorf("log lookup for a pruned tx errored: %v", err)
+	}
+	if len(logs) != 0 {
+		t.Errorf("got %d logs for a pruned transaction, want 0", len(logs))
+	}
+
+	// The surviving one is untouched.
+	tx, err = store.GetTransactionByHash(t.Context(), survivingTx)
+	if err != nil || tx == nil {
+		t.Fatalf("surviving transaction is gone (err=%v)", err)
+	}
+	logs, err = store.GetLogsByTxHash(t.Context(), survivingTx)
+	if err != nil {
+		t.Fatalf("log lookup for the surviving tx: %v", err)
+	}
+	if len(logs) != 1 {
+		t.Errorf("got %d logs for the surviving transaction, want 1", len(logs))
+	}
+}

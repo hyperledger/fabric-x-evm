@@ -210,6 +210,7 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 	if err != nil {
 		return nil, fmt.Errorf("failed to create chain: %w", err)
 	}
+	chain.SetBlockRetention(cfg.Gateway.BlockRetention, cfg.Gateway.BlockPruneInterval)
 
 	var txQueue core.TxQueueInterface
 	var nonceGate core.NonceSequencer

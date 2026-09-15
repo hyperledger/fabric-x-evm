@@ -99,6 +99,13 @@ type Gateway struct {
 	WorkerCount         int `mapstructure:"worker-count"  yaml:"worker-count"`
 	SubmitterCount      int `mapstructure:"submitter-count" yaml:"submitter-count"`
 	EndorsementChanSize int `mapstructure:"endorsement-chan-size"  yaml:"endorsement-chan-size"`
+
+	// BlockRetention is the number of most recent blocks the gateway keeps in its
+	// database; older blocks, with their transactions and logs, are pruned. 0 keeps
+	// every block.
+	BlockRetention uint64 `mapstructure:"block-retention" yaml:"block-retention"`
+	// BlockPruneInterval is how often, in blocks, pruning runs; 0 uses the default.
+	BlockPruneInterval uint64 `mapstructure:"block-prune-interval" yaml:"block-prune-interval"`
 }
 
 // Validate checks that required fields are set and values are within acceptable ranges.
