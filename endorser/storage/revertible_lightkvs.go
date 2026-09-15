@@ -113,8 +113,8 @@ func (kvs *RevertibleLightKVS) NewSnapshot(blockNumber *uint64) (execution.ReadS
 // Get overrides the promoted LightKVS.Get so it resolves through this type's
 // own NewSnapshot (with its older-snapshot fallback) instead of LightKVS's
 // exact-match-only one.
-func (kvs *RevertibleLightKVS) Get(namespace, key string, lastBlock uint64) (*blocks.WriteRecord, error) {
-	r, err := kvs.NewSnapshot(blockRefFromLastBlock(lastBlock))
+func (kvs *RevertibleLightKVS) Get(namespace, key string) (*blocks.WriteRecord, error) {
+	r, err := kvs.NewSnapshot(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +139,7 @@ func (kvs *RevertibleLightKVS) Handle(ctx context.Context, b blocks.Block) error
 
 	var updates []KeyValueVersion
 	for _, tx := range b.Transactions {
-		collectWrites(&updates, tx.NsRWS, b.Number, uint64(tx.Number), tx.ID, tx.Valid)
+		collectWrites(&updates, tx.NsRWS, b.Number, uint64(tx.Number), tx.ID, tx.Valid())
 	}
 
 	if !current.Placeholder && b.Number == current.BlockNumber {

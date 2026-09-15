@@ -33,9 +33,19 @@ func makeBlock(num uint64, txs ...blocks.Transaction) blocks.Block {
 	return blocks.Block{Number: num, Transactions: txs}
 }
 
+// txStatus maps a test's valid/invalid boolean onto the status a blocks.Transaction
+// now carries, Valid() being derived from it. MVCC conflict stands in for "rejected",
+// which is what Commit skips write sets for.
+func txStatus(valid bool) blocks.Status {
+	if valid {
+		return blocks.StatusCommitted
+	}
+	return blocks.StatusMVCCConflict
+}
+
 func makeTx(valid bool, writes ...blocks.KVWrite) blocks.Transaction {
 	return blocks.Transaction{
-		Valid: valid,
+		Status: txStatus(valid),
 		NsRWS: []blocks.NsReadWriteSet{{
 			Namespace: "evmcc",
 			RWS:       blocks.ReadWriteSet{Writes: writes},
@@ -331,7 +341,7 @@ func TestCommit_MultipleNamespaces(t *testing.T) {
 	addr2 := common.HexToAddress("0xbbbb")
 
 	tx := blocks.Transaction{
-		Valid: true,
+		Status: blocks.StatusCommitted,
 		NsRWS: []blocks.NsReadWriteSet{
 			{Namespace: "evmcc", RWS: blocks.ReadWriteSet{
 				Writes: []blocks.KVWrite{balWrite(addr1.Hex(), big.NewInt(111))},

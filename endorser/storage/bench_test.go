@@ -128,7 +128,7 @@ func makeBlock(blockNum uint64, txCount, writesPerTx int, kg *keyGen) blocks.Blo
 		txs[i] = blocks.Transaction{
 			ID:     fmt.Sprintf("%d-%d", blockNum, i),
 			Number: int64(i),
-			Valid:  true,
+			Status: blocks.StatusCommitted,
 			NsRWS: []blocks.NsReadWriteSet{{
 				Namespace: benchNamespace,
 				RWS:       blocks.ReadWriteSet{Writes: writes},
@@ -158,7 +158,7 @@ func preloadDB(b *testing.B, kvs storage.KVS, numKeys, writesPerBlock int) {
 			Transactions: []blocks.Transaction{{
 				ID:     fmt.Sprintf("preload-%d", blockNum),
 				Number: 0,
-				Valid:  true,
+				Status: blocks.StatusCommitted,
 				NsRWS: []blocks.NsReadWriteSet{{
 					Namespace: benchNamespace,
 					RWS:       blocks.ReadWriteSet{Writes: writes},
@@ -341,9 +341,8 @@ func BenchmarkUpdateWorldStateAtScale(b *testing.B) {
 // Run: go test -bench=BenchmarkGetState -benchtime=5s ./endorser/storage/
 func BenchmarkGetState(b *testing.B) {
 	const (
-		numKeys          = 100_000
-		writesPerBlock   = 100
-		preloadLastBlock = uint64(numKeys/writesPerBlock - 1)
+		numKeys        = 100_000
+		writesPerBlock = 100
 	)
 
 	rep := newReport("GetState  (ns/op | reads/s)")
@@ -360,7 +359,7 @@ func BenchmarkGetState(b *testing.B) {
 			b.ResetTimer()
 			b.ReportAllocs()
 			for range b.N {
-				if _, err := kvs.Get(benchNamespace, hexKey(kg.next()), preloadLastBlock); err != nil {
+				if _, err := kvs.Get(benchNamespace, hexKey(kg.next())); err != nil {
 					b.Fatal(err)
 				}
 			}

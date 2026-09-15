@@ -402,13 +402,13 @@ func verifyTrieRoot(t *testing.T, genesisRWS, txRWS blocks.ReadWriteSet, blockNu
 	txns := make([]blocks.Transaction, 0, 2)
 	if len(genesisRWS.Writes) > 0 {
 		txns = append(txns, blocks.Transaction{
-			Valid: true,
-			NsRWS: []blocks.NsReadWriteSet{{Namespace: "basic", RWS: genesisRWS}},
+			Status: blocks.StatusCommitted,
+			NsRWS:  []blocks.NsReadWriteSet{{Namespace: "basic", RWS: genesisRWS}},
 		})
 	}
 	txns = append(txns, blocks.Transaction{
-		Valid: true,
-		NsRWS: []blocks.NsReadWriteSet{{Namespace: "basic", RWS: txRWS}},
+		Status: blocks.StatusCommitted,
+		NsRWS:  []blocks.NsReadWriteSet{{Namespace: "basic", RWS: txRWS}},
 	})
 
 	ts, err := trie.New("", types.EmptyRootHash)

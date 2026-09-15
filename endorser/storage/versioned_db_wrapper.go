@@ -75,13 +75,13 @@ func (s *VersionedDBSnapshot) Close() error {
 	return nil
 }
 
-// Get retrieves the value for a key as of the given block number, honoring the
-// KVS convention that lastBlock 0 means "latest" (see blockRefFromLastBlock) —
-// the same route LightKVS.Get and PebbleKVS.Get take. Passing 0 straight
-// through to VersionedDB.Get would instead match `version_block <= 0`, so
-// every latest-read would come back empty.
-func (w *VersionedDBWrapper) Get(namespace, key string, lastBlock uint64) (*blocks.WriteRecord, error) {
-	r, err := w.NewSnapshot(blockRefFromLastBlock(lastBlock))
+// Get implements blocks.RecordGetter, reading the latest committed state — the same
+// route LightKVS.Get and PebbleKVS.Get take. It resolves the height through
+// NewSnapshot rather than calling VersionedDB.Get directly, because that method takes
+// a lastBlock and matches `version_block <= lastBlock`, so there is no value to pass
+// for "latest": 0 would come back empty for every key.
+func (w *VersionedDBWrapper) Get(namespace, key string) (*blocks.WriteRecord, error) {
+	r, err := w.NewSnapshot(nil)
 	if err != nil {
 		return nil, err
 	}

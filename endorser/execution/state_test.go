@@ -74,7 +74,7 @@ func TestOpsReplayOnFreshDB(t *testing.T) {
 
 	// commit changes
 	b := blocks.Block{Transactions: []blocks.Transaction{
-		{ID: "txid", Valid: true, NsRWS: []blocks.NsReadWriteSet{{Namespace: Namespace, RWS: db.Result()}}},
+		{ID: "txid", Status: blocks.StatusCommitted, NsRWS: []blocks.NsReadWriteSet{{Namespace: Namespace, RWS: db.Result()}}},
 	}}
 
 	err = originalState.Handle(t.Context(), b)
@@ -242,7 +242,7 @@ func TestSnapshotRevertRWS(t *testing.T) {
 	err = originalState.UpdateWorldState(t.Context(), blocks.Block{
 		Number: 0,
 		Transactions: []blocks.Transaction{{
-			ID: "setup", Number: 0, Valid: true,
+			ID: "setup", Number: 0, Status: blocks.StatusCommitted,
 			NsRWS: []blocks.NsReadWriteSet{{Namespace: Namespace, RWS: setupRWS}},
 		}},
 	})

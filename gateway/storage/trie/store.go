@@ -79,7 +79,7 @@ func (s *Store) Commit(ctx context.Context, block blocks.Block) (common.Hash, er
 	}
 
 	for _, tx := range block.Transactions {
-		if !tx.Valid {
+		if !tx.Valid() {
 			// MVCC-rejected: Fabric did not apply this transaction's write set.
 			continue
 		}

@@ -35,13 +35,13 @@ func TestCriteriaToLogFilter_BoundsAndFilters(t *testing.T) {
 		wantFrom *uint64
 		wantTo   *uint64
 	}{
-		{"omitted", `{}`, 7, u64(7), nil},
-		{"explicit", `{"fromBlock":"0x2","toBlock":"0x5"}`, 7, u64(2), u64(5)},
-		{"earliest from", `{"fromBlock":"earliest","toBlock":"0x0"}`, 7, u64(0), u64(0)},
-		{"latest to", `{"fromBlock":"0x1","toBlock":"latest"}`, 7, u64(1), nil},
-		{"pending to", `{"toBlock":"pending"}`, 7, u64(7), nil},
-		{"latest from", `{"fromBlock":"latest"}`, 7, u64(7), nil},
-		{"earliest to only", `{"toBlock":"earliest"}`, 7, u64(7), u64(0)},
+		{"omitted", `{}`, 7, new(uint64(7)), nil},
+		{"explicit", `{"fromBlock":"0x2","toBlock":"0x5"}`, 7, new(uint64(2)), new(uint64(5))},
+		{"earliest from", `{"fromBlock":"earliest","toBlock":"0x0"}`, 7, new(uint64(0)), new(uint64(0))},
+		{"latest to", `{"fromBlock":"0x1","toBlock":"latest"}`, 7, new(uint64(1)), nil},
+		{"pending to", `{"toBlock":"pending"}`, 7, new(uint64(7)), nil},
+		{"latest from", `{"fromBlock":"latest"}`, 7, new(uint64(7)), nil},
+		{"earliest to only", `{"toBlock":"earliest"}`, 7, new(uint64(7)), new(uint64(0))},
 	}
 
 	for _, tt := range tests {
@@ -100,8 +100,6 @@ func TestResolveToBlock_NilAndNegative(t *testing.T) {
 		t.Fatal("latest sentinel should stay open")
 	}
 }
-
-func u64(v uint64) *uint64 { return &v }
 
 func u64eq(a, b *uint64) bool {
 	if a == nil || b == nil {

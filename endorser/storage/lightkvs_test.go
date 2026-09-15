@@ -578,7 +578,7 @@ func TestHandle(t *testing.T) {
 			{
 				ID:     "tx1",
 				Number: 0,
-				Valid:  true,
+				Status: blocks.StatusCommitted,
 				NsRWS: []blocks.NsReadWriteSet{
 					{
 						Namespace: "ns1",
@@ -602,7 +602,7 @@ func TestHandle(t *testing.T) {
 			{
 				ID:     "tx2",
 				Number: 1,
-				Valid:  true,
+				Status: blocks.StatusCommitted,
 				NsRWS: []blocks.NsReadWriteSet{
 					{
 						Namespace: "ns2",
@@ -684,7 +684,7 @@ func TestHandleInvalidTransactions(t *testing.T) {
 			{
 				ID:     "tx1",
 				Number: 0,
-				Valid:  false, // Invalid transaction
+				Status: blocks.StatusMVCCConflict, // Invalid transaction
 				NsRWS: []blocks.NsReadWriteSet{
 					{
 						Namespace: "ns1",
@@ -703,7 +703,7 @@ func TestHandleInvalidTransactions(t *testing.T) {
 			{
 				ID:     "tx2",
 				Number: 1,
-				Valid:  true, // Valid transaction
+				Status: blocks.StatusCommitted, // Valid transaction
 				NsRWS: []blocks.NsReadWriteSet{
 					{
 						Namespace: "ns1",
@@ -767,7 +767,7 @@ func TestHandleDeletes(t *testing.T) {
 			{
 				ID:     "tx1",
 				Number: 0,
-				Valid:  true,
+				Status: blocks.StatusCommitted,
 				NsRWS: []blocks.NsReadWriteSet{
 					{
 						Namespace: "ns1",
@@ -812,7 +812,7 @@ func TestHandleDeletes(t *testing.T) {
 			{
 				ID:     "tx2",
 				Number: 0,
-				Valid:  true,
+				Status: blocks.StatusCommitted,
 				NsRWS: []blocks.NsReadWriteSet{
 					{
 						Namespace: "ns1",
@@ -946,7 +946,7 @@ func TestGetMethod(t *testing.T) {
 	}
 
 	// Test Get method
-	record, err := kvs.Get("ns1", "key1", 0)
+	record, err := kvs.Get("ns1", "key1")
 	if err != nil {
 		t.Fatalf("Get failed: %v", err)
 	}

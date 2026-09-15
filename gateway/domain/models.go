@@ -30,9 +30,13 @@ type Transaction struct {
 	ContractAddress []byte
 	Status          uint8 // EVM receipt status: 1 is success, 0 is a revert or an invalid tx
 	FabricTxID      string
-	FabricTxStatus  int   // from the SDK Transaction.Status, which is currently never set
-	FabricValid     bool  // Fabric-valid commit: the nonce was consumed, reverts included
-	Logs            []Log // populated for receipt queries
+	// FabricTxStatus is the SDK's protocol-neutral blocks.Status for the commit
+	// (1 committed, 3 MVCC conflict, and so on — see blocks.Status). Both the
+	// delivery and notification paths now populate it; it used to be left at 0 on
+	// the delivery path, so older rows carry 0 regardless of outcome.
+	FabricTxStatus int
+	FabricValid    bool  // Fabric-valid commit: the nonce was consumed, reverts included
+	Logs           []Log // populated for receipt queries
 }
 
 // ToEthTx converts a domain Transaction to an ethereum types.Transaction.

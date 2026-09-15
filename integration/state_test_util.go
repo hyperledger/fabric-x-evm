@@ -667,7 +667,7 @@ func makePreStateWithDualState(db ethdb.Database, accounts types.GenesisAlloc, s
 		{
 			ID:     "setup",
 			Number: 0,
-			Valid:  true,
+			Status: blocks.StatusCommitted, // Valid() is derived from Status
 			NsRWS: []blocks.NsReadWriteSet{
 				{
 					Namespace: "testns",

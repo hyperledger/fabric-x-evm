@@ -88,8 +88,7 @@ func TestHandle_ReprocessingSameBlockKeepsIndexesAndTrieStable(t *testing.T) {
 		Transactions: []blocks.Transaction{{
 			ID:        "fabric-tx-1",
 			Number:    0,
-			Valid:     true,
-			Status:    0,
+			Status:    blocks.StatusCommitted,
 			InputArgs: [][]byte{{byte(fc.ProposalTypeEVMTx)}, txBytes},
 			Events:    resilienceEvents(t, "fabric-tx-1", logs),
 			NsRWS: []blocks.NsReadWriteSet{{
@@ -209,7 +208,7 @@ func testPrevHashNotAdvancedOnInsertFailure(t *testing.T, withTrie bool) {
 		Transactions: []blocks.Transaction{{
 			ID:        "fabric-tx-1",
 			Number:    0,
-			Valid:     true,
+			Status:    blocks.StatusCommitted,
 			InputArgs: [][]byte{{byte(fc.ProposalTypeEVMTx)}, txBytes},
 			NsRWS: []blocks.NsReadWriteSet{{
 				Namespace: "evmcc",
@@ -236,7 +235,7 @@ func testPrevHashNotAdvancedOnInsertFailure(t *testing.T, withTrie bool) {
 		Transactions: []blocks.Transaction{{
 			ID:        "fabric-tx-2",
 			Number:    0,
-			Valid:     true,
+			Status:    blocks.StatusCommitted,
 			InputArgs: [][]byte{{byte(fc.ProposalTypeEVMTx)}, txBytes},
 			NsRWS: []blocks.NsReadWriteSet{{
 				Namespace: "evmcc",
