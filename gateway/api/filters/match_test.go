@@ -81,29 +81,29 @@ func TestLogsFromBlock_HappyAndSkips(t *testing.T) {
 		Transactions: []blocks.Transaction{
 			{
 				Number:    0,
-				Valid:     true,
+				Status:    blocks.StatusCommitted,
 				InputArgs: [][]byte{[]byte("nope")},
 			},
 			{
 				Number:    1,
-				Valid:     false,
+				Status:    blocks.StatusMVCCConflict,
 				InputArgs: [][]byte{{byte(fc.ProposalTypeEVMTx)}, rawTx},
 				Events:    events,
 			},
 			{
 				Number:    2,
-				Valid:     true,
+				Status:    blocks.StatusCommitted,
 				InputArgs: [][]byte{{byte(fc.ProposalTypeEVMTx)}, rawTx},
 			},
 			{
 				Number:    3,
-				Valid:     true,
+				Status:    blocks.StatusCommitted,
 				InputArgs: [][]byte{{byte(fc.ProposalTypeEVMTx)}, []byte("not-rlp")},
 				Events:    events,
 			},
 			{
 				Number:    4,
-				Valid:     true,
+				Status:    blocks.StatusCommitted,
 				InputArgs: [][]byte{{byte(fc.ProposalTypeEVMTx)}, rawTx},
 				Events:    events,
 			},
@@ -141,7 +141,7 @@ func TestLogsFromBlock_RevertSkipped(t *testing.T) {
 		Hash:   bytes32(1),
 		Transactions: []blocks.Transaction{{
 			Number:    0,
-			Valid:     true,
+			Status:    blocks.StatusCommitted,
 			InputArgs: [][]byte{{byte(fc.ProposalTypeEVMTx)}, rawTx},
 			Events:    outer,
 		}},
@@ -215,8 +215,8 @@ func TestLogFilter_LivePathViaHandle(t *testing.T) {
 		Number: 3,
 		Hash:   bytes32(3),
 		Transactions: []blocks.Transaction{
-			{Number: 0, Valid: true, InputArgs: [][]byte{{byte(fc.ProposalTypeEVMTx)}, rawTx}, Events: miss},
-			{Number: 1, Valid: true, InputArgs: [][]byte{{byte(fc.ProposalTypeEVMTx)}, rawTx}, Events: events},
+			{Number: 0, Status: blocks.StatusCommitted, InputArgs: [][]byte{{byte(fc.ProposalTypeEVMTx)}, rawTx}, Events: miss},
+			{Number: 1, Status: blocks.StatusCommitted, InputArgs: [][]byte{{byte(fc.ProposalTypeEVMTx)}, rawTx}, Events: events},
 		},
 	})
 

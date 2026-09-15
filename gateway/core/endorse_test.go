@@ -23,6 +23,8 @@ import (
 	"github.com/hyperledger/fabric-x-evm/endorser/api"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type stubEndorser struct {
@@ -458,12 +460,13 @@ func TestExecuteTransaction_RejectedStatusErrors(t *testing.T) {
 	}
 }
 
-// blockingEndorser rejects the transaction only once released, and reports
-// whatever the context says if it is cancelled first. It stands in for a remote
+// blockingEndorser rejects the transaction only once released, and reports a
+// cancellation built by onCancel if it is interrupted first. It stands in for a remote
 // endorser whose in-flight call is interruptible, which an in-process one is not.
 type blockingEndorser struct {
 	stubEndorser
-	release <-chan struct{}
+	release  <-chan struct{}
+	onCancel func(ctx context.Context) error
 }
 
 func (b *blockingEndorser) Execute(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction, _ time.Time) (*peer.ProposalResponse, error) {
@@ -471,33 +474,52 @@ func (b *blockingEndorser) Execute(ctx context.Context, inv endorsement.Invocati
 	case <-b.release:
 		return b.execResp, b.execErr
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil, b.onCancel(ctx)
 	}
 }
 
-// With several endorsers the first rejection cancels the others, so their calls
-// come back cancelled. The caller must still be told why the transaction was
-// rejected rather than that something was cancelled.
+// With several endorsers the first rejection cancels the others, so their calls come
+// back cancelled. The caller must still be told why the transaction was rejected
+// rather than that something was cancelled.
+//
+// Both shapes of cancellation are covered. An in-process endorser hands back the
+// context's own error, but a remote one goes through gRPC, which reports the abort as
+// a status error that does not unwrap to context.Canceled — so a guard written only
+// against context.Canceled passes this test in-process while the real two-endorser
+// deployment intermittently surfaces "rpc error: code = Canceled" instead of the
+// rejection.
 func TestExecuteTransaction_RejectionSurvivesCancellationOfOtherEndorsers(t *testing.T) {
-	rejected := &peer.ProposalResponse{Response: &peer.Response{Status: common.StatusTxRejected, Message: "nonce too low"}}
+	for _, shape := range []struct {
+		name     string
+		onCancel func(ctx context.Context) error
+	}{
+		{"in-process endorser returns the context error", func(ctx context.Context) error { return ctx.Err() }},
+		{"remote endorser returns a gRPC Canceled status", func(context.Context) error {
+			return status.Error(codes.Canceled, "context canceled")
+		}},
+	} {
+		t.Run(shape.name, func(t *testing.T) {
+			rejected := &peer.ProposalResponse{Response: &peer.Response{Status: common.StatusTxRejected, Message: "nonce too low"}}
 
-	// Never released, so this one only ever returns the cancellation. It sits at
-	// index 0, ahead of the endorser that produces the real error.
-	blocked := &blockingEndorser{release: make(chan struct{})}
-	c := &EndorsementClient{
-		endorsers: []api.Service{blocked, &stubEndorser{execResp: rejected}},
-		signer:    stubSigner{},
-		channel:   "ch",
-		namespace: "ns",
-		nsVersion: "1.0",
-	}
+			// Never released, so this one only ever returns the cancellation. It sits
+			// at index 0, ahead of the endorser that produces the real error.
+			blocked := &blockingEndorser{release: make(chan struct{}), onCancel: shape.onCancel}
+			c := &EndorsementClient{
+				endorsers: []api.Service{blocked, &stubEndorser{execResp: rejected}},
+				signer:    stubSigner{},
+				channel:   "ch",
+				namespace: "ns",
+				nsVersion: "1.0",
+			}
 
-	tx := types.NewTx(&types.LegacyTx{Gas: 21000, GasPrice: big.NewInt(0)})
-	_, err := c.ExecuteTransaction(context.Background(), tx)
-	if err == nil {
-		t.Fatal("expected an error for a rejected transaction")
-	}
-	if !strings.Contains(err.Error(), "nonce too low") {
-		t.Errorf("error = %q, want the rejection reason", err.Error())
+			tx := types.NewTx(&types.LegacyTx{Gas: 21000, GasPrice: big.NewInt(0)})
+			_, err := c.ExecuteTransaction(context.Background(), tx)
+			if err == nil {
+				t.Fatal("expected an error for a rejected transaction")
+			}
+			if !strings.Contains(err.Error(), "nonce too low") {
+				t.Errorf("error = %q, want the rejection reason", err.Error())
+			}
+		})
 	}
 }

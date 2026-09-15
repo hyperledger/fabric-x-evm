@@ -82,7 +82,7 @@ func FundTestAccounts(ctx context.Context, kvs estorage.KVS, namespace string, a
 			{
 				ID:     "test-account-funding",
 				Number: 0,
-				Valid:  true,
+				Status: blocks.StatusCommitted, // Valid() is derived from Status
 				NsRWS: []blocks.NsReadWriteSet{
 					{
 						Namespace: namespace,

@@ -11,14 +11,10 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
-	"github.com/hyperledger/fabric-x-common/api/applicationpb"
-	"github.com/hyperledger/fabric-x-common/api/committerpb"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/notification"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/proto"
 )
 
 // stubHandler captures every block delivered to it and lets tests inject
@@ -33,23 +29,23 @@ func (s *stubHandler) Handle(_ context.Context, b blocks.Block) error {
 	return s.err
 }
 
-// makeMetadata builds the wire-format Metadata[0] entry the dispatcher expects:
-// a marshalled ChaincodeInput whose Args[0] is the proposal-type byte and
-// Args[1] is the raw ethereum-tx bytes (opaque to the dispatcher).
-func makeMetadata(t *testing.T, propType ProposalType, ethTxBytes []byte) [][]byte {
-	t.Helper()
-	input := &peer.ChaincodeInput{Args: [][]byte{{byte(propType)}, ethTxBytes}}
-	b, err := proto.Marshal(input)
-	require.NoError(t, err)
-	return [][]byte{b}
+// evmEvent builds a committed event as the SDK delivers it: the ChaincodeInput has
+// already been decoded at the network boundary, so InputArgs holds the proposal-type
+// byte in Args[0] and the raw ethereum-tx bytes (opaque to the dispatcher) in Args[1].
+func evmEvent(txID string, txNum int64, status blocks.Status, propType ProposalType, ethTxBytes []byte) notification.CommittedTxEvent {
+	return notification.CommittedTxEvent{
+		Transaction: blocks.Transaction{
+			ID:        txID,
+			Number:    txNum,
+			Status:    status,
+			InputArgs: [][]byte{{byte(propType)}, ethTxBytes},
+		},
+	}
 }
 
-// makeMetadataWithEvent is like makeMetadata but also appends eventBytes as
-// Metadata[1], mirroring the fabric-x builder which stores events there.
-func makeMetadataWithEvent(t *testing.T, propType ProposalType, ethTxBytes, eventBytes []byte) [][]byte {
-	t.Helper()
-	meta := makeMetadata(t, propType, ethTxBytes)
-	return append(meta, eventBytes)
+// committedEVMEvent is evmEvent for the common case: a committed EVM transaction.
+func committedEVMEvent(txID string) notification.CommittedTxEvent {
+	return evmEvent(txID, 0, blocks.StatusCommitted, ProposalTypeEVMTx, []byte{0xaa})
 }
 
 // ---- NewAllTxBatchDispatcher ----
@@ -77,48 +73,32 @@ func TestHandleBatch_EmptyBatchDoesNothing(t *testing.T) {
 	assert.Empty(t, h.seen, "no events → no dispatch")
 }
 
-func TestHandleBatch_SkipsEventWithEmptyMetadata(t *testing.T) {
-	h := &stubHandler{}
-	d := NewAllTxBatchDispatcher(h)
-	err := d.HandleBatch(context.Background(), notification.AllTxBatch{
-		BlockNumber: 1,
-		Events: []notification.CommittedTxEvent{
-			{TxID: "tx-empty-meta", Metadata: nil},
-		},
-	})
-	require.NoError(t, err)
-	assert.Empty(t, h.seen)
-}
-
-func TestHandleBatch_SkipsEventWithMalformedProtobuf(t *testing.T) {
-	h := &stubHandler{}
-	d := NewAllTxBatchDispatcher(h)
-	err := d.HandleBatch(context.Background(), notification.AllTxBatch{
-		BlockNumber: 1,
-		Events: []notification.CommittedTxEvent{
-			{TxID: "tx-bad-proto", Metadata: [][]byte{{0xff, 0xff, 0xff}}},
-		},
-	})
-	require.NoError(t, err)
-	assert.Empty(t, h.seen)
-}
-
-func TestHandleBatch_SkipsEventWithInsufficientArgs(t *testing.T) {
-	// A ChaincodeInput with only one arg fails the `len(input.Args) < 2` check.
-	input := &peer.ChaincodeInput{Args: [][]byte{{byte(ProposalTypeEVMTx)}}}
-	metaBytes, err := proto.Marshal(input)
-	require.NoError(t, err)
-
-	h := &stubHandler{}
-	d := NewAllTxBatchDispatcher(h)
-	err = d.HandleBatch(context.Background(), notification.AllTxBatch{
-		BlockNumber: 1,
-		Events: []notification.CommittedTxEvent{
-			{TxID: "tx-one-arg", Metadata: [][]byte{metaBytes}},
-		},
-	})
-	require.NoError(t, err)
-	assert.Empty(t, h.seen)
+// TestHandleBatch_SkipsEventWithoutEthTx covers every way an event can fail to carry
+// an ethereum transaction. Metadata that was absent, or a ChaincodeInput that did not
+// parse, both reach us from the SDK as an event with no InputArgs at all — the
+// dispatcher no longer decodes the wire format, so it sees only the outcome.
+func TestHandleBatch_SkipsEventWithoutEthTx(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args [][]byte
+	}{
+		{"no metadata or undecodable metadata", nil},
+		{"empty args", [][]byte{}},
+		{"proposal type but no eth tx", [][]byte{{byte(ProposalTypeEVMTx)}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := &stubHandler{}
+			d := NewAllTxBatchDispatcher(h)
+			err := d.HandleBatch(context.Background(), notification.AllTxBatch{
+				BlockNumber: 1,
+				Events: []notification.CommittedTxEvent{{
+					Transaction: blocks.Transaction{ID: "tx-no-eth", InputArgs: tc.args},
+				}},
+			})
+			require.NoError(t, err)
+			assert.Empty(t, h.seen)
+		})
+	}
 }
 
 func TestHandleBatch_SkipsNonEVMTx(t *testing.T) {
@@ -128,7 +108,7 @@ func TestHandleBatch_SkipsNonEVMTx(t *testing.T) {
 	err := d.HandleBatch(context.Background(), notification.AllTxBatch{
 		BlockNumber: 1,
 		Events: []notification.CommittedTxEvent{
-			{TxID: "tx-not-evm", Metadata: makeMetadata(t, ProposalType(0x01), []byte{0xde, 0xad})},
+			evmEvent("tx-not-evm", 0, blocks.StatusCommitted, ProposalType(0x01), []byte{0xde, 0xad}),
 		},
 	})
 	require.NoError(t, err)
@@ -141,12 +121,9 @@ func TestHandleBatch_DispatchesOnlyEVMTxsFromMixedBatch(t *testing.T) {
 	err := d.HandleBatch(context.Background(), notification.AllTxBatch{
 		BlockNumber: 42,
 		Events: []notification.CommittedTxEvent{
-			{TxID: "evm-1", TxNum: 0, Status: notification.StatusCommitted,
-				Metadata: makeMetadata(t, ProposalTypeEVMTx, []byte{0xaa})},
-			{TxID: "non-evm", TxNum: 1, Status: notification.StatusCommitted,
-				Metadata: makeMetadata(t, ProposalType(0x01), []byte{0xbb})},
-			{TxID: "evm-2", TxNum: 2, Status: notification.StatusMVCCConflict,
-				Metadata: makeMetadata(t, ProposalTypeEVMTx, []byte{0xcc})},
+			evmEvent("evm-1", 0, blocks.StatusCommitted, ProposalTypeEVMTx, []byte{0xaa}),
+			evmEvent("non-evm", 1, blocks.StatusCommitted, ProposalType(0x01), []byte{0xbb}),
+			evmEvent("evm-2", 2, blocks.StatusMVCCConflict, ProposalTypeEVMTx, []byte{0xcc}),
 		},
 	})
 	require.NoError(t, err)
@@ -159,15 +136,15 @@ func TestHandleBatch_DispatchesOnlyEVMTxsFromMixedBatch(t *testing.T) {
 
 	assert.Equal(t, "evm-1", b.Transactions[0].ID)
 	assert.Equal(t, int64(0), b.Transactions[0].Number)
-	assert.True(t, b.Transactions[0].Valid, "COMMITTED tx is Valid")
-	assert.Equal(t, int(committerpb.Status_COMMITTED), b.Transactions[0].Status)
+	assert.True(t, b.Transactions[0].Valid(), "COMMITTED tx is Valid")
+	assert.Equal(t, blocks.StatusCommitted, b.Transactions[0].Status)
 	require.Len(t, b.Transactions[0].InputArgs, 2)
 	assert.Equal(t, []byte{0xaa}, b.Transactions[0].InputArgs[1])
 
 	assert.Equal(t, "evm-2", b.Transactions[1].ID)
 	assert.Equal(t, int64(2), b.Transactions[1].Number)
-	assert.False(t, b.Transactions[1].Valid, "non-COMMITTED tx has Valid=false")
-	assert.Equal(t, int(committerpb.Status_ABORTED_MVCC_CONFLICT), b.Transactions[1].Status)
+	assert.False(t, b.Transactions[1].Valid(), "non-COMMITTED tx is not Valid")
+	assert.Equal(t, blocks.StatusMVCCConflict, b.Transactions[1].Status)
 }
 
 func TestHandleBatch_BlockZeroParentHashDoesNotUnderflow(t *testing.T) {
@@ -179,8 +156,7 @@ func TestHandleBatch_BlockZeroParentHashDoesNotUnderflow(t *testing.T) {
 	err := d.HandleBatch(context.Background(), notification.AllTxBatch{
 		BlockNumber: 0,
 		Events: []notification.CommittedTxEvent{
-			{TxID: "evm-1", Status: notification.StatusCommitted,
-				Metadata: makeMetadata(t, ProposalTypeEVMTx, []byte{0xaa})},
+			committedEVMEvent("evm-1"),
 		},
 	})
 	require.NoError(t, err)
@@ -195,8 +171,7 @@ func TestHandleBatch_MultipleHandlersAllReceive(t *testing.T) {
 	err := d.HandleBatch(context.Background(), notification.AllTxBatch{
 		BlockNumber: 7,
 		Events: []notification.CommittedTxEvent{
-			{TxID: "evm-1", Status: notification.StatusCommitted,
-				Metadata: makeMetadata(t, ProposalTypeEVMTx, []byte{0xaa})},
+			committedEVMEvent("evm-1"),
 		},
 	})
 	require.NoError(t, err)
@@ -206,24 +181,23 @@ func TestHandleBatch_MultipleHandlersAllReceive(t *testing.T) {
 	assert.Equal(t, uint64(7), h2.seen[0].Number)
 }
 
-// TestHandleBatch_EventsFromMetadata1 verifies that the revert event (and any
-// other event) is taken from Metadata[1], mirroring how the fabric-x block
-// parser populates tx.Events on the delivery path.  A nil events slice means
-// no event was emitted; a non-nil one is forwarded as-is to the handler.
-func TestHandleBatch_EventsFromMetadata1(t *testing.T) {
+// TestHandleBatch_ForwardsEvents verifies that the revert event (and any other event)
+// reaches the handler untouched. The SDK lifts it out of the wire format into
+// Transaction.Events, exactly as the block parser does on the delivery path; the
+// dispatcher must pass it straight through. A nil slice means no event was emitted.
+func TestHandleBatch_ForwardsEvents(t *testing.T) {
 	eventPayload := []byte("some-event-bytes")
+
+	withEvent := committedEVMEvent("evm-with-event")
+	withEvent.Events = eventPayload
 
 	h := &stubHandler{}
 	d := NewAllTxBatchDispatcher(h)
 	err := d.HandleBatch(context.Background(), notification.AllTxBatch{
 		BlockNumber: 5,
 		Events: []notification.CommittedTxEvent{
-			// tx with event in Metadata[1]
-			{TxID: "evm-with-event", Status: notification.StatusCommitted,
-				Metadata: makeMetadataWithEvent(t, ProposalTypeEVMTx, []byte{0xaa}, eventPayload)},
-			// tx with no event (only Metadata[0])
-			{TxID: "evm-no-event", Status: notification.StatusCommitted,
-				Metadata: makeMetadata(t, ProposalTypeEVMTx, []byte{0xbb})},
+			withEvent,
+			committedEVMEvent("evm-no-event"), // no event emitted
 		},
 	})
 	require.NoError(t, err)
@@ -231,9 +205,9 @@ func TestHandleBatch_EventsFromMetadata1(t *testing.T) {
 	require.Len(t, h.seen[0].Transactions, 2)
 
 	assert.Equal(t, eventPayload, h.seen[0].Transactions[0].Events,
-		"Metadata[1] event bytes must be forwarded")
+		"event bytes must be forwarded as-is")
 	assert.Nil(t, h.seen[0].Transactions[1].Events,
-		"missing Metadata[1] must leave Events nil")
+		"a tx that emitted no event must leave Events nil")
 }
 
 func TestHandleBatch_HandlerErrorPanics(t *testing.T) {
@@ -252,144 +226,8 @@ func TestHandleBatch_HandlerErrorPanics(t *testing.T) {
 	_ = d.HandleBatch(context.Background(), notification.AllTxBatch{
 		BlockNumber: 1,
 		Events: []notification.CommittedTxEvent{
-			{TxID: "evm-1", Status: notification.StatusCommitted,
-				Metadata: makeMetadata(t, ProposalTypeEVMTx, []byte{0xaa})},
+			committedEVMEvent("evm-1"),
 		},
 	})
 	t.Fatal("expected panic, HandleBatch returned normally")
-}
-
-// ---- namespacesToNsRWS ----
-
-func TestNamespacesToNsRWS_EmptyInput(t *testing.T) {
-	nsrws, events := namespacesToNsRWS(nil)
-	assert.Empty(t, nsrws)
-	assert.Nil(t, events)
-}
-
-func TestNamespacesToNsRWS_ReadsOnly_WithAndWithoutVersion(t *testing.T) {
-	ns := []*applicationpb.TxNamespace{{
-		NsId: "evm",
-		ReadsOnly: []*applicationpb.Read{
-			{Key: []byte("k-noversion"), Version: nil},
-			{Key: []byte("k-versioned"), Version: new(uint64(3))},
-		},
-	}}
-	nsrws, events := namespacesToNsRWS(ns)
-	require.Len(t, nsrws, 1)
-	assert.Nil(t, events)
-	assert.Equal(t, "evm", nsrws[0].Namespace)
-
-	reads := nsrws[0].RWS.Reads
-	require.Len(t, reads, 2)
-	assert.Equal(t, "k-noversion", reads[0].Key)
-	assert.Nil(t, reads[0].Version, "nil version stays nil")
-	assert.Equal(t, "k-versioned", reads[1].Key)
-	require.NotNil(t, reads[1].Version)
-	assert.Equal(t, uint64(3), reads[1].Version.BlockNum)
-	assert.Empty(t, nsrws[0].RWS.Writes, "reads-only produces no writes")
-}
-
-func TestNamespacesToNsRWS_ReadWrites_AppearsInReadsAndWrites(t *testing.T) {
-	ns := []*applicationpb.TxNamespace{{
-		NsId: "evm",
-		ReadWrites: []*applicationpb.ReadWrite{
-			{Key: []byte("rw-noversion"), Version: nil, Value: []byte("v1")},
-			{Key: []byte("rw-versioned"), Version: new(uint64(7)), Value: []byte("v2")},
-		},
-	}}
-	nsrws, _ := namespacesToNsRWS(ns)
-	require.Len(t, nsrws, 1)
-
-	reads := nsrws[0].RWS.Reads
-	writes := nsrws[0].RWS.Writes
-	require.Len(t, reads, 2, "each ReadWrite adds a read entry")
-	require.Len(t, writes, 2, "each ReadWrite adds a write entry")
-
-	assert.Equal(t, "rw-noversion", reads[0].Key)
-	assert.Nil(t, reads[0].Version)
-	assert.Equal(t, "rw-versioned", reads[1].Key)
-	require.NotNil(t, reads[1].Version)
-	assert.Equal(t, uint64(7), reads[1].Version.BlockNum)
-
-	assert.Equal(t, "rw-noversion", writes[0].Key)
-	assert.Equal(t, []byte("v1"), writes[0].Value)
-	assert.Equal(t, "rw-versioned", writes[1].Key)
-	assert.Equal(t, []byte("v2"), writes[1].Value)
-}
-
-func TestNamespacesToNsRWS_BlindWrite_EventKeyCapturedNotWritten(t *testing.T) {
-	ns := []*applicationpb.TxNamespace{{
-		NsId: "evm",
-		BlindWrites: []*applicationpb.Write{
-			{Key: []byte("_event_"), Value: []byte("event-payload")},
-		},
-	}}
-	nsrws, events := namespacesToNsRWS(ns)
-	require.Len(t, nsrws, 1)
-	assert.Equal(t, []byte("event-payload"), events)
-	assert.Empty(t, nsrws[0].RWS.Writes, "_event_ must not appear in writes")
-}
-
-func TestNamespacesToNsRWS_BlindWrite_InputKeySkipped(t *testing.T) {
-	ns := []*applicationpb.TxNamespace{{
-		NsId: "evm",
-		BlindWrites: []*applicationpb.Write{
-			{Key: []byte("_input_"), Value: []byte("raw-input")},
-		},
-	}}
-	nsrws, events := namespacesToNsRWS(ns)
-	require.Len(t, nsrws, 1)
-	assert.Nil(t, events, "_input_ does not populate events")
-	assert.Empty(t, nsrws[0].RWS.Writes, "_input_ is dropped entirely")
-}
-
-func TestNamespacesToNsRWS_BlindWrite_RegularKeyGoesToWrites(t *testing.T) {
-	ns := []*applicationpb.TxNamespace{{
-		NsId: "evm",
-		BlindWrites: []*applicationpb.Write{
-			{Key: []byte("acc:0xabc:bal"), Value: []byte("100")},
-		},
-	}}
-	nsrws, _ := namespacesToNsRWS(ns)
-	require.Len(t, nsrws, 1)
-	writes := nsrws[0].RWS.Writes
-	require.Len(t, writes, 1)
-	assert.Equal(t, "acc:0xabc:bal", writes[0].Key)
-	assert.Equal(t, []byte("100"), writes[0].Value)
-}
-
-func TestNamespacesToNsRWS_MultipleNamespacesPreserveOrder(t *testing.T) {
-	ns := []*applicationpb.TxNamespace{
-		{NsId: "ns-a", ReadsOnly: []*applicationpb.Read{{Key: []byte("k1")}}},
-		{NsId: "ns-b", ReadsOnly: []*applicationpb.Read{{Key: []byte("k2")}}},
-		{NsId: "ns-c", ReadsOnly: []*applicationpb.Read{{Key: []byte("k3")}}},
-	}
-	nsrws, _ := namespacesToNsRWS(ns)
-	require.Len(t, nsrws, 3)
-	assert.Equal(t, "ns-a", nsrws[0].Namespace)
-	assert.Equal(t, "ns-b", nsrws[1].Namespace)
-	assert.Equal(t, "ns-c", nsrws[2].Namespace)
-}
-
-func TestNamespacesToNsRWS_MixedReadsWritesAndBlind(t *testing.T) {
-	ns := []*applicationpb.TxNamespace{{
-		NsId: "evm",
-		ReadsOnly: []*applicationpb.Read{
-			{Key: []byte("r1"), Version: new(uint64(1))},
-		},
-		ReadWrites: []*applicationpb.ReadWrite{
-			{Key: []byte("rw1"), Version: new(uint64(2)), Value: []byte("vrw")},
-		},
-		BlindWrites: []*applicationpb.Write{
-			{Key: []byte("bw1"), Value: []byte("vbw")},
-			{Key: []byte("_event_"), Value: []byte("evt")},
-			{Key: []byte("_input_"), Value: []byte("in")},
-		},
-	}}
-	nsrws, events := namespacesToNsRWS(ns)
-	require.Len(t, nsrws, 1)
-	assert.Equal(t, []byte("evt"), events)
-	assert.Len(t, nsrws[0].RWS.Reads, 2, "1 from ReadsOnly + 1 from ReadWrites")
-	assert.Len(t, nsrws[0].RWS.Writes, 2, "1 from ReadWrites + 1 regular BlindWrite (event/input excluded)")
 }

@@ -103,13 +103,7 @@ func (api *FilterAPI) timeoutLoop() {
 	defer api.wg.Done()
 	// Sweep more often than the filter timeout so expired filters are removed
 	// close to their deadline instead of lingering for almost another full period.
-	sweep := api.timeout / 3
-	if sweep < time.Second {
-		sweep = time.Second
-	}
-	if sweep > time.Minute {
-		sweep = time.Minute
-	}
+	sweep := min(max(api.timeout/3, time.Second), time.Minute)
 	ticker := time.NewTicker(sweep)
 	defer ticker.Stop()
 	for {
@@ -226,15 +220,15 @@ func (api *FilterAPI) UninstallFilter(id rpc.ID) bool {
 }
 
 // GetFilterChanges drains buffered hashes or logs since the last poll.
-func (api *FilterAPI) GetFilterChanges(id rpc.ID) (interface{}, error) {
+func (api *FilterAPI) GetFilterChanges(id rpc.ID) (any, error) {
 	api.mu.Lock()
 	defer api.mu.Unlock()
 	f, ok := api.filters[id]
 	if !ok {
-		return []interface{}{}, errFilterNotFound
+		return []any{}, errFilterNotFound
 	}
 	if !api.resetDeadlineLocked(id, f) {
-		return []interface{}{}, errFilterNotFound
+		return []any{}, errFilterNotFound
 	}
 
 	switch f.typ {
@@ -253,7 +247,7 @@ func (api *FilterAPI) GetFilterChanges(id rpc.ID) (interface{}, error) {
 		}
 		return logs, nil
 	default:
-		return []interface{}{}, errFilterNotFound
+		return []any{}, errFilterNotFound
 	}
 }
 

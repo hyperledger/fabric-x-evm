@@ -28,7 +28,7 @@ func logsFromBlock(b blocks.Block) []*types.Log {
 		if len(tx.InputArgs) < 2 || len(tx.InputArgs[0]) != 1 || tx.InputArgs[0][0] != byte(fc.ProposalTypeEVMTx) {
 			continue
 		}
-		if !tx.Valid || fc.IsRevertEvent(tx.Events) || len(tx.Events) == 0 {
+		if !tx.Valid() || fc.IsRevertEvent(tx.Events) || len(tx.Events) == 0 {
 			continue
 		}
 		raw, err := fc.UnmarshalLogs(tx.Events)

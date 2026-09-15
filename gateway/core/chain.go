@@ -154,11 +154,11 @@ func ConvertToDomain(b blocks.Block) domain.Block {
 			continue
 		}
 		status := uint8(0)
-		if tx.Valid && !fc.IsRevertEvent(tx.Events) && !fc.IsExecFailureEvent(tx.Events) {
+		if tx.Valid() && !fc.IsRevertEvent(tx.Events) && !fc.IsExecFailureEvent(tx.Events) {
 			status = 1
 		}
 
-		etx, err := convertTransaction(tx.InputArgs[1], b.Hash, b.Number, tx.Number, tx.ID, status, tx.Status, tx.Valid, tx.Events, &logIndex)
+		etx, err := convertTransaction(tx.InputArgs[1], b.Hash, b.Number, tx.Number, tx.ID, status, tx.Status, tx.Valid(), tx.Events, &logIndex)
 		if err != nil {
 			panic(err) // we surface this for now instead of swallowing it
 		}
@@ -170,7 +170,11 @@ func ConvertToDomain(b blocks.Block) domain.Block {
 }
 
 // convertTransaction converts an Ethereum transaction to a domain.Transaction.
-func convertTransaction(ethTxBytes []byte, blockHash []byte, blockNumber uint64, txIndex int64, txID string, ethStatus uint8, validationCode int, fabricValid bool, events []byte, logIndex *int64) (domain.Transaction, error) {
+//
+// fabricStatus is the SDK's protocol-neutral commit status, not a ledger-specific
+// validation code: it used to be a peer.TxValidationCode on the delivery path and a
+// committerpb.Status on the notification path, and is now one blocks.Status on both.
+func convertTransaction(ethTxBytes []byte, blockHash []byte, blockNumber uint64, txIndex int64, txID string, ethStatus uint8, fabricStatus blocks.Status, fabricValid bool, events []byte, logIndex *int64) (domain.Transaction, error) {
 	ethTx := &types.Transaction{}
 	if err := ethTx.UnmarshalBinary(ethTxBytes); err != nil {
 		return domain.Transaction{}, fmt.Errorf("invalid tx: %w", err)
@@ -233,7 +237,7 @@ func convertTransaction(ethTxBytes []byte, blockHash []byte, blockNumber uint64,
 		ContractAddress: contractAddr,
 		Status:          ethStatus,
 		FabricTxID:      txID,
-		FabricTxStatus:  validationCode,
+		FabricTxStatus:  int(fabricStatus),
 		FabricValid:     fabricValid,
 		Logs:            logs,
 	}, nil

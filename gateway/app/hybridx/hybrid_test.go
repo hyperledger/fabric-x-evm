@@ -15,13 +15,11 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/notification"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/proto"
 
 	evmcommon "github.com/hyperledger/fabric-x-evm/common"
 )
@@ -112,7 +110,10 @@ func (f *fakeNotifPeer) push(blockNum uint64, txID string) {
 	f.batches <- notification.AllTxBatch{
 		BlockNumber: blockNum,
 		Events: []notification.CommittedTxEvent{
-			{TxID: txID, BlockNum: blockNum, Status: notification.StatusCommitted},
+			{
+				Transaction: blocks.Transaction{ID: txID, Status: blocks.StatusCommitted},
+				BlockNum:    blockNum,
+			},
 		},
 	}
 }
@@ -182,20 +183,21 @@ func newGate(h *HybridSynchronizer) (*notifGate, *bool) {
 	}, stopped
 }
 
-// evmBatch builds a batch the AllTxBatchDispatcher will actually forward: it
-// drops batches whose events carry no EVM proposal metadata.
+// evmBatch builds a batch the AllTxBatchDispatcher will actually forward: it drops
+// batches whose events carry no EVM proposal args. The SDK decodes the ChaincodeInput
+// at the network boundary, so events arrive with InputArgs already populated and there
+// is no wire-format metadata to marshal here.
 func evmBatch(t *testing.T, blockNum uint64) notification.AllTxBatch {
 	t.Helper()
-	input := &peer.ChaincodeInput{Args: [][]byte{{byte(evmcommon.ProposalTypeEVMTx)}, {0xaa}}}
-	raw, err := proto.Marshal(input)
-	require.NoError(t, err)
 	return notification.AllTxBatch{
 		BlockNumber: blockNum,
 		Events: []notification.CommittedTxEvent{{
-			TxID:     "evm-tx",
+			Transaction: blocks.Transaction{
+				ID:        "evm-tx",
+				Status:    blocks.StatusCommitted,
+				InputArgs: [][]byte{{byte(evmcommon.ProposalTypeEVMTx)}, {0xaa}},
+			},
 			BlockNum: blockNum,
-			Status:   notification.StatusCommitted,
-			Metadata: [][]byte{raw},
 		}},
 	}
 }

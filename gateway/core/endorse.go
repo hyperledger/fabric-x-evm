@@ -24,6 +24,8 @@ import (
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // EndorsementClient forwards ethereum-style transactions and calls
@@ -114,7 +116,7 @@ func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Tra
 	// endorsement error which caused it. A genuinely cancelled caller has
 	// nothing but cancellations, and the second pass returns one of those.
 	for _, err := range errs {
-		if err != nil && !errors.Is(err, context.Canceled) {
+		if err != nil && !isCancellation(err) {
 			return sdk.Endorsement{}, err
 		}
 	}
@@ -128,6 +130,18 @@ func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Tra
 		Proposal:  inv.Proposal,
 		Responses: res,
 	}, nil
+}
+
+// isCancellation reports whether err is a cancellation, in either of the two forms an
+// aborted endorsement can take. A locally cancelled context unwraps to
+// context.Canceled, but once the call has reached gRPC the abort comes back as a
+// status error with codes.Canceled, which does not unwrap to context.Canceled at all.
+// Recognising only the first form lets a remote endorser's cancellation through as if
+// it were a transport failure, which then masks the endorsement error that caused the
+// cancel in the first place — the "nonce too low" rejection reported by the sibling
+// endorser that got there first.
+func isCancellation(err error) bool {
+	return errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled
 }
 
 // CallContract queries a smart contract and returns the value.

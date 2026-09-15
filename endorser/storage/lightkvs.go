@@ -25,6 +25,13 @@ var (
 
 // KVS is implemented by both LightKVS and VersionedDBWrapper.
 // It combines snapshot reads, block handling, and lifecycle management.
+// There is one read API per question a caller can ask. Get (from
+// blocks.RecordGetter) answers "what is the current value", and NewSnapshot (from
+// execution.KVSSnapshotter) answers "what was the value at block N" — note that its
+// nil means latest while its 0 means genesis, so the two cannot be collapsed into one
+// signature. Get used to take a lastBlock too, with the opposite convention that 0
+// meant latest; it was only ever a wrapper around NewSnapshot plus a read, so it went
+// when the SDK narrowed blocks.RecordGetter.
 type KVS interface {
 	execution.KVSSnapshotter
 	blocks.BlockHandler
@@ -150,24 +157,16 @@ func (kvs *LightKVS) NewSnapshot(blockNumber *uint64) (execution.ReadStore, erro
 	return nil, fmt.Errorf("snapshot not found for block number %d", bn)
 }
 
-func (kvs *LightKVS) Get(namespace, key string, lastBlock uint64) (*blocks.WriteRecord, error) {
-	// lastBlock 0 keeps the historical Get convention of "latest".
-	r, err := kvs.NewSnapshot(blockRefFromLastBlock(lastBlock))
+// Get implements blocks.RecordGetter, reading the latest committed state. For a read
+// at a specific block, take a NewSnapshot instead.
+func (kvs *LightKVS) Get(namespace, key string) (*blocks.WriteRecord, error) {
+	r, err := kvs.NewSnapshot(nil)
 	if err != nil {
 		return nil, err
 	}
 	defer r.Close()
 
 	return r.Get(namespace, key)
-}
-
-// blockRefFromLastBlock maps the older Get lastBlock convention (0 = latest)
-// onto NewSnapshot's pointer form.
-func blockRefFromLastBlock(lastBlock uint64) *uint64 {
-	if lastBlock == 0 {
-		return nil
-	}
-	return &lastBlock
 }
 
 // Get retrieves the value and version for a key from the reader's snapshot.
@@ -325,7 +324,7 @@ func (kvs *LightKVS) Handle(ctx context.Context, b blocks.Block) error {
 	var allUpdates []KeyValueVersion
 
 	for _, tx := range b.Transactions {
-		collectWrites(&allUpdates, tx.NsRWS, b.Number, uint64(tx.Number), tx.ID, tx.Valid)
+		collectWrites(&allUpdates, tx.NsRWS, b.Number, uint64(tx.Number), tx.ID, tx.Valid())
 	}
 
 	if !current.Placeholder && b.Number == current.BlockNumber {

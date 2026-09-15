@@ -131,7 +131,7 @@ func TestFundTestAccounts_SurvivesLaterUpdate(t *testing.T) {
 		Transactions: []blocks.Transaction{{
 			ID:     "tx-1",
 			Number: 0,
-			Valid:  true,
+			Status: blocks.StatusCommitted,
 			NsRWS: []blocks.NsReadWriteSet{{
 				Namespace: testNS,
 				RWS: blocks.ReadWriteSet{Writes: []blocks.KVWrite{

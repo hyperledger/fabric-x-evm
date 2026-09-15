@@ -286,8 +286,11 @@ func (s *deliveryShim) Handle(ctx context.Context, b blocks.Block) error {
 // notifGate is a notification.AllTxHandler that gates the handler chain,
 // performing the notification half of the protocol in the package doc.
 //
-// switched needs no synchronisation: AllTxStreamer calls HandleBatch
-// sequentially from the single notification goroutine started in Start.
+// switched needs no synchronisation.  AllTxStreamer runs HandleBatch sequentially on
+// one handler goroutine per Stream call — not on the stream's receive loop, so the
+// waits and dispatches below cost the network path nothing — and Stream does not
+// return until that goroutine has exited.  The retry loop in Start therefore orders
+// each Stream call's first HandleBatch after the previous call's last one.
 type notifGate struct {
 	hybrid       *HybridSynchronizer
 	dispatcher   *evmcommon.AllTxBatchDispatcher

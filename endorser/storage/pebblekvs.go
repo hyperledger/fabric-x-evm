@@ -302,11 +302,11 @@ func (p *PebbleKVS) NewSnapshot(blockNumber *uint64) (execution.ReadStore, error
 	}, nil
 }
 
-// Get returns the record for (namespace, key) as of lastBlock, or nil if no
-// such record exists at or before that block. A lastBlock of 0 resolves to the
-// latest committed block (legacy Get convention).
-func (p *PebbleKVS) Get(namespace, key string, lastBlock uint64) (*blocks.WriteRecord, error) {
-	r, err := p.NewSnapshot(blockRefFromLastBlock(lastBlock))
+// Get implements blocks.RecordGetter, returning the record for (namespace, key) at the
+// latest committed block, or nil if no such record exists. For a read at a specific
+// block, take a NewSnapshot instead.
+func (p *PebbleKVS) Get(namespace, key string) (*blocks.WriteRecord, error) {
+	r, err := p.NewSnapshot(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -328,7 +328,7 @@ func (p *PebbleKVS) Get(namespace, key string, lastBlock uint64) (*blocks.WriteR
 func (p *PebbleKVS) Handle(ctx context.Context, b blocks.Block) error {
 	var updates []KeyValueVersion
 	for _, tx := range b.Transactions {
-		collectWrites(&updates, tx.NsRWS, b.Number, uint64(tx.Number), tx.ID, tx.Valid)
+		collectWrites(&updates, tx.NsRWS, b.Number, uint64(tx.Number), tx.ID, tx.Valid())
 	}
 	return p.commitBlock(b.Number, updates)
 }

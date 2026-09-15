@@ -251,7 +251,10 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 		// Use local submitters for bypass mode (no network communication)
 		submitters = make([]core.Submitter, submitterCount)
 		for i := 0; i < submitterCount; i++ {
-			submitters[i] = local.NewLocalSubmitter(dbs[0], cfg.Network.Channel, cfg.Network.Namespace, nfab.NewTxPackager(gwSigner), bfab.NewBlockParser(logger), false)
+			// dbs[0] is passed twice: once as the state to commit into, and once as the
+			// record getter the submitter validates MVCC reads against, which reads its
+			// latest committed state.
+			submitters[i] = local.NewLocalSubmitter(dbs[0], dbs[0], cfg.Network.Channel, cfg.Network.Namespace, nfab.NewTxPackager(gwSigner), bfab.NewBlockParser(logger), false)
 		}
 	} else {
 		// Create network submitters

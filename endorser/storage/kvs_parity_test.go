@@ -120,6 +120,16 @@ func absent(rec *blocks.WriteRecord) bool {
 	return rec == nil || rec.IsDelete
 }
 
+// txStatus maps a test's valid/invalid boolean onto the status a blocks.Transaction
+// now carries, Valid() being derived from it. MVCC conflict stands in for "rejected",
+// being how the committer most often rejects a transaction that reached a block.
+func txStatus(valid bool) blocks.Status {
+	if valid {
+		return blocks.StatusCommitted
+	}
+	return blocks.StatusMVCCConflict
+}
+
 // mkBlock builds a single-tx block writing the given ns/key/value writes.
 func mkBlock(number uint64, txNum int64, txID string, valid bool, ns string, writes ...blocks.KVWrite) blocks.Block {
 	return blocks.Block{
@@ -127,7 +137,7 @@ func mkBlock(number uint64, txNum int64, txID string, valid bool, ns string, wri
 		Transactions: []blocks.Transaction{{
 			ID:     txID,
 			Number: txNum,
-			Valid:  valid,
+			Status: txStatus(valid),
 			NsRWS: []blocks.NsReadWriteSet{{
 				Namespace: ns,
 				RWS:       blocks.ReadWriteSet{Writes: writes},
@@ -145,7 +155,7 @@ func mkMultiTxBlock(number uint64, ns string, writes ...blocks.KVWrite) blocks.B
 		txs[i] = blocks.Transaction{
 			ID:     fmt.Sprintf("tx%d", i),
 			Number: int64(i),
-			Valid:  true,
+			Status: blocks.StatusCommitted,
 			NsRWS: []blocks.NsReadWriteSet{{
 				Namespace: ns,
 				RWS:       blocks.ReadWriteSet{Writes: []blocks.KVWrite{w}},
@@ -163,12 +173,31 @@ func mustHandle(t *testing.T, kvs KVS, blk blocks.Block) {
 	}
 }
 
-// mustGet reads ns/key as of lastBlock (0 = latest), failing the test on error.
-func mustGet(t *testing.T, kvs KVS, ns, key string, lastBlock uint64) *blocks.WriteRecord {
+// mustGet reads ns/key at the latest committed block, failing the test on error.
+func mustGet(t *testing.T, kvs KVS, ns, key string) *blocks.WriteRecord {
 	t.Helper()
-	rec, err := kvs.Get(ns, key, lastBlock)
+	rec, err := kvs.Get(ns, key)
 	if err != nil {
-		t.Fatalf("Get %s/%s as of %d: %v", ns, key, lastBlock, err)
+		t.Fatalf("Get %s/%s: %v", ns, key, err)
+	}
+	return rec
+}
+
+// mustGetAsOf reads ns/key as of block, failing the test on error. Unlike mustGet's
+// latest read this has to go through a snapshot, which is the only API that takes a
+// height — and where, unlike the lastBlock parameter Get used to carry, 0 names
+// genesis rather than latest.
+func mustGetAsOf(t *testing.T, kvs KVS, ns, key string, block uint64) *blocks.WriteRecord {
+	t.Helper()
+	snap, err := kvs.NewSnapshot(&block)
+	if err != nil {
+		t.Fatalf("NewSnapshot at %d: %v", block, err)
+	}
+	defer snap.Close()
+
+	rec, err := snap.Get(ns, key)
+	if err != nil {
+		t.Fatalf("Get %s/%s as of %d: %v", ns, key, block, err)
 	}
 	return rec
 }
@@ -197,7 +226,7 @@ func TestParityGetAndVersionIncrement(t *testing.T) {
 		mustHandle(t, kvs, mkBlock(1, 0, "tx1", true, "ns1",
 			blocks.KVWrite{Key: "key1", Value: []byte("v1")}))
 
-		rec := mustGet(t, kvs, "ns1", "key1", 0)
+		rec := mustGet(t, kvs, "ns1", "key1")
 		wantValue(t, rec, "v1")
 		if rec.Version != 0 {
 			t.Errorf("expected version 0 on first write, got %d", rec.Version)
@@ -212,14 +241,14 @@ func TestParityGetAndVersionIncrement(t *testing.T) {
 		mustHandle(t, kvs, mkBlock(3, 0, "tx3", true, "ns1",
 			blocks.KVWrite{Key: "key1", Value: []byte("v3")}))
 
-		rec = mustGet(t, kvs, "ns1", "key1", 0)
+		rec = mustGet(t, kvs, "ns1", "key1")
 		wantValue(t, rec, "v3")
 		if rec.Version != 2 {
 			t.Errorf("expected version 2 after 3 writes, got %d", rec.Version)
 		}
 
 		// Missing key reads as absent.
-		if rec := mustGet(t, kvs, "ns1", "nope", 0); !absent(rec) {
+		if rec := mustGet(t, kvs, "ns1", "nope"); !absent(rec) {
 			t.Errorf("expected absent for missing key, got %+v", rec)
 		}
 	})
@@ -230,7 +259,7 @@ func TestParityNilValueRoundTrip(t *testing.T) {
 		mustHandle(t, kvs, mkBlock(1, 0, "tx1", true, "ns1",
 			blocks.KVWrite{Key: "key1", Value: nil}))
 
-		rec := mustGet(t, kvs, "ns1", "key1", 0)
+		rec := mustGet(t, kvs, "ns1", "key1")
 		if rec == nil {
 			t.Fatal("expected record for nil-value write, got nil")
 		}
@@ -251,7 +280,7 @@ func TestParityMultipleNamespacesAndColonKeys(t *testing.T) {
 		mustHandle(t, kvs, blocks.Block{
 			Number: 1,
 			Transactions: []blocks.Transaction{{
-				ID: "tx1", Number: 0, Valid: true,
+				ID: "tx1", Number: 0, Status: blocks.StatusCommitted,
 				NsRWS: []blocks.NsReadWriteSet{
 					{Namespace: "ns1", RWS: blocks.ReadWriteSet{Writes: []blocks.KVWrite{
 						{Key: "a", Value: []byte("ns1-a")},
@@ -270,7 +299,7 @@ func TestParityMultipleNamespacesAndColonKeys(t *testing.T) {
 			{"ns2", "a"}:     "ns2-a",
 		}
 		for k, want := range cases {
-			if rec := mustGet(t, kvs, k[0], k[1], 0); rec == nil || string(rec.Value) != want {
+			if rec := mustGet(t, kvs, k[0], k[1]); rec == nil || string(rec.Value) != want {
 				t.Errorf("Get %v: expected %q, got %+v", k, want, rec)
 			}
 		}
@@ -282,12 +311,12 @@ func TestParityInvalidTransactionsSkipped(t *testing.T) {
 		mustHandle(t, kvs, blocks.Block{
 			Number: 1,
 			Transactions: []blocks.Transaction{
-				{ID: "bad", Number: 0, Valid: false, NsRWS: []blocks.NsReadWriteSet{
+				{ID: "bad", Number: 0, Status: blocks.StatusMVCCConflict, NsRWS: []blocks.NsReadWriteSet{
 					{Namespace: "ns1", RWS: blocks.ReadWriteSet{Writes: []blocks.KVWrite{
 						{Key: "k", Value: []byte("bad")},
 					}}},
 				}},
-				{ID: "good", Number: 1, Valid: true, NsRWS: []blocks.NsReadWriteSet{
+				{ID: "good", Number: 1, Status: blocks.StatusCommitted, NsRWS: []blocks.NsReadWriteSet{
 					{Namespace: "ns1", RWS: blocks.ReadWriteSet{Writes: []blocks.KVWrite{
 						{Key: "k2", Value: []byte("good")},
 					}}},
@@ -295,10 +324,10 @@ func TestParityInvalidTransactionsSkipped(t *testing.T) {
 			},
 		})
 
-		if rec := mustGet(t, kvs, "ns1", "k", 0); !absent(rec) {
+		if rec := mustGet(t, kvs, "ns1", "k"); !absent(rec) {
 			t.Errorf("write from invalid tx must not be visible, got %+v", rec)
 		}
-		wantValue(t, mustGet(t, kvs, "ns1", "k2", 0), "good")
+		wantValue(t, mustGet(t, kvs, "ns1", "k2"), "good")
 	})
 }
 
@@ -311,7 +340,7 @@ func TestParityDeleteTombstoneContract(t *testing.T) {
 
 		// As of the latest block the key is effectively absent for every backend
 		// (LightKVS: nil; persistent backends: IsDelete tombstone).
-		if rec := mustGet(t, kvs, "ns1", "key1", 0); !absent(rec) {
+		if rec := mustGet(t, kvs, "ns1", "key1"); !absent(rec) {
 			t.Errorf("expected key absent after delete, got %+v", rec)
 		}
 	})
@@ -328,7 +357,7 @@ func TestParityTimeTravelReads(t *testing.T) {
 		// Reading as of each block returns that block's value.
 		for i := uint64(1); i <= 3; i++ {
 			want := string([]byte{byte('0' + i)})
-			if rec := mustGet(t, kvs, "ns1", "k", i); rec == nil || string(rec.Value) != want {
+			if rec := mustGetAsOf(t, kvs, "ns1", "k", i); rec == nil || string(rec.Value) != want {
 				t.Errorf("as of block %d: expected %q, got %+v", i, want, rec)
 			}
 		}
@@ -368,7 +397,7 @@ func TestParityBlock0OnFreshStore(t *testing.T) {
 		mustHandle(t, kvs, mkBlock(0, 0, "tx0", true, "ns1",
 			blocks.KVWrite{Key: "k", Value: []byte("block0")}))
 
-		wantValue(t, mustGet(t, kvs, "ns1", "k", 0), "block0")
+		wantValue(t, mustGet(t, kvs, "ns1", "k"), "block0")
 		if n := mustBlockNumber(t, kvs); n != 0 {
 			t.Errorf("expected block 0, got %d", n)
 		}
@@ -384,7 +413,7 @@ func TestParityReplayIsNoOp(t *testing.T) {
 		mustHandle(t, kvs, mkBlock(1, 0, "tx1", true, "ns1",
 			blocks.KVWrite{Key: "k", Value: []byte("v1")}))
 
-		rec := mustGet(t, kvs, "ns1", "k", 0)
+		rec := mustGet(t, kvs, "ns1", "k")
 		wantValue(t, rec, "v1")
 		if rec.Version != 0 {
 			t.Fatalf("expected version 0 after first apply, got %d", rec.Version)
@@ -394,7 +423,7 @@ func TestParityReplayIsNoOp(t *testing.T) {
 		mustHandle(t, kvs, mkBlock(1, 0, "tx1", true, "ns1",
 			blocks.KVWrite{Key: "k", Value: []byte("v1")}))
 
-		rec = mustGet(t, kvs, "ns1", "k", 0)
+		rec = mustGet(t, kvs, "ns1", "k")
 		wantValue(t, rec, "v1")
 		if rec.Version != 0 {
 			t.Errorf("identical replay bumped the version: got %d, want 0", rec.Version)
@@ -404,7 +433,7 @@ func TestParityReplayIsNoOp(t *testing.T) {
 		mustHandle(t, kvs, mkBlock(2, 0, "tx2", true, "ns1",
 			blocks.KVWrite{Key: "k", Value: []byte("v3")}))
 
-		rec = mustGet(t, kvs, "ns1", "k", 0)
+		rec = mustGet(t, kvs, "ns1", "k")
 		wantValue(t, rec, "v3")
 		if rec.Version != 1 {
 			t.Errorf("expected version 1 after block 2, got %d", rec.Version)
@@ -430,10 +459,10 @@ func TestParityReplayWithDifferentContentErrors(t *testing.T) {
 
 		// State is unaffected by the rejected replay, and the next block still
 		// applies normally.
-		wantValue(t, mustGet(t, kvs, "ns1", "k", 0), "v1")
+		wantValue(t, mustGet(t, kvs, "ns1", "k"), "v1")
 		mustHandle(t, kvs, mkBlock(2, 0, "tx2", true, "ns1",
 			blocks.KVWrite{Key: "k", Value: []byte("v3")}))
-		wantValue(t, mustGet(t, kvs, "ns1", "k", 0), "v3")
+		wantValue(t, mustGet(t, kvs, "ns1", "k"), "v3")
 	})
 }
 
@@ -450,7 +479,7 @@ func TestParityEmptyBlockAdvancesCheckpoint(t *testing.T) {
 		if n := mustBlockNumber(t, kvs); n != 2 {
 			t.Errorf("expected height 2 after empty block, got %d", n)
 		}
-		wantValue(t, mustGet(t, kvs, "ns1", "k", 0), "v1")
+		wantValue(t, mustGet(t, kvs, "ns1", "k"), "v1")
 	})
 }
 
@@ -467,10 +496,10 @@ func TestParityInvalidTxBlockAdvancesCheckpoint(t *testing.T) {
 		if n := mustBlockNumber(t, kvs); n != 2 {
 			t.Errorf("expected height 2, got %d", n)
 		}
-		if rec := mustGet(t, kvs, "ns1", "k2", 0); !absent(rec) {
+		if rec := mustGet(t, kvs, "ns1", "k2"); !absent(rec) {
 			t.Errorf("invalid tx write should not be visible, got %+v", rec)
 		}
-		wantValue(t, mustGet(t, kvs, "ns1", "k", 0), "v1")
+		wantValue(t, mustGet(t, kvs, "ns1", "k"), "v1")
 	})
 }
 
@@ -482,7 +511,7 @@ func TestParityMultiWritePerBlockValue(t *testing.T) {
 		mustHandle(t, kvs, mkMultiTxBlock(1, "ns1",
 			blocks.KVWrite{Key: "k", Value: []byte("lo")},
 			blocks.KVWrite{Key: "k", Value: []byte("hi")}))
-		wantValue(t, mustGet(t, kvs, "ns1", "k", 0), "hi")
+		wantValue(t, mustGet(t, kvs, "ns1", "k"), "hi")
 	})
 }
 
@@ -508,7 +537,7 @@ func TestParityPersistenceAcrossReopen(t *testing.T) {
 		if n := mustBlockNumber(t, reopened); n != 7 {
 			t.Errorf("expected block 7 to survive restart, got %d", n)
 		}
-		wantValue(t, mustGet(t, reopened, "ns1", "key1", 0), "persisted")
+		wantValue(t, mustGet(t, reopened, "ns1", "key1"), "persisted")
 	})
 }
 
@@ -540,13 +569,13 @@ func TestParityReplayAcrossReopen(t *testing.T) {
 			blocks.KVWrite{Key: "k", Value: []byte("v2-changed")})); err == nil {
 			t.Fatal("expected error replaying block 2 with different content, got nil")
 		}
-		wantValue(t, mustGet(t, reopened, "ns1", "k", 0), "v2")
+		wantValue(t, mustGet(t, reopened, "ns1", "k"), "v2")
 
 		// Replay block 2 with identical content across the reopen: no-op.
 		mustHandle(t, reopened, mkBlock(2, 0, "tx2", true, "ns1",
 			blocks.KVWrite{Key: "k", Value: []byte("v2")}))
 
-		rec := mustGet(t, reopened, "ns1", "k", 0)
+		rec := mustGet(t, reopened, "ns1", "k")
 		wantValue(t, rec, "v2")
 		if rec.Version != 1 {
 			t.Errorf("identical replay after reopen bumped the version: got %d, want 1", rec.Version)
@@ -558,7 +587,7 @@ func TestParityReplayAcrossReopen(t *testing.T) {
 		// Block 3 still applies.
 		mustHandle(t, reopened, mkBlock(3, 0, "tx3", true, "ns1",
 			blocks.KVWrite{Key: "k", Value: []byte("v3")}))
-		rec = mustGet(t, reopened, "ns1", "k", 0)
+		rec = mustGet(t, reopened, "ns1", "k")
 		wantValue(t, rec, "v3")
 		if rec.Version != 2 {
 			t.Errorf("expected version 2 after block 3, got %d", rec.Version)
@@ -582,7 +611,7 @@ func TestParityVersionSemantics(t *testing.T) {
 				blocks.KVWrite{Key: "k", Value: []byte("from-tx0")},
 				blocks.KVWrite{Key: "k", Value: []byte("from-tx1")}))
 
-			rec := mustGet(t, kvs, "ns1", "k", 0)
+			rec := mustGet(t, kvs, "ns1", "k")
 			wantValue(t, rec, "from-tx1")
 
 			// MVCC backends: tx0→0, tx1→1, consecutive. LightKVS: both writes
@@ -608,7 +637,7 @@ func TestParityVersionSemantics(t *testing.T) {
 			mustHandle(t, kvs, mkBlock(3, 0, "tx3", true, "ns1",
 				blocks.KVWrite{Key: "k", Value: []byte("again")}))
 
-			rec := mustGet(t, kvs, "ns1", "k", 0)
+			rec := mustGet(t, kvs, "ns1", "k")
 			wantValue(t, rec, "again")
 
 			// MVCC backends keep counting across the tombstone (v0, tombstone
@@ -638,7 +667,7 @@ func TestParityVersionSemantics(t *testing.T) {
 			mustHandle(t, kvs, mkBlock(5, 0, "tx5", true, "ns1",
 				blocks.KVWrite{Key: "k", Value: []byte("v2")}))
 
-			rec := mustGet(t, kvs, "ns1", "k", 0)
+			rec := mustGet(t, kvs, "ns1", "k")
 			wantValue(t, rec, "v2")
 
 			// LightKVS resets to 0 after every delete, no matter how many cycles
@@ -667,7 +696,7 @@ func TestParityDeleteThenRewriteWithinBlock(t *testing.T) {
 				blocks.KVWrite{Key: "k", IsDelete: true},
 				blocks.KVWrite{Key: "k", Value: []byte("resurrected")}))
 
-			wantValue(t, mustGet(t, kvs, "ns1", "k", 0), "resurrected")
+			wantValue(t, mustGet(t, kvs, "ns1", "k"), "resurrected")
 		})
 	})
 
@@ -679,7 +708,7 @@ func TestParityDeleteThenRewriteWithinBlock(t *testing.T) {
 				blocks.KVWrite{Key: "k", Value: []byte("about-to-be-deleted")},
 				blocks.KVWrite{Key: "k", IsDelete: true}))
 
-			if rec := mustGet(t, kvs, "ns1", "k", 0); !absent(rec) {
+			if rec := mustGet(t, kvs, "ns1", "k"); !absent(rec) {
 				t.Errorf("expected key absent after trailing delete in block, got %+v", rec)
 			}
 		})
@@ -698,13 +727,13 @@ func TestParityDeleteNeverWrittenKey(t *testing.T) {
 		mustHandle(t, kvs, mkBlock(1, 0, "tx1", true, "ns1",
 			blocks.KVWrite{Key: "ghost", IsDelete: true}))
 
-		if rec := mustGet(t, kvs, "ns1", "ghost", 0); !absent(rec) {
+		if rec := mustGet(t, kvs, "ns1", "ghost"); !absent(rec) {
 			t.Errorf("expected never-written deleted key absent, got %+v", rec)
 		}
 
 		mustHandle(t, kvs, mkBlock(2, 0, "tx2", true, "ns1",
 			blocks.KVWrite{Key: "ghost", Value: []byte("alive")}))
-		rec := mustGet(t, kvs, "ns1", "ghost", 0)
+		rec := mustGet(t, kvs, "ns1", "ghost")
 		wantValue(t, rec, "alive")
 
 		want := uint64(0)
@@ -727,7 +756,7 @@ func TestParityVersionIndependentOfBlockGap(t *testing.T) {
 		mustHandle(t, kvs, mkBlock(1000, 0, "tx2", true, "ns1",
 			blocks.KVWrite{Key: "k", Value: []byte("v1")}))
 
-		rec := mustGet(t, kvs, "ns1", "k", 0)
+		rec := mustGet(t, kvs, "ns1", "k")
 		wantValue(t, rec, "v1")
 		if rec.Version != 1 {
 			t.Errorf("expected version 1 despite block gap, got %d", rec.Version)
@@ -747,11 +776,11 @@ func TestParityTimeTravelAcrossTombstone(t *testing.T) {
 		mustHandle(t, kvs, mkBlock(3, 0, "tx3", true, "ns1",
 			blocks.KVWrite{Key: "k", Value: []byte("v3")}))
 
-		wantValue(t, mustGet(t, kvs, "ns1", "k", 1), "v1")
-		if rec := mustGet(t, kvs, "ns1", "k", 2); !absent(rec) {
+		wantValue(t, mustGetAsOf(t, kvs, "ns1", "k", 1), "v1")
+		if rec := mustGetAsOf(t, kvs, "ns1", "k", 2); !absent(rec) {
 			t.Errorf("as of block 2 (delete): expected absent, got %+v", rec)
 		}
-		wantValue(t, mustGet(t, kvs, "ns1", "k", 3), "v3")
+		wantValue(t, mustGetAsOf(t, kvs, "ns1", "k", 3), "v3")
 	})
 }
 
@@ -832,7 +861,7 @@ func TestParityProtocolVersionCompatibility(t *testing.T) {
 						continue // absent afterward; nothing to read back
 					}
 
-					rec := mustGet(t, kvs, "ns1", "k", 0)
+					rec := mustGet(t, kvs, "ns1", "k")
 					gotBlock, gotTx := simulateReadSetVersion(rec, monotonic)
 
 					if monotonic {

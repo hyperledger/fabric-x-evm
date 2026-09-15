@@ -14,11 +14,8 @@ import (
 	"time"
 
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
-	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
-	"github.com/hyperledger/fabric-x-common/api/applicationpb"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/notification"
-	"google.golang.org/protobuf/proto"
 )
 
 var notifLogger = flogging.MustGetLogger("evm.notification")
@@ -36,6 +33,12 @@ type BlockHandler interface {
 //  1. Filters out non-EVM transactions (those without Ethereum tx bytes in InputArgs).
 //  2. Assembles a blocks.Block from the remaining events.
 //  3. Dispatches the block to all registered BlockHandler.
+//
+// Decoding the wire format is the SDK's job, not ours: each CommittedTxEvent embeds a
+// blocks.Transaction that the network boundary has already populated with the same
+// DecodeMetadata/DecodeNamespaces pair the block parser uses on the delivery path. A
+// block therefore looks identical whichever path delivered it, which matters because
+// under hybridx both paths feed one handler chain and one trie.
 type AllTxBatchDispatcher struct {
 	handlers []BlockHandler
 }
@@ -52,39 +55,19 @@ func (d *AllTxBatchDispatcher) HandleBatch(ctx context.Context, batch notificati
 
 	txs := make([]blocks.Transaction, 0, len(batch.Events))
 	for _, event := range batch.Events {
-		if len(event.Metadata) == 0 {
-			notifLogger.Debugf("Skipping tx %s: no metadata", event.TxID)
+		// InputArgs is empty when the transaction carried no metadata at all and when
+		// its ChaincodeInput failed to parse, so this one check covers both.
+		if len(event.InputArgs) < 2 {
+			notifLogger.Debugf("Skipping tx %s: no ethereum tx in metadata", event.ID)
 			continue
 		}
 
-		var input peer.ChaincodeInput
-		if err := proto.Unmarshal(event.Metadata[0], &input); err != nil || len(input.Args) < 2 {
-			notifLogger.Debugf("Skipping tx %s: cannot extract eth tx from metadata", event.TxID)
+		if !bytes.Equal(event.InputArgs[0], []byte{byte(ProposalTypeEVMTx)}) {
+			notifLogger.Debugf("Skipping tx %s: not an EVM transaction", event.ID)
 			continue
 		}
 
-		if !bytes.Equal(input.Args[0], []byte{byte(ProposalTypeEVMTx)}) {
-			notifLogger.Debugf("Skipping tx %s: not an EVM transaction", event.TxID)
-			continue
-		}
-
-		nsrws, _ := namespacesToNsRWS(event.Namespaces)
-
-		// In fabric-x format, events are in Metadata[1] (not in BlindWrites).
-		var txEvents []byte
-		if len(event.Metadata) > 1 {
-			txEvents = event.Metadata[1]
-		}
-
-		txs = append(txs, blocks.Transaction{
-			ID:        event.TxID,
-			Number:    int64(event.TxNum),
-			InputArgs: input.Args,
-			Valid:     event.Status == notification.StatusCommitted,
-			Status:    int(event.Status),
-			Events:    txEvents,
-			NsRWS:     nsrws,
-		})
+		txs = append(txs, event.Transaction)
 	}
 
 	if len(txs) == 0 {
@@ -127,55 +110,4 @@ func blockNumberHash(n uint64) []byte {
 	h := make([]byte, 32)
 	binary.BigEndian.PutUint64(h[24:], n)
 	return h
-}
-
-// namespacesToNsRWS converts applicationpb.TxNamespace slices (as delivered by
-// AllTxStreamer) into the blocks.NsReadWriteSet format used internally.
-// It also extracts the special _event_ key as raw event bytes.
-func namespacesToNsRWS(namespaces []*applicationpb.TxNamespace) ([]blocks.NsReadWriteSet, []byte) {
-	nsrws := make([]blocks.NsReadWriteSet, 0, len(namespaces))
-	var events []byte
-
-	for _, ns := range namespaces {
-		rws := blocks.ReadWriteSet{
-			Reads:  make([]blocks.KVRead, 0),
-			Writes: make([]blocks.KVWrite, 0),
-		}
-
-		for _, r := range ns.ReadsOnly {
-			kvRead := blocks.KVRead{Key: string(r.Key)}
-			if r.Version != nil {
-				kvRead.Version = &blocks.Version{BlockNum: *r.Version}
-			}
-			rws.Reads = append(rws.Reads, kvRead)
-		}
-
-		for _, rw := range ns.ReadWrites {
-			kvRead := blocks.KVRead{Key: string(rw.Key)}
-			if rw.Version != nil {
-				kvRead.Version = &blocks.Version{BlockNum: *rw.Version}
-			}
-			rws.Reads = append(rws.Reads, kvRead)
-			rws.Writes = append(rws.Writes, blocks.KVWrite{
-				Key:   string(rw.Key),
-				Value: rw.Value,
-			})
-		}
-
-		for _, w := range ns.BlindWrites {
-			key := string(w.Key)
-			switch key {
-			case "_event_":
-				events = w.Value
-			case "_input_":
-				// skip
-			default:
-				rws.Writes = append(rws.Writes, blocks.KVWrite{Key: key, Value: w.Value})
-			}
-		}
-
-		nsrws = append(nsrws, blocks.NsReadWriteSet{Namespace: ns.NsId, RWS: rws})
-	}
-
-	return nsrws, events
 }

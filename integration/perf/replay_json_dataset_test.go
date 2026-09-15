@@ -25,7 +25,6 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/hyperledger/fabric-x-common/api/committerpb"
 	eapi "github.com/hyperledger/fabric-x-evm/endorser/api"
 	econf "github.com/hyperledger/fabric-x-evm/endorser/config"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
@@ -153,7 +152,10 @@ var outstanding = flag.Int("outstanding", 1000, "maximum number of outstanding t
 type txCompletion struct {
 	EthTxHash common.Hash
 	Valid     bool
-	Status    committerpb.Status
+	// Status is the SDK's protocol-neutral status, not a committerpb.Status: the two
+	// agree on COMMITTED and MVCC_CONFLICT but nothing else, so casting between them
+	// would mislabel every other outcome in the failure log below.
+	Status blocks.Status
 }
 
 // TxCompletionTracker forwards all transaction completion notifications to a single channel.
@@ -209,8 +211,8 @@ func (t *TxCompletionTracker) Handle(ctx context.Context, b blocks.Block) error 
 		}
 		notif := txCompletion{
 			EthTxHash: ethTx.Hash(),
-			Valid:     tx.Valid,
-			Status:    committerpb.Status(tx.Status),
+			Valid:     tx.Valid(),
+			Status:    tx.Status,
 		}
 		select {
 		case t.completionCh <- notif:

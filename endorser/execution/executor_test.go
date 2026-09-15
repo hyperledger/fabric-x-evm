@@ -267,7 +267,7 @@ func TestCall_ReportsPreRefundGasNotPostRefund(t *testing.T) {
 	err = backend.UpdateWorldState(t.Context(), blocks.Block{
 		Number: 0,
 		Transactions: []blocks.Transaction{{
-			ID: "setup", Number: 0, Valid: true,
+			ID: "setup", Number: 0, Status: blocks.StatusCommitted,
 			NsRWS: []blocks.NsReadWriteSet{{Namespace: Namespace, RWS: setup.Result()}},
 		}},
 	})
