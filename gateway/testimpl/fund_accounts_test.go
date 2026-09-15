@@ -37,7 +37,7 @@ func TestFundTestAccounts_SeedsBalancesReadableViaStateDB(t *testing.T) {
 	}
 	defer reader.Close()
 
-	stateDB, err := execution.NewStateDB(t.Context(), reader, testNS, 0, true)
+	stateDB, err := execution.NewStateDB(t.Context(), reader, testNS, true)
 	if err != nil {
 		t.Fatalf("NewStateDB: %v", err)
 	}
