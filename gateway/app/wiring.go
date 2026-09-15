@@ -12,30 +12,25 @@ import (
 	"time"
 
 	sdk "github.com/hyperledger/fabric-x-sdk"
-	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/network"
 	nfab "github.com/hyperledger/fabric-x-sdk/network/fabric"
 	nfabx "github.com/hyperledger/fabric-x-sdk/network/fabricx"
 
 	"github.com/hyperledger/fabric-x-evm/common"
 	eapi "github.com/hyperledger/fabric-x-evm/endorser/api"
-	"github.com/hyperledger/fabric-x-evm/gateway/app/hybridx"
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
 )
-
-// Synchronizer is the interface required by the gateway application from any
-// synchronizer implementation. Both *network.Synchronizer (delivery) and
-// *hybridx.HybridSynchronizer satisfy it.
-type Synchronizer interface {
-	Start(ctx context.Context) error
-	Ready() error
-}
 
 // NewNetworkSubmitters creates one network submitter per parallel-submission worker for
 // the given protocol. count <= 0 defaults to core.DefaultNumWorkers. This is the wiring
 // shared between a real backend (connecting to real orderers) and an in-process test
 // backend (connecting to a fabrictest orderer).
 func NewNetworkSubmitters(ctx context.Context, protocol string, orderers []network.OrdererConf, gwSigner sdk.Signer, count int, logger sdk.Logger) ([]core.Submitter, error) {
+	protocol, err := common.NormalizeProtocol(protocol)
+	if err != nil {
+		return nil, err
+	}
+
 	if count <= 0 {
 		count = core.DefaultNumWorkers
 	}
@@ -43,9 +38,9 @@ func NewNetworkSubmitters(ctx context.Context, protocol string, orderers []netwo
 	for i := 0; i < count; i++ {
 		var err error
 		switch protocol {
-		case "fabric":
+		case common.ProtocolFabric:
 			submitters[i], err = nfab.NewSubmitter(ctx, orderers, gwSigner, time.Duration(0), logger)
-		case "fabric-x", "":
+		case common.ProtocolFabricX:
 			submitters[i], err = nfabx.NewSubmitter(ctx, orderers, time.Duration(0), logger)
 		default:
 			return nil, fmt.Errorf("unsupported protocol: %q", protocol)
@@ -55,28 +50,6 @@ func NewNetworkSubmitters(ctx context.Context, protocol string, orderers []netwo
 		}
 	}
 	return submitters, nil
-}
-
-// NewSynchronizer creates the protocol-appropriate synchronizer that delivers
-// committed blocks to handlers, in order — the one synchronizer a process
-// runs, feeding every store it owns (chain, an embedded endorser's KVS,
-// gateway), not just the gateway. Callers decide the handler list (and
-// therefore the sync topology): a real backend typically registers only
-// [chain, gateway], while an in-process test backend with per-endorser-
-// embedded synchronization instead registers [endorser DBs..., chain,
-// gateway] on a single synchronizer so that endorser state is applied before
-// the gateway marks a transaction complete.
-//
-// namespace is used by the fabric-x hybrid synchronizer to filter the notification stream.
-func NewSynchronizer(protocol string, db network.BlockHeightReader, channel, namespace string, committer network.PeerConf, gwSigner sdk.Signer, logger sdk.Logger, handlers ...blocks.BlockHandler) (Synchronizer, error) {
-	switch protocol {
-	case "fabric":
-		return nfab.NewSynchronizer(db, channel, committer, gwSigner, logger, handlers...)
-	case "fabric-x", "":
-		return hybridx.New(db, channel, namespace, committer, gwSigner, logger, handlers...)
-	default:
-		return nil, fmt.Errorf("unsupported protocol: %q", protocol)
-	}
 }
 
 // BuildGateway wires the endorsement client, batch submitter, and gateway core component

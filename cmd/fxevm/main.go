@@ -15,6 +15,7 @@ import (
 	"syscall"
 
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
+	eapp "github.com/hyperledger/fabric-x-evm/endorser/app"
 	"github.com/hyperledger/fabric-x-evm/gateway/app"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
 	"github.com/spf13/cobra"
@@ -43,13 +44,15 @@ func main() {
 	}
 }
 
-// newStartCmd starts the gateway and endorsers in a single process (combined mode).
+// newStartCmd starts a process described by the given config: a gateway with
+// its embedded endorser if gateway: is present, a standalone endorser
+// otherwise.
 func newStartCmd() *cobra.Command {
 	var configPath string
 
 	cmd := &cobra.Command{
 		Use:   "start",
-		Short: "Start the EVM gateway with embedded endorsers (single-process mode)",
+		Short: "Start a gateway (with embedded endorser) or a standalone endorser, config-driven",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runStart(cmd.Context(), configPath)
 		},
@@ -72,6 +75,14 @@ func runStart(ctx context.Context, configPath string) error {
 		Format:  cfg.Logging.Format,
 		LogSpec: cfg.Logging.Spec,
 	})
+
+	if cfg.Gateway == nil {
+		application, err := eapp.New(ctx, cfg)
+		if err != nil {
+			return err
+		}
+		return application.Run(ctx)
+	}
 
 	application, err := app.New(ctx, cfg)
 	if err != nil {

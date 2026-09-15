@@ -40,6 +40,7 @@ import (
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
 	"github.com/hyperledger/fabric-x-evm/gateway/testimpl"
 	"github.com/hyperledger/fabric-x-evm/gateway/testimpl/primer"
+	"github.com/hyperledger/fabric-x-evm/synchronizer"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	bfab "github.com/hyperledger/fabric-x-sdk/blocks/fabric"
@@ -197,7 +198,7 @@ func defaultHandlerChain(t *testing.T, ctx context.Context, cfg config.Config, e
 //
 // chainFactory controls which chain store and handler chain are wired into the
 // synchronizer. Pass nil to use defaultHandlerChain.
-func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmConfig execution.EVMConfig, primeDBPath string, bypass bool, endorsers []EndorserComponents, txQueue core.TxQueueInterface, chainFactory HandlerChainFactory) (*TestHarness, app.Synchronizer, error) {
+func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmConfig execution.EVMConfig, primeDBPath string, bypass bool, endorsers []EndorserComponents, txQueue core.TxQueueInterface, chainFactory HandlerChainFactory) (*TestHarness, synchronizer.Synchronizer, error) {
 	dbs := make([]storage.KVS, len(endorsers))
 	builders := make([]endorsement.Builder, len(endorsers))
 	ends := make([]eapi.Service, len(endorsers))
@@ -230,7 +231,7 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 
 	var (
 		submitters []core.Submitter
-		sync       app.Synchronizer
+		sync       synchronizer.Synchronizer
 		err        error
 	)
 
@@ -260,7 +261,7 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 	// The ordering is the responsibility of the chainFactory; see defaultHandlerChain for
 	// the conventional ordering (endorser KVS…, chain store, gateway, extra observers…).
 	if !bypass {
-		sync, err = app.NewSynchronizer(cfg.Network.Protocol, heightReader, cfg.Network.Channel, cfg.Network.Namespace, cfg.Committer.ToPeerConf(), gwSigner, logger, handlers...)
+		sync, err = synchronizer.New(cfg.Network.Protocol, heightReader, cfg.Network.Channel, cfg.Network.Namespace, cfg.Committer.ToPeerConf(), gwSigner, logger, handlers...)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -319,7 +320,16 @@ func applyConfigOverrides(cfg *config.Config, overrides map[string]any) error {
 				}
 				field.Set(val)
 			} else {
-				// Intermediate part - navigate deeper
+				// Intermediate part - navigate deeper, dereferencing optional fields.
+				if field.Kind() == reflect.Pointer {
+					if field.IsNil() {
+						if !field.CanSet() {
+							return fmt.Errorf("cannot allocate nil config field: %s", key)
+						}
+						field.Set(reflect.New(field.Type().Elem()))
+					}
+					field = field.Elem()
+				}
 				if field.Kind() != reflect.Struct {
 					return fmt.Errorf("cannot navigate through non-struct field: %s", key)
 				}
@@ -410,7 +420,7 @@ func NewLocalTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig e
 		},
 		Committer:    common.ClientConfig{Endpoint: peer},
 		Synchronizer: config.Synchronizer{Timeout: 2 * time.Second},
-		Gateway: config.Gateway{
+		Gateway: &config.Gateway{
 			Database: config.DB{
 				ConnString: filepath.Join(dir, "gateway.db"),
 				TriePath:   filepath.Join(dir, "triedb.db"),
@@ -470,7 +480,7 @@ func newFileConfigHarness(t *testing.T, logger sdk.Logger, evmConfig execution.E
 		return nil, err
 	}
 
-	if err := app.WaitUntilSynced(t.Context(), sync, 10*time.Second); err != nil {
+	if err := synchronizer.WaitUntilSynced(t.Context(), sync, 10*time.Second); err != nil {
 		t.Fatal(err)
 	}
 
@@ -514,7 +524,7 @@ func newSplitFileConfigHarness(t *testing.T, logger sdk.Logger, evmConfig execut
 		return nil, err
 	}
 
-	if err := app.WaitUntilSynced(t.Context(), sync, 10*time.Second); err != nil {
+	if err := synchronizer.WaitUntilSynced(t.Context(), sync, 10*time.Second); err != nil {
 		t.Fatal(err)
 	}
 
@@ -557,7 +567,7 @@ func NewFabricXTestHarnessWithNotifications(t *testing.T, logger sdk.Logger, evm
 	}
 
 	// Wait for the hybrid synchronizer to finish delivery catch-up.
-	if err := app.WaitUntilSynced(t.Context(), sync, 60*time.Second); err != nil {
+	if err := synchronizer.WaitUntilSynced(t.Context(), sync, 60*time.Second); err != nil {
 		return nil, fmt.Errorf("timed out waiting for sync: %w", err)
 	}
 
