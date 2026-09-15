@@ -72,7 +72,7 @@ jobs:
         if: always()
         run: |
           # Extract the PERF RESULT line logged by TestReplayJSONDataset.
-          # Example: "PERF RESULT throughput=123.45 invalid_rate=0.000000 conflict_rate=0.000000 total=10000 failed=0"
+          # Example: "PERF RESULT goodput=120.00 throughput=123.45 invalid_rate=0.000000 conflict_rate=0.000000 total=10000 failed=0"
           RESULT_LINE=$(grep 'PERF RESULT' /tmp/perf-smoke.log | tail -1)
           if [ -z "$RESULT_LINE" ]; then
             echo "## ⚠️ Perf smoke — no result line found" >> "$GITHUB_STEP_SUMMARY"
@@ -81,7 +81,8 @@ jobs:
           fi
           echo "$RESULT_LINE" > /tmp/perf-smoke-result.txt
 
-          THROUGHPUT=$(echo "$RESULT_LINE"   | grep -oP 'throughput=\K[0-9.]+')
+          GOODPUT=$(echo "$RESULT_LINE"      | grep -oP '(?<!\w)goodput=\K[0-9.]+')
+          THROUGHPUT=$(echo "$RESULT_LINE"   | grep -oP '(?<!\w)throughput=\K[0-9.]+')
           INVALID_RATE=$(echo "$RESULT_LINE"  | grep -oP 'invalid_rate=\K[0-9.]+')
           CONFLICT_RATE=$(echo "$RESULT_LINE" | grep -oP 'conflict_rate=\K[0-9.]+')
 
@@ -90,7 +91,8 @@ jobs:
             echo ""
             echo "| Metric | Value |"
             echo "|--------|-------|"
-            echo "| Throughput | ${THROUGHPUT} tx/s |"
+            echo "| Goodput (committed) | ${GOODPUT} tx/s |"
+            echo "| Throughput (attempted) | ${THROUGHPUT} tx/s |"
             echo "| Invalid rate | ${INVALID_RATE} |"
             echo "| Conflict rate | ${CONFLICT_RATE} |"
           } >> "$GITHUB_STEP_SUMMARY"

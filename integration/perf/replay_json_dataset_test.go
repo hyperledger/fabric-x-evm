@@ -328,11 +328,24 @@ func writeHeapProfile(filename string) {
 	}
 }
 
+// replayMetrics is what a single replay run reports.
+//
+// Goodput and submissionRate differ whenever transactions complete unsuccessfully:
+// goodput counts only transactions that committed as valid, while submissionRate
+// counts every transaction that reached a terminal state (valid or not). The gap
+// between the two is the work the system did that produced no state change.
+type replayMetrics struct {
+	goodput        float64 // successfully committed tx/s
+	submissionRate float64 // all completed tx/s, committed or not
+	committed      int64   // transactions committed as valid
+	failed         int64   // transactions that failed to submit or committed as invalid
+	dispatched     int64   // transactions handed to the submitting workers
+	invalidRate    float64 // fraction of committed transactions that were invalid (MVCC / signature failures)
+	conflictRate   float64 // fraction of enqueued transactions rejected due to conflicts
+}
+
 // runReplayTest executes the replay test with configurable worker counts and returns metrics.
-// Returns: (overallThroughput, failedTransactionCount, totalTransactionCount, invalidRate, conflictRate)
-// invalidRate  = fraction of committed transactions that were invalid (MVCC / signature failures).
-// conflictRate = fraction of enqueued transactions that were rejected due to conflicts.
-func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCount int, ordererSubmitterCount int, numOutstandingTx int, cfg replayConfig, gwConfig string) (float64, int64, int64, float64, float64) {
+func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCount int, ordererSubmitterCount int, numOutstandingTx int, cfg replayConfig, gwConfig string) replayMetrics {
 	// Silence GRPC logging
 	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr))
 
@@ -593,16 +606,17 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 
 				totalElapsed := now.Sub(startTime).Seconds()
 				overallThroughput := float64(currentTotal) / totalElapsed
+				overallGoodput := float64(currentSuccess) / totalElapsed
 
 				progressTarget := int64(len(window))
 				if cfg.wrapAround {
 					progressTarget = cfg.totalDispatches
 				}
 
-				t.Logf("Progress: %d/%d transfers processed (%d successful, %d failed, %d skipped, %d outstanding) | Throughput: %.2f tx/s (recent), %.2f tx/s (overall)",
+				t.Logf("Progress: %d/%d transfers processed (%d successful, %d failed, %d skipped, %d outstanding) | Throughput: %.2f tx/s (recent), %.2f tx/s (overall), %.2f tx/s (goodput)",
 					currentSuccess+currentFail+currentSkipped, progressTarget,
 					currentSuccess, currentFail, currentSkipped, currentOutstanding,
-					throughput, overallThroughput)
+					throughput, overallThroughput, overallGoodput)
 
 				// Update metrics
 				if metrics != nil {
@@ -767,9 +781,16 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	t.Logf("Replay complete: %d successful, %d failed, %d skipped out of %d total transfers",
 		finalSuccess, finalFail, finalSkipped, dispatched)
 
-	// Calculate overall throughput
+	// Calculate overall throughput. Goodput counts only transactions that
+	// committed as valid; the submission rate counts every completed one.
 	totalElapsed := time.Since(startTime).Seconds()
-	overallThroughput := float64(finalSuccess+finalFail) / totalElapsed
+	var goodput, submissionRate float64
+	if totalElapsed > 0 {
+		goodput = float64(finalSuccess) / totalElapsed
+		submissionRate = float64(finalSuccess+finalFail) / totalElapsed
+	}
+
+	t.Logf("Goodput: %.2f tx/s committed | Submission rate: %.2f tx/s attempted", goodput, submissionRate)
 
 	// Read queue stats before t.Cleanup fires and calls gw.Stop().
 	total, invalid, totalEnq, conflictEnq := th.Gateways[0].TxQueue.Stats()
@@ -781,8 +802,15 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 		conflictRate = float64(conflictEnq) / float64(totalEnq)
 	}
 
-	// Return metrics (throughput, failed count, total dispatched transfers, invalidRate, conflictRate)
-	return overallThroughput, finalFail, dispatched, invalidRate, conflictRate
+	return replayMetrics{
+		goodput:        goodput,
+		submissionRate: submissionRate,
+		committed:      finalSuccess,
+		failed:         finalFail,
+		dispatched:     dispatched,
+		invalidRate:    invalidRate,
+		conflictRate:   conflictRate,
+	}
 }
 
 // TestReplayJSONDataset loads the USDC_dataset.json.gz file with pre-generated transactions
@@ -800,17 +828,18 @@ func TestReplayJSONDataset(t *testing.T) {
 	ordererSubmitterCount := *orderers   // Number of goroutines submitting transactions TO the orderer (BatchSubmitter workers)
 	numOutstandingTx := *outstanding     // Maximum number of outstanding transactions
 
-	throughput, failedTxs, totalTxs, invalidRate, conflictRate := runReplayTest(t, processingWorkerCount, submittingWorkerCount, ordererSubmitterCount, numOutstandingTx, replayConfig{windowSize: 1000000}, *gatewayConfig)
+	m := runReplayTest(t, processingWorkerCount, submittingWorkerCount, ordererSubmitterCount, numOutstandingTx, replayConfig{windowSize: 1000000}, *gatewayConfig)
 
 	// Machine-readable summary parsed by CI to post on the PR.
-	// Format: PERF RESULT throughput=<tx/s> invalid_rate=<0.NNN> conflict_rate=<0.NNN>
-	t.Logf("PERF RESULT throughput=%.2f invalid_rate=%.6f conflict_rate=%.6f total=%d failed=%d",
-		throughput, invalidRate, conflictRate, totalTxs, failedTxs)
+	// Format: PERF RESULT goodput=<tx/s> throughput=<tx/s> invalid_rate=<0.NNN> conflict_rate=<0.NNN>
+	t.Logf("PERF RESULT goodput=%.2f throughput=%.2f invalid_rate=%.6f conflict_rate=%.6f total=%d failed=%d",
+		m.goodput, m.submissionRate, m.invalidRate, m.conflictRate, m.dispatched, m.failed)
 }
 
 type performanceResult struct {
 	processingWorkers  int
 	submittingWorkers  int
+	goodput            float64
 	throughput         float64
 	failedTransactions int64
 	totalTransactions  int64
@@ -835,27 +864,46 @@ func TestReplayJSONDatasetPerformance(t *testing.T) {
 
 	t.Logf("Starting performance test with varying worker counts...")
 
-	// Run tests with different worker configurations
+	// Run tests with different worker configurations. Each configuration runs as a
+	// subtest so its harness (gateway, endorsers, block store) is torn down by
+	// t.Cleanup before the next one starts — running them all on the parent t would
+	// keep every harness of the sweep alive until the very end.
 	for _, processingWorkers := range processingWorkerCounts {
 		for _, submittingWorkers := range submittingWorkerCounts {
 			for _, ordererSubmitters := range ordererSubmitterCounts {
-				t.Logf("\n=== Testing with processingWorkers=%d, submittingWorkers=%d, ordererSubmitters=%d ===",
+				name := fmt.Sprintf("processing%d_submitting%d_orderers%d",
 					processingWorkers, submittingWorkers, ordererSubmitters)
 
-				throughput, failedTxs, totalTxs, _, _ := runReplayTest(t, processingWorkers, submittingWorkers, ordererSubmitters, 100, loadReplayConfigFromEnv(t), *gatewayConfig)
-				failureRate := float64(failedTxs) / float64(totalTxs)
+				// A config that dies during setup used to abort the whole test,
+				// since runReplayTest ran on the parent t. Keep that: carrying on
+				// would write a CSV silently missing this row, and the plotting
+				// scripts leave absent configs at their zero-initialised value, so
+				// the gap renders as a real 0 tx/s cliff rather than as missing data.
+				if !t.Run(name, func(t *testing.T) {
+					m := runReplayTest(t, processingWorkers, submittingWorkers, ordererSubmitters, *outstanding, loadReplayConfigFromEnv(t), *gatewayConfig)
+					// Guard the denominator: 0/0 would reach the CSV as the
+					// literal "NaN", which pandas loads as NA and the surface
+					// plots render as a hole.
+					var failureRate float64
+					if m.dispatched > 0 {
+						failureRate = float64(m.failed) / float64(m.dispatched)
+					}
 
-				results = append(results, performanceResult{
-					processingWorkers:  processingWorkers,
-					submittingWorkers:  submittingWorkers,
-					throughput:         throughput,
-					failedTransactions: failedTxs,
-					totalTransactions:  totalTxs,
-					failureRate:        failureRate,
-				})
+					results = append(results, performanceResult{
+						processingWorkers:  processingWorkers,
+						submittingWorkers:  submittingWorkers,
+						goodput:            m.goodput,
+						throughput:         m.submissionRate,
+						failedTransactions: m.failed,
+						totalTransactions:  m.dispatched,
+						failureRate:        failureRate,
+					})
 
-				t.Logf("Result: Throughput=%.2f tx/s, Failed=%d/%d (%.2f%%)",
-					throughput, failedTxs, totalTxs, failureRate*100)
+					t.Logf("Result: Goodput=%.2f tx/s, Throughput=%.2f tx/s, Failed=%d/%d (%.2f%%)",
+						m.goodput, m.submissionRate, m.failed, m.dispatched, failureRate*100)
+				}) {
+					t.Fatalf("configuration %s failed; aborting the sweep instead of writing a partial CSV", name)
+				}
 			}
 		}
 	}
@@ -873,6 +921,7 @@ func TestReplayJSONDatasetPerformance(t *testing.T) {
 	err = writer.Write([]string{
 		"processing_workers",
 		"submitting_workers",
+		"goodput_tx_per_s",
 		"throughput_tx_per_s",
 		"failed_transactions",
 		"total_transactions",
@@ -885,6 +934,7 @@ func TestReplayJSONDatasetPerformance(t *testing.T) {
 		err = writer.Write([]string{
 			fmt.Sprintf("%d", result.processingWorkers),
 			fmt.Sprintf("%d", result.submittingWorkers),
+			fmt.Sprintf("%.2f", result.goodput),
 			fmt.Sprintf("%.2f", result.throughput),
 			fmt.Sprintf("%d", result.failedTransactions),
 			fmt.Sprintf("%d", result.totalTransactions),
