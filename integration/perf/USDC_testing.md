@@ -128,7 +128,31 @@ The test will:
 2. Use balance priming to automatically fund accounts on first access
 3. Replay the configured transfer window
 4. Optionally wrap around and replay the same window multiple times
-5. Output throughput and failure metrics
+5. Output goodput, throughput and failure metrics
+
+## Metrics
+
+Each run reports two rates, which differ whenever transactions complete unsuccessfully:
+
+- **Goodput** — transactions per second that committed as *valid*. This is the rate
+  at which the system actually applied state changes.
+- **Throughput** (submission rate) — transactions per second that reached any terminal
+  state, valid or not. The gap to goodput is work that produced no state change.
+
+Alongside them, `invalid_rate` is the fraction of committed transactions that were
+invalid (MVCC / signature failures) and `conflict_rate` is the fraction of enqueued
+transactions the gateway rejected due to conflicts.
+
+`TestReplayJSONDataset` also logs a machine-readable line that CI parses to post the
+perf smoke comment:
+
+```
+PERF RESULT goodput=<tx/s> throughput=<tx/s> invalid_rate=<0.NNN> conflict_rate=<0.NNN> total=<n> failed=<n>
+```
+
+`TestReplayJSONDatasetPerformance` sweeps worker counts — each configuration runs as
+its own subtest, so one harness is torn down before the next starts — and writes
+`performance_results.csv` with a row per configuration.
 
 ## Replay Configuration
 
@@ -234,7 +258,9 @@ Install dependencies:
 pip install matplotlib pandas plotly
 ```
 
-Run the scripts after collecting performance data from the tests.
+Run the scripts after collecting performance data from the tests. Both read the
+`performance_results.csv` written by `TestReplayJSONDatasetPerformance` and plot
+goodput, throughput and failure rate against the worker counts.
 
 ## Balance Priming
 

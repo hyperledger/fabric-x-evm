@@ -22,10 +22,22 @@ from matplotlib import cm
 from pathlib import Path
 
 
+# The Go test writes snake_case headers; the plots below use CamelCase names.
+COLUMN_ALIASES = {
+    "processing_workers": "ProcessingWorkers",
+    "submitting_workers": "SubmittingWorkers",
+    "goodput_tx_per_s": "Goodput",
+    "throughput_tx_per_s": "Throughput",
+    "failed_transactions": "FailedTransactions",
+    "total_transactions": "TotalTransactions",
+    "failure_rate": "FailureRate",
+}
+
+
 def load_data(csv_path):
     """Load performance data from CSV file."""
     try:
-        df = pd.read_csv(csv_path)
+        df = pd.read_csv(csv_path).rename(columns=COLUMN_ALIASES)
         print(f"Loaded {len(df)} data points from {csv_path}")
         return df
     except FileNotFoundError:
@@ -214,6 +226,15 @@ def main():
         output_dir / 'throughput_3d.png'
     )
     
+    if 'Goodput' in df.columns:
+        create_3d_surface_plot(
+            df,
+            'Goodput',
+            'Committed Goodput vs Worker Counts',
+            'Goodput (tx/s)',
+            output_dir / 'goodput_3d.png'
+        )
+
     create_3d_surface_plot(
         df,
         'FailureRate',
