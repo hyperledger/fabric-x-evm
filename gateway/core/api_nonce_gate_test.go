@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -138,4 +139,27 @@ func TestSendTransaction_ValidationRejectsBeforeGate(t *testing.T) {
 	require.Error(t, g.SendTransaction(context.Background(), tx))
 	require.Nil(t, g.TxQueue.IsPending(tx.Hash()))
 	require.Nil(t, g.nonceGate.IsPending(tx.Hash()))
+}
+
+// An empty committed block is still a clock tick for parked TTL, so an
+// abandoned future-nonce tx stops showing as pending and can be resubmitted.
+func TestHandle_EmptyBlockSweepsExpiredParked(t *testing.T) {
+	key := newKey(t)
+	g := gatewayWithGate(t)
+	gate := g.nonceGate.(*nonceGate)
+
+	now := time.Now()
+	gate.now = func() time.Time { return now }
+
+	tx := newValidTx(t, key, validTxOpts{nonce: 3})
+	require.NoError(t, g.SendTransaction(context.Background(), tx))
+
+	now = now.Add(defaultParkedTTL + time.Second)
+	require.NoError(t, g.Handle(context.Background(), blocks.Block{}))
+
+	require.Nil(t, g.nonceGate.IsPending(tx.Hash()), "expired parked tx must not stay pending")
+	require.Nil(t, g.TxQueue.IsPending(tx.Hash()))
+
+	require.NoError(t, g.SendTransaction(context.Background(), tx), "client can resubmit after TTL drop")
+	require.NotNil(t, g.nonceGate.IsPending(tx.Hash()))
 }

@@ -19,10 +19,14 @@ import (
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 )
 
-// Memory guardrails per sender.
+// Memory guardrails for parked transactions and the sender cache.
 const (
 	defaultMaxParkedPerSender = 64
 	defaultParkedTTL          = 3 * time.Minute
+	// Cap on parked transactions across all senders. Abandoned gaps cannot
+	// grow without bound even when the per-sender cap and TTL have not yet
+	// fired.
+	defaultMaxParked = 4096
 	// Cap on cached senders before LRU eviction.
 	defaultMaxSenders = 1 << 20
 )
@@ -51,8 +55,12 @@ type nonceGate struct {
 
 	senders *senderCache
 	byHash  map[common.Hash]*types.Transaction // parked txs indexed by hash
+	// parkedFrom is the subset of the cache that currently holds parked txs,
+	// so TTL and global-cap sweeps do not walk the whole sender cache.
+	parkedFrom map[common.Address]*senderState
 
 	maxPerSender int
+	maxParked    int
 	maxSenders   int
 	ttl          time.Duration
 	now          func() time.Time
@@ -161,7 +169,9 @@ func newNonceGate(state stateReader, signer types.Signer, queue enqueuer) *nonce
 		queue:        queue,
 		senders:      newSenderCache(),
 		byHash:       make(map[common.Hash]*types.Transaction),
+		parkedFrom:   make(map[common.Address]*senderState),
 		maxPerSender: defaultMaxParkedPerSender,
+		maxParked:    defaultMaxParked,
 		maxSenders:   defaultMaxSenders,
 		ttl:          defaultParkedTTL,
 		now:          time.Now,
@@ -176,7 +186,8 @@ func (g *nonceGate) Admit(ctx context.Context, tx *types.Transaction) error {
 	}
 
 	g.mu.Lock()
-	// Deferred LIFO: release runs first, with the lock still held, then the unlock.
+	// Deferred LIFO: evictLRU (registered after the seed) and release run with
+	// the lock still held, then the unlock.
 	defer g.mu.Unlock()
 	ss := g.senders.acquire(from)
 	defer g.senders.release(ss)
@@ -202,10 +213,11 @@ func (g *nonceGate) Admit(ctx context.Context, tx *types.Transaction) error {
 		// a commit is newer than anything the store could have told us.
 		ss.next.raise(seed)
 		next, _ = ss.next.value()
-		g.evictLRU() // cannot drop ss: we still hold it
 	}
 
 	ss.lastSeen = g.now()
+	g.sweepParked()
+	defer g.evictLRU() // cannot drop ss: we still hold it
 
 	switch {
 	case tx.Nonce() < next:
@@ -216,7 +228,6 @@ func (g *nonceGate) Admit(ctx context.Context, tx *types.Transaction) error {
 	}
 
 	// Future nonce: park until the gap fills.
-	g.evictExpiredParked(ss)
 	_, replacing := ss.parked[tx.Nonce()]
 	if !replacing && len(ss.parked) >= g.maxPerSender {
 		return errTooManyParked
@@ -225,6 +236,8 @@ func (g *nonceGate) Admit(ctx context.Context, tx *types.Transaction) error {
 		// Overwriting an existing parked tx at this nonce. Ethereum replacement has
 		// its own fee-bump rules, tracked in #62; until then we log and overwrite.
 		logger.Infof("nonce gate: replacing parked tx for %s at nonce %d", from, tx.Nonce())
+	} else {
+		g.enforceParkedCap()
 	}
 	g.park(ss, tx)
 	return nil
@@ -275,6 +288,9 @@ func (g *nonceGate) Observe(committed []domain.Transaction) {
 		}
 		g.senders.release(ss)
 	}
+	// Promote first so a gap that just filled still releases, then drop
+	// parked txs whose senders never came back.
+	g.sweepParked()
 	g.evictLRU()
 }
 
@@ -292,6 +308,7 @@ func (g *nonceGate) park(ss *senderState, tx *types.Transaction) {
 	}
 	ss.parked[tx.Nonce()] = parkedTx{tx: tx, parkedAt: g.now()}
 	g.byHash[tx.Hash()] = tx
+	g.parkedFrom[ss.from] = ss
 }
 
 // unpark removes any parked tx at nonce and returns it, or nil. Caller holds g.mu.
@@ -302,18 +319,60 @@ func (g *nonceGate) unpark(ss *senderState, nonce uint64) *types.Transaction {
 	}
 	delete(ss.parked, nonce)
 	delete(g.byHash, p.tx.Hash())
+	if len(ss.parked) == 0 {
+		delete(g.parkedFrom, ss.from)
+	}
 	return p.tx
 }
 
-// evictExpiredParked drops parked txs whose gap never filled within the TTL. Caller holds g.mu.
-func (g *nonceGate) evictExpiredParked(ss *senderState) {
+// sweepParked drops parked txs whose gap never filled within the TTL, across
+// every sender, so an abandoned gap is reclaimed without that sender parking
+// again. Caller holds g.mu.
+func (g *nonceGate) sweepParked() {
+	if len(g.parkedFrom) == 0 {
+		return
+	}
 	now := g.now()
-	for nonce, p := range ss.parked {
-		if now.Sub(p.parkedAt) > g.ttl {
-			delete(ss.parked, nonce)
-			delete(g.byHash, p.tx.Hash())
+	for _, ss := range g.parkedFrom {
+		for nonce, p := range ss.parked {
+			if now.Sub(p.parkedAt) > g.ttl {
+				g.unpark(ss, nonce)
+			}
 		}
 	}
+}
+
+// enforceParkedCap drops the oldest parked txs across senders until the global
+// parked count is under the cap. Caller holds g.mu.
+func (g *nonceGate) enforceParkedCap() {
+	if g.maxParked <= 0 {
+		return
+	}
+	for len(g.byHash) >= g.maxParked {
+		ss, nonce, ok := g.oldestParked()
+		if !ok {
+			return
+		}
+		g.unpark(ss, nonce)
+	}
+}
+
+// oldestParked returns the parked tx with the earliest parkedAt. Caller holds g.mu.
+func (g *nonceGate) oldestParked() (*senderState, uint64, bool) {
+	var (
+		oldest *senderState
+		nonce  uint64
+		at     time.Time
+		found  bool
+	)
+	for _, ss := range g.parkedFrom {
+		for n, p := range ss.parked {
+			if !found || p.parkedAt.Before(at) {
+				oldest, nonce, at, found = ss, n, p.parkedAt, true
+			}
+		}
+	}
+	return oldest, nonce, found
 }
 
 // evictLRU bounds the sender cache. A sender holding parked txs stays however far

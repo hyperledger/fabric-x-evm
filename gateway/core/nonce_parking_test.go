@@ -379,9 +379,9 @@ func TestNonceGate_SeedFailureLeavesNoSender(t *testing.T) {
 // straight through.
 func blockFirstRead(state *stubState) (seeding <-chan struct{}, release func()) {
 	started, gate := make(chan struct{}), make(chan struct{})
-	var reads int32
+	var reads atomic.Int32
 	state.onRead = func() {
-		if atomic.AddInt32(&reads, 1) == 1 {
+		if reads.Add(1) == 1 {
 			close(started)
 			<-gate
 		}
@@ -575,4 +575,321 @@ func TestNonceGate_ObserveSkipsUndecodableTx(t *testing.T) {
 	}})
 
 	require.Empty(t, q.nonces(), "an undecodable commit advances no nonce")
+}
+
+func parkedCount(g *nonceGate) int {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return len(g.byHash)
+}
+
+func parkedSenderCount(g *nonceGate) int {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return len(g.parkedFrom)
+}
+
+func cachedSenderCount(g *nonceGate) int {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.senders.size()
+}
+
+// A sender that parks once and never returns still loses the parked tx once
+// the TTL elapses and any other Admit runs — not only when that sender parks
+// again.
+func TestNonceGate_AbandonedSenderTTLOnOtherAdmit(t *testing.T) {
+	keyA, keyB := newKey(t), newKey(t)
+	state := newStubState()
+	state.set(senderAddr(keyA), 5)
+	state.set(senderAddr(keyB), 2)
+	gate, q := newTestGate(state)
+
+	now := time.Now()
+	gate.now = func() time.Time { return now }
+
+	stale := newValidTx(t, keyA, validTxOpts{nonce: 6})
+	require.NoError(t, gate.Admit(context.Background(), stale))
+	require.Equal(t, 1, parkedCount(gate))
+
+	now = now.Add(defaultParkedTTL + time.Second)
+	require.NoError(t, gate.Admit(context.Background(), newValidTx(t, keyB, validTxOpts{nonce: 2})))
+
+	require.Equal(t, []uint64{2}, q.nonces())
+	require.Nil(t, gate.IsPending(stale.Hash()), "abandoned parked tx must expire without that sender returning")
+	require.Equal(t, 0, parkedCount(gate))
+	require.Equal(t, 0, parkedSenderCount(gate))
+}
+
+// Blocks keep arriving even when the abandoned sender does not. Observe must
+// sweep expired parked txs for senders that are not in the block.
+func TestNonceGate_AbandonedSenderTTLOnObserve(t *testing.T) {
+	keyA, keyB := newKey(t), newKey(t)
+	state := newStubState()
+	state.set(senderAddr(keyA), 5)
+	gate, _ := newTestGate(state)
+
+	now := time.Now()
+	gate.now = func() time.Time { return now }
+
+	stale := newValidTx(t, keyA, validTxOpts{nonce: 6})
+	require.NoError(t, gate.Admit(context.Background(), stale))
+
+	now = now.Add(defaultParkedTTL + time.Second)
+	gate.Observe(committedBlock(t, keyB, 0))
+
+	require.Nil(t, gate.IsPending(stale.Hash()))
+	require.Equal(t, 0, parkedCount(gate))
+	require.Equal(t, 0, parkedSenderCount(gate))
+}
+
+// An empty block is still a clock tick: expired parked txs must go even when
+// Observe has nothing to promote.
+func TestNonceGate_EmptyObserveSweepsAbandoned(t *testing.T) {
+	key := newKey(t)
+	state := newStubState()
+	state.set(senderAddr(key), 5)
+	gate, _ := newTestGate(state)
+
+	now := time.Now()
+	gate.now = func() time.Time { return now }
+
+	stale := newValidTx(t, key, validTxOpts{nonce: 6})
+	require.NoError(t, gate.Admit(context.Background(), stale))
+
+	now = now.Add(defaultParkedTTL + time.Second)
+	gate.Observe(nil)
+
+	require.Nil(t, gate.IsPending(stale.Hash()))
+	require.Equal(t, 0, parkedCount(gate))
+}
+
+// Traffic from another sender before the TTL must not drop a live parked tx.
+func TestNonceGate_TTLDoesNotDropEarly(t *testing.T) {
+	keyA, keyB := newKey(t), newKey(t)
+	state := newStubState()
+	state.set(senderAddr(keyA), 5)
+	state.set(senderAddr(keyB), 2)
+	gate, _ := newTestGate(state)
+
+	now := time.Now()
+	gate.now = func() time.Time { return now }
+
+	live := newValidTx(t, keyA, validTxOpts{nonce: 6})
+	require.NoError(t, gate.Admit(context.Background(), live))
+
+	now = now.Add(defaultParkedTTL)
+	require.NoError(t, gate.Admit(context.Background(), newValidTx(t, keyB, validTxOpts{nonce: 2})))
+
+	require.Equal(t, live.Hash(), gate.IsPending(live.Hash()).Hash())
+	require.Equal(t, 1, parkedCount(gate))
+}
+
+// A commit that fills the gap still releases the parked tx even if it has
+// sat past the TTL: that gap is no longer abandoned.
+func TestNonceGate_ObserveReleasesExpiredWhenGapFills(t *testing.T) {
+	key := newKey(t)
+	state := newStubState()
+	state.set(senderAddr(key), 5)
+	gate, q := newTestGate(state)
+
+	now := time.Now()
+	gate.now = func() time.Time { return now }
+
+	future := newValidTx(t, key, validTxOpts{nonce: 6})
+	require.NoError(t, gate.Admit(context.Background(), future))
+	require.NoError(t, gate.Admit(context.Background(), newValidTx(t, key, validTxOpts{nonce: 5})))
+
+	now = now.Add(defaultParkedTTL + time.Second)
+	gate.Observe(committedBlock(t, key, 5))
+
+	require.Equal(t, []uint64{5, 6}, q.nonces())
+	require.Nil(t, gate.IsPending(future.Hash()))
+}
+
+// Once TTL has already dropped a parked tx, a later gap-fill must not enqueue it.
+func TestNonceGate_ExpiredParkedNotReleasedAfterSweep(t *testing.T) {
+	key := newKey(t)
+	state := newStubState()
+	state.set(senderAddr(key), 5)
+	gate, q := newTestGate(state)
+
+	now := time.Now()
+	gate.now = func() time.Time { return now }
+
+	stale := newValidTx(t, key, validTxOpts{nonce: 6})
+	require.NoError(t, gate.Admit(context.Background(), stale))
+
+	now = now.Add(defaultParkedTTL + time.Second)
+	require.NoError(t, gate.Admit(context.Background(), newValidTx(t, key, validTxOpts{nonce: 5})))
+	require.Nil(t, gate.IsPending(stale.Hash()))
+
+	gate.Observe(committedBlock(t, key, 5))
+	require.Equal(t, []uint64{5}, q.nonces(), "a swept parked tx must not come back on commit")
+}
+
+// A global parked cap drops the oldest parked tx across senders so many
+// abandoned gaps cannot exhaust memory inside the TTL window.
+func TestNonceGate_GlobalParkedCapEvictsOldest(t *testing.T) {
+	keyA, keyB, keyC := newKey(t), newKey(t), newKey(t)
+	state := newStubState()
+	state.set(senderAddr(keyA), 5)
+	state.set(senderAddr(keyB), 5)
+	state.set(senderAddr(keyC), 5)
+	gate, _ := newTestGate(state)
+	gate.maxParked = 2
+
+	now := time.Now()
+	gate.now = func() time.Time { return now }
+
+	txA := newValidTx(t, keyA, validTxOpts{nonce: 6})
+	txB := newValidTx(t, keyB, validTxOpts{nonce: 6})
+	txC := newValidTx(t, keyC, validTxOpts{nonce: 6})
+	require.NoError(t, gate.Admit(context.Background(), txA))
+	now = now.Add(time.Second)
+	require.NoError(t, gate.Admit(context.Background(), txB))
+	now = now.Add(time.Second)
+	require.NoError(t, gate.Admit(context.Background(), txC))
+
+	require.Nil(t, gate.IsPending(txA.Hash()), "oldest parked tx is dropped at the global cap")
+	require.Equal(t, txB.Hash(), gate.IsPending(txB.Hash()).Hash())
+	require.Equal(t, txC.Hash(), gate.IsPending(txC.Hash()).Hash())
+	require.Equal(t, 2, parkedCount(gate))
+	require.Equal(t, 2, parkedSenderCount(gate))
+}
+
+// Replacing a parked nonce does not consume an extra global slot or evict others.
+func TestNonceGate_GlobalCapSkipsReplacement(t *testing.T) {
+	keyA, keyB := newKey(t), newKey(t)
+	state := newStubState()
+	state.set(senderAddr(keyA), 5)
+	state.set(senderAddr(keyB), 5)
+	gate, _ := newTestGate(state)
+	gate.maxParked = 1
+
+	first := newValidTx(t, keyA, validTxOpts{nonce: 6, gas: 21_000})
+	second := newValidTx(t, keyA, validTxOpts{nonce: 6, gas: 22_000})
+	other := newValidTx(t, keyB, validTxOpts{nonce: 6})
+	require.NoError(t, gate.Admit(context.Background(), first))
+	require.NoError(t, gate.Admit(context.Background(), second))
+
+	require.Nil(t, gate.IsPending(first.Hash()))
+	require.NotNil(t, gate.IsPending(second.Hash()))
+	require.Equal(t, 1, parkedCount(gate))
+
+	require.NoError(t, gate.Admit(context.Background(), other))
+	require.Nil(t, gate.IsPending(second.Hash()), "the replaced sender is the oldest slot")
+	require.NotNil(t, gate.IsPending(other.Hash()))
+	require.Equal(t, 1, parkedCount(gate))
+}
+
+// The per-sender cap still rejects before the global cap evicts anything.
+func TestNonceGate_PerSenderCapStillApplies(t *testing.T) {
+	key := newKey(t)
+	state := newStubState()
+	state.set(senderAddr(key), 5)
+	gate, _ := newTestGate(state)
+	gate.maxPerSender = 2
+	gate.maxParked = 100
+
+	require.NoError(t, gate.Admit(context.Background(), newValidTx(t, key, validTxOpts{nonce: 6})))
+	require.NoError(t, gate.Admit(context.Background(), newValidTx(t, key, validTxOpts{nonce: 7})))
+	require.ErrorIs(t, gate.Admit(context.Background(), newValidTx(t, key, validTxOpts{nonce: 8})), errTooManyParked)
+	require.Equal(t, 2, parkedCount(gate))
+}
+
+// After TTL clears parked txs, LRU can finally enforce maxSenders.
+func TestNonceGate_TTLThenLRUEnforcesMaxSenders(t *testing.T) {
+	keys := []*ecdsa.PrivateKey{newKey(t), newKey(t), newKey(t), newKey(t), newKey(t)}
+	traffic := newKey(t)
+	state := newStubState()
+	for _, key := range keys {
+		state.set(senderAddr(key), 5)
+	}
+	state.set(senderAddr(traffic), 1)
+	gate, _ := newTestGate(state)
+	gate.maxSenders = 2
+
+	now := time.Now()
+	gate.now = func() time.Time { return now }
+
+	for _, key := range keys {
+		require.NoError(t, gate.Admit(context.Background(), newValidTx(t, key, validTxOpts{nonce: 6})))
+	}
+	require.Equal(t, 5, cachedSenderCount(gate), "parked senders must survive LRU until they expire")
+
+	now = now.Add(defaultParkedTTL + time.Second)
+	require.NoError(t, gate.Admit(context.Background(), newValidTx(t, traffic, validTxOpts{nonce: 1})))
+
+	require.Equal(t, 0, parkedCount(gate))
+	require.LessOrEqual(t, cachedSenderCount(gate), 2)
+}
+
+// An invalidated commit must not advance the nonce, but the parked dependent
+// still expires on the next sweep instead of living forever.
+func TestNonceGate_InvalidCommitThenTTLDropsDependent(t *testing.T) {
+	key := newKey(t)
+	state := newStubState()
+	state.set(senderAddr(key), 5)
+	gate, q := newTestGate(state)
+
+	now := time.Now()
+	gate.now = func() time.Time { return now }
+
+	require.NoError(t, gate.Admit(context.Background(), newValidTx(t, key, validTxOpts{nonce: 5})))
+	tx6 := newValidTx(t, key, validTxOpts{nonce: 6})
+	require.NoError(t, gate.Admit(context.Background(), tx6))
+
+	block := committedBlock(t, key, 5)
+	block[0].FabricValid = false
+	gate.Observe(block)
+	require.Equal(t, tx6.Hash(), gate.IsPending(tx6.Hash()).Hash())
+
+	now = now.Add(defaultParkedTTL + time.Second)
+	gate.Observe(nil)
+
+	require.Equal(t, []uint64{5}, q.nonces())
+	require.Nil(t, gate.IsPending(tx6.Hash()))
+	require.Equal(t, 0, parkedCount(gate))
+}
+
+// Concurrent parks serialize on the gate lock, so the global cap is a hard
+// ceiling rather than a best-effort bound.
+func TestNonceGate_ConcurrentParkRespectsGlobalCap(t *testing.T) {
+	const n = 50
+	keys := make([]*ecdsa.PrivateKey, n)
+	txs := make([]*types.Transaction, n)
+	state := newStubState()
+	for i := range n {
+		keys[i] = newKey(t)
+		state.set(senderAddr(keys[i]), 0)
+		txs[i] = newValidTx(t, keys[i], validTxOpts{nonce: 1})
+	}
+	gate, _ := newTestGate(state)
+	gate.maxParked = 8
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, n)
+	for i := range n {
+		wg.Add(1)
+		go func(tx *types.Transaction) {
+			defer wg.Done()
+			errCh <- gate.Admit(context.Background(), tx)
+		}(txs[i])
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		require.NoError(t, err)
+	}
+
+	require.Equal(t, 8, parkedCount(gate))
+	require.Equal(t, 8, parkedSenderCount(gate))
+	pending := 0
+	for _, tx := range txs {
+		if gate.IsPending(tx.Hash()) != nil {
+			pending++
+		}
+	}
+	require.Equal(t, 8, pending)
 }

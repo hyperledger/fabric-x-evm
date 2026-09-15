@@ -23,6 +23,8 @@ import (
 	"github.com/hyperledger/fabric-x-evm/endorser/api"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type stubEndorser struct {
@@ -463,7 +465,8 @@ func TestExecuteTransaction_RejectedStatusErrors(t *testing.T) {
 // endorser whose in-flight call is interruptible, which an in-process one is not.
 type blockingEndorser struct {
 	stubEndorser
-	release <-chan struct{}
+	release   <-chan struct{}
+	cancelErr error // if set, returned on ctx cancel instead of ctx.Err()
 }
 
 func (b *blockingEndorser) Execute(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction, _ time.Time) (*peer.ProposalResponse, error) {
@@ -471,6 +474,9 @@ func (b *blockingEndorser) Execute(ctx context.Context, inv endorsement.Invocati
 	case <-b.release:
 		return b.execResp, b.execErr
 	case <-ctx.Done():
+		if b.cancelErr != nil {
+			return nil, b.cancelErr
+		}
 		return nil, ctx.Err()
 	}
 }
@@ -484,6 +490,34 @@ func TestExecuteTransaction_RejectionSurvivesCancellationOfOtherEndorsers(t *tes
 	// Never released, so this one only ever returns the cancellation. It sits at
 	// index 0, ahead of the endorser that produces the real error.
 	blocked := &blockingEndorser{release: make(chan struct{})}
+	c := &EndorsementClient{
+		endorsers: []api.Service{blocked, &stubEndorser{execResp: rejected}},
+		signer:    stubSigner{},
+		channel:   "ch",
+		namespace: "ns",
+		nsVersion: "1.0",
+	}
+
+	tx := types.NewTx(&types.LegacyTx{Gas: 21000, GasPrice: big.NewInt(0)})
+	_, err := c.ExecuteTransaction(context.Background(), tx)
+	if err == nil {
+		t.Fatal("expected an error for a rejected transaction")
+	}
+	if !strings.Contains(err.Error(), "nonce too low") {
+		t.Errorf("error = %q, want the rejection reason", err.Error())
+	}
+}
+
+// Same as above, but the cancelled endorser returns a gRPC Canceled status the
+// way a remote Fablo/gRPC client does. errors.Is(err, context.Canceled) misses
+// that wrapping, so the rejection must still win.
+func TestExecuteTransaction_RejectionSurvivesGRPCCancellationOfOtherEndorsers(t *testing.T) {
+	rejected := &peer.ProposalResponse{Response: &peer.Response{Status: common.StatusTxRejected, Message: "nonce too low"}}
+
+	blocked := &blockingEndorser{
+		release:   make(chan struct{}),
+		cancelErr: status.Error(codes.Canceled, "context canceled"),
+	}
 	c := &EndorsementClient{
 		endorsers: []api.Service{blocked, &stubEndorser{execResp: rejected}},
 		signer:    stubSigner{},

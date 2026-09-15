@@ -24,6 +24,8 @@ import (
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // EndorsementClient forwards ethereum-style transactions and calls
@@ -114,7 +116,7 @@ func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Tra
 	// endorsement error which caused it. A genuinely cancelled caller has
 	// nothing but cancellations, and the second pass returns one of those.
 	for _, err := range errs {
-		if err != nil && !errors.Is(err, context.Canceled) {
+		if err != nil && !canceled(err) {
 			return sdk.Endorsement{}, err
 		}
 	}
@@ -128,6 +130,13 @@ func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Tra
 		Proposal:  inv.Proposal,
 		Responses: res,
 	}, nil
+}
+
+// canceled reports whether err is a context cancellation, including a gRPC
+// status with code Canceled. Remote endorsers return the latter when we abort
+// their in-flight call; errors.Is(err, context.Canceled) does not match it.
+func canceled(err error) bool {
+	return errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled
 }
 
 // CallContract queries a smart contract and returns the value.
