@@ -34,12 +34,10 @@ func classifyCallError(err error) error {
 	if err == nil {
 		return nil
 	}
-	var revert *domain.RevertError
-	if errors.As(err, &revert) {
+	if revert, ok := errors.AsType[*domain.RevertError](err); ok {
 		return rpcerr.ExecutionReverted(revert.Reason, hexutil.Encode(revert.Data))
 	}
-	var exec *domain.ExecutionError
-	if errors.As(err, &exec) {
+	if exec, ok := errors.AsType[*domain.ExecutionError](err); ok {
 		return rpcerr.ExecutionError(exec.Message)
 	}
 	return rpcerr.Internal(err)

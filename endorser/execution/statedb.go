@@ -38,6 +38,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math/big"
+	"slices"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -278,8 +279,8 @@ func storeKey(addr common.Address, slot common.Hash) string {
 // getStateFromJournal scans the journal backwards to find the latest write for a key.
 // Returns the value and true if found, or nil and false if not found.
 func (s *StateDB) getStateFromJournal(key string) ([]byte, bool) {
-	for i := len(s.journal) - 1; i >= 0; i-- {
-		if w, ok := s.journal[i].(writeEntry); ok && w.write.Key == key {
+	for _, v := range slices.Backward(s.journal) {
+		if w, ok := v.(writeEntry); ok && w.write.Key == key {
 			if w.write.IsDelete {
 				return nil, true
 			}

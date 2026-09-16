@@ -146,8 +146,7 @@ func TestClassifyCallError_ExecutionErrorMapsToMinus32000(t *testing.T) {
 	if rpcErr.Error() != "out of gas" {
 		t.Errorf("message = %q, want %q", rpcErr.Error(), "out of gas")
 	}
-	var dataErr rpc.DataError
-	if errors.As(got, &dataErr) {
+	if _, ok := errors.AsType[rpc.DataError](got); ok {
 		t.Errorf("execution error must not carry revert data")
 	}
 }

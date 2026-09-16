@@ -380,9 +380,9 @@ func TestNonceGate_SeedFailureLeavesNoSender(t *testing.T) {
 // straight through.
 func blockFirstRead(state *stubState) (seeding <-chan struct{}, release func()) {
 	started, gate := make(chan struct{}), make(chan struct{})
-	var reads int32
+	var reads atomic.Int32
 	state.onRead = func() {
-		if atomic.AddInt32(&reads, 1) == 1 {
+		if reads.Add(1) == 1 {
 			close(started)
 			<-gate
 		}

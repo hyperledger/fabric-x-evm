@@ -126,15 +126,13 @@ func TestCallContract_Status500IsGenericError(t *testing.T) {
 
 	_, err := c.CallContract(context.Background(), ethereum.CallMsg{}, nil)
 
-	var revert *domain.RevertError
-	if errors.As(err, &revert) {
+	if revert, ok := errors.AsType[*domain.RevertError](err); ok {
 		t.Errorf("non-revert error must not be *RevertError, got %v", revert)
 	}
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	var exec *domain.ExecutionError
-	if errors.As(err, &exec) {
+	if exec, ok := errors.AsType[*domain.ExecutionError](err); ok {
 		t.Errorf("backend fault must not be *ExecutionError, got %v", exec)
 	}
 }
@@ -292,8 +290,7 @@ func TestEstimateGas_EmptyRevertAtCeilingIsAllowanceError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	var rev *domain.RevertError
-	if errors.As(err, &rev) {
+	if rev, ok := errors.AsType[*domain.RevertError](err); ok {
 		t.Errorf("an empty revert must not be treated as a hard *RevertError, got %v", rev)
 	}
 	if !strings.Contains(err.Error(), "gas required exceeds allowance") {
@@ -308,8 +305,7 @@ func TestEstimateGas_RevertPropagates(t *testing.T) {
 	})
 
 	_, err := c.EstimateGas(context.Background(), ethereum.CallMsg{}, nil)
-	var rev *domain.RevertError
-	if !errors.As(err, &rev) {
+	if _, ok := errors.AsType[*domain.RevertError](err); !ok {
 		t.Fatalf("expected *RevertError, got %T (%v)", err, err)
 	}
 }
@@ -325,8 +321,7 @@ func TestEstimateGas_ExecFailurePropagatesAsAllowanceError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	var rev *domain.RevertError
-	if errors.As(err, &rev) {
+	if rev, ok := errors.AsType[*domain.RevertError](err); ok {
 		t.Errorf("a non-revert failure at the ceiling must not be *RevertError, got %v", rev)
 	}
 	if !strings.Contains(err.Error(), "gas required exceeds allowance") {
@@ -361,12 +356,10 @@ func TestCallContract_TransportErrorIsWrapped(t *testing.T) {
 		t.Fatal("expected error")
 	}
 
-	var revert *domain.RevertError
-	if errors.As(err, &revert) {
+	if revert, ok := errors.AsType[*domain.RevertError](err); ok {
 		t.Errorf("transport error must not be *RevertError, got %v", revert)
 	}
-	var exec *domain.ExecutionError
-	if errors.As(err, &exec) {
+	if exec, ok := errors.AsType[*domain.ExecutionError](err); ok {
 		t.Errorf("transport error must not be *ExecutionError, got %v", exec)
 	}
 	if err.Error() != "process call: connection refused" {
