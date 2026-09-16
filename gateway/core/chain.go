@@ -158,7 +158,7 @@ func ConvertToDomain(b blocks.Block) domain.Block {
 			status = 1
 		}
 
-		etx, err := convertTransaction(tx.InputArgs[1], b.Hash, b.Number, tx.Number, tx.ID, status, tx.Status, tx.Valid(), tx.Events, &logIndex)
+		etx, err := convertTransaction(tx.InputArgs[1], b.Hash, b.Number, tx.Number, tx.ID, status, tx.Status, tx.Events, &logIndex)
 		if err != nil {
 			panic(err) // we surface this for now instead of swallowing it
 		}
@@ -173,8 +173,9 @@ func ConvertToDomain(b blocks.Block) domain.Block {
 //
 // fabricStatus is the SDK's protocol-neutral commit status, not a ledger-specific
 // validation code: it is one blocks.Status whichever path — delivery or notification —
-// produced the block.
-func convertTransaction(ethTxBytes []byte, blockHash []byte, blockNumber uint64, txIndex int64, txID string, ethStatus uint8, fabricStatus blocks.Status, fabricValid bool, events []byte, logIndex *int64) (domain.Transaction, error) {
+// produced the block. It is the sole record of whether the commit was Fabric-valid,
+// there being exactly one valid status.
+func convertTransaction(ethTxBytes []byte, blockHash []byte, blockNumber uint64, txIndex int64, txID string, ethStatus uint8, fabricStatus blocks.Status, events []byte, logIndex *int64) (domain.Transaction, error) {
 	ethTx := &types.Transaction{}
 	if err := ethTx.UnmarshalBinary(ethTxBytes); err != nil {
 		return domain.Transaction{}, fmt.Errorf("invalid tx: %w", err)
@@ -237,8 +238,7 @@ func convertTransaction(ethTxBytes []byte, blockHash []byte, blockNumber uint64,
 		ContractAddress: contractAddr,
 		Status:          ethStatus,
 		FabricTxID:      txID,
-		FabricTxStatus:  int(fabricStatus),
-		FabricValid:     fabricValid,
+		FabricTxStatus:  fabricStatus,
 		Logs:            logs,
 	}, nil
 }

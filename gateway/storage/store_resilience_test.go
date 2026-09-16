@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
+	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,7 +35,7 @@ func sampleLedgerDerivedBlock(blockNum uint64) domain.Block {
 			ToAddress:      makeAddress(byte(0x20 + blockNum)),
 			Status:         1,
 			FabricTxID:     fmt.Sprintf("fabric-tx-%d", blockNum),
-			FabricTxStatus: 0,
+			FabricTxStatus: blocks.StatusCommitted,
 			Logs: []domain.Log{{
 				BlockNumber: blockNum,
 				BlockHash:   blockHash,

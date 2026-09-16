@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
+	"github.com/hyperledger/fabric-x-sdk/blocks"
 )
 
 //go:embed schema.sql
@@ -87,7 +88,7 @@ func toDomainTransaction(t Transaction) domain.Transaction {
 		ToAddress:       t.ToAddress,
 		ContractAddress: t.ContractAddress,
 		FabricTxID:      t.FabricTxID,
-		FabricTxStatus:  int(t.FabricTxStatus),
+		FabricTxStatus:  blocks.Status(t.FabricTxStatus),
 		Status:          uint8(t.Status),
 	}
 }

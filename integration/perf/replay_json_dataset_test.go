@@ -151,10 +151,10 @@ var outstanding = flag.Int("outstanding", 1000, "maximum number of outstanding t
 // txCompletion carries the fields needed by the refill loop after a transaction commits.
 type txCompletion struct {
 	EthTxHash common.Hash
-	Valid     bool
 	// Status is the SDK's protocol-neutral status, not a committerpb.Status: the two
 	// agree on COMMITTED and MVCC_CONFLICT but nothing else, so casting between them
-	// would mislabel every other outcome in the failure log below.
+	// would mislabel every other outcome in the failure log below. StatusCommitted is
+	// the only successful outcome, which Status.Valid() below tests for.
 	Status blocks.Status
 }
 
@@ -211,7 +211,6 @@ func (t *TxCompletionTracker) Handle(ctx context.Context, b blocks.Block) error 
 		}
 		notif := txCompletion{
 			EthTxHash: ethTx.Hash(),
-			Valid:     tx.Valid(),
 			Status:    tx.Status,
 		}
 		select {
@@ -691,7 +690,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 			}
 
 			// Update success/fail counts
-			if notif.Valid {
+			if notif.Status.Valid() {
 				atomic.AddInt64(&successCount, 1)
 				if metrics != nil {
 					metrics.RecordTransactionCommitted()

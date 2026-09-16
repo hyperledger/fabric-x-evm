@@ -21,6 +21,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
+	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/stretchr/testify/require"
 )
 
@@ -107,7 +108,7 @@ func committedBlock(t *testing.T, key *ecdsa.PrivateKey, nonces ...uint64) []dom
 		tx := newValidTx(t, key, validTxOpts{nonce: n})
 		raw, err := tx.MarshalBinary()
 		require.NoError(t, err)
-		out[i] = domain.Transaction{FromAddress: from.Bytes(), RawTx: raw, FabricValid: true}
+		out[i] = domain.Transaction{FromAddress: from.Bytes(), RawTx: raw, FabricTxStatus: blocks.StatusCommitted}
 	}
 	return out
 }
@@ -287,7 +288,7 @@ func TestNonceGate_ObserveSkipsInvalidTx(t *testing.T) {
 
 	// An invalidated commit must not advance the sender's nonce.
 	block := committedBlock(t, key, 5)
-	block[0].FabricValid = false
+	block[0].FabricTxStatus = blocks.StatusMVCCConflict
 	gate.Observe(block)
 
 	require.Equal(t, []uint64{5}, q.nonces())
@@ -569,9 +570,9 @@ func TestNonceGate_ObserveSkipsUndecodableTx(t *testing.T) {
 	require.NoError(t, gate.Admit(context.Background(), newValidTx(t, key, validTxOpts{nonce: 6})))
 
 	gate.Observe([]domain.Transaction{{
-		FromAddress: from.Bytes(),
-		RawTx:       []byte("not a transaction"),
-		FabricValid: true,
+		FromAddress:    from.Bytes(),
+		RawTx:          []byte("not a transaction"),
+		FabricTxStatus: blocks.StatusCommitted,
 	}})
 
 	require.Empty(t, q.nonces(), "an undecodable commit advances no nonce")

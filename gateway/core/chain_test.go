@@ -69,7 +69,7 @@ func TestConvertToDomain_ValidTx(t *testing.T) {
 	require.Len(t, got.Transactions, 1)
 	assert.Equal(t, uint8(1), got.Transactions[0].Status)
 	assert.Equal(t, "tx-1", got.Transactions[0].FabricTxID)
-	assert.True(t, got.Transactions[0].FabricValid)
+	assert.Equal(t, blocks.StatusCommitted, got.Transactions[0].FabricTxStatus)
 }
 
 func TestConvertToDomain_InvalidTxStatus(t *testing.T) {
@@ -91,7 +91,7 @@ func TestConvertToDomain_InvalidTxStatus(t *testing.T) {
 
 	require.Len(t, got.Transactions, 1)
 	assert.Equal(t, uint8(0), got.Transactions[0].Status)
-	assert.False(t, got.Transactions[0].FabricValid)
+	assert.Equal(t, blocks.StatusMVCCConflict, got.Transactions[0].FabricTxStatus)
 }
 
 // A Fabric-invalid tx can still carry events recorded during endorsement-time
@@ -176,7 +176,7 @@ func TestConvertTransaction_RegularTransfer(t *testing.T) {
 	ethb, _ := ethTx.MarshalBinary()
 
 	logIndex := int64(0)
-	domainTx, err := convertTransaction(ethb, []byte("block-hash"), 42, 5, "fabric-tx-123", 1, blocks.StatusCommitted, true, nil, &logIndex)
+	domainTx, err := convertTransaction(ethb, []byte("block-hash"), 42, 5, "fabric-tx-123", 1, blocks.StatusCommitted, nil, &logIndex)
 
 	require.NoError(t, err)
 	assert.Equal(t, ethTx.Hash().Bytes(), domainTx.TxHash)
@@ -187,8 +187,7 @@ func TestConvertTransaction_RegularTransfer(t *testing.T) {
 	assert.Nil(t, domainTx.ContractAddress)
 	assert.Equal(t, "fabric-tx-123", domainTx.FabricTxID)
 	assert.Equal(t, uint8(1), domainTx.Status)
-	assert.Equal(t, int(blocks.StatusCommitted), domainTx.FabricTxStatus)
-	assert.True(t, domainTx.FabricValid)
+	assert.Equal(t, blocks.StatusCommitted, domainTx.FabricTxStatus)
 	assert.NotNil(t, domainTx.FromAddress)
 	assert.NotNil(t, domainTx.RawTx)
 }
@@ -204,7 +203,7 @@ func TestConvertTransaction_ContractCreation(t *testing.T) {
 	ethb, _ := signed.MarshalBinary()
 
 	logIndex := int64(0)
-	domainTx, err := convertTransaction(ethb, []byte("block-hash"), 42, 3, "fabric-tx-456", 1, blocks.StatusCommitted, true, nil, &logIndex)
+	domainTx, err := convertTransaction(ethb, []byte("block-hash"), 42, 3, "fabric-tx-456", 1, blocks.StatusCommitted, nil, &logIndex)
 
 	require.NoError(t, err)
 	assert.Nil(t, domainTx.ToAddress)
@@ -221,7 +220,7 @@ func TestConvertTransaction_InvalidSignature(t *testing.T) {
 	ethb, _ := ethTx.MarshalBinary()
 
 	logIndex := int64(0)
-	_, err := convertTransaction(ethb, []byte("block-hash"), 42, 1, "fabric-tx-789", 1, blocks.StatusCommitted, true, nil, &logIndex)
+	_, err := convertTransaction(ethb, []byte("block-hash"), 42, 1, "fabric-tx-789", 1, blocks.StatusCommitted, nil, &logIndex)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid sender")
@@ -242,7 +241,7 @@ func TestConvertTransaction_FabricStatuses(t *testing.T) {
 		name         string
 		ethStatus    uint8
 		fabricStatus blocks.Status
-		fabricValid  bool
+		wantValid    bool
 	}{
 		{"committed", 1, blocks.StatusCommitted, true},
 		// A revert is Fabric-valid even though its EVM status is 0.
@@ -254,11 +253,13 @@ func TestConvertTransaction_FabricStatuses(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			logIndex := int64(0)
-			domainTx, err := convertTransaction(ethb, []byte("bh"), 42, 1, "tx", tt.ethStatus, tt.fabricStatus, tt.fabricValid, nil, &logIndex)
+			domainTx, err := convertTransaction(ethb, []byte("bh"), 42, 1, "tx", tt.ethStatus, tt.fabricStatus, nil, &logIndex)
 			require.NoError(t, err)
 			assert.Equal(t, tt.ethStatus, domainTx.Status)
-			assert.Equal(t, int(tt.fabricStatus), domainTx.FabricTxStatus)
-			assert.Equal(t, tt.fabricValid, domainTx.FabricValid)
+			assert.Equal(t, tt.fabricStatus, domainTx.FabricTxStatus)
+			// The status is the only record of a Fabric-valid commit: no separate
+			// boolean rides alongside it that could disagree.
+			assert.Equal(t, tt.wantValid, domainTx.FabricTxStatus.Valid())
 		})
 	}
 }

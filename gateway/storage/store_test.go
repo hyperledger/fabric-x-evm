@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
+	"github.com/hyperledger/fabric-x-sdk/blocks"
 	_ "modernc.org/sqlite"
 )
 
@@ -763,7 +764,7 @@ func TestInsertBlock_WithTransactionsAndLogs(t *testing.T) {
 				ToAddress:      makeAddress(0x22),
 				Status:         1,
 				FabricTxID:     "fabric-123",
-				FabricTxStatus: 0,
+				FabricTxStatus: blocks.StatusCommitted,
 				Logs: []domain.Log{
 					{
 						BlockNumber: 100,
