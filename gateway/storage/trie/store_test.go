@@ -34,7 +34,7 @@ func makeBlock(num uint64, txs ...blocks.Transaction) blocks.Block {
 }
 
 // txStatus maps a test's valid/invalid boolean onto the status a blocks.Transaction
-// now carries, Valid() being derived from it. MVCC conflict stands in for "rejected",
+// carries, Valid() being derived from it. MVCC conflict stands in for "rejected",
 // which is what Commit skips write sets for.
 func txStatus(valid bool) blocks.Status {
 	if valid {

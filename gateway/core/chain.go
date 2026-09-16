@@ -172,8 +172,8 @@ func ConvertToDomain(b blocks.Block) domain.Block {
 // convertTransaction converts an Ethereum transaction to a domain.Transaction.
 //
 // fabricStatus is the SDK's protocol-neutral commit status, not a ledger-specific
-// validation code: it used to be a peer.TxValidationCode on the delivery path and a
-// committerpb.Status on the notification path, and is now one blocks.Status on both.
+// validation code: it is one blocks.Status whichever path — delivery or notification —
+// produced the block.
 func convertTransaction(ethTxBytes []byte, blockHash []byte, blockNumber uint64, txIndex int64, txID string, ethStatus uint8, fabricStatus blocks.Status, fabricValid bool, events []byte, logIndex *int64) (domain.Transaction, error) {
 	ethTx := &types.Transaction{}
 	if err := ethTx.UnmarshalBinary(ethTxBytes); err != nil {

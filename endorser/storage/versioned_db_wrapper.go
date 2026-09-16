@@ -75,18 +75,9 @@ func (s *VersionedDBSnapshot) Close() error {
 	return nil
 }
 
-// Get implements blocks.RecordGetter, reading the latest committed state — the same
-// route LightKVS.Get and PebbleKVS.Get take. It resolves the height through
-// NewSnapshot rather than calling VersionedDB.Get directly, because that method takes
-// a lastBlock and matches `version_block <= lastBlock`, so there is no value to pass
-// for "latest": 0 would come back empty for every key.
+// Get implements blocks.RecordGetter, reading the latest committed state
 func (w *VersionedDBWrapper) Get(namespace, key string) (*blocks.WriteRecord, error) {
-	r, err := w.NewSnapshot(nil)
-	if err != nil {
-		return nil, err
-	}
-	defer r.Close()
-	return r.Get(namespace, key)
+	return w.db.GetCurrent(namespace, key)
 }
 
 // Handle implements blocks.BlockHandler by delegating to the underlying VersionedDB.

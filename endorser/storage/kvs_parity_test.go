@@ -121,7 +121,7 @@ func absent(rec *blocks.WriteRecord) bool {
 }
 
 // txStatus maps a test's valid/invalid boolean onto the status a blocks.Transaction
-// now carries, Valid() being derived from it. MVCC conflict stands in for "rejected",
+// carries, Valid() being derived from it. MVCC conflict stands in for "rejected",
 // being how the committer most often rejects a transaction that reached a block.
 func txStatus(valid bool) blocks.Status {
 	if valid {
@@ -184,9 +184,8 @@ func mustGet(t *testing.T, kvs KVS, ns, key string) *blocks.WriteRecord {
 }
 
 // mustGetAsOf reads ns/key as of block, failing the test on error. Unlike mustGet's
-// latest read this has to go through a snapshot, which is the only API that takes a
-// height — and where, unlike the lastBlock parameter Get used to carry, 0 names
-// genesis rather than latest.
+// latest read this has to go through a snapshot, the only API that takes a height, and
+// where block 0 names genesis rather than latest.
 func mustGetAsOf(t *testing.T, kvs KVS, ns, key string, block uint64) *blocks.WriteRecord {
 	t.Helper()
 	snap, err := kvs.NewSnapshot(&block)

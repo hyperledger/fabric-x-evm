@@ -29,9 +29,7 @@ var (
 // blocks.RecordGetter) answers "what is the current value", and NewSnapshot (from
 // execution.KVSSnapshotter) answers "what was the value at block N" — note that its
 // nil means latest while its 0 means genesis, so the two cannot be collapsed into one
-// signature. Get used to take a lastBlock too, with the opposite convention that 0
-// meant latest; it was only ever a wrapper around NewSnapshot plus a read, so it went
-// when the SDK narrowed blocks.RecordGetter.
+// signature.
 type KVS interface {
 	execution.KVSSnapshotter
 	blocks.BlockHandler

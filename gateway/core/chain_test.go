@@ -230,9 +230,8 @@ func TestConvertTransaction_InvalidSignature(t *testing.T) {
 // TestConvertTransaction_FabricStatuses checks that the commit status is carried
 // through to the domain row independently of the EVM receipt status, which the two
 // valid cases below distinguish: a revert commits on Fabric while reporting an EVM
-// status of 0. The statuses are blocks.Status values, not the peer.TxValidationCode
-// numbers this test used before the SDK unified the two delivery paths on one
-// protocol-neutral enum.
+// status of 0. The statuses are blocks.Status values, the SDK's protocol-neutral enum
+// shared by both delivery paths, rather than ledger-specific validation codes.
 func TestConvertTransaction_FabricStatuses(t *testing.T) {
 	key, err := crypto.GenerateKey()
 	require.NoError(t, err)

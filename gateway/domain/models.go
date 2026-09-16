@@ -32,8 +32,7 @@ type Transaction struct {
 	FabricTxID      string
 	// FabricTxStatus is the SDK's protocol-neutral blocks.Status for the commit
 	// (1 committed, 3 MVCC conflict, and so on — see blocks.Status). Both the
-	// delivery and notification paths now populate it; it used to be left at 0 on
-	// the delivery path, so older rows carry 0 regardless of outcome.
+	// delivery and notification paths populate it.
 	FabricTxStatus int
 	FabricValid    bool  // Fabric-valid commit: the nonce was consumed, reverts included
 	Logs           []Log // populated for receipt queries

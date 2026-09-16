@@ -75,8 +75,8 @@ func TestHandleBatch_EmptyBatchDoesNothing(t *testing.T) {
 
 // TestHandleBatch_SkipsEventWithoutEthTx covers every way an event can fail to carry
 // an ethereum transaction. Metadata that was absent, or a ChaincodeInput that did not
-// parse, both reach us from the SDK as an event with no InputArgs at all — the
-// dispatcher no longer decodes the wire format, so it sees only the outcome.
+// parse, both reach us from the SDK as an event with no InputArgs at all: the
+// dispatcher sees only that outcome, never the wire format behind it.
 func TestHandleBatch_SkipsEventWithoutEthTx(t *testing.T) {
 	for _, tc := range []struct {
 		name string
