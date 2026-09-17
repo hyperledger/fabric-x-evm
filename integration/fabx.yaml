@@ -25,6 +25,15 @@ committer:
 gateway:
   listen: "0.0.0.0:8545"
 
+  # Host header allowlist for the JSON-RPC server (DNS-rebinding guard); IP
+  # hosts (127.0.0.1, 10.0.0.5, ...) are always allowed regardless. Defaults
+  # to ["localhost"] when omitted, which is why plain `curl localhost:8545`
+  # works against this config. Deploying behind a hostname (ingress, a
+  # Kubernetes Service DNS name, ...) needs that hostname added here, e.g.:
+  # vhosts:
+  #   - localhost
+  #   - fxevm-gateway.default.svc.cluster.local
+
   identity:
     msp-id: Org1MSP
     msp-dir: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/msp

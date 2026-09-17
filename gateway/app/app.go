@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/ethereum/go-ethereum/rpc"
@@ -320,7 +321,11 @@ func (a *App) Run(ctx context.Context) error {
 	a.gateway.Start(gctx)
 
 	// Create HTTP server before starting goroutine so Shutdown can safely read a.httpServer
-	a.httpServer = api.NewHTTPServer(a.rpcServer, a.cfg.Gateway.Listen)
+	vhosts := a.cfg.Gateway.VHosts()
+	if slices.Contains(vhosts, "*") {
+		appLogger.Warn("gateway.vhosts includes \"*\": JSON-RPC server accepts any Host header (DNS-rebinding protection disabled)")
+	}
+	a.httpServer = api.NewHTTPServer(a.rpcServer, a.cfg.Gateway.Listen, vhosts)
 	g.Go(func() error {
 		if err := a.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			return err

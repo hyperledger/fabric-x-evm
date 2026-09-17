@@ -100,6 +100,7 @@ func NewTestNode(ctx context.Context, tcfg TestNodeConfig) (*App, error) {
 		},
 		Gateway: &config.Gateway{
 			Listen: tcfg.Listen,
+			Vhosts: []string{"*"}, // allow any host header
 			Database: config.DB{
 				ConnString: ":memory:",
 			},
@@ -128,5 +129,6 @@ func NewTestNode(ctx context.Context, tcfg TestNodeConfig) (*App, error) {
 	if err := application.EnsureGenesisBlock(ctx); err != nil {
 		return nil, fmt.Errorf("failed to create genesis block: %w", err)
 	}
+	logger.Infof("test node ready: chain-id=%d listen=%s", tcfg.ChainID, tcfg.Listen)
 	return application, nil
 }

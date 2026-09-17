@@ -55,7 +55,7 @@ func newTestHTTPServer(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	httpSrv := NewHTTPServer(rpcSrv, ln.Addr().String())
+	httpSrv := NewHTTPServer(rpcSrv, ln.Addr().String(), nil)
 	go func() { _ = httpSrv.Serve(ln) }()
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

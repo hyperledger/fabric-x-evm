@@ -100,9 +100,32 @@ type Gateway struct {
 	// instead of embedding one from the top-level Endorser config.
 	Endorsers []common.ClientConfig `mapstructure:"endorsers" yaml:"endorsers"`
 
+	// Vhosts lists the Host header values the JSON-RPC HTTP server accepts
+	// from non-IP clients, guarding against DNS-rebinding attacks (a hostile
+	// web page pointing a domain at 127.0.0.1 to reach the RPC port from a
+	// browser). Requests with an IP Host header (127.0.0.1, 10.0.0.5, ...)
+	// are always allowed regardless of this list. Unset defaults to
+	// ["localhost"]; "*" allows any host (only behind a reverse proxy or
+	// network you already trust, e.g. a locked-down k8s namespace) — add the
+	// specific hostname (ingress host, Service DNS name, ...) instead where
+	// possible.
+	Vhosts []string `mapstructure:"vhosts" yaml:"vhosts"`
+
 	WorkerCount         int `mapstructure:"worker-count"  yaml:"worker-count"`
 	SubmitterCount      int `mapstructure:"submitter-count" yaml:"submitter-count"`
 	EndorsementChanSize int `mapstructure:"endorsement-chan-size"  yaml:"endorsement-chan-size"`
+}
+
+// DefaultVhosts is used when Gateway.Vhosts is unset.
+var DefaultVhosts = []string{"localhost"}
+
+// VHosts returns the configured RPC Host-header allowlist, or DefaultVhosts
+// when unset.
+func (g Gateway) VHosts() []string {
+	if len(g.Vhosts) == 0 {
+		return DefaultVhosts
+	}
+	return g.Vhosts
 }
 
 // Validate checks that required fields are set and values are within acceptable ranges.
