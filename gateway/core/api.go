@@ -143,6 +143,12 @@ func New(ec *EndorsementClient, batchSubmitter *BatchSubmitter, store Store, cha
 
 // Start initializes the worker pool to process transactions from the queue
 func (g *Gateway) Start(ctx context.Context) {
+	// The default gate reclaims abandoned parked transactions in the background.
+	// It stops with ctx rather than with Stop: Stop waits on wg, which the reaper
+	// must not hold up. A supplied sequencer has nothing to reap.
+	if gate, ok := g.nonceGate.(*nonceGate); ok {
+		gate.startReaper(ctx)
+	}
 	for range g.workerCount {
 		g.wg.Add(1)
 		go g.worker(ctx)

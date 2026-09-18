@@ -229,10 +229,13 @@ func TestNonceGate_InOrderAdmitsSkipStateReads(t *testing.T) {
 	require.Equal(t, 1, state.readCount())
 }
 
-func TestNonceGate_TTLEviction(t *testing.T) {
+// A sender that parks behind a gap and never comes back is reclaimed anyway:
+// prune, not the sender's next transaction, expires the entry.
+func TestNonceGate_PruneExpiresAbandonedParked(t *testing.T) {
 	key := newKey(t)
+	from := senderAddr(key)
 	state := newStubState()
-	state.set(senderAddr(key), 5)
+	state.set(from, 5)
 	gate, _ := newTestGate(state)
 
 	now := time.Now()
@@ -241,13 +244,76 @@ func TestNonceGate_TTLEviction(t *testing.T) {
 	stale := newValidTx(t, key, validTxOpts{nonce: 6})
 	require.NoError(t, gate.Admit(context.Background(), stale))
 
-	// Past the TTL, the next park sweeps the expired entry.
-	now = now.Add(defaultParkedTTL + time.Second)
-	fresh := newValidTx(t, key, validTxOpts{nonce: 7})
-	require.NoError(t, gate.Admit(context.Background(), fresh))
+	gate.prune() // still inside the TTL
+	require.NotNil(t, gate.IsPending(stale.Hash()), "prune must not drop a live parked tx")
 
-	require.Nil(t, gate.IsPending(stale.Hash()))
-	require.Equal(t, fresh.Hash(), gate.IsPending(fresh.Hash()).Hash())
+	now = now.Add(defaultParkedTTL + time.Second)
+	gate.prune()
+
+	require.Nil(t, gate.IsPending(stale.Hash()), "expired parked tx must be dropped")
+	require.Zero(t, parkedCount(gate), "the parked entry must go with its index entry")
+}
+
+// Expiry runs before LRU, so the sender whose last parked tx just expired is
+// evictable in the same pass: nothing pins it until the next one.
+func TestNonceGate_PruneExpiresThenEvicts(t *testing.T) {
+	key := newKey(t)
+	from := senderAddr(key)
+	state := newStubState()
+	state.set(from, 5)
+	gate, _ := newTestGate(state)
+
+	now := time.Now()
+	gate.now = func() time.Time { return now }
+	require.NoError(t, gate.Admit(context.Background(), newValidTx(t, key, validTxOpts{nonce: 6})))
+
+	gate.maxSenders = 0
+	now = now.Add(defaultParkedTTL + time.Second)
+	gate.prune()
+
+	gate.mu.RLock()
+	_, cached := gate.senders.lookup(from)
+	gate.mu.RUnlock()
+	require.False(t, cached, "a sender left holding nothing must be evicted in the same pass")
+}
+
+// The reaper is what runs prune in production, and it stops with its context.
+func TestNonceGate_ReaperPrunesUntilContextDone(t *testing.T) {
+	key := newKey(t)
+	state := newStubState()
+	state.set(senderAddr(key), 5)
+	gate, _ := newTestGate(state)
+
+	// The reaper reads the clock from its own goroutine, so the test moves it atomically.
+	var nanos atomic.Int64
+	nanos.Store(time.Now().UnixNano())
+	gate.now = func() time.Time { return time.Unix(0, nanos.Load()) }
+
+	stale := newValidTx(t, key, validTxOpts{nonce: 6})
+	require.NoError(t, gate.Admit(context.Background(), stale))
+	nanos.Add(int64(defaultParkedTTL + time.Second))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	gate.reapEvery = time.Millisecond
+	stopped := make(chan struct{})
+	go func() { defer close(stopped); gate.reap(ctx) }()
+
+	require.Eventually(t, func() bool { return gate.IsPending(stale.Hash()) == nil },
+		time.Second, time.Millisecond, "the reaper must expire parked txs on its own")
+
+	cancel()
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("the reaper must stop with its context")
+	}
+}
+
+func parkedCount(g *nonceGate) int {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return len(g.byHash)
 }
 
 func TestNonceGate_SeedErrorPropagates(t *testing.T) {
@@ -340,8 +406,9 @@ func TestNonceGate_SeedRaceWithObserveAndEvict(t *testing.T) {
 	}()
 
 	<-seeding
-	// Nonce 5 commits and Observe evicts, both while the seed is off the lock.
+	// Nonce 5 commits and the reaper prunes, both while the seed is off the lock.
 	gate.Observe(committedBlock(t, key, 5))
+	gate.prune()
 	close(release)
 
 	require.NoError(t, <-admitted)
@@ -485,7 +552,7 @@ func TestNonceGate_EvictLRUKeepsParkedSenders(t *testing.T) {
 
 	require.NoError(t, gate.Admit(context.Background(), newValidTx(t, key, validTxOpts{nonce: 7})))
 	gate.maxSenders = 0
-	gate.evictLRU()
+	gate.prune()
 
 	gate.mu.RLock()
 	_, kept := gate.senders.lookup(from)
