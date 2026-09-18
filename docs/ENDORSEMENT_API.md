@@ -25,28 +25,31 @@ Schema: [`api/endorsementpb/endorsement.proto`](../api/endorsementpb/endorsement
 
 ## Architecture
 
-The gateway holds one client per endorser it collects endorsements from. In a
-split deployment it reaches each of them over gRPC:
+A gateway always embeds its own org's endorser, called directly in-process.
+It reaches every other org's endorser over gRPC:
 
 ```mermaid
 flowchart LR
     G["<b>Gateway</b><br/>EndorsementClient"]
     E1["<b>Endorser</b> (own org)<br/>EVM engine"]
     E2["<b>Endorser</b> (other org)<br/>EVM engine"]
-    G -->|"Execute · Call · BalanceAt<br/>StorageAt · CodeAt · NonceAt<br/><i>gRPC + mTLS</i>"| E1
+    G -->|"Execute · Call · BalanceAt<br/>StorageAt · CodeAt · NonceAt<br/><i>direct call</i>"| E1
     G -->|"<i>gRPC + mTLS</i>"| E2
     E1 -->|"signed result"| G
     E2 -->|"signed result"| G
 ```
 
-Both sides of the boundary are the same contract, the
+Both sides of the gRPC boundary are the same contract, the
 [`endorser/api.Service`](../endorser/api/service.go) interface. The in-process
 endorser implements it directly, and the gRPC client implements it by calling a
 remote endorser, so the gateway's fan-out, error ordering and parallelism are
-identical either way.
+identical either way. State reads (`Call`, `BalanceAt`, ...) always go to the
+local state directly.
 
-A gateway can run its endorser embedded in the same process, or dial endorsers
-as separate processes. See [Configuration](#configuration).
+A gateway may also *serve* its own endorser over gRPC (`endorser.server`), so
+other orgs can reach it the same way this gateway reaches theirs. Serving is
+independent of the in-process call above: it exists purely for other orgs'
+benefit. See [Configuration](#configuration).
 
 ## Service
 
@@ -222,21 +225,14 @@ process.
 
 ### Gateway
 
-`gateway.endorsers` lists the endorsers to dial, each an endpoint plus TLS:
+`gateway.endorsers` lists *additional remote* endorsers to dial — other orgs,
+never a substitute for the always-present, always-embedded local one above.
+Endorsement is N-of-N, so each entry here makes every transaction depend on
+that org's liveness:
 
 ```yaml
 gateway:
   endorsers:
-    - endpoint:
-        host: endorser.org1.example.com
-        port: 9001
-      tls:
-        mode: mtls
-        server-name: endorser.org1.example.com
-        cert-path: /crypto/.../client.crt
-        key-path: /crypto/.../client.key
-        ca-cert-paths:
-          - /crypto/.../tlsca.org1.example.com-cert.pem
     - endpoint:
         host: endorser.org2.example.com
         port: 9001
@@ -256,6 +252,10 @@ then verified against that name rather than the address.
 
 This is the same `common.ClientConfig` used for orderers and the committer, so
 endpoint handling, validation and TLS wiring are shared.
+
+To let another org reach *this* gateway's own endorser, set `endorser.server`
+(see [Endorser](#endorser) above) — it uses the same gRPC server config a
+standalone endorser process does.
 
 ## Testing
 

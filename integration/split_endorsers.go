@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	ethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/hyperledger/fabric-x-committer/utils/serve"
 	"github.com/hyperledger/fabric-x-evm/common"
@@ -25,7 +24,6 @@ import (
 	estorage "github.com/hyperledger/fabric-x-evm/endorser/storage"
 	"github.com/hyperledger/fabric-x-evm/gateway/app"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
-	"github.com/hyperledger/fabric-x-evm/gateway/core"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	"github.com/hyperledger/fabric-x-sdk/identity"
 )
@@ -120,22 +118,29 @@ func startEndorserGRPCServer(t *testing.T, configFile string) string {
 	return addr
 }
 
-// buildSplitGatewayApp loads a split-deployment gateway config, points its
-// two gateway.endorsers entries at the live addresses, and runs it. It also
-// returns the chain config the network's chain ID implies, which transaction
-// signing has to match.
-func buildSplitGatewayApp(t *testing.T, configFile, org1Addr, org2Addr string) (*app.App, *params.ChainConfig) {
+// buildSplitGatewayApp loads a gateway config with a real multi-org topology
+// (its own endorser embedded and served, plus one remote dialed over gRPC),
+// points its sole gateway.endorsers entry at the live remote address, and
+// runs it. It also returns the chain config the network's chain ID implies,
+// which transaction signing has to match, and the address the gateway's own
+// endorser is served on (from endorser.server), for a test to dial directly.
+func buildSplitGatewayApp(t *testing.T, configFile, remoteAddr string) (*app.App, *params.ChainConfig, string) {
 	t.Helper()
 
 	cfg, err := config.Load(configFile)
 	if err != nil {
 		t.Fatalf("load %s: %v", configFile, err)
 	}
-	if len(cfg.Gateway.Endorsers) != 2 {
-		t.Fatalf("%s: want 2 gateway.endorsers entries, got %d", configFile, len(cfg.Gateway.Endorsers))
+	if len(cfg.Gateway.Endorsers) != 1 {
+		t.Fatalf("%s: want 1 gateway.endorsers entry, got %d", configFile, len(cfg.Gateway.Endorsers))
 	}
-	setDialPort(t, &cfg.Gateway.Endorsers[0], org1Addr)
-	setDialPort(t, &cfg.Gateway.Endorsers[1], org2Addr)
+	setDialPort(t, &cfg.Gateway.Endorsers[0], remoteAddr)
+
+	if cfg.Endorser == nil || cfg.Endorser.Server == nil {
+		t.Fatalf("%s: no endorser.server configured", configFile)
+	}
+	serve.PreAllocateListener(t, cfg.Endorser.Server)
+	localAddr := cfg.Endorser.Server.Endpoint.Address()
 
 	gwSigner, err := identity.SignerFromMSP(cfg.Gateway.Identity.MSPDir, cfg.Gateway.Identity.MspID)
 	if err != nil {
@@ -161,53 +166,9 @@ func buildSplitGatewayApp(t *testing.T, configFile, org1Addr, org2Addr string) (
 		t.Fatalf("parse gateway.listen %q: %v", cfg.Gateway.Listen, err)
 	}
 	waitForTCP(t, net.JoinHostPort("127.0.0.1", listenPort))
+	waitForTCP(t, localAddr)
 
-	return application, common.BuildChainConfig(cfg.Network.ChainID)
-}
-
-// waitForReadEndorser blocks until the endorser that answers the gateway's reads
-// has applied the sender's transaction that leaves the account at wantNonce.
-//
-// Why this is needed, and why it is a test concern rather than a bug: in a split
-// deployment the gateway and every endorser sync from the committer
-// independently. The gateway runs its own synchronizer (hybridx, for fabric-x)
-// and each endorser runs a separate one of its own (startEndorserGRPCServer),
-// with nothing ordering the three against each other. waitForCommit observes
-// only the *gateway's* block store, but reads are answered by an endorser --
-// both EndorsementClient.NonceAt and EndorsementClient.call go to endorsers[0].
-// So when waitForCommit returns, that endorser may still be a block behind and a
-// read then sees pre-transaction state: a stale nonce, which gets the next
-// transaction rejected with "nonce too low", or stale contract storage.
-//
-// The gateway is not a replica of the endorsers and promises no
-// read-your-writes across them, so any client of a split deployment that reads
-// straight after a commit has to tolerate the lag. Tests driving one must too.
-//
-// The single-process harness tests need none of this. They register
-// [endorser KVS..., chain, gateway] on one synchronizer, so endorser state is
-// always applied before the gateway marks a transaction complete -- see
-// synchronizer.New.
-//
-// The account nonce is used as the marker because an endorser applies a block's
-// state in one step: once the nonce reflects the transaction, that same
-// transaction's storage writes are visible too.
-func waitForReadEndorser(t *testing.T, gw *core.Gateway, sender ethcommon.Address, wantNonce uint64) {
-	t.Helper()
-
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		got, err := gw.NonceAt(t.Context(), sender, nil)
-		if err != nil {
-			t.Fatalf("read nonce for %s: %v", sender, err)
-		}
-		if got >= wantNonce {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("endorser serving reads stuck at nonce %d for %s, want %d", got, sender, wantNonce)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	return application, common.BuildChainConfig(cfg.Network.ChainID), localAddr
 }
 
 // setDialPort points a client config at the ephemeral port a listener actually

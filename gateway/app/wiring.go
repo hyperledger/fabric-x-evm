@@ -53,13 +53,11 @@ func NewNetworkSubmitters(ctx context.Context, protocol string, orderers []netwo
 }
 
 // BuildGateway wires the endorsement client, batch submitter, and gateway core component
-// from pre-built endorsers, a pre-built chain store, and pre-built submitters. This is the
-// wiring shared between a real backend and an in-process test backend; callers are
-// responsible for creating the chain store (so they can register its cleanup independently
-// of the rest of this wiring) and for creating and starting the synchronizer(s) that feed
-// committed blocks to chain/gateway/endorsers.
-func BuildGateway(ctx context.Context, endorsers []eapi.Service, gwSigner sdk.Signer, netCfg common.Network, chain core.Store, submitters []core.Submitter, submitterCount int, workerCount int, txQueue core.TxQueueInterface, nonceGate core.NonceSequencer, endorsementChanSize int, txPerSec int) (*core.Gateway, error) {
-	ec, err := core.NewEndorsementClient(endorsers, gwSigner, netCfg.Channel, netCfg.Namespace, netCfg.NsVersion)
+// from a pre-built local endorser, remote endorsers, chain store, and submitters. Callers
+// are also responsible for creating and starting the synchronizer(s) that feed committed
+// blocks to chain/gateway/endorsers.
+func BuildGateway(ctx context.Context, local eapi.Service, remotes []eapi.Service, gwSigner sdk.Signer, netCfg common.Network, chain core.Store, submitters []core.Submitter, submitterCount int, workerCount int, txQueue core.TxQueueInterface, nonceGate core.NonceSequencer, endorsementChanSize int, txPerSec int) (*core.Gateway, error) {
+	ec, err := core.NewEndorsementClient(local, remotes, gwSigner, netCfg.Channel, netCfg.Namespace, netCfg.NsVersion)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create endorsement client: %w", err)
 	}

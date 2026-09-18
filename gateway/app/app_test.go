@@ -8,18 +8,94 @@ package app
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	sdk "github.com/hyperledger/fabric-x-sdk"
+	"time"
 
 	"github.com/hyperledger/fabric-x-evm/common"
+	econfig "github.com/hyperledger/fabric-x-evm/endorser/config"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
 )
 
-func splitModeConfig() config.Config {
+// testMSPDir writes a throwaway ECDSA key and self-signed certificate into an
+// MSP-shaped directory (keystore/signcerts), enough for identity.SignerFromMSP
+// to load — it only reads these files, it never verifies the certificate
+// chain, so a self-signed leaf is fine for tests.
+func testMSPDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	keyBytes, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatalf("marshal key: %v", err)
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "test"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create certificate: %v", err)
+	}
+
+	keystoreDir := filepath.Join(dir, "keystore")
+	if err := os.MkdirAll(keystoreDir, 0o755); err != nil {
+		t.Fatalf("mkdir keystore: %v", err)
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyBytes})
+	if err := os.WriteFile(filepath.Join(keystoreDir, "priv_sk"), keyPEM, 0o600); err != nil {
+		t.Fatalf("write key: %v", err)
+	}
+
+	signcertsDir := filepath.Join(dir, "signcerts")
+	if err := os.MkdirAll(signcertsDir, 0o755); err != nil {
+		t.Fatalf("mkdir signcerts: %v", err)
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	if err := os.WriteFile(filepath.Join(signcertsDir, "cert.pem"), certPEM, 0o644); err != nil {
+		t.Fatalf("write cert: %v", err)
+	}
+
+	return dir
+}
+
+func endpoint(port int) common.ClientConfig {
+	return common.ClientConfig{Endpoint: &common.Endpoint{Host: "127.0.0.1", Port: port}}
+}
+
+// localEndorserConfig returns a minimal, always-required local endorser
+// config backed by an in-memory KVS, with a real (throwaway) MSP identity.
+func localEndorserConfig(t *testing.T) *econfig.Endorser {
+	t.Helper()
+	return &econfig.Endorser{
+		Name:     "org1",
+		Identity: common.IdentityConfig{MspID: "Org1MSP", MSPDir: testMSPDir(t)},
+		Database: econfig.DB{Database: econfig.DBMemory},
+	}
+}
+
+// remoteDialFailureConfig has one remote endorser whose TLS material doesn't
+// exist, so dialing it fails before newApp ever reaches local endorser
+// construction. cfg.Endorser is non-nil only to clear newApp's own
+// required-ness check; it is never actually built.
+func remoteDialFailureConfig() config.Config {
 	return config.Config{
+		Endorser: &econfig.Endorser{},
 		Gateway: &config.Gateway{
 			Endorsers: []common.ClientConfig{
 				{
@@ -36,35 +112,23 @@ func splitModeConfig() config.Config {
 	}
 }
 
-// Test RPC needs a local KVS to snapshot/revert against, which split
-// deployment doesn't have - it must be rejected before any dialing happens.
-func TestNewApp_TestRPCRejectedInSplitMode(t *testing.T) {
-	_, err := newApp(context.Background(), splitModeConfig(), nil, true, "")
+// A gateway without an endorser section is rejected before any dialing or
+// endorser construction is attempted.
+func TestNewApp_RequiresEndorser(t *testing.T) {
+	cfg := config.Config{Gateway: &config.Gateway{}}
+	_, err := newApp(context.Background(), cfg, nil, false, "")
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "test RPC is not supported") {
-		t.Errorf("error = %q, want it to mention test RPC is not supported", err.Error())
+	if !strings.Contains(err.Error(), "endorser is required") {
+		t.Errorf("error = %q, want it to mention endorser is required", err.Error())
 	}
 }
 
-// Without test RPC, newApp routes split-mode configs into newSplitApp - a
-// dial failure there surfaces immediately, proving the routing happened.
-func TestNewApp_RoutesToSplitMode(t *testing.T) {
-	_, err := newApp(context.Background(), splitModeConfig(), nil, false, "")
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if !strings.Contains(err.Error(), "dial endorser 0") {
-		t.Errorf("error = %q, want it to have gone through newSplitApp", err.Error())
-	}
-}
-
-// A dial failure for one endorser must fail newSplitApp outright, before ever
-// reaching buildApp (no chain/db/network setup should be attempted).
-func TestNewSplitApp_DialFailureReturnsError(t *testing.T) {
-	logger := sdk.NewStdLogger("gateway")
-	_, err := newSplitApp(context.Background(), splitModeConfig(), nil, logger)
+// A dial failure for a remote endorser must fail newApp outright, before ever
+// building the local endorser (no MSP/DB setup should be attempted).
+func TestNewApp_RemoteDialFailureReturnsError(t *testing.T) {
+	_, err := newApp(context.Background(), remoteDialFailureConfig(), nil, false, "")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -73,14 +137,15 @@ func TestNewSplitApp_DialFailureReturnsError(t *testing.T) {
 	}
 }
 
-// If a later endorser fails to dial, connections already opened for earlier
-// ones must be closed rather than leaked.
-func TestNewSplitApp_ClosesEarlierConnsOnLaterFailure(t *testing.T) {
+// If a later remote endorser fails to dial, connections already opened for
+// earlier ones must be closed rather than leaked.
+func TestNewApp_ClosesEarlierConnsOnLaterDialFailure(t *testing.T) {
 	cfg := config.Config{
+		Endorser: &econfig.Endorser{},
 		Gateway: &config.Gateway{
 			Endorsers: []common.ClientConfig{
 				// Dials successfully: no TLS, no live server needed (lazy dial).
-				{Endpoint: &common.Endpoint{Host: "127.0.0.1", Port: 1}},
+				endpoint(1),
 				// Fails at credential loading, before any network I/O.
 				{
 					Endpoint: &common.Endpoint{Host: "127.0.0.1", Port: 2},
@@ -94,9 +159,8 @@ func TestNewSplitApp_ClosesEarlierConnsOnLaterFailure(t *testing.T) {
 			},
 		},
 	}
-	logger := sdk.NewStdLogger("gateway")
 
-	_, err := newSplitApp(context.Background(), cfg, nil, logger)
+	_, err := newApp(context.Background(), cfg, nil, false, "")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -105,13 +169,10 @@ func TestNewSplitApp_ClosesEarlierConnsOnLaterFailure(t *testing.T) {
 	}
 }
 
-func endpoint(port int) common.ClientConfig {
-	return common.ClientConfig{Endpoint: &common.Endpoint{Host: "127.0.0.1", Port: port}}
-}
-
-// splitAppConfig returns a config that dials one endorser successfully
-// (lazy dial, no live server needed) and is otherwise ready for buildApp.
-func splitAppConfig(t *testing.T, dbConnString string) config.Config {
+// fullAppConfig returns a config with a real local endorser and one remote
+// endorser that dials successfully (lazy dial, no live server needed) — a
+// complete config ready for buildApp.
+func fullAppConfig(t *testing.T, dbConnString string) config.Config {
 	t.Helper()
 	return config.Config{
 		Network:   common.Network{Protocol: "fabric-x", Channel: "mychannel", Namespace: "basic", NsVersion: "1.0", ChainID: 4011},
@@ -122,22 +183,25 @@ func splitAppConfig(t *testing.T, dbConnString string) config.Config {
 			Endorsers:      []common.ClientConfig{endpoint(3)},
 			SubmitterCount: 1,
 		},
+		Endorser: localEndorserConfig(t),
 	}
 }
 
 // The wiring underneath buildApp (orderer/committer/peer clients) dials
 // lazily, the same way endorser/client.Dial does - none of it requires a
-// reachable server to construct successfully. So a full split-deployment App
-// can be built and torn down with nothing but local disk (the chain DB) and
-// syntactically valid addresses.
-func TestNewSplitApp_Success(t *testing.T) {
+// reachable server to construct successfully. So a full App, local endorser
+// plus one remote, can be built and torn down with nothing but local disk
+// (the chain DB, the throwaway MSP dir) and syntactically valid addresses.
+func TestNewApp_Success(t *testing.T) {
 	dbPath := "file:" + filepath.Join(t.TempDir(), "gw.db")
-	cfg := splitAppConfig(t, dbPath)
-	logger := sdk.NewStdLogger("gateway")
+	cfg := fullAppConfig(t, dbPath)
 
-	app, err := newSplitApp(context.Background(), cfg, nil, logger)
+	app, err := newApp(context.Background(), cfg, nil, false, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if app.localEndorser == nil {
+		t.Error("localEndorser = nil, want the embedded endorser")
 	}
 	if len(app.endorserConns) != 1 {
 		t.Errorf("endorserConns = %d, want 1", len(app.endorserConns))
@@ -148,15 +212,33 @@ func TestNewSplitApp_Success(t *testing.T) {
 	}
 }
 
-// If buildApp fails after every endorser dialed successfully, the already-open
-// endorser connections must still be closed rather than leaked.
-func TestNewSplitApp_BuildAppFailureClosesConns(t *testing.T) {
-	// A DB path inside a directory that doesn't exist: dialing the endorser
-	// succeeds first, then core.NewChain fails to open the database.
-	cfg := splitAppConfig(t, "file:/no/such/directory/gw.db")
-	logger := sdk.NewStdLogger("gateway")
+// If local endorser construction fails after every remote dialed
+// successfully, the already-open remote connections must still be closed
+// rather than leaked.
+func TestNewApp_LocalEndorserFailureClosesConns(t *testing.T) {
+	cfg := fullAppConfig(t, "file:"+filepath.Join(t.TempDir(), "gw.db"))
+	// An MSP dir with no keystore/signcerts: SignerFromMSP fails after every
+	// remote has already dialed successfully.
+	cfg.Endorser.Identity.MSPDir = t.TempDir()
 
-	_, err := newSplitApp(context.Background(), cfg, nil, logger)
+	_, err := newApp(context.Background(), cfg, nil, false, "")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "failed to create signer") {
+		t.Errorf("error = %q, want it to come from signer creation", err.Error())
+	}
+}
+
+// If buildApp fails after the local endorser and every remote are ready, the
+// already-open remote connections must still be closed rather than leaked.
+func TestNewApp_BuildAppFailureClosesConns(t *testing.T) {
+	// A DB path inside a directory that doesn't exist: local endorser and
+	// remote dial both succeed first, then core.NewChain fails to open the
+	// database.
+	cfg := fullAppConfig(t, "file:/no/such/directory/gw.db")
+
+	_, err := newApp(context.Background(), cfg, nil, false, "")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -170,10 +252,9 @@ func TestNewSplitApp_BuildAppFailureClosesConns(t *testing.T) {
 // and chain.Close errors as non-fatal.
 func TestApp_Shutdown_ToleratesEndorserCloseError(t *testing.T) {
 	dbPath := "file:" + filepath.Join(t.TempDir(), "gw.db")
-	cfg := splitAppConfig(t, dbPath)
-	logger := sdk.NewStdLogger("gateway")
+	cfg := fullAppConfig(t, dbPath)
 
-	app, err := newSplitApp(context.Background(), cfg, nil, logger)
+	app, err := newApp(context.Background(), cfg, nil, false, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

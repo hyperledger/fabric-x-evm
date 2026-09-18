@@ -31,18 +31,23 @@ import (
 // EndorsementClient forwards ethereum-style transactions and calls
 // to the endorsers and returns their signed fabric-style responses.
 type EndorsementClient struct {
-	endorsers []api.Service
+	local     api.Service
+	endorsers []api.Service // local + remotes, precomputed once for ExecuteTransaction's fan-out
 	signer    Signer
 	channel   string
 	namespace string
 	nsVersion string
 }
 
-// NewEndorsementClient creates an EndorsementClient from api.Service instances.
-// This allows using concrete endorsers, wrapped endorsers (e.g., from testimpl package), remote
-// gRPC clients to other organizations' endorsers, or other implementations.
-func NewEndorsementClient(endorsers []api.Service, signer Signer, channel, namespace, nsVersion string) (*EndorsementClient, error) {
+// NewEndorsementClient creates an EndorsementClient from a mandatory local
+// endorser (called directly in-process) and zero or more remote endorsers
+// (other orgs, called over gRPC).
+func NewEndorsementClient(local api.Service, remotes []api.Service, signer Signer, channel, namespace, nsVersion string) (*EndorsementClient, error) {
+	endorsers := make([]api.Service, 0, 1+len(remotes))
+	endorsers = append(endorsers, local)
+	endorsers = append(endorsers, remotes...)
 	return &EndorsementClient{
+		local:     local,
 		endorsers: endorsers,
 		signer:    signer,
 		channel:   channel,
@@ -173,7 +178,7 @@ func (e *EndorsementClient) EstimateGas(ctx context.Context, args ethereum.CallM
 
 	probeGas := func(gas uint64) (maxUsedGas uint64, ok bool, err error) {
 		call.Gas = gas
-		_, maxUsedGas, err = e.endorsers[0].Call(ctx, &call, blockNumber)
+		_, maxUsedGas, err = e.local.Call(ctx, &call, blockNumber)
 		if err == nil {
 			return maxUsedGas, true, nil
 		}
@@ -212,7 +217,7 @@ func (e *EndorsementClient) EstimateGas(ctx context.Context, args ethereum.CallM
 
 // call is CallContract's query path.
 func (e *EndorsementClient) call(ctx context.Context, args ethereum.CallMsg, blockNumber *big.Int) ([]byte, uint64, error) {
-	payload, gas, err := e.endorsers[0].Call(ctx, &args, blockNumber)
+	payload, gas, err := e.local.Call(ctx, &args, blockNumber)
 	if err == nil {
 		return payload, gas, nil
 	}
@@ -242,22 +247,22 @@ func (e *EndorsementClient) call(ctx context.Context, args ethereum.CallMsg, blo
 
 // BalanceAt returns an account's balance at the given block.
 func (e *EndorsementClient) BalanceAt(ctx context.Context, account ethcommon.Address, blockNumber *big.Int) (*big.Int, error) {
-	return e.endorsers[0].BalanceAt(ctx, account, blockNumber)
+	return e.local.BalanceAt(ctx, account, blockNumber)
 }
 
 // StorageAt returns the storage word at key for an account.
 func (e *EndorsementClient) StorageAt(ctx context.Context, account ethcommon.Address, key ethcommon.Hash, blockNumber *big.Int) ([]byte, error) {
-	return e.endorsers[0].StorageAt(ctx, account, key, blockNumber)
+	return e.local.StorageAt(ctx, account, key, blockNumber)
 }
 
 // CodeAt returns an account's contract code.
 func (e *EndorsementClient) CodeAt(ctx context.Context, account ethcommon.Address, blockNumber *big.Int) ([]byte, error) {
-	return e.endorsers[0].CodeAt(ctx, account, blockNumber)
+	return e.local.CodeAt(ctx, account, blockNumber)
 }
 
 // NonceAt returns an account's nonce.
 func (e *EndorsementClient) NonceAt(ctx context.Context, account ethcommon.Address, blockNumber *big.Int) (uint64, error) {
-	return e.endorsers[0].NonceAt(ctx, account, blockNumber)
+	return e.local.NonceAt(ctx, account, blockNumber)
 }
 
 // createInvocation creates an endorsement.Invocation from the given parameters

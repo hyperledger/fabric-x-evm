@@ -47,3 +47,8 @@ func (s *Server) RegisterService(servers serve.Servers) {
 func (s *Server) Serve(ctx context.Context, cfg *Config) error {
 	return serve.Serve(ctx, s, cfg)
 }
+
+// ServeEndorser serves svc over gRPC per cfg until ctx is done.
+func ServeEndorser(ctx context.Context, svc api.Service, cfg *serve.ServerConfig) error {
+	return New(svc).Serve(ctx, &Config{GRPC: *cfg})
+}
