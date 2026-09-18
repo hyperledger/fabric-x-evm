@@ -145,8 +145,7 @@ func NewDepGraphQueue() *DepGraphQueue {
 }
 
 func (q *DepGraphQueue) spawn(fn func()) {
-	q.wg.Add(1)
-	go func() { defer q.wg.Done(); fn() }()
+	q.wg.Go(fn)
 }
 
 // Bind supplies the endorsement client and checks the protocol. It is separate

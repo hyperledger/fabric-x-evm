@@ -413,8 +413,7 @@ func TestDepGraphQueue_ConcurrentProducersAndConsumers(t *testing.T) {
 	const total = 200
 	var wg sync.WaitGroup
 	for i := range total {
-		wg.Add(1)
-		go func() { defer wg.Done(); q.Enqueue(txWithNonce(uint64(i))) }()
+		wg.Go(func() { q.Enqueue(txWithNonce(uint64(i))) })
 	}
 	wg.Wait()
 
@@ -422,9 +421,7 @@ func TestDepGraphQueue_ConcurrentProducersAndConsumers(t *testing.T) {
 	var mu sync.Mutex
 	var consumers sync.WaitGroup
 	for range 8 {
-		consumers.Add(1)
-		go func() {
-			defer consumers.Done()
+		consumers.Go(func() {
 			for {
 				tx, ok := q.Dequeue()
 				if !ok {
@@ -438,7 +435,7 @@ func TestDepGraphQueue_ConcurrentProducersAndConsumers(t *testing.T) {
 					return
 				}
 			}
-		}()
+		})
 	}
 
 	require.Eventually(t, func() bool {
