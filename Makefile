@@ -1,4 +1,5 @@
 # Configuration
+.DEFAULT_GOAL := help
 FABRIC_VERSION ?= 3.1.4
 RELEASE_ARCHS  := amd64 arm64 s390x
 UID := $(shell id -u)
@@ -12,12 +13,19 @@ export GID
 DOCKER  ?= docker
 COMPOSE ?= docker compose
 
+.PHONY: help
+help:  ## Show this help
+	@echo "Targets (see CONTRIBUTING.md for the workflows):"
+	@grep -hE '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) \
+		| sort \
+		| awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-30s\033[0m %s\n", $$1, $$2}'
+
 .PHONY: build
-build:
+build:  ## Build bin/fxevm
 	go build -o bin/fxevm ./cmd/fxevm
 
 .PHONY: build-release
-build-release:
+build-release:  ## Cross-compile release binaries for all archs
 	@for arch in $(RELEASE_ARCHS); do \
 		mkdir -p release/linux-$$arch && \
 		CGO_ENABLED=0 GOOS=linux GOARCH=$$arch go build -trimpath -ldflags '-w -s' \
@@ -25,7 +33,7 @@ build-release:
 	done
 
 .PHONY: build-image
-build-image: build-release
+build-image: build-release  ## Build the fabric-x-evm docker image
 	$(DOCKER) buildx build \
 		--file Dockerfile \
 		--load \
@@ -36,7 +44,7 @@ build-image: build-release
 		.
 
 .PHONY: checks
-checks:
+checks:  ## Lint: gofmt, vet, staticcheck, license headers (run before pushing)
 	@test -z $(shell gofmt -l -s $(shell go list -f '{{.Dir}}' ./...) | tee /dev/stderr) || (echo "Fix formatting issues"; exit 1)
 	@go vet -all $(shell go list -f '{{.Dir}}' ./...)
 	@go tool staticcheck ./... || (echo "Staticcheck failed"; exit 1)
@@ -44,7 +52,7 @@ checks:
 	@find . -type d -name testdata -prune -o -name '*.go' -print | xargs go tool addlicense -check || (echo "Missing license headers"; exit 1)
 
 .PHONY: proto
-proto:
+proto:  ## Regenerate protobuf code
 	@echo "Generating protobufs..."
 	@protoc \
 		-I="$(CURDIR)" \
@@ -53,15 +61,15 @@ proto:
 		$(CURDIR)/api/*/*.proto
 
 .PHONY: unit-tests
-unit-tests:
+unit-tests:  ## Unit tests + short integration (what CI's Quick Tests runs)
 	go test ./... -short -coverprofile=coverage.out -covermode=atomic
 
 .PHONY: pre-pull-images
-pre-pull-images:
+pre-pull-images:  ## Pre-pull docker images used by the integration tests
 	@$(DOCKER) pull hyperledger/fabric-ccenv:$(FABRIC_VERSION) || echo "Warning: Failed to pull fabric-ccenv"
 
 .PHONY: integration-tests
-integration-tests: pre-pull-images
+integration-tests: pre-pull-images  ## Fabric (fablo) integration tests, incl. network bring-up
 	@VERBOSE=$(VERBOSE) FABRIC_VERSION=$(FABRIC_VERSION) ./scripts/run_integration_test.sh
 
 # Container images for fabric-x
@@ -112,7 +120,7 @@ done; \
 endef
 
 .PHONY: init-x
-init-x:
+init-x:  ## Generate fabric-x crypto material (one-time)
 	@rm -rf testdata/crypto
 	@$(DOCKER) run --rm \
 		--user "$(UID):$(GID)" \
@@ -147,11 +155,11 @@ init-x:
 	@find testdata/config -type f -exec chmod a+r {} +
 
 .PHONY: clean-x
-clean-x:
+clean-x:  ## Remove generated fabric-x crypto material
 	@rm -rf testdata/crypto
 
 .PHONY: start-x
-start-x:
+start-x:  ## Start the fabric-x test network (docker)
 	@if nc -z localhost 7050 2>/dev/null; then echo "Error: port 7050 is already in use — stop any running Fabric orderer before starting."; exit 1; fi
 	@$(COMPOSE) -f compose.fabric-x.yml up -d
 	@echo "Waiting for test committer to be ready..."
@@ -160,11 +168,11 @@ start-x:
 	$(call create-namespace,$(NS_2OF2),$(POLICY_2OF2))
 
 .PHONY: test-x
-test-x:
+test-x:  ## Integration cases against a running fabric-x network
 	@go test -timeout 30s -v -run ^TestFabricX$$ ./integration
 
 .PHONY: perf-smoke
-perf-smoke:
+perf-smoke:  ## Short perf replay against a running fabric-x network
 	@go test -timeout 600s -tags=perf -run ^TestReplayJSONDataset$$ -v -count=1 \
 		./integration/perf/... \
 		-outstanding 500 \
@@ -173,29 +181,29 @@ perf-smoke:
 		-namespace basic
 
 .PHONY: stop-x
-stop-x:
+stop-x:  ## Stop the fabric-x test network
 	@$(COMPOSE) -f compose.fabric-x.yml down
 
 .PHONY: start-fablo
-start-fablo:
+start-fablo:  ## Start the fablo (classic Fabric) network
 	@if nc -z localhost 7030 2>/dev/null; then echo "Error: port 7030 is already in use — stop any running Fabric orderer before starting."; exit 1; fi
 	cd testdata/fablo && ./fablo up
 
 .PHONY: stop-fablo
-stop-fablo:
+stop-fablo:  ## Stop the fablo network
 	cd testdata/fablo && ./fablo down
 
 .PHONY: test-fablo
-test-fablo:
+test-fablo:  ## Integration cases against a running fablo network
 	@go test -timeout 360s -run ^TestFablo$$ ./integration
 
 .PHONY: clean-fablo
-clean-fablo:
+clean-fablo:  ## Prune fablo state
 	cd testdata/fablo && ./fablo prune || true
 	rm -rf testdata/fablo/snapshot.fablo.tar.gz
 
 .PHONY: start-full
-start-full:
+start-full:  ## Start the full multi-party fabric-x network (docker)
 	@if nc -z localhost 7050 2>/dev/null; then echo "Error: port 7050 is already in use — stop any running Fabric orderer before starting."; exit 1; fi
 	@mkdir -p \
 		data/orderers/party1-router data/orderers/party1-batcher \
@@ -238,24 +246,24 @@ start-full:
 		fxconfig namespace create "$$FX_NS" --policy="$$FX_POLICY" --endorse --submit --wait --config=/config/fxconfig.yaml'
 
 .PHONY: stop-full
-stop-full:
+stop-full:  ## Stop the full multi-party network
 	@$(COMPOSE) -f compose.fabric-x.full.yaml down
 	@rm -rf data/
 
 .PHONY: test-local
-test-local:
+test-local:  ## Integration cases on the bypass backend, fabric encoding
 	@go test -timeout 30s -v -run ^TestLocal$$ ./integration
 
 .PHONY: test-local-x
-test-local-x:
+test-local-x:  ## Integration cases on the bypass backend, fabric-x encoding
 	@go test -timeout 30s -v -run ^TestLocalX$$ ./integration
 
 .PHONY: fetch-execution-specs-tests
-fetch-execution-specs-tests:
+fetch-execution-specs-tests:  ## Download the conformance fixtures (~400MB, cached)
 	@./scripts/fetch_execution_specs_tests.sh
 
 .PHONY: eth-tests
-eth-tests: fetch-execution-specs-tests
+eth-tests: fetch-execution-specs-tests  ## Ethereum conformance suite (execution-spec-tests) + baseline diff
 	@./scripts/run_eth_tests.sh
 
 # Full OZ compatible set — what CI's oz-hardhat-compat job runs.
@@ -265,12 +273,12 @@ eth-tests: fetch-execution-specs-tests
 # PORT= runs the testnode somewhere other than 8545, so a second run can go
 # alongside one already in progress.
 .PHONY: hardhat-tests
-hardhat-tests:
+hardhat-tests:  ## OpenZeppelin suite via testnode + baseline diff [FILE= GREP= PORT=]
 	@./scripts/run_hardhat_test.sh \
 		$(if $(FILE),--file '$(FILE)') \
 		$(if $(GREP),--grep '$(GREP)') \
 		$(if $(PORT),--port '$(PORT)')
 
 .PHONY: perf-tests
-perf-tests: pre-pull-images
+perf-tests: pre-pull-images  ## Full perf replay suite
 	@VERBOSE=$(VERBOSE) FABRIC_VERSION=$(FABRIC_VERSION) ./scripts/run_perf_test.sh
