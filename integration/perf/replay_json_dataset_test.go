@@ -237,6 +237,7 @@ var enableMetrics = flag.Bool("enable-metrics", false, "enable Prometheus metric
 var namespace = flag.String("namespace", "real", "namespace to commit transactions to")
 var dataset = flag.String("dataset", "testdata/USDC_dataset.json.gz", "dataset to use")
 var oldqueue = flag.Bool("oldqueue", false, "enable old queue")
+var depgraph = flag.Bool("depgraph", false, "schedule through the committer's dependency manager")
 var workers = flag.Int("workers", 20, "number of gateway workers processing transactions")
 var submitters = flag.Int("submitters", 4, "number of goroutines submitting transactions to the gateway")
 var orderers = flag.Int("orderers", 8, "number of goroutines submitting transactions to the orderer (BatchSubmitter workers)")
@@ -482,9 +483,12 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	// - Fabric-X: Notification-based (MemoryStore + NotificationDispatcher)
 	// th, err := integration.NewLocalTestHarnessWithFactoryAndTxQueue(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", "fabric", map[string]any{"Gateway.WorkerCount": processingWorkerCount, "Gateway.SubmitterCount": ordererSubmitterCount, "Network.Namespace": *namespace}, factory, gwcore.NewTxQueueV2())
 	var queue gwcore.TxQueueInterface
-	if *oldqueue {
+	switch {
+	case *depgraph:
+		queue = gwcore.NewDepGraphQueue()
+	case *oldqueue:
 		queue = gwcore.NewTxQueue()
-	} else {
+	default:
 		queue = gwcore.NewTxQueueV2()
 	}
 	fmt.Printf("using queue type %T\n", queue)
@@ -889,6 +893,11 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	}
 	if totalEnq > 0 {
 		conflictRate = float64(conflictEnq) / float64(totalEnq)
+	}
+	// The dependency manager queue reports contention as a peak rather than a
+	// per-enqueue rate, so it is logged on its own line.
+	if dq, ok := th.Gateways[0].TxQueue.(*gwcore.DepGraphQueue); ok {
+		t.Logf("depgraph queue: peak transactions held on dependencies %d", dq.PeakDependentTxs())
 	}
 
 	// Return metrics (throughput, failed count, total dispatched transfers, invalidRate, conflictRate)
