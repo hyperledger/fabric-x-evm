@@ -422,10 +422,11 @@ func TestUpdateDelete(t *testing.T) {
 		t.Fatalf("Update failed: %v", err)
 	}
 
-	// Verify key is deleted
+	// Verify key is deleted: stored as a tombstone, not removed.
 	snapshot = kvs.Current.Load()
-	if _, ok := snapshot.Data["ns1:key1"]; ok {
-		t.Error("key1 should be deleted")
+	vv, ok := snapshot.Data["ns1:key1"]
+	if !ok || !vv.IsDelete {
+		t.Errorf("expected key1 to be a tombstone, got %+v (present=%v)", vv, ok)
 	}
 }
 
@@ -845,8 +846,8 @@ func TestHandleDeletes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get failed: %v", err)
 	}
-	if record2 != nil {
-		t.Error("key1 should be deleted")
+	if !absent(record2) {
+		t.Errorf("key1 should be deleted, got %+v", record2)
 	}
 }
 

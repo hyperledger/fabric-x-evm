@@ -9,7 +9,6 @@ package storage
 import (
 	"context"
 	"fmt"
-	"maps"
 
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
@@ -185,10 +184,15 @@ func (kvs *RevertibleLightKVS) applyBlockSequential(blockNum uint64, updates []K
 // It searches through the history for a snapshot matching the requested block number,
 // and if found, merges it with the current snapshot to preserve version information.
 //
-// The merge process handles MVCC conflicts by:
-// - If a key exists in both snapshots: use target snapshot's value but current snapshot's version info
-// - If a key exists only in current (created after target): keep it with nil value and current version
-// - If a key exists only in target (deleted after target): mark it as deleted with current version
+// Deletes are stored as tombstones (see applyUpdates), so a key present in the
+// target snapshot is always still present in the current one too - the merge
+// only ever has to reconcile two cases:
+//   - Key present in target: use target's value/delete-state (the reverted
+//     state) but current's version info, so future writes don't collide with
+//     the real ledger's MVCC counter.
+//   - Key present only in current (written for the first time after target):
+//     it must read back absent, so mark it a tombstone, still with current's
+//     version info.
 //
 // This ensures that when we revert and simulate new transactions, the read dependencies
 // will match the actual versions in the peer's ledger, avoiding MVCC conflicts.
@@ -257,61 +261,36 @@ func (kvs *RevertibleLightKVS) RevertToBlock(blockNumber uint64) error {
 
 	revertLogger.Debugf("RevertibleLightKVS.RevertToBlock() found target snapshot at block %d (requested %d), performing merge", targetSnapshot.BlockNumber, blockNumber)
 
-	// Create a new merged snapshot
-	// Start with a clone of the target snapshot's data
-	mergedData := maps.Clone(targetSnapshot.Data)
-
-	// Process keys that exist in current but not in target (created after target)
-	// These keys need to be preserved with their current version info but with nil value
+	// Create the merged snapshot. Since deletes are tombstones (not removals),
+	// every key in targetSnapshot.Data is guaranteed to still be present in
+	// currentSnapshot.Data (data only ever accumulates going forward through
+	// history), so currentSnapshot.Data's keyset is a superset of target's and
+	// a single pass over it is sufficient.
+	mergedData := make(map[string]*ValueVersion, len(currentSnapshot.Data))
 	for key, currentValue := range currentSnapshot.Data {
-		if _, existsInTarget := targetSnapshot.Data[key]; !existsInTarget {
-			// Key was created after target snapshot
-			// Keep it with nil value but preserve version info from current ledger
-			revertLogger.Debugf("RevertibleLightKVS.RevertToBlock() key %s created after target, preserving with nil value: version=%d, blockNum=%d, txNum=%d, isDelete=false",
-				key, currentValue.Version, currentValue.BlockNum, currentValue.TxNum)
+		if targetValue, existsInTarget := targetSnapshot.Data[key]; existsInTarget {
+			// Key existed as of target: use its value/delete-state (the
+			// reverted state) but current's version info.
 			mergedData[key] = &ValueVersion{
-				Value:    nil, // Nil out the value
+				Value:    targetValue.Value,
 				BlockNum: currentValue.BlockNum,
 				TxNum:    currentValue.TxNum,
 				Version:  currentValue.Version,
 				TxID:     currentValue.TxID,
-				IsDelete: false,
+				IsDelete: targetValue.IsDelete,
 			}
+			continue
 		}
-	}
 
-	// Process keys that exist in target but not in current (deleted after target)
-	// These keys need to be marked as deleted with current version info
-	for key, targetValue := range targetSnapshot.Data {
-		if currentValue, existsInCurrent := currentSnapshot.Data[key]; !existsInCurrent {
-			// Key was deleted after target snapshot
-			// Mark it as deleted but we need to infer the version from what would be in the ledger
-			// Since it was deleted, the ledger has a delete record with a version
-			// We'll use target's version + 1 to represent the delete operation
-			deleteVersion := targetValue.Version + 1
-			revertLogger.Debugf("RevertibleLightKVS.RevertToBlock() key %s deleted after target, marking as deleted: version=%d, blockNum=%d, txNum=%d, isDelete=true",
-				key, deleteVersion, targetValue.BlockNum, targetValue.TxNum)
-			mergedData[key] = &ValueVersion{
-				Value:    targetValue.Value, // Keep target's value for reference
-				BlockNum: targetValue.BlockNum,
-				TxNum:    targetValue.TxNum,
-				Version:  deleteVersion,
-				TxID:     targetValue.TxID,
-				IsDelete: true,
-			}
-		} else {
-			// Key exists in both snapshots
-			// Use target's value but update version info from current
-			revertLogger.Debugf("RevertibleLightKVS.RevertToBlock() key %s exists in both, using target value with current version: version=%d, blockNum=%d, txNum=%d, isDelete=%v",
-				key, currentValue.Version, currentValue.BlockNum, currentValue.TxNum, currentValue.IsDelete)
-			mergedData[key] = &ValueVersion{
-				Value:    targetValue.Value,     // Use target's value (the reverted state)
-				BlockNum: currentValue.BlockNum, // Use current's version info
-				TxNum:    currentValue.TxNum,
-				Version:  currentValue.Version,
-				TxID:     currentValue.TxID,
-				IsDelete: currentValue.IsDelete,
-			}
+		// Key was created after target snapshot: it must read back absent,
+		// but its version info still needs to track the real ledger.
+		mergedData[key] = &ValueVersion{
+			Value:    nil,
+			BlockNum: currentValue.BlockNum,
+			TxNum:    currentValue.TxNum,
+			Version:  currentValue.Version,
+			TxID:     currentValue.TxID,
+			IsDelete: true,
 		}
 	}
 
