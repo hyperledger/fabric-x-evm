@@ -154,6 +154,10 @@ func (c *senderCache) evictLRU(max int, evictable func(*senderState) bool) {
 	}
 }
 
+// NewNonceGate returns the default nonce gate for g, for callers that supply their own
+// NonceSequencer to core.New and delegate to it.
+func NewNonceGate(g *Gateway) NonceSequencer { return newNonceGate(g, g.Signer, g.TxQueue) }
+
 func newNonceGate(state stateReader, signer types.Signer, queue enqueuer) *nonceGate {
 	return &nonceGate{
 		state:        state,

@@ -8,6 +8,7 @@ package testimpl
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -18,6 +19,8 @@ import (
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/hyperledger/fabric-x-evm/gateway/api"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
+	"github.com/hyperledger/fabric-x-evm/gateway/storage"
+	"github.com/stretchr/testify/require"
 )
 
 func dialHardhat(t *testing.T) *rpc.Client {
@@ -36,7 +39,7 @@ func dialHardhat(t *testing.T) *rpc.Client {
 func dialEvm(t *testing.T) *rpc.Client {
 	t.Helper()
 	srv := rpc.NewServer()
-	if err := srv.RegisterName("evm", NewEvmAPI(&mockRevertibleKVS{}, &mockRevertibleStore{}, &txFence{})); err != nil {
+	if err := srv.RegisterName("evm", NewEvmAPI(&mockRevertibleKVS{}, &mockRevertibleStore{}, &txFence{}, &recordingNonces{})); err != nil {
 		t.Fatalf("RegisterName evm: %v", err)
 	}
 	client := rpc.DialInProc(srv)
@@ -113,10 +116,39 @@ func (m *mockRevertibleKVS) RevertToBlock(blockNumber uint64) error {
 	return nil
 }
 
+// recordingNonces counts the nonce resets a revert asks the gateway for.
+type recordingNonces struct{ resets int }
+
+func (r *recordingNonces) ResetNonces() { r.resets++ }
+
 type mockRevertibleStore struct{}
 
 func (m *mockRevertibleStore) Snapshot(context.Context) (uint64, error)    { return 1, nil }
 func (m *mockRevertibleStore) RevertToBlock(context.Context, uint64) error { return nil }
+
+// failingStore fails the store half of the rewind, after the KVS half has moved.
+type failingStore struct{ mockRevertibleStore }
+
+func (failingStore) RevertToBlock(context.Context, uint64) error { return errors.New("boom") }
+
+func TestEvmAPI_RevertResetsNonces(t *testing.T) {
+	for name, store := range map[string]storage.Revertible{
+		"success":        &mockRevertibleStore{},
+		"failed mid-way": &failingStore{},
+	} {
+		t.Run(name, func(t *testing.T) {
+			nonces := &recordingNonces{}
+			api := NewEvmAPI(&mockRevertibleKVS{}, store, &txFence{pool: &fakePool{}}, nonces)
+
+			id, err := api.Snapshot(context.Background())
+			require.NoError(t, err)
+			require.Zero(t, nonces.resets, "a snapshot leaves the ledger alone")
+
+			_, _ = api.Revert(context.Background(), id)
+			require.Equal(t, 1, nonces.resets)
+		})
+	}
+}
 
 // TestEvmAPI_RevertWaitsForInFlightTransaction pins the invariant the txFence
 // exists for: a transaction the test RPC has accepted must reach a block before
@@ -176,7 +208,7 @@ func TestEvmAPI_RevertWaitsForInFlightTransaction(t *testing.T) {
 	fence := &txFence{pool: pool}
 	kvs := &mockRevertibleKVS{onRevert: func(uint64) { record("revert") }}
 	testAPI := NewTestEthAPI(api.NewEthAPI(backend), backend, testAccountMgr.Addresses, testAccountMgr.PrivateKeys, fence)
-	evmAPI := NewEvmAPI(kvs, &mockRevertibleStore{}, fence)
+	evmAPI := NewEvmAPI(kvs, &mockRevertibleStore{}, fence, &recordingNonces{})
 
 	snapshotID, err := evmAPI.Snapshot(context.Background())
 	if err != nil {

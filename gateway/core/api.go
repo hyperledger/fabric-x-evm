@@ -106,8 +106,8 @@ type Store interface {
 // New creates a new Ethereum Gateway.
 // If txQueue is nil, NewTxQueue() will be used as the default.
 // If nonceGate is nil, the default nonce gate will be used: it parks future-nonce
-// transactions and releases them in nonce order as earlier nonces commit. The test
-// backend supplies a passthrough instead; production leaves it nil.
+// transactions and releases them in nonce order as earlier nonces commit. Test
+// harnesses supply their own (see gateway/testimpl).
 // batchSubmitter handles all endorsement submissions and is owned by the Gateway.
 // endorsementChan is the channel to send endorsements to the BatchSubmitter.
 func New(ec *EndorsementClient, batchSubmitter *BatchSubmitter, store Store, chainID int64, workerCount int, txQueue TxQueueInterface, nonceGate NonceSequencer, endorsementChan chan EndorsedTx) (*Gateway, error) {
@@ -136,7 +136,7 @@ func New(ec *EndorsementClient, batchSubmitter *BatchSubmitter, store Store, cha
 	// Use the default nonce gate if none provided. It needs the gateway itself, so
 	// it can only be built once g exists.
 	if g.nonceGate == nil {
-		g.nonceGate = newNonceGate(g, g.Signer, g.TxQueue)
+		g.nonceGate = NewNonceGate(g)
 	}
 	return g, nil
 }

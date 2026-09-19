@@ -15,9 +15,10 @@ import (
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 )
 
-// passthroughGate is the test backend's nonce sequencer. It keeps no per-sender
-// nonce, so the snapshot reverts and primed state that only the test backend
-// makes out of band can never leave it stale.
+// passthroughGate is the nonce sequencer for harnesses that replay signed
+// transactions or move ledger state out of band without telling the gateway. It
+// keeps no per-sender nonce, so nothing can leave it stale. testnode uses
+// ResettableGate instead.
 type passthroughGate struct {
 	queue core.TxQueueInterface
 }

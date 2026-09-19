@@ -195,18 +195,20 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 		return nil, fmt.Errorf("failed to create chain: %w", err)
 	}
 
-	var txQueue core.TxQueueInterface
+	// The test RPC's evm_revert must be able to discard the gate's cached nonces; production leaves it nil.
 	var nonceGate core.NonceSequencer
+	var testGate *testimpl.ResettableGate
 	if test != nil {
-		// The test RPC's snapshot reverts move the ledger nonce out of band, so
-		// the test backend keeps no cached nonce and parks nothing.
-		txQueue = core.NewTxQueue()
-		nonceGate = testimpl.NewPassthroughGate(txQueue)
+		testGate = testimpl.NewResettableGate()
+		nonceGate = testGate
 	}
 	// Gateway owns the BatchSubmitter and will handle its lifecycle
-	gateway, err := BuildGateway(ctx, local, remotes, gwSigner, cfg.Network, chain, submitters, cfg.Gateway.SubmitterCount, cfg.Gateway.WorkerCount, txQueue, nonceGate, cfg.Gateway.EndorsementChanSize, 0)
+	gateway, err := BuildGateway(ctx, local, remotes, gwSigner, cfg.Network, chain, submitters, cfg.Gateway.SubmitterCount, cfg.Gateway.WorkerCount, nil, nonceGate, cfg.Gateway.EndorsementChanSize, 0)
 	if err != nil {
 		return nil, err
+	}
+	if testGate != nil {
+		testGate.Bind(func() core.NonceSequencer { return core.NewNonceGate(gateway) })
 	}
 
 	filterAPI := filters.NewFilterAPI(gateway)
@@ -273,7 +275,7 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 			return nil, fmt.Errorf("failed to create state primer: %w", err)
 		}
 
-		rpcServer, err = testimpl.NewTestServer(gateway, testAccountMgr.Addresses, testAccountMgr.PrivateKeys, revertibleKVS, snapshotStore, gateway.TxQueue, statePrimer, filterAPI)
+		rpcServer, err = testimpl.NewTestServer(gateway, testAccountMgr.Addresses, testAccountMgr.PrivateKeys, revertibleKVS, snapshotStore, gateway.TxQueue, testGate, statePrimer, filterAPI)
 		if err != nil {
 			filterAPI.Close()
 			return nil, err
