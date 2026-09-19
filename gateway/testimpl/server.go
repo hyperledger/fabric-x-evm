@@ -59,6 +59,9 @@ func NewTestServer(b api.Backend, testAccounts []common.Address, testAccountKeys
 		if err := srv.RegisterName("eth", filterAPI); err != nil {
 			return nil, err
 		}
+		if err := srv.RegisterName("eth", api.NewHeadsAPI(filterAPI)); err != nil {
+			return nil, err
+		}
 	}
 
 	// Register other standard APIs

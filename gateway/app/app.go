@@ -220,12 +220,18 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 	}
 
 	filterAPI := filters.NewFilterAPI(gateway)
+	ok := false
+	defer func() {
+		if !ok {
+			filterAPI.Close()
+		}
+	}()
 
 	// Chain must be called before gateway, to persist blocks before marking transactions complete.
-	handlers := append(extraHandlers, filterAPI, chain, gateway)
+	// FilterAPI runs after chain so newHeads can load the stored block (stateRoot etc.).
+	handlers := append(extraHandlers, chain, filterAPI, gateway)
 	syncer, err := synchronizer.New(cfg.Network.Protocol, chain, cfg.Network.Channel, cfg.Network.Namespace, cfg.Committer.ToPeerConf(), gwSigner, logger, handlers...)
 	if err != nil {
-		filterAPI.Close()
 		return nil, fmt.Errorf("failed to create synchronizer: %w", err)
 	}
 
@@ -250,9 +256,8 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 		}
 		appLogger.Infof("Funded %d test accounts with %s wei each", len(testAccountMgr.Addresses), testimpl.DefaultTestAccountBalance.String())
 
-		revertibleKVS, ok := test.kvs.(estorage.Revertible)
-		if !ok {
-			filterAPI.Close()
+		revertibleKVS, okKVS := test.kvs.(estorage.Revertible)
+		if !okKVS {
 			return nil, fmt.Errorf("test RPC enabled but the endorser KVS is not Revertible")
 		}
 
@@ -292,6 +297,7 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 		}
 	}
 
+	ok = true
 	return &App{
 		cfg:          cfg,
 		synchronizer: syncer,

@@ -33,6 +33,9 @@ func NewServer(b Backend, filterAPI *filters.FilterAPI) (*rpc.Server, error) {
 		if err := srv.RegisterName("eth", filterAPI); err != nil {
 			return nil, err
 		}
+		if err := srv.RegisterName("eth", NewHeadsAPI(filterAPI)); err != nil {
+			return nil, err
+		}
 	}
 
 	chainID, err := b.ChainID(context.TODO())
