@@ -114,6 +114,29 @@ type Gateway struct {
 	WorkerCount         int `mapstructure:"worker-count"  yaml:"worker-count"`
 	SubmitterCount      int `mapstructure:"submitter-count" yaml:"submitter-count"`
 	EndorsementChanSize int `mapstructure:"endorsement-chan-size"  yaml:"endorsement-chan-size"`
+
+	// Filters caps eth_*Filter and eth_subscribe resource use. Nil or zero
+	// fields use package defaults (see filters.DefaultLimits).
+	Filters *Filters `mapstructure:"filters" yaml:"filters"`
+}
+
+// Filters configures server-side filter and subscription resource caps.
+type Filters struct {
+	// MaxFilters is the global concurrent cap on eth_newBlockFilter + eth_newFilter.
+	MaxFilters int `mapstructure:"max-filters" yaml:"max-filters"`
+	// MaxSubscriptionsPerConnection caps eth_subscribe("newHeads") per WS connection.
+	MaxSubscriptionsPerConnection int `mapstructure:"max-subscriptions-per-connection" yaml:"max-subscriptions-per-connection"`
+	// MaxSubscriptionsGlobal caps newHeads subscribers across all connections.
+	MaxSubscriptionsGlobal int `mapstructure:"max-subscriptions-global" yaml:"max-subscriptions-global"`
+}
+
+// Limits returns the filter package limits for this config. Nil Filters uses zeros
+// so the filters package fills in DefaultLimits.
+func (f *Filters) Limits() (maxFilters, maxSubsPerConn, maxSubsGlobal int) {
+	if f == nil {
+		return 0, 0, 0
+	}
+	return f.MaxFilters, f.MaxSubscriptionsPerConnection, f.MaxSubscriptionsGlobal
 }
 
 // DefaultVhosts is used when Gateway.Vhosts is unset.
@@ -167,6 +190,17 @@ func (cfg Config) Validate() error {
 		for i, o := range cfg.Gateway.Orderers {
 			if err := o.Validate(); err != nil {
 				errs = append(errs, fmt.Errorf("gateway.orderers[%d]: %w", i, err))
+			}
+		}
+		if f := cfg.Gateway.Filters; f != nil {
+			if f.MaxFilters < 0 {
+				errs = append(errs, errors.New("gateway.filters.max-filters must be >= 0"))
+			}
+			if f.MaxSubscriptionsPerConnection < 0 {
+				errs = append(errs, errors.New("gateway.filters.max-subscriptions-per-connection must be >= 0"))
+			}
+			if f.MaxSubscriptionsGlobal < 0 {
+				errs = append(errs, errors.New("gateway.filters.max-subscriptions-global must be >= 0"))
 			}
 		}
 	}

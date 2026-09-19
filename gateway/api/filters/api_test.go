@@ -46,10 +46,19 @@ func newTestAPI(t *testing.T, logs LogQuerier) *FilterAPI {
 	return api
 }
 
+func mustNewBlockFilter(t *testing.T, api *FilterAPI) rpc.ID {
+	t.Helper()
+	id, err := api.NewBlockFilter(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
 func TestBlockFilter_GetFilterChangesDrains(t *testing.T) {
 	api := newTestAPI(t, &stubLogs{head: 1})
 
-	id := api.NewBlockFilter(context.Background())
+	id := mustNewBlockFilter(t, api)
 	if err := api.Handle(context.Background(), testBlock(1, 0x11)); err != nil {
 		t.Fatal(err)
 	}
@@ -76,8 +85,8 @@ func TestBlockFilter_GetFilterChangesDrains(t *testing.T) {
 func TestBlockFilter_MultipleFiltersIndependent(t *testing.T) {
 	api := newTestAPI(t, nil)
 
-	id1 := api.NewBlockFilter(context.Background())
-	id2 := api.NewBlockFilter(context.Background())
+	id1 := mustNewBlockFilter(t, api)
+	id2 := mustNewBlockFilter(t, api)
 	if err := api.Handle(context.Background(), testBlock(2, 0x22)); err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +106,7 @@ func TestBlockFilter_MultipleFiltersIndependent(t *testing.T) {
 func TestUninstallFilter(t *testing.T) {
 	api := newTestAPI(t, nil)
 
-	id := api.NewBlockFilter(context.Background())
+	id := mustNewBlockFilter(t, api)
 	if !api.UninstallFilter(id) {
 		t.Fatal("expected uninstall true")
 	}
@@ -113,7 +122,7 @@ func TestFilterExpiry(t *testing.T) {
 	api := NewFilterAPIWithTimeout(nil, 50*time.Millisecond)
 	t.Cleanup(api.Close)
 
-	id := api.NewBlockFilter(context.Background())
+	id := mustNewBlockFilter(t, api)
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		api.mu.Lock()
@@ -131,7 +140,7 @@ func TestGetFilterChanges_DoesNotReviveExpired(t *testing.T) {
 	api := NewFilterAPIWithTimeout(nil, time.Hour)
 	t.Cleanup(api.Close)
 
-	id := api.NewBlockFilter(context.Background())
+	id := mustNewBlockFilter(t, api)
 	api.mu.Lock()
 	api.filters[id].expiresAt = time.Now().Add(-time.Millisecond)
 	api.mu.Unlock()
@@ -228,7 +237,7 @@ func TestGetFilterLogs_Historical(t *testing.T) {
 func TestGetFilterLogs_Errors(t *testing.T) {
 	api := newTestAPI(t, &stubLogs{head: 1, err: context.DeadlineExceeded})
 
-	blockID := api.NewBlockFilter(context.Background())
+	blockID := mustNewBlockFilter(t, api)
 	if _, err := api.GetFilterLogs(context.Background(), blockID); err == nil {
 		t.Fatal("block filter should reject GetFilterLogs")
 	}
@@ -255,7 +264,7 @@ func TestGetFilterLogs_Errors(t *testing.T) {
 
 func TestHandle_UpdatesSynchronously(t *testing.T) {
 	api := newTestAPI(t, nil)
-	id := api.NewBlockFilter(context.Background())
+	id := mustNewBlockFilter(t, api)
 
 	if err := api.Handle(context.Background(), testBlock(3, 0x33)); err != nil {
 		t.Fatal(err)
@@ -287,8 +296,8 @@ func TestShutdown_CloseReturns(t *testing.T) {
 func TestPanicIsolation(t *testing.T) {
 	api := newTestAPI(t, nil)
 
-	bad := api.NewBlockFilter(context.Background())
-	good := api.NewBlockFilter(context.Background())
+	bad := mustNewBlockFilter(t, api)
+	good := mustNewBlockFilter(t, api)
 
 	api.mu.Lock()
 	api.filters[bad].testDeliver = func(blocks.Block) { panic("boom") }

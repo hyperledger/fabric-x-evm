@@ -25,6 +25,7 @@ func TestRPC_NewBlockFilterRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := rpc.DialInProc(srv)
+	t.Cleanup(client.Close)
 
 	var id string
 	if err := client.Call(&id, "eth_newBlockFilter"); err != nil {

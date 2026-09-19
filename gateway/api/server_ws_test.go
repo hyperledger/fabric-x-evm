@@ -31,6 +31,7 @@ func TestNewServer_RegistersFilterAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := rpc.DialInProc(rpcSrv)
+	t.Cleanup(client.Close)
 
 	var id string
 	if err := client.Call(&id, "eth_newBlockFilter"); err != nil {
@@ -47,7 +48,10 @@ func TestNewServer_RegistersFilterAPI(t *testing.T) {
 
 func newTestHTTPServer(t *testing.T) string {
 	t.Helper()
-	rpcSrv, err := NewServer(&stubBackend{chainID: big.NewInt(4011)}, nil)
+	backend := &stubBackend{chainID: big.NewInt(4011)}
+	filterAPI := filters.NewFilterAPI(backend)
+	t.Cleanup(filterAPI.Close)
+	rpcSrv, err := NewServer(backend, filterAPI)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}

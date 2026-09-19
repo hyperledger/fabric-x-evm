@@ -17,6 +17,7 @@ import (
 	gethfilters "github.com/ethereum/go-ethereum/eth/filters"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
+	"github.com/hyperledger/fabric-x-evm/gateway/api/rpcerr"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 )
@@ -55,13 +56,18 @@ type filter struct {
 	testDeliver func(b blocks.Block)
 }
 
-// FilterAPI exposes the eth_*Filter JSON-RPC methods.
+// FilterAPI exposes the eth_*Filter JSON-RPC methods and newHeads subscriptions.
 type FilterAPI struct {
 	logs    LogQuerier
 	timeout time.Duration
+	limits  Limits
 
-	mu      sync.Mutex
-	filters map[rpc.ID]*filter
+	mu         sync.Mutex
+	filters    map[rpc.ID]*filter
+	headSubs   map[uint64]*headSub
+	connSubs   map[any]int // active newHeads count per WS connection key
+	nextHeadID uint64
+	closed     bool
 
 	quit chan struct{}
 	wg   sync.WaitGroup
@@ -69,28 +75,48 @@ type FilterAPI struct {
 
 // NewFilterAPI starts the expiry loop. FilterAPI itself is a blocks.BlockHandler.
 func NewFilterAPI(logs LogQuerier) *FilterAPI {
-	return newFilterAPI(logs, defaultTimeout)
+	return newFilterAPI(logs, defaultTimeout, DefaultLimits)
 }
 
 // NewFilterAPIWithTimeout is for tests that need a short expiry.
 func NewFilterAPIWithTimeout(logs LogQuerier, timeout time.Duration) *FilterAPI {
-	return newFilterAPI(logs, timeout)
+	return newFilterAPI(logs, timeout, DefaultLimits)
 }
 
-func newFilterAPI(logs LogQuerier, timeout time.Duration) *FilterAPI {
+// NewFilterAPIWithLimits starts the expiry loop with custom resource caps.
+func NewFilterAPIWithLimits(logs LogQuerier, limits Limits) *FilterAPI {
+	return newFilterAPI(logs, defaultTimeout, limits)
+}
+
+// NewFilterAPIWithTimeoutAndLimits is for tests that need both a short expiry and tight caps.
+func NewFilterAPIWithTimeoutAndLimits(logs LogQuerier, timeout time.Duration, limits Limits) *FilterAPI {
+	return newFilterAPI(logs, timeout, limits)
+}
+
+func newFilterAPI(logs LogQuerier, timeout time.Duration, limits Limits) *FilterAPI {
 	api := &FilterAPI{
-		logs:    logs,
-		timeout: timeout,
-		filters: make(map[rpc.ID]*filter),
-		quit:    make(chan struct{}),
+		logs:     logs,
+		timeout:  timeout,
+		limits:   limits.withDefaults(),
+		filters:  make(map[rpc.ID]*filter),
+		headSubs: make(map[uint64]*headSub),
+		connSubs: make(map[any]int),
+		quit:     make(chan struct{}),
 	}
 	api.wg.Add(1)
 	go api.timeoutLoop()
 	return api
 }
 
-// Close stops the expiry loop.
+// Close stops the expiry loop and closes all newHeads subscribers.
 func (api *FilterAPI) Close() {
+	api.mu.Lock()
+	if !api.closed {
+		api.closed = true
+		api.closeHeadSubsLocked()
+	}
+	api.mu.Unlock()
+
 	select {
 	case <-api.quit:
 	default:
@@ -124,30 +150,47 @@ func (api *FilterAPI) timeoutLoop() {
 }
 
 // Handle implements blocks.BlockHandler. It updates every installed filter
-// under the API lock before returning.
-func (api *FilterAPI) Handle(_ context.Context, b blocks.Block) error {
+// under the API lock, then loads the stored block for newHeads without holding
+// the lock (DB I/O) before fanning out.
+func (api *FilterAPI) Handle(ctx context.Context, b blocks.Block) error {
 	api.mu.Lock()
-	defer api.mu.Unlock()
 
-	if len(api.filters) == 0 {
+	if len(api.filters) == 0 && len(api.headSubs) == 0 {
+		api.mu.Unlock()
 		return nil
 	}
 
-	needLogs := false
-	for _, f := range api.filters {
-		if f.typ == LogsSubscription {
-			needLogs = true
-			break
+	if len(api.filters) > 0 {
+		needLogs := false
+		for _, f := range api.filters {
+			if f.typ == LogsSubscription {
+				needLogs = true
+				break
+			}
+		}
+		var blockLogs []*types.Log
+		if needLogs {
+			blockLogs = logsFromBlock(b)
+		}
+		hash := common.BytesToHash(b.Hash)
+		for id := range api.filters {
+			api.deliverOneLocked(id, b, hash, blockLogs)
 		}
 	}
-	var blockLogs []*types.Log
-	if needLogs {
-		blockLogs = logsFromBlock(b)
+
+	needHeads := len(api.headSubs) > 0
+	api.mu.Unlock()
+
+	if !needHeads {
+		return nil
 	}
-	hash := common.BytesToHash(b.Hash)
-	for id := range api.filters {
-		api.deliverOneLocked(id, b, hash, blockLogs)
-	}
+
+	// FilterAPI is registered after chain, so the block is already persisted.
+	block := api.domainBlockFor(ctx, b)
+
+	api.mu.Lock()
+	api.fanOutHeads(block)
+	api.mu.Unlock()
 	return nil
 }
 
@@ -177,7 +220,10 @@ func (api *FilterAPI) deliverOneLocked(id rpc.ID, b blocks.Block, hash common.Ha
 	}
 }
 
-func (api *FilterAPI) install(typ Type, crit gethfilters.FilterCriteria) rpc.ID {
+func (api *FilterAPI) install(typ Type, crit gethfilters.FilterCriteria) (rpc.ID, error) {
+	if len(api.filters) >= api.limits.MaxFilters {
+		return "", rpcerr.LimitExceeded("filter limit of %d reached", api.limits.MaxFilters)
+	}
 	id := rpc.NewID()
 	f := &filter{
 		typ:       typ,
@@ -191,11 +237,11 @@ func (api *FilterAPI) install(typ Type, crit gethfilters.FilterCriteria) rpc.ID 
 		f.logs = make([]*types.Log, 0)
 	}
 	api.filters[id] = f
-	return id
+	return id, nil
 }
 
 // NewBlockFilter creates a filter that notifies on new block hashes.
-func (api *FilterAPI) NewBlockFilter(ctx context.Context) rpc.ID {
+func (api *FilterAPI) NewBlockFilter(ctx context.Context) (rpc.ID, error) {
 	api.mu.Lock()
 	defer api.mu.Unlock()
 	return api.install(BlocksSubscription, gethfilters.FilterCriteria{})
@@ -205,7 +251,7 @@ func (api *FilterAPI) NewBlockFilter(ctx context.Context) rpc.ID {
 func (api *FilterAPI) NewFilter(ctx context.Context, crit gethfilters.FilterCriteria) (rpc.ID, error) {
 	api.mu.Lock()
 	defer api.mu.Unlock()
-	return api.install(LogsSubscription, crit), nil
+	return api.install(LogsSubscription, crit)
 }
 
 // UninstallFilter removes a filter by id. Returns true if it existed.
