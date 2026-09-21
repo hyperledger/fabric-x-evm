@@ -179,7 +179,10 @@ func defaultHandlerChain(t *testing.T, ctx context.Context, cfg config.Config, e
 	if txQueue == nil {
 		txQueue = core.NewTxQueue()
 	}
-	gw, err := app.BuildGateway(ctx, ends, gwSigner, cfg.Network, chain, submitters, cfg.Gateway.SubmitterCount, cfg.Gateway.WorkerCount, txQueue, testimpl.NewPassthroughGate(txQueue), cfg.Gateway.EndorsementChanSize, txPerSec)
+	// ends is caller-ordered [local, remotes...], matching production's own
+	// invariant (see gateway/config's "Local endorser is a distinct field"
+	// decision) — position 0 is the local endorser.
+	gw, err := app.BuildGateway(ctx, ends[0], ends[1:], gwSigner, cfg.Network, chain, submitters, cfg.Gateway.SubmitterCount, cfg.Gateway.WorkerCount, txQueue, testimpl.NewPassthroughGate(txQueue), cfg.Gateway.EndorsementChanSize, txPerSec)
 	if err != nil {
 		t.Fatalf("build gateway: %v", err)
 	}
@@ -195,7 +198,7 @@ func defaultHandlerChain(t *testing.T, ctx context.Context, cfg config.Config, e
 	for _, db := range dbs {
 		handlers = append(handlers, db)
 	}
-	handlers = append(handlers, filterAPI, chain, gw)
+	handlers = append(handlers, chain, filterAPI, gw)
 	return gw, handlers, chain
 }
 

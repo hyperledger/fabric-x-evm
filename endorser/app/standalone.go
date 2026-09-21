@@ -93,7 +93,7 @@ func (a *App) Run(ctx context.Context) error {
 	// Validate() requires endorser.server for a standalone process — this
 	// path is pointless without it — so this is never nil here.
 	g.Go(func() error {
-		return server.New(a.endorser).Serve(gctx, &server.Config{GRPC: *a.cfg.Endorser.Server})
+		return server.ServeEndorser(gctx, a.endorser, a.cfg.Endorser.Server)
 	})
 
 	// Shutdown trigger: fires when any goroutine fails or context is canceled.

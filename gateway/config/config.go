@@ -16,12 +16,14 @@ import (
 )
 
 // Config is the top-level configuration for a process: either a gateway (with
-// its own embedded endorser or dialing remote ones) or a standalone endorser.
+// its own embedded endorser, plus optionally dialing remote ones) or a
+// standalone endorser.
 //
-// Gateway is optional — nil means an endorser-only process. Exactly one of
-// Endorser and Gateway.Endorsers is set: Endorser runs this process's own
-// endorser embedded, Gateway.Endorsers dials other processes' endorsers over
-// gRPC. Setting both is rejected.
+// Gateway is optional — nil means an endorser-only process. Endorser is
+// mandatory whenever Gateway is set: a gateway always embeds its own org's
+// endorser, called directly in-process. Gateway.Endorsers, when present, are
+// strictly additional remote endorsers (other orgs) dialed over gRPC — never
+// a substitute for the always-present local one.
 type Config struct {
 	Logging Logging        `mapstructure:"logging"   yaml:"logging"`
 	Network common.Network `mapstructure:"network"   yaml:"network"`
@@ -95,9 +97,10 @@ type Gateway struct {
 
 	Orderers []common.ClientConfig `mapstructure:"orderers" yaml:"orderers"`
 
-	// Endorsers, when set, switches to split deployment: the gateway dials each
-	// entry over gRPC (co-located endorsers included, addressed on localhost)
-	// instead of embedding one from the top-level Endorser config.
+	// Endorsers, when set, are additional remote endorsers (other orgs) the
+	// gateway dials over gRPC — never a substitute for the always-present
+	// local endorser configured at the top level. Endorsement is N-of-N, so
+	// each entry here makes every transaction depend on that org's liveness.
 	Endorsers []common.ClientConfig `mapstructure:"endorsers" yaml:"endorsers"`
 
 	// Vhosts lists the Host header values the JSON-RPC HTTP server accepts
@@ -146,9 +149,14 @@ func (cfg Config) Validate() error {
 		errs = append(errs, fmt.Errorf("committer: %w", err))
 	}
 
-	var hasGatewayEndorsers bool
+	if cfg.Gateway == nil && cfg.Endorser == nil {
+		errs = append(errs, errors.New("one of gateway or endorser is required"))
+	}
+
 	if cfg.Gateway != nil {
-		hasGatewayEndorsers = len(cfg.Gateway.Endorsers) > 0
+		if cfg.Endorser == nil {
+			errs = append(errs, errors.New("endorser is required when gateway is present"))
+		}
 
 		if cfg.Gateway.Listen == "" {
 			errs = append(errs, errors.New("gateway.listen is required"))
@@ -169,18 +177,14 @@ func (cfg Config) Validate() error {
 				errs = append(errs, fmt.Errorf("gateway.orderers[%d]: %w", i, err))
 			}
 		}
+		for i, e := range cfg.Gateway.Endorsers {
+			if err := e.Validate(); err != nil {
+				errs = append(errs, fmt.Errorf("gateway.endorsers[%d]: %w", i, err))
+			}
+		}
 	}
 
-	// The two deployment modes are mutually exclusive. Mixing an embedded
-	// endorser with remote ones is not supported yet.
-	switch {
-	case cfg.Endorser != nil && hasGatewayEndorsers:
-		errs = append(errs, errors.New("endorser and gateway.endorsers are mutually exclusive: set endorser to embed this process's own endorser, or gateway.endorsers to dial remote ones"))
-
-	case cfg.Endorser == nil && !hasGatewayEndorsers:
-		errs = append(errs, errors.New("one of endorser or gateway.endorsers is required"))
-
-	case cfg.Endorser != nil:
+	if cfg.Endorser != nil {
 		errs = append(errs, cfg.Endorser.Validate())
 		// A standalone endorser (no gateway) is unreachable, and therefore
 		// pointless, without a gRPC server. A gateway's own embedded endorser
@@ -188,13 +192,6 @@ func (cfg Config) Validate() error {
 		// whether another org needs to reach it.
 		if cfg.Gateway == nil && cfg.Endorser.Server == nil {
 			errs = append(errs, errors.New("endorser.server is required when running as a standalone endorser (no gateway configured)"))
-		}
-
-	default:
-		for i, e := range cfg.Gateway.Endorsers {
-			if err := e.Validate(); err != nil {
-				errs = append(errs, fmt.Errorf("gateway.endorsers[%d]: %w", i, err))
-			}
 		}
 	}
 

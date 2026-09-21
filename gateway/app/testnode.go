@@ -17,7 +17,6 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/hyperledger/fabric-x-evm/common"
-	eapi "github.com/hyperledger/fabric-x-evm/endorser/api"
 	eapp "github.com/hyperledger/fabric-x-evm/endorser/app"
 	econfig "github.com/hyperledger/fabric-x-evm/endorser/config"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
@@ -122,7 +121,7 @@ func NewTestNode(ctx context.Context, tcfg TestNodeConfig) (*App, error) {
 		builders:     []endorsement.Builder{endorserBuilder},
 		accountsPath: tcfg.TestAccountsPath,
 	}
-	application, err := buildApp(ctx, cfg, signer, logger, []eapi.Service{endorser}, test, endorserKVS)
+	application, err := buildApp(ctx, cfg, signer, logger, endorser, nil, test, endorserKVS)
 	if err != nil {
 		return nil, err
 	}
