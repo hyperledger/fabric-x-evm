@@ -476,3 +476,21 @@ func TestDepGraphQueue_CompleteTwiceIsSafe(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, second.Hash(), got.Hash())
 }
+
+// Binding twice would start a second set of endorse workers.
+func TestDepGraphQueue_BindTwiceRejected(t *testing.T) {
+	q := NewDepGraphQueue()
+	t.Cleanup(q.Close)
+
+	require.NoError(t, q.Bind(newKeyedEndorser(t), cmn.ProtocolFabricX))
+	require.Error(t, q.Bind(newKeyedEndorser(t), cmn.ProtocolFabricX))
+}
+
+// Enqueue before Bind is a wiring bug, and nothing would ever drain the
+// transaction, so it fails loudly instead of accumulating in silence.
+func TestDepGraphQueue_EnqueueBeforeBindPanics(t *testing.T) {
+	q := NewDepGraphQueue()
+	t.Cleanup(q.Close)
+
+	require.Panics(t, func() { q.Enqueue(txWithNonce(1)) })
+}

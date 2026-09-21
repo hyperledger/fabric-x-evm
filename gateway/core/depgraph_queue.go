@@ -81,9 +81,14 @@ type DepGraphQueue struct {
 	admitted  chan *types.Transaction
 
 	// sendMu keeps batch-ID assignment and the send to the manager atomic.
-	// The local constructor spins on CompareAndSwap(id-1, id) and reads the
-	// channel with one worker, so a batch arriving out of order wedges it: it
-	// waits for a predecessor that is stuck behind it in the same channel.
+	//
+	// An atomic counter and a channel are each safe on their own, but the
+	// manager needs batches to *arrive* in order, and nothing here guarantees
+	// that: a worker can be descheduled between taking an ID and sending, so
+	// batch 6 reaches the constructor before batch 5. The constructor then
+	// spins on CompareAndSwap(5, 6) while batch 5 sits behind it in the same
+	// channel, read by the single worker now stuck spinning. It never
+	// recovers. Reproduced with 8 endorse workers; one worker never hits it.
 	sendMu        sync.Mutex
 	batchID       atomic.Uint64
 	blocksHandled atomic.Uint64
@@ -92,10 +97,12 @@ type DepGraphQueue struct {
 	cond    *sync.Cond
 	ready   []*types.Transaction
 	tracked map[common.Hash]*trackedTx
-	byTxID  map[string]common.Hash
 	done    bool
 
+	// endorser is written once by Bind, which then starts the workers that read
+	// it. Starting them after the write is the happens-before, so no lock.
 	endorser txEndorser
+	bound    bool
 
 	total       int
 	invalid     int
@@ -118,7 +125,6 @@ func NewDepGraphQueue() *DepGraphQueue {
 		validated: make(chan dependencygraph.TxNodeBatch, defaultChanSize),
 		admitted:  make(chan *types.Transaction, defaultChanSize),
 		tracked:   make(map[common.Hash]*trackedTx),
-		byTxID:    make(map[string]common.Hash),
 	}
 	q.cond = sync.NewCond(&q.mu)
 	q.ctx, q.cancel = context.WithCancel(context.Background())
@@ -136,22 +142,22 @@ func NewDepGraphQueue() *DepGraphQueue {
 		PrometheusMetricsProvider: monitoring.NewProvider(),
 	})
 
-	q.spawn(func() { mgr.Run(q.ctx) })
-	q.spawn(q.drainReleased)
-	for range defaultEndorseWorkers {
-		q.spawn(q.endorseLoop)
-	}
+	q.wg.Go(func() { mgr.Run(q.ctx) })
+	q.wg.Go(q.drainReleased)
 	return q
 }
 
-func (q *DepGraphQueue) spawn(fn func()) {
-	q.wg.Go(fn)
-}
-
-// Bind supplies the endorsement client and checks the protocol. It is separate
-// from the constructor because BuildGateway only creates the client after the
-// queue, and it errors rather than degrading: a classic Fabric endorsement
-// carries no namespaces to schedule on, so every transaction would be dropped.
+// Bind supplies the endorsement client, checks the protocol, and starts the
+// workers that endorse. It is separate from the constructor because
+// BuildGateway only creates the client after the queue.
+//
+// The workers start here rather than in the constructor so that the endorser is
+// written before the goroutines that read it exist. That ordering is what makes
+// the field safe to read without a lock.
+//
+// It errors rather than degrading: a classic Fabric endorsement carries no
+// namespaces to schedule on, so every transaction would be dropped one at a
+// time at runtime instead of failing once at startup.
 func (q *DepGraphQueue) Bind(e txEndorser, protocol string) error {
 	resolved, err := cmn.NormalizeProtocol(protocol)
 	if err != nil {
@@ -160,9 +166,19 @@ func (q *DepGraphQueue) Bind(e txEndorser, protocol string) error {
 	if resolved != cmn.ProtocolFabricX {
 		return fmt.Errorf("dependency manager queue requires %q, got %q", cmn.ProtocolFabricX, resolved)
 	}
+
 	q.mu.Lock()
-	defer q.mu.Unlock()
+	if q.bound {
+		q.mu.Unlock()
+		return fmt.Errorf("dependency manager queue is already bound")
+	}
 	q.endorser = e
+	q.bound = true
+	q.mu.Unlock()
+
+	for range defaultEndorseWorkers {
+		q.wg.Go(q.endorseLoop)
+	}
 	return nil
 }
 
@@ -173,6 +189,10 @@ func (q *DepGraphQueue) Enqueue(tx *types.Transaction) {
 	hash := tx.Hash()
 
 	q.mu.Lock()
+	if !q.bound {
+		q.mu.Unlock()
+		panic("dependency manager queue: Enqueue before Bind")
+	}
 	if q.done {
 		q.mu.Unlock()
 		return
@@ -182,7 +202,6 @@ func (q *DepGraphQueue) Enqueue(tx *types.Transaction) {
 		return
 	}
 	q.tracked[hash] = &trackedTx{tx: tx, enqueuedAtBlock: q.blocksHandled.Load()}
-	q.byTxID[hash.Hex()] = hash
 	q.totalEnq++
 	q.mu.Unlock()
 
@@ -217,26 +236,19 @@ func (q *DepGraphQueue) endorseLoop() {
 func (q *DepGraphQueue) submitToManager(tx *types.Transaction) {
 	hash := tx.Hash()
 
-	q.mu.RLock()
-	endorser := q.endorser
-	q.mu.RUnlock()
-	if endorser == nil {
-		depGraphLogger.Errorf("Bind was never called, dropping tx %s", hash.Hex())
-		q.drop(hash)
-		return
-	}
-
-	end, err := endorser.ExecuteTransaction(q.ctx, tx)
+	end, err := q.endorser.ExecuteTransaction(q.ctx, tx)
 	if err != nil {
 		depGraphLogger.Errorf("endorse tx %s: %v", hash.Hex(), err)
 		q.drop(hash)
 		return
 	}
+	// An endorsement we cannot read a read-write set from means the endorser and
+	// this queue disagree about the wire format, which no amount of dropping
+	// recovers from. Loud for the prototype; see the hygiene issue for removing
+	// it before production.
 	content, err := txContent(end)
 	if err != nil {
-		depGraphLogger.Errorf("read-write set for tx %s: %v", hash.Hex(), err)
-		q.drop(hash)
-		return
+		panic(fmt.Sprintf("dependency manager queue: read-write set for tx %s: %v", hash.Hex(), err))
 	}
 
 	// IDs must start at 1 and rise by one: the constructor spins on
@@ -281,10 +293,8 @@ func (q *DepGraphQueue) markReady(nodes dependencygraph.TxNodeBatch) {
 	defer q.mu.Unlock()
 
 	for _, node := range nodes {
-		hash, known := q.byTxID[node.VerifierTx.GetRef().GetTxId()]
-		if !known {
-			continue
-		}
+		// TxId is the transaction hash we set in submitToManager.
+		hash := common.HexToHash(node.VerifierTx.GetRef().GetTxId())
 		t, tracked := q.tracked[hash]
 		if !tracked {
 			continue
@@ -392,7 +402,6 @@ func (q *DepGraphQueue) takeNodesLocked(hashes []common.Hash) dependencygraph.Tx
 			t.node = nil
 		}
 		delete(q.tracked, hash)
-		delete(q.byTxID, hash.Hex())
 	}
 	return nodes
 }
@@ -418,7 +427,6 @@ func (q *DepGraphQueue) drop(hash common.Hash) {
 		return
 	}
 	delete(q.tracked, hash)
-	delete(q.byTxID, hash.Hex())
 	q.dropped++
 }
 
