@@ -175,10 +175,12 @@ VALUES
 
 -- name: GetLogsByTxHash :many
 SELECT
-    *
+    l.*,
+    b.timestamp
 FROM
-    logs
+    logs l
+    JOIN blocks b ON l.block_number = b.block_number
 WHERE
-    tx_hash = ?
+    l.tx_hash = ?
 ORDER BY
-    log_index;
+    l.log_index;

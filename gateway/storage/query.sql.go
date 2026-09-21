@@ -156,24 +156,41 @@ func (q *Queries) GetFullTransactionByHash(ctx context.Context, txHash []byte) (
 
 const getLogsByTxHash = `-- name: GetLogsByTxHash :many
 SELECT
-    block_number, block_hash, tx_hash, tx_index, log_index, address, topic0, topic1, topic2, topic3, data
+    l.block_number, l.block_hash, l.tx_hash, l.tx_index, l.log_index, l.address, l.topic0, l.topic1, l.topic2, l.topic3, l.data,
+    b.timestamp
 FROM
-    logs
+    logs l
+    JOIN blocks b ON l.block_number = b.block_number
 WHERE
-    tx_hash = ?
+    l.tx_hash = ?
 ORDER BY
-    log_index
+    l.log_index
 `
 
-func (q *Queries) GetLogsByTxHash(ctx context.Context, txHash []byte) ([]Log, error) {
+type GetLogsByTxHashRow struct {
+	BlockNumber int64
+	BlockHash   []byte
+	TxHash      []byte
+	TxIndex     int64
+	LogIndex    int64
+	Address     []byte
+	Topic0      []byte
+	Topic1      []byte
+	Topic2      []byte
+	Topic3      []byte
+	Data        []byte
+	Timestamp   int64
+}
+
+func (q *Queries) GetLogsByTxHash(ctx context.Context, txHash []byte) ([]GetLogsByTxHashRow, error) {
 	rows, err := q.db.QueryContext(ctx, getLogsByTxHash, txHash)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Log
+	var items []GetLogsByTxHashRow
 	for rows.Next() {
-		var i Log
+		var i GetLogsByTxHashRow
 		if err := rows.Scan(
 			&i.BlockNumber,
 			&i.BlockHash,
@@ -186,6 +203,7 @@ func (q *Queries) GetLogsByTxHash(ctx context.Context, txHash []byte) ([]Log, er
 			&i.Topic2,
 			&i.Topic3,
 			&i.Data,
+			&i.Timestamp,
 		); err != nil {
 			return nil, err
 		}

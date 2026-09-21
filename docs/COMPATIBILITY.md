@@ -84,6 +84,7 @@ Per-suite pass rates and compatibility matrices will be added as coverage stabil
 | `eth_getTransactionByBlockHashAndIndex` | ✅ | |
 | `eth_getTransactionByBlockNumberAndIndex` | ✅ | |
 | `eth_getTransactionReceipt` | ✅ | see receipt section |
+| `eth_getBlockReceipts` | ✅ | number or hash; same receipt shape as above |
 | `eth_getLogs` | ✅ | |
 | `eth_estimateGas` | ✅ | returns EVM `usedGas` from a simulation |
 | `eth_gasPrice` | 🔧 | always returns `0` |

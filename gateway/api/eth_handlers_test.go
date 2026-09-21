@@ -163,6 +163,123 @@ func TestGetBlockByHash_BackendError(t *testing.T) {
 	}
 }
 
+// receiptBlock returns a block whose transactions are full rows, as the store loads them.
+func receiptBlock(hashes ...common.Hash) *domain.Block {
+	blk := mustBlock(7, testBlockHash)
+	for i, h := range hashes {
+		blk.Transactions = append(blk.Transactions, domain.Transaction{
+			TxHash:      h.Bytes(),
+			BlockHash:   testBlockHash.Bytes(),
+			BlockNumber: 7,
+			TxIndex:     int64(i),
+			Status:      1,
+		})
+	}
+	return blk
+}
+
+func blockLog(txHash common.Hash, txIndex, logIndex int64) domain.Log {
+	return domain.Log{
+		BlockNumber: 7, BlockHash: testBlockHash.Bytes(), TxHash: txHash.Bytes(),
+		TxIndex: txIndex, LogIndex: logIndex, Address: testAddr.Bytes(),
+	}
+}
+
+func TestGetBlockReceipts_Happy(t *testing.T) {
+	otherTxHash := common.HexToHash("0xfeed")
+	blk := receiptBlock(testTxHash, otherTxHash)
+	// Logs come back for the whole block in one query, ordered by tx and log index.
+	stub := &stubBackend{
+		blockByHash:   map[common.Hash]*domain.Block{testBlockHash: blk},
+		blockByNumber: map[uint64]*domain.Block{7: blk},
+		logs: []domain.Log{
+			blockLog(testTxHash, 0, 0),
+			blockLog(otherTxHash, 1, 1),
+			blockLog(otherTxHash, 1, 2),
+			blockLog(common.HexToHash("0xbeef"), 2, 3), // not a transaction of this block: ignored
+		},
+	}
+	api := NewEthAPI(stub) // no txByHash: a per-transaction lookup would find nothing
+
+	byHash, err := api.GetBlockReceipts(context.Background(), rpc.BlockNumberOrHashWithHash(testBlockHash, false))
+	if err != nil {
+		t.Fatalf("by hash: %v", err)
+	}
+	byNumber, err := api.GetBlockReceipts(context.Background(), rpc.BlockNumberOrHashWithNumber(7))
+	if err != nil {
+		t.Fatalf("by number: %v", err)
+	}
+	for name, got := range map[string][]*rpcReceipt{"by hash": byHash, "by number": byNumber} {
+		if len(got) != 2 {
+			t.Fatalf("%s: got %d receipts, want 2", name, len(got))
+		}
+		if got[0].TxHash != testTxHash || got[1].TxHash != otherTxHash {
+			t.Errorf("%s: receipts out of order: %s, %s", name, got[0].TxHash, got[1].TxHash)
+		}
+		if got[1].BlockHash != testBlockHash || got[1].TransactionIndex != 1 {
+			t.Errorf("%s: receipt 1 block hash/index = %s/%d", name, got[1].BlockHash, got[1].TransactionIndex)
+		}
+		if len(got[0].Logs) != 1 || len(got[1].Logs) != 2 || got[1].Logs[0].Index != 1 || got[1].Logs[1].Index != 2 {
+			t.Errorf("%s: logs = %d and %d, want the block's logs split by transaction", name, len(got[0].Logs), len(got[1].Logs))
+		}
+	}
+	if stub.logsCalls != 2 {
+		t.Errorf("GetLogs called %d times for 2 requests, want once per request", stub.logsCalls)
+	}
+	if f := stub.lastFilter; f.BlockHash != nil || f.FromBlock == nil || f.ToBlock == nil || *f.FromBlock != 7 || *f.ToBlock != 7 {
+		t.Errorf("log filter = %+v, want exactly block 7", f)
+	}
+}
+
+func TestGetBlockReceipts_EmptyBlock(t *testing.T) {
+	// logsErr proves an empty block does not query logs at all.
+	api := NewEthAPI(&stubBackend{blockByNumber: map[uint64]*domain.Block{7: mustBlock(7, testBlockHash)}, logsErr: errBoom})
+	got, err := api.GetBlockReceipts(context.Background(), rpc.BlockNumberOrHashWithNumber(7))
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if got == nil || len(got) != 0 {
+		t.Errorf("got %v, want empty non-nil slice (JSON [])", got)
+	}
+}
+
+func TestGetBlockReceipts_NotFound(t *testing.T) {
+	api := NewEthAPI(&stubBackend{})
+	got, err := api.GetBlockReceipts(context.Background(), rpc.BlockNumberOrHashWithHash(testBlockHash, false))
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if got != nil {
+		t.Errorf("want nil, got %+v", got)
+	}
+}
+
+func TestGetBlockReceipts_BackendError(t *testing.T) {
+	api := NewEthAPI(&stubBackend{getBlockErr: errBoom})
+	if _, err := api.GetBlockReceipts(context.Background(), rpc.BlockNumberOrHashWithNumber(7)); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestGetBlockReceipts_LogsError(t *testing.T) {
+	api := NewEthAPI(&stubBackend{
+		blockByNumber: map[uint64]*domain.Block{7: receiptBlock(testTxHash)},
+		logsErr:       errBoom,
+	})
+	if _, err := api.GetBlockReceipts(context.Background(), rpc.BlockNumberOrHashWithNumber(7)); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestGetBlockReceipts_TxWithoutBlockHash(t *testing.T) {
+	blk := receiptBlock(testTxHash)
+	blk.Transactions[0].BlockHash = nil
+	api := NewEthAPI(&stubBackend{blockByNumber: map[uint64]*domain.Block{7: blk}})
+	if _, err := api.GetBlockReceipts(context.Background(), rpc.BlockNumberOrHashWithNumber(7)); err == nil {
+		t.Fatal("expected an error rather than a null receipt in the list")
+	}
+}
+
 func TestGetBlockTransactionCountByHash_Happy(t *testing.T) {
 	api := NewEthAPI(&stubBackend{
 		txCountByHash: map[common.Hash]int64{testBlockHash: 3},
@@ -999,5 +1116,31 @@ func TestReceipt_ContractCreationSetsContractAddress(t *testing.T) {
 	}
 	if got.To != nil {
 		t.Errorf("To should be nil for contract creation, got %v", got.To)
+	}
+}
+
+func TestReceipt_ContractAddressJSON(t *testing.T) {
+	contract := common.HexToAddress("0x3333333333333333333333333333333333333333")
+	tx := domain.Transaction{TxHash: testTxHash.Bytes(), BlockHash: testBlockHash.Bytes(), FromAddress: testAddr.Bytes(), Status: 1}
+
+	for name, tc := range map[string]struct {
+		contractAddress []byte
+		want            any
+	}{
+		"creation":     {contract.Bytes(), contract.Hex()},
+		"non-creation": {nil, nil},
+	} {
+		tx.ContractAddress = tc.contractAddress
+		raw, err := json.Marshal(receipt(&tx))
+		if err != nil {
+			t.Fatalf("%s: marshal: %v", name, err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatalf("%s: unmarshal: %v", name, err)
+		}
+		if got, ok := m["contractAddress"]; !ok || got != tc.want {
+			t.Errorf("%s: contractAddress = %v (present=%v), want %v", name, got, ok, tc.want)
+		}
 	}
 }

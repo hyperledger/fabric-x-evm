@@ -42,6 +42,10 @@ func (r *rpcReceipt) MarshalJSON() ([]byte, error) {
 	} else {
 		m["to"] = nil
 	}
+	// Spec: null unless the tx created a contract (geth's Receipt marshals the zero address).
+	if r.ContractAddress == (common.Address{}) {
+		m["contractAddress"] = nil
+	}
 
 	return json.Marshal(m)
 }

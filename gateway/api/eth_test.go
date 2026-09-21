@@ -383,6 +383,7 @@ type stubBackend struct {
 	logs       []domain.Log
 	logsErr    error
 	lastFilter domain.LogFilter // captured on GetLogs for assertion
+	logsCalls  int
 }
 
 func (s *stubBackend) ChainID(ctx context.Context) (*big.Int, error) {
@@ -509,6 +510,7 @@ func (s *stubBackend) GetTransactionByBlockNumberAndIndex(ctx context.Context, n
 }
 func (s *stubBackend) GetLogs(ctx context.Context, query domain.LogFilter) ([]domain.Log, error) {
 	s.lastFilter = query
+	s.logsCalls++
 	return s.logs, s.logsErr
 }
 

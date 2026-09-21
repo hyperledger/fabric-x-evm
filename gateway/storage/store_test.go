@@ -848,7 +848,16 @@ func TestGetLogsByTxHash(t *testing.T) {
 		t.Fatalf("GetLogsByTxHash error: %v", err)
 	}
 	if len(logs) != 2 {
-		t.Errorf("expected 2 logs for txHash1, got %d", len(logs))
+		t.Fatalf("expected 2 logs for txHash1, got %d", len(logs))
+	}
+	// Ordered by log index, and stamped with the block's timestamp like GetLogs does.
+	if logs[0].LogIndex != 0 || logs[1].LogIndex != 1 {
+		t.Errorf("log indexes = %d, %d, want 0, 1", logs[0].LogIndex, logs[1].LogIndex)
+	}
+	for i, l := range logs {
+		if l.Timestamp != 1000 {
+			t.Errorf("log %d timestamp = %d, want the block's 1000", i, l.Timestamp)
+		}
 	}
 
 	// Get logs for txHash2

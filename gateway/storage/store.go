@@ -463,8 +463,13 @@ func (s *Store) GetLogsByTxHash(ctx context.Context, txHash []byte) ([]domain.Lo
 		return nil, err
 	}
 	logs := make([]domain.Log, len(rows))
-	for i, row := range rows {
-		logs[i] = toDomainLog(row)
+	for i, r := range rows {
+		logs[i] = toDomainLog(Log{
+			BlockNumber: r.BlockNumber, BlockHash: r.BlockHash, TxHash: r.TxHash, TxIndex: r.TxIndex,
+			LogIndex: r.LogIndex, Address: r.Address, Data: r.Data,
+			Topic0: r.Topic0, Topic1: r.Topic1, Topic2: r.Topic2, Topic3: r.Topic3,
+		})
+		logs[i].Timestamp = r.Timestamp
 	}
 	return logs, nil
 }

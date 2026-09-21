@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"math"
 	"math/big"
 	"strings"
@@ -345,6 +346,56 @@ func (api *EthAPI) GetTransactionReceipt(ctx context.Context, hash common.Hash) 
 		logger.Debugf("EthAPI.GetTransactionReceipt() returning nada")
 	}
 	return result, nil
+}
+
+// eth_getBlockReceipts
+func (api *EthAPI) GetBlockReceipts(ctx context.Context, block rpc.BlockNumberOrHash) ([]*rpcReceipt, error) {
+	logger.Debugf("EthAPI.GetBlockReceipts() called with block=%v", block)
+	var (
+		b   *domain.Block
+		err error
+	)
+	if hash, ok := block.Hash(); ok {
+		b, err = api.b.GetBlockByHash(ctx, hash, false)
+	} else if num, ok := block.Number(); ok {
+		b, err = api.b.GetBlockByNumber(ctx, blockNumberToUint64(num), false)
+	}
+	if err != nil {
+		logger.Debugf("EthAPI.GetBlockReceipts() returning error: %v", err)
+		return nil, err
+	}
+	if b == nil {
+		return nil, nil
+	}
+
+	receipts := make([]*rpcReceipt, 0, len(b.Transactions))
+	if len(b.Transactions) == 0 {
+		return receipts, nil
+	}
+
+	// The block query loads the transactions but not their logs; fetch those for the whole block at once.
+	logs, err := api.b.GetLogs(ctx, domain.LogFilter{FromBlock: &b.BlockNumber, ToBlock: &b.BlockNumber})
+	if err != nil {
+		logger.Debugf("EthAPI.GetBlockReceipts() returning error: %v", err)
+		return nil, err
+	}
+	logsByTx := make(map[common.Hash][]domain.Log)
+	for _, l := range logs {
+		h := common.BytesToHash(l.TxHash)
+		logsByTx[h] = append(logsByTx[h], l)
+	}
+
+	for _, tx := range b.Transactions {
+		hash := common.BytesToHash(tx.TxHash)
+		tx.Logs = logsByTx[hash]
+		r := receipt(&tx)
+		if r == nil {
+			return nil, fmt.Errorf("tx %s in block %d has no block hash", hash.Hex(), b.BlockNumber)
+		}
+		receipts = append(receipts, r)
+	}
+	logger.Debugf("EthAPI.GetBlockReceipts() returning %d receipts", len(receipts))
+	return receipts, nil
 }
 
 // eth_call
