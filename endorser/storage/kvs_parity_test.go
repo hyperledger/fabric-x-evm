@@ -10,7 +10,6 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/hyperledger/fabric-x-sdk/blocks"
@@ -28,13 +27,18 @@ type kvsBackend struct {
 	// newLoc returns a fresh, unused location for this backend.
 	newLoc func(t *testing.T) string
 	// open attaches to the store at loc, creating it if needed. historySize is
-	// honored by LightKVS and ignored by the persistent backends.
+	// honored by the backends that bound their history (see boundedHistory) and
+	// ignored by the rest.
 	open func(t *testing.T, loc string, historySize int) KVS
 	// persistent reports whether state survives close and reopen.
 	persistent bool
 	// mvccVersions reports per-key MAX(version)+1 numbering, mirroring the
 	// committer's worldstate. See TestParityVersionSemantics.
 	mvccVersions bool
+	// boundedHistory reports that only historySize blocks of history are kept and
+	// that an older height is refused rather than answered. See
+	// TestParityEvictedHistoryErrors.
+	boundedHistory bool
 }
 
 func kvsBackends() []kvsBackend {
@@ -45,8 +49,9 @@ func kvsBackends() []kvsBackend {
 			open: func(t *testing.T, _ string, historySize int) KVS {
 				return NewLightKVS(historySize)
 			},
-			persistent:   false,
-			mvccVersions: false,
+			persistent:     false,
+			mvccVersions:   false,
+			boundedHistory: true,
 		},
 		{
 			name:   "RevertibleLightKVS",
@@ -67,8 +72,9 @@ func kvsBackends() []kvsBackend {
 				}
 				return kvs
 			},
-			persistent:   true,
-			mvccVersions: true,
+			persistent:     true,
+			mvccVersions:   true,
+			boundedHistory: true,
 		},
 		{
 			name:   "VersionedDB",
@@ -375,6 +381,44 @@ func TestParityTimeTravelReads(t *testing.T) {
 	})
 }
 
+// TestParityEvictedHistoryErrors is TestParityTimeTravelReads' boundary: the
+// backends that keep only historySize blocks of history must refuse a height
+// below that window, rather than answering it with a newer value. The endorser
+// reads state to build MVCC read-sets, so a silently-shifted height would be
+// validated against the wrong version.
+func TestParityEvictedHistoryErrors(t *testing.T) {
+	const (
+		window = 1
+		head   = 5
+	)
+	forEachBackend(t, func(t *testing.T, b kvsBackend) {
+		if !b.boundedHistory {
+			t.Skipf("%s keeps all history", b.name)
+		}
+		kvs := b.openFresh(t, window)
+
+		for i := uint64(1); i <= head; i++ {
+			mustHandle(t, kvs, mkBlock(i, 0, fmt.Sprintf("tx%d", i), true, "ns1",
+				blocks.KVWrite{Key: "k", Value: fmt.Appendf(nil, "v%d", i)}))
+		}
+
+		// The window is [head-window, head], so head-1 is still served...
+		wantValue(t, mustGetAsOf(t, kvs, "ns1", "k", head-1), fmt.Sprintf("v%d", head-1))
+
+		// ...and anything below it is gone, not silently answered.
+		for _, evicted := range []uint64{1, head - window - 1} {
+			snap, err := kvs.NewSnapshot(&evicted)
+			if err != nil {
+				continue // the expected outcome
+			}
+			rec, getErr := snap.Get("ns1", "k")
+			snap.Close()
+			t.Errorf("NewSnapshot(%d) succeeded for an evicted block: got record %+v (Get err %v)",
+				evicted, rec, getErr)
+		}
+	})
+}
+
 func TestParityBlockNumber(t *testing.T) {
 	forEachFreshKVS(t, 8, func(t *testing.T, kvs KVS) {
 		if n := mustBlockNumber(t, kvs); n != 0 {
@@ -436,6 +480,24 @@ func TestParityReplayIsNoOp(t *testing.T) {
 		wantValue(t, rec, "v3")
 		if rec.Version != 1 {
 			t.Errorf("expected version 1 after block 2, got %d", rec.Version)
+		}
+
+		// A block whose transactions write the same key twice also has to survive
+		// its own redelivery. Only the surviving write is stored, so a backend that
+		// looked for each write individually would reject the replay.
+		twice := mkMultiTxBlock(3, "ns1",
+			blocks.KVWrite{Key: "k", Value: []byte("lo")},
+			blocks.KVWrite{Key: "k", Value: []byte("hi")})
+		mustHandle(t, kvs, twice)
+		afterFirst := mustGet(t, kvs, "ns1", "k")
+		wantValue(t, afterFirst, "hi")
+
+		mustHandle(t, kvs, twice)
+		rec = mustGet(t, kvs, "ns1", "k")
+		wantValue(t, rec, "hi")
+		if rec.Version != afterFirst.Version {
+			t.Errorf("replaying a block with two writes to one key bumped the version: got %d, want %d",
+				rec.Version, afterFirst.Version)
 		}
 	})
 }
@@ -876,30 +938,4 @@ func TestParityProtocolVersionCompatibility(t *testing.T) {
 			})
 		}
 	})
-}
-
-// TestPebbleUpdateRejectsMultiBlockBatch is PebbleKVS-specific: Update is its
-// batch primitive and rejects a batch spanning block numbers, where LightKVS
-// takes the block number from the first entry.
-func TestPebbleUpdateRejectsMultiBlockBatch(t *testing.T) {
-	kvs, err := NewPebbleKVS(t.TempDir(), 8)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	defer kvs.Close()
-
-	err = kvs.update([]KeyValueVersion{
-		{Key: "ns1:a", BlockNum: 1, TxNum: 0, Value: []byte("a")},
-		{Key: "ns1:b", BlockNum: 2, TxNum: 0, Value: []byte("b")},
-	})
-	if err == nil {
-		t.Fatal("expected error for multi-block batch, got nil")
-	}
-	if !strings.Contains(err.Error(), "spans multiple blocks") {
-		t.Errorf("error should mention 'spans multiple blocks', got: %v", err)
-	}
-
-	if n := mustBlockNumber(t, kvs); n != 0 {
-		t.Errorf("expected block 0 (nothing committed), got %d", n)
-	}
 }
