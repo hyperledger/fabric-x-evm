@@ -447,7 +447,7 @@ func mineBlocks(ctx context.Context, cutter BlockCutter, numbers interface {
 	if err != nil {
 		return fmt.Errorf("block number before mine: %w", err)
 	}
-	for i := uint64(0); i < n; i++ {
+	for i := range n {
 		if err := cutter.CutBlock(ctx); err != nil {
 			return fmt.Errorf("cut block %d/%d: %w", i+1, n, err)
 		}
