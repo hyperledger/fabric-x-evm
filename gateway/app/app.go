@@ -173,6 +173,10 @@ type testRPCDeps struct {
 
 	// accountsPath is the file the server-side signing keys are loaded from.
 	accountsPath string
+
+	// cutter cuts empty blocks for hardhat_mine / evm_mine on testnode.
+	// Nil on config-based EnableTestRPC; those RPCs then return an error.
+	cutter testimpl.BlockCutter
 }
 
 // buildApp wires up the gateway from a pre-built local endorser and pre-built remote
@@ -275,7 +279,7 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 			return nil, fmt.Errorf("failed to create state primer: %w", err)
 		}
 
-		rpcServer, err = testimpl.NewTestServer(gateway, testAccountMgr.Addresses, testAccountMgr.PrivateKeys, revertibleKVS, snapshotStore, gateway.TxQueue, testGate, statePrimer, filterAPI)
+		rpcServer, err = testimpl.NewTestServer(gateway, testAccountMgr.Addresses, testAccountMgr.PrivateKeys, revertibleKVS, snapshotStore, gateway.TxQueue, testGate, statePrimer, filterAPI, test.cutter)
 		if err != nil {
 			filterAPI.Close()
 			return nil, err

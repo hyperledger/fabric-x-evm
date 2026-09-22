@@ -35,18 +35,31 @@ const primeCommitTimeout = 30 * time.Second
 // primePollInterval is how often that wait re-reads the value.
 const primePollInterval = 50 * time.Millisecond
 
+// BlockCutter cuts empty blocks on the in-process test network. Satisfied by
+// *fabrictest.Network. Nil means hardhat_mine / evm_mine are unavailable.
+type BlockCutter interface {
+	CutBlock(ctx context.Context) error
+}
+
+const (
+	mineSyncTimeout  = 2 * time.Minute
+	minePollInterval = 10 * time.Millisecond
+)
+
 // HardhatAPI provides Hardhat-specific RPC methods for testing.
 // Most methods are stubs that let Hardhat tests run. The three state-changing ones
 // (setBalance, setCode, setStorageAt) are real: each commits a priming transaction
 // via StatePrimer, which endorses locally with every endorser's key and submits
 // through the normal commit flow. The endorsers themselves are never asked to
 // execute anything, so this works unchanged against remote/served endorsers.
+// hardhat_mine is real when a BlockCutter is wired (testnode).
 //
 // SECURITY WARNING: These methods are for testing only and should NEVER
 // be enabled in production environments.
 type HardhatAPI struct {
 	primer  *primer.StatePrimer
 	backend gwapi.Backend
+	cutter  BlockCutter
 
 	// StatePrimer wraps a single mutable StateDB, so one priming transaction must
 	// finish before the next resets it.
@@ -55,13 +68,11 @@ type HardhatAPI struct {
 
 // NewHardhatAPI creates a Hardhat API whose setBalance/setCode/setStorageAt commit
 // real priming transactions through sp, confirming each change against backend
-// before returning.
+// before returning. cutter may be nil; Mine then returns an error.
 //
-// Both arguments are required: the state-changing methods are part of the surface
-// Hardhat expects, not an opt-in extra, so there is no half-built variant of this
-// API to keep working.
-func NewHardhatAPI(sp *primer.StatePrimer, backend gwapi.Backend) *HardhatAPI {
-	return &HardhatAPI{primer: sp, backend: backend}
+// primer and backend are required for the state-changing methods Hardhat expects.
+func NewHardhatAPI(sp *primer.StatePrimer, backend gwapi.Backend, cutter BlockCutter) *HardhatAPI {
+	return &HardhatAPI{primer: sp, backend: backend, cutter: cutter}
 }
 
 // prime resets the primer, lets apply queue its writes, commits the resulting
@@ -205,13 +216,20 @@ func (api *HardhatAPI) SetStorageAt(ctx context.Context, address common.Address,
 	return true, nil
 }
 
-// Mine accepts hardhat_mine for RPC compatibility with Hardhat tests.
-// It does not advance chain state: fabric-evm creates blocks via Fabric
-// consensus, not mining. Optional blocks/interval params match Hardhat's
-// signature and are ignored.
+// Mine implements hardhat_mine([blocks], [interval]). It cuts empty blocks via
+// the testnetwork BlockCutter and waits until eth_blockNumber reflects them.
+// interval is accepted for signature compatibility but does not change timestamps
+// yet (see issue #277). Default blocks is 1; explicit 0 is a no-op.
 func (api *HardhatAPI) Mine(ctx context.Context, blocks *hexutil.Uint64, interval *hexutil.Uint64) error {
-	hardhatLogger.Debugf("HardhatAPI.Mine() called blocks=%v interval=%v (stub; no state change)", blocks, interval)
-	return nil
+	hardhatLogger.Debugf("HardhatAPI.Mine() called blocks=%v interval=%v", blocks, interval)
+	if interval != nil {
+		hardhatLogger.Debugf("HardhatAPI.Mine() ignoring interval=%d (timestamps not controllable yet)", *interval)
+	}
+	n := uint64(1)
+	if blocks != nil {
+		n = uint64(*blocks)
+	}
+	return mineBlocks(ctx, api.cutter, api.backend, n)
 }
 
 // ImpersonateAccount accepts hardhat_impersonateAccount for RPC compatibility.
@@ -230,7 +248,7 @@ func (api *HardhatAPI) StopImpersonatingAccount(ctx context.Context, address com
 
 // EvmAPI provides EVM-specific RPC methods for testing, particularly snapshot/revert.
 // Uses LightKVS history mechanism to capture and restore ledger state, and Store
-// for database snapshot/revert.
+// for database snapshot/revert. evm_mine is real when a BlockCutter is wired.
 //
 // SECURITY WARNING: These methods are for testing only and should NEVER
 // be enabled in production environments.
@@ -242,6 +260,9 @@ type EvmAPI struct {
 	fence *txFence
 	// Told when a revert moves the ledger nonces out from under the gateway.
 	nonces NonceResetter
+	cutter BlockCutter
+	// backend is used by Mine to wait until cut blocks are visible via eth_blockNumber.
+	backend gwapi.Backend
 	// Map snapshot IDs (hex strings) to block numbers
 	snapshots map[string]uint64
 }
@@ -250,12 +271,15 @@ type EvmAPI struct {
 type NonceResetter interface{ ResetNonces() }
 
 // NewEvmAPI creates a new EVM API instance with LightKVS and Store for state management.
-func NewEvmAPI(lightKVS estorage.Revertible, store storage.Revertible, fence *txFence, nonces NonceResetter) *EvmAPI {
+// cutter and backend may be nil; Mine then returns an error.
+func NewEvmAPI(lightKVS estorage.Revertible, store storage.Revertible, fence *txFence, nonces NonceResetter, cutter BlockCutter, backend gwapi.Backend) *EvmAPI {
 	return &EvmAPI{
 		lightKVS:  lightKVS,
 		store:     store,
 		fence:     fence,
 		nonces:    nonces,
+		cutter:    cutter,
+		backend:   backend,
 		snapshots: make(map[string]uint64),
 	}
 }
@@ -384,15 +408,72 @@ func (api *EvmAPI) Revert(ctx context.Context, snapshotID string) (bool, error) 
 	return true, nil
 }
 
-// Mine mines a new block (evm_mine).
-// This is a stub that returns success. In fabric-evm, blocks are created
-// by the Fabric consensus mechanism, not by mining.
+// Mine implements evm_mine: cut one empty block and wait until it is visible.
+// Returns the new block hash hex when available, otherwise the new height as hex.
 func (api *EvmAPI) Mine(ctx context.Context) (string, error) {
 	hardhatLogger.Debugf("EvmAPI.Mine() called")
-	// Stub: In fabric-evm, blocks are created by Fabric consensus
-	// Return success to allow tests to proceed
-	hardhatLogger.Debugf("EvmAPI.Mine() returning: 0x0")
-	return "0x0", nil
+	if err := mineBlocks(ctx, api.cutter, api.backend, 1); err != nil {
+		return "", err
+	}
+	if api.backend == nil {
+		return "0x0", nil
+	}
+	num, err := api.backend.BlockNumber(ctx)
+	if err != nil {
+		return "", err
+	}
+	block, err := api.backend.GetBlockByNumber(ctx, num, false)
+	if err != nil || block == nil || len(block.BlockHash) == 0 {
+		return hexutil.EncodeUint64(num), nil
+	}
+	return common.BytesToHash(block.BlockHash).Hex(), nil
+}
+
+// mineBlocks cuts n empty blocks and waits until backend.BlockNumber reaches
+// start+n. n==0 is a no-op. cutter must be non-nil when n>0.
+func mineBlocks(ctx context.Context, cutter BlockCutter, numbers interface {
+	BlockNumber(context.Context) (uint64, error)
+}, n uint64) error {
+	if n == 0 {
+		return nil
+	}
+	if cutter == nil {
+		return fmt.Errorf("hardhat_mine requires a block cutter; only available on testnode")
+	}
+	if numbers == nil {
+		return fmt.Errorf("hardhat_mine requires a backend to observe block height")
+	}
+	start, err := numbers.BlockNumber(ctx)
+	if err != nil {
+		return fmt.Errorf("block number before mine: %w", err)
+	}
+	for i := uint64(0); i < n; i++ {
+		if err := cutter.CutBlock(ctx); err != nil {
+			return fmt.Errorf("cut block %d/%d: %w", i+1, n, err)
+		}
+	}
+	target := start + n
+	deadline := time.Now().Add(mineSyncTimeout)
+	if dl, ok := ctx.Deadline(); ok && dl.Before(deadline) {
+		deadline = dl
+	}
+	for {
+		height, err := numbers.BlockNumber(ctx)
+		if err != nil {
+			return fmt.Errorf("block number while waiting for mine: %w", err)
+		}
+		if height >= target {
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("timed out waiting for block height %d (have %d)", target, height)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(minePollInterval):
+		}
+	}
 }
 
 // SetAutomine accepts evm_setAutomine for RPC compatibility with Hardhat tests.
