@@ -803,7 +803,22 @@ func TestReplayJSONDataset(t *testing.T) {
 	ordererSubmitterCount := *orderers   // Number of goroutines submitting transactions TO the orderer (BatchSubmitter workers)
 	numOutstandingTx := *outstanding     // Maximum number of outstanding transactions
 
-	throughput, failedTxs, totalTxs, invalidRate, conflictRate := runReplayTest(t, processingWorkerCount, submittingWorkerCount, ordererSubmitterCount, numOutstandingTx, replayConfig{windowSize: 1000000}, *gatewayConfig)
+	// Single pass by default, so CI (make perf-smoke, -timeout 600s) is unaffected.
+	// Set PERF_REPLAY_WRAP_COUNT>1 to replay the window repeatedly, which is what a
+	// demo-length run needs — without it the test finishes and the load simply stops.
+	replayCfg := replayConfig{windowSize: 1000000}
+	if wrapCountStr := os.Getenv("PERF_REPLAY_WRAP_COUNT"); wrapCountStr != "" {
+		var wrapCount int64
+		_, err := fmt.Sscanf(wrapCountStr, "%d", &wrapCount)
+		assert.NoError(t, err, "PERF_REPLAY_WRAP_COUNT must be a valid integer")
+		assert.True(t, wrapCount >= 1, "PERF_REPLAY_WRAP_COUNT must be >= 1")
+		if wrapCount > 1 {
+			replayCfg.wrapAround = true
+			replayCfg.wrapCount = wrapCount
+		}
+	}
+
+	throughput, failedTxs, totalTxs, invalidRate, conflictRate := runReplayTest(t, processingWorkerCount, submittingWorkerCount, ordererSubmitterCount, numOutstandingTx, replayCfg, *gatewayConfig)
 
 	// Machine-readable summary parsed by CI to post on the PR.
 	// Format: PERF RESULT throughput=<tx/s> invalid_rate=<0.NNN> conflict_rate=<0.NNN>
