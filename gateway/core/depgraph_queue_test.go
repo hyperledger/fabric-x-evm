@@ -478,5 +478,13 @@ func TestDepGraphQueue_AdmittedChannelFullPanics(t *testing.T) {
 // released transaction is never found again.
 func TestDepGraphQueue_TxRefIDRoundTrips(t *testing.T) {
 	hash := txWithNonce(7).Hash()
-	require.Equal(t, hash, hashFromTxRefID(txRefID(hash)))
+	got, ok := hashFromTxRefID(txRefID(hash))
+	require.True(t, ok)
+	require.Equal(t, hash, got)
+
+	// common.HexToHash would return a hash for each of these rather than fail.
+	for _, bad := range []string{"", "0x", hash.Hex()[:40], "tx-id-1", hash.Hex() + "00"} {
+		_, ok := hashFromTxRefID(bad)
+		require.False(t, ok, "must reject %q", bad)
+	}
 }

@@ -8,6 +8,7 @@ package core
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -44,12 +45,27 @@ const (
 	defaultBatchTimeout   = 10 * time.Millisecond
 )
 
-// txRefID is the id the manager knows a transaction by: its Ethereum hash, in
-// hex. hashFromTxRefID reverses it. The manager echoes the id back on release
-// and that is how markReady finds the transaction again, so the two must stay
-// in step - there is no Fabric transaction id involved anywhere here.
-func txRefID(hash common.Hash) string       { return hash.Hex() }
-func hashFromTxRefID(id string) common.Hash { return common.HexToHash(id) }
+// txRefID is the id the manager knows a transaction by. TxRef.TxId is a plain
+// string the manager never interprets, so this queue puts the Ethereum hash
+// there and gets the same bytes back on release. No Fabric transaction id is
+// involved on either side.
+func txRefID(hash common.Hash) string { return hash.Hex() }
+
+// hashFromTxRefID reverses txRefID, reporting whether the id was one this queue
+// produced. The check is not decoration: common.HexToHash truncates or pads
+// anything malformed and returns a hash rather than an error, so without it an
+// unexpected id would silently become the zero hash and the transaction would
+// look untracked.
+func hashFromTxRefID(id string) (common.Hash, bool) {
+	if len(id) != 2+2*common.HashLength || id[:2] != "0x" {
+		return common.Hash{}, false
+	}
+	raw, err := hex.DecodeString(id[2:])
+	if err != nil {
+		return common.Hash{}, false
+	}
+	return common.BytesToHash(raw), true
+}
 
 // txEndorser produces the read-write set the manager schedules on.
 type txEndorser interface {
@@ -76,8 +92,7 @@ type trackedTx struct {
 //
 // Fabric-X only. The manager schedules on applicationpb namespaces, which is
 // what a fabric-x endorsement carries; a classic Fabric endorsement carries a
-// different message entirely. Bind rejects that rather than letting it fail
-// per transaction at runtime.
+// different message entirely, which submitToManager rejects.
 //
 // Persistence: in-memory only, like the queues it replaces.
 type DepGraphQueue struct {
@@ -304,7 +319,14 @@ func (q *DepGraphQueue) markReady(nodes dependencygraph.TxNodeBatch) {
 	defer q.mu.Unlock()
 
 	for _, node := range nodes {
-		hash := hashFromTxRefID(node.VerifierTx.GetRef().GetTxId())
+		id := node.VerifierTx.GetRef().GetTxId()
+		hash, ok := hashFromTxRefID(id)
+		if !ok {
+			// Only this queue sets TxId, so anything else means the manager and
+			// the queue disagree about the reference. Loud for the prototype;
+			// see #386.
+			panic(fmt.Sprintf("dependency manager queue: unrecognised tx ref %q", id))
+		}
 		t, tracked := q.tracked[hash]
 		if !tracked {
 			continue
