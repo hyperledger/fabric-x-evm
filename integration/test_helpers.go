@@ -29,6 +29,7 @@ import (
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/msp"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
+	fxsigner "github.com/hyperledger/fabric-x-common/cmd/common/signer"
 	"github.com/hyperledger/fabric-x-common/protoutil"
 	"github.com/hyperledger/fabric-x-evm/common"
 	eapi "github.com/hyperledger/fabric-x-evm/endorser/api"
@@ -593,6 +594,66 @@ func NewFabricXTestHarnessWithNotifications(t *testing.T, logger sdk.Logger, evm
 	return th, nil
 }
 
+// fabricXSignerWrapper wraps a fabric-x-common signer so that Serialize returns only
+// the ID (hash) of the signing cert instead of the full cert.
+//
+// The serialized identity is computed once, in newIDOfCertSigner, and cached:
+// SerializeWithIDOfCert re-decodes the PEM, re-parses the x509 certificate and re-hashes
+// it on every call, and the SDK calls Serialize once per endorsement. Doing that per
+// transaction would add work to the very hot path this wrapper exists to shrink. The
+// identity is constant for the signer's lifetime, so caching it is safe.
+type fabricXSignerWrapper struct {
+	*fxsigner.Signer
+	identity []byte
+}
+
+// Serialize returns the cached ID-of-cert identity. It returns a copy so callers cannot
+// mutate the shared buffer.
+func (w *fabricXSignerWrapper) Serialize() ([]byte, error) {
+	out := make([]byte, len(w.identity))
+	copy(out, w.identity)
+	return out, nil
+}
+
+// newIDOfCertSigner builds a fabric-x-common signer from cfg's MSP directory and wraps it
+// so that Serialize emits only the cert ID.
+func newIDOfCertSigner(t *testing.T, cfg econf.Endorser) sdk.Signer {
+	t.Helper()
+
+	keyFiles, err := filepath.Glob(filepath.Join(cfg.Identity.MSPDir, "keystore", "*_sk"))
+	if err != nil || len(keyFiles) == 0 {
+		keyFiles, err = filepath.Glob(filepath.Join(cfg.Identity.MSPDir, "keystore", "*.pem"))
+	}
+	if err != nil || len(keyFiles) == 0 {
+		t.Fatalf("no private key found in %s/keystore", cfg.Identity.MSPDir)
+	}
+
+	certFiles, err := filepath.Glob(filepath.Join(cfg.Identity.MSPDir, "signcerts", "*.pem"))
+	if err != nil || len(certFiles) == 0 {
+		t.Fatalf("no signcert found in %s/signcerts", cfg.Identity.MSPDir)
+	}
+
+	fxSigner, err := fxsigner.NewSigner(fxsigner.Config{
+		MSPID:        cfg.Identity.MspID,
+		IdentityPath: certFiles[0],
+		KeyPath:      keyFiles[0],
+		// Must equal bccsp.SHA256, and must match the hash the committer uses to
+		// index endorser certs. There is no config plumbing for this today.
+		HashFunc: "SHA256",
+	})
+	if err != nil {
+		t.Fatalf("NewSigner: %v", err)
+	}
+
+	// Compute the ID-of-cert identity once; see fabricXSignerWrapper.
+	serializedIdentity, err := fxSigner.SerializeWithIDOfCert()
+	if err != nil {
+		t.Fatalf("SerializeWithIDOfCert: %v", err)
+	}
+
+	return &fabricXSignerWrapper{Signer: fxSigner, identity: serializedIdentity}
+}
+
 // NewEndorser creates a sync-less endorser with its dependencies, for use under the
 // harness's single gateway-level synchronizer topology (see buildTestHarnessWithExtraHandler).
 // Exported for use by custom endorser factories.
@@ -604,9 +665,25 @@ func NewEndorser(t *testing.T, cfg econf.Endorser, channel, namespace string, ev
 		signer = &localSigner{}
 	} else {
 		var err error
-		signer, err = identity.SignerFromMSP(cfg.Identity.MSPDir, cfg.Identity.MspID)
-		if err != nil {
-			t.Fatalf("SignerFromMSP: %v", err)
+		// Normalize first: NewEndorserCore treats an empty protocol as Fabric-X
+		// (common.NormalizeProtocol), so comparing the raw string would leave the
+		// endorser building Fabric-X endorsements with a full-cert signer.
+		normProtocol, nerr := common.NormalizeProtocol(protocol)
+		if nerr != nil {
+			t.Fatalf("NormalizeProtocol(%q): %v", protocol, nerr)
+		}
+
+		if normProtocol == common.ProtocolFabricX {
+			// Fabric-X serialises the endorser identity into every endorsement. Sending
+			// only the ID (hash) of the signing cert instead of the whole cert shrinks
+			// each endorsement. Ported from 8ca7627 ("Only serialise hash of endorser")
+			// on the noendorser branch.
+			signer = newIDOfCertSigner(t, cfg)
+		} else {
+			signer, err = identity.SignerFromMSP(cfg.Identity.MSPDir, cfg.Identity.MspID)
+			if err != nil {
+				t.Fatalf("SignerFromMSP: %v", err)
+			}
 		}
 	}
 
