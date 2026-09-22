@@ -65,14 +65,15 @@ jobs:
             if (!resultLine || resultLine === 'NO_RESULT') {
               body = `${marker}\n### ⚠️ Perf Smoke — no result recorded\n\nThe test may have failed before producing output. Check the [workflow run](${runUrl}) for details.\n`;
             } else {
-              const get = (key) => { const m = resultLine.match(new RegExp(key + '=([0-9.]+)')); return m ? m[1] : 'n/a'; };
+              const get = (key) => { const m = resultLine.match(new RegExp('(?:^|\\s)' + key + '=([0-9.]+)')); return m ? m[1] : 'n/a'; };
               body = [
                 marker,
                 '### **Perf Smoke — CI baseline (lower-bound against test committer)**',
                 '',
                 '| Metric | Value |',
                 '|--------|-------|',
-                `| Throughput | ${get('throughput')} tx/s |`,
+                `| Goodput (committed) | ${get('goodput')} tx/s |`,
+                `| Throughput (attempted) | ${get('throughput')} tx/s |`,
                 `| Invalid rate | ${get('invalid_rate')} |`,
                 `| Conflict rate | ${get('conflict_rate')} |`,
                 '',
