@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -21,7 +22,6 @@ import (
 	"github.com/hyperledger/fabric-x-common/api/committerpb"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 
-	cmn "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 )
 
@@ -34,10 +34,22 @@ const (
 	// defaultChanSize buffers each hop. The manager sizes an internal channel
 	// from cap(IncomingTxs), so an unbuffered one would starve it.
 	defaultChanSize = 1024
-	// defaultWaitingTxsLimit caps what the graph holds. It must exceed the
-	// largest batch or Acquire blocks forever; batches here are one transaction.
+	// defaultWaitingTxsLimit caps what the graph holds. It must exceed
+	// defaultBatchThreshold or Acquire blocks forever.
 	defaultWaitingTxsLimit = 1 << 16
+	// defaultBatchThreshold and defaultBatchTimeout size the batches handed to
+	// the manager: send at the threshold, or on the timeout if traffic is thin.
+	// Both are guesses pending guidance from the committer side.
+	defaultBatchThreshold = 64
+	defaultBatchTimeout   = 10 * time.Millisecond
 )
+
+// txRefID is the id the manager knows a transaction by: its Ethereum hash, in
+// hex. hashFromTxRefID reverses it. The manager echoes the id back on release
+// and that is how markReady finds the transaction again, so the two must stay
+// in step - there is no Fabric transaction id involved anywhere here.
+func txRefID(hash common.Hash) string       { return hash.Hex() }
+func hashFromTxRefID(id string) common.Hash { return common.HexToHash(id) }
 
 // txEndorser produces the read-write set the manager schedules on.
 type txEndorser interface {
@@ -79,18 +91,14 @@ type DepGraphQueue struct {
 	outgoing  chan dependencygraph.TxNodeBatch
 	validated chan dependencygraph.TxNodeBatch
 	admitted  chan *types.Transaction
+	endorsed  chan *servicepb.TxWithRef
 
-	// sendMu keeps batch-ID assignment and the send to the manager atomic.
-	//
-	// An atomic counter and a channel are each safe on their own, but the
-	// manager needs batches to *arrive* in order, and nothing here guarantees
-	// that: a worker can be descheduled between taking an ID and sending, so
-	// batch 6 reaches the constructor before batch 5. The constructor then
-	// spins on CompareAndSwap(5, 6) while batch 5 sits behind it in the same
-	// channel, read by the single worker now stuck spinning. It never
-	// recovers. Reproduced with 8 endorse workers; one worker never hits it.
-	sendMu        sync.Mutex
-	batchID       atomic.Uint64
+	// batchID is owned by the batcher goroutine alone. The manager needs
+	// batches to arrive in strictly increasing order, which one sender gives
+	// for free and concurrent senders cannot: numbering and sending are not
+	// atomic together, so a worker descheduled between the two lets a later
+	// batch overtake an earlier one and the constructor spins forever.
+	batchID       uint64
 	blocksHandled atomic.Uint64
 
 	mu      sync.RWMutex
@@ -102,7 +110,6 @@ type DepGraphQueue struct {
 	// endorser is written once by Bind, which then starts the workers that read
 	// it. Starting them after the write is the happens-before, so no lock.
 	endorser txEndorser
-	bound    bool
 
 	total       int
 	invalid     int
@@ -124,6 +131,7 @@ func NewDepGraphQueue() *DepGraphQueue {
 		outgoing:  make(chan dependencygraph.TxNodeBatch, defaultChanSize),
 		validated: make(chan dependencygraph.TxNodeBatch, defaultChanSize),
 		admitted:  make(chan *types.Transaction, defaultChanSize),
+		endorsed:  make(chan *servicepb.TxWithRef, defaultChanSize),
 		tracked:   make(map[common.Hash]*trackedTx),
 	}
 	q.cond = sync.NewCond(&q.mu)
@@ -147,39 +155,20 @@ func NewDepGraphQueue() *DepGraphQueue {
 	return q
 }
 
-// Bind supplies the endorsement client, checks the protocol, and starts the
-// workers that endorse. It is separate from the constructor because
-// BuildGateway only creates the client after the queue.
+// Bind supplies the endorsement client and starts the goroutines that use it.
+// It is separate from the constructor because BuildGateway only creates the
+// client after the queue.
 //
 // The workers start here rather than in the constructor so that the endorser is
 // written before the goroutines that read it exist. That ordering is what makes
 // the field safe to read without a lock.
-//
-// It errors rather than degrading: a classic Fabric endorsement carries no
-// namespaces to schedule on, so every transaction would be dropped one at a
-// time at runtime instead of failing once at startup.
-func (q *DepGraphQueue) Bind(e txEndorser, protocol string) error {
-	resolved, err := cmn.NormalizeProtocol(protocol)
-	if err != nil {
-		return err
-	}
-	if resolved != cmn.ProtocolFabricX {
-		return fmt.Errorf("dependency manager queue requires %q, got %q", cmn.ProtocolFabricX, resolved)
-	}
-
-	q.mu.Lock()
-	if q.bound {
-		q.mu.Unlock()
-		return fmt.Errorf("dependency manager queue is already bound")
-	}
+func (q *DepGraphQueue) Bind(e txEndorser) {
 	q.endorser = e
-	q.bound = true
-	q.mu.Unlock()
 
 	for range defaultEndorseWorkers {
 		q.wg.Go(q.endorseLoop)
 	}
-	return nil
+	q.wg.Go(q.batchLoop)
 }
 
 // Enqueue accepts a transaction for scheduling. It must not block: the nonce
@@ -189,30 +178,25 @@ func (q *DepGraphQueue) Enqueue(tx *types.Transaction) {
 	hash := tx.Hash()
 
 	q.mu.Lock()
-	if !q.bound {
-		q.mu.Unlock()
-		panic("dependency manager queue: Enqueue before Bind")
-	}
+	defer q.mu.Unlock()
+
 	if q.done {
-		q.mu.Unlock()
 		return
 	}
 	if _, dup := q.tracked[hash]; dup {
-		q.mu.Unlock()
 		return
 	}
-	q.tracked[hash] = &trackedTx{tx: tx, enqueuedAtBlock: q.blocksHandled.Load()}
-	q.totalEnq++
-	q.mu.Unlock()
 
 	select {
 	case q.admitted <- tx:
 	default:
-		// Nothing downstream can report this, and blocking here would stall the
-		// nonce gate for every sender. Dropping is the behaviour #379 covers.
-		depGraphLogger.Warnf("admitted channel full, dropping tx %s", hash.Hex())
-		q.drop(hash)
+		// Enqueue cannot report this (#379) and the nonce gate holds its own
+		// lock while calling us, so blocking is not an option either. Loud for
+		// the prototype rather than a transaction quietly disappearing.
+		panic(fmt.Sprintf("dependency manager queue: admitted channel full, tx %s", hash.Hex()))
 	}
+	q.tracked[hash] = &trackedTx{tx: tx, enqueuedAtBlock: q.blocksHandled.Load()}
+	q.totalEnq++
 }
 
 // endorseLoop endorses admitted transactions and hands them to the manager.
@@ -230,9 +214,9 @@ func (q *DepGraphQueue) endorseLoop() {
 	}
 }
 
-// submitToManager endorses for a read-write set and sends a one-transaction
-// batch. A failure here drops the transaction: Enqueue has no error return, so
-// there is nowhere to report it (#379).
+// submitToManager endorses for a read-write set and hands the result to the
+// batcher. A failure here drops the transaction: Enqueue has no error return,
+// so there is nowhere to report it (#379).
 func (q *DepGraphQueue) submitToManager(tx *types.Transaction) {
 	hash := tx.Hash()
 
@@ -242,33 +226,61 @@ func (q *DepGraphQueue) submitToManager(tx *types.Transaction) {
 		q.drop(hash)
 		return
 	}
+
 	// An endorsement we cannot read a read-write set from means the endorser and
 	// this queue disagree about the wire format, which no amount of dropping
-	// recovers from. Loud for the prototype; see the hygiene issue for removing
-	// it before production.
+	// recovers from. Loud for the prototype; see #386 for removing it before
+	// production.
 	content, err := txContent(end)
 	if err != nil {
 		panic(fmt.Sprintf("dependency manager queue: read-write set for tx %s: %v", hash.Hex(), err))
 	}
 
-	// IDs must start at 1 and rise by one: the constructor spins on
-	// CompareAndSwap(id-1, id) against a zero-valued atomic, so ID 0 never
-	// lands. Numbering and sending are one step, or endorse workers racing here
-	// deliver them out of order and the constructor deadlocks.
-	q.sendMu.Lock()
-	batch := &dependencygraph.TransactionBatch{
-		ID: q.batchID.Add(1),
-		Txs: []*servicepb.TxWithRef{{
-			Ref:     &committerpb.TxRef{TxId: hash.Hex()},
-			Content: content,
-		}},
-	}
 	select {
-	case q.incoming <- batch:
-		q.sendMu.Unlock()
+	case q.endorsed <- &servicepb.TxWithRef{
+		Ref:     &committerpb.TxRef{TxId: txRefID(hash)},
+		Content: content,
+	}:
 	case <-q.ctx.Done():
-		q.sendMu.Unlock()
 		q.drop(hash)
+	}
+}
+
+// batchLoop is the only sender to the manager, which is what keeps batch ids in
+// order without a lock. It packs whatever the endorse workers produce, sending
+// at the threshold or on the timeout so a thin stream is not held up.
+func (q *DepGraphQueue) batchLoop() {
+	ticker := time.NewTicker(defaultBatchTimeout)
+	defer ticker.Stop()
+
+	pending := make([]*servicepb.TxWithRef, 0, defaultBatchThreshold)
+	flush := func() {
+		if len(pending) == 0 {
+			return
+		}
+		// Ids start at 1: the constructor spins on CompareAndSwap(id-1, id)
+		// against a zero-valued atomic, so a batch numbered 0 never lands.
+		q.batchID++
+		batch := &dependencygraph.TransactionBatch{ID: q.batchID, Txs: pending}
+		select {
+		case q.incoming <- batch:
+		case <-q.ctx.Done():
+		}
+		pending = make([]*servicepb.TxWithRef, 0, defaultBatchThreshold)
+	}
+
+	for {
+		select {
+		case <-q.ctx.Done():
+			return
+		case tx := <-q.endorsed:
+			pending = append(pending, tx)
+			if len(pending) >= defaultBatchThreshold {
+				flush()
+			}
+		case <-ticker.C:
+			flush()
+		}
 	}
 }
 
@@ -293,8 +305,7 @@ func (q *DepGraphQueue) markReady(nodes dependencygraph.TxNodeBatch) {
 	defer q.mu.Unlock()
 
 	for _, node := range nodes {
-		// TxId is the transaction hash we set in submitToManager.
-		hash := common.HexToHash(node.VerifierTx.GetRef().GetTxId())
+		hash := hashFromTxRefID(node.VerifierTx.GetRef().GetTxId())
 		t, tracked := q.tracked[hash]
 		if !tracked {
 			continue

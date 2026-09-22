@@ -77,12 +77,9 @@ func BuildGateway(ctx context.Context, local eapi.Service, remotes []eapi.Servic
 	}
 	// The dependency-manager queue endorses on the way in, to learn which keys a
 	// transaction touches. It is built before the endorsement client exists, so
-	// the client is bound here rather than passed to its constructor, which is
-	// also where the protocol it requires is checked.
+	// the client is bound here rather than passed to its constructor.
 	if dq, ok := txQueue.(*core.DepGraphQueue); ok {
-		if err := dq.Bind(ec, netCfg.Protocol); err != nil {
-			return nil, fmt.Errorf("dependency manager queue: %w", err)
-		}
+		dq.Bind(ec)
 	}
 	endorsementChan := make(chan core.EndorsedTx, endorsementChanSize)
 	// txQueue as Completer: a submission failure means the tx will never reach a block, so

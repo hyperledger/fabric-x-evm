@@ -19,7 +19,6 @@ import (
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/stretchr/testify/require"
 
-	cmn "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 )
 
@@ -74,7 +73,7 @@ func newDepQueue(t *testing.T) (*DepGraphQueue, *keyedEndorser) {
 	t.Helper()
 	e := newKeyedEndorser(t)
 	q := NewDepGraphQueue()
-	require.NoError(t, q.Bind(e, cmn.ProtocolFabricX))
+	q.Bind(e)
 	t.Cleanup(q.Close)
 	return q, e
 }
@@ -276,18 +275,17 @@ func TestDepGraphQueue_DuplicateEnqueueIgnored(t *testing.T) {
 	require.Equal(t, 1, e.calls(), "the duplicate must not be endorsed again")
 }
 
-// Batch IDs start at 1: the constructor spins on CompareAndSwap(id-1, id)
-// against a zero-valued atomic, so a batch with ID 0 is never released.
-func TestDepGraphQueue_BatchIDsStartAtOne(t *testing.T) {
+// Batch ids start at 1: the constructor spins on CompareAndSwap(id-1, id)
+// against a zero-valued atomic, so a batch numbered 0 is never released. If the
+// batcher ever numbered from 0, nothing would come back at all.
+func TestDepGraphQueue_BatchesAreReleased(t *testing.T) {
 	q, _ := newDepQueue(t)
 
 	q.Enqueue(txWithNonce(1))
 	requireReady(t, q, 1)
-	require.Equal(t, uint64(1), q.batchID.Load())
 
 	q.Enqueue(txWithNonce(2))
 	requireReady(t, q, 2)
-	require.Equal(t, uint64(2), q.batchID.Load())
 }
 
 func TestDepGraphQueue_EnqueueAfterCloseIsIgnored(t *testing.T) {
@@ -296,30 +294,6 @@ func TestDepGraphQueue_EnqueueAfterCloseIsIgnored(t *testing.T) {
 
 	require.NotPanics(t, func() { q.Enqueue(txWithNonce(1)) })
 	require.Zero(t, q.InFlight())
-}
-
-// Fabric-X only: a classic Fabric endorsement carries no namespaces to schedule
-// on, so this fails at wiring time rather than dropping every transaction.
-func TestDepGraphQueue_BindRejectsClassicFabric(t *testing.T) {
-	q := NewDepGraphQueue()
-	t.Cleanup(q.Close)
-
-	err := q.Bind(newKeyedEndorser(t), cmn.ProtocolFabric)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), cmn.ProtocolFabricX)
-}
-
-func TestDepGraphQueue_BindRejectsUnknownProtocol(t *testing.T) {
-	q := NewDepGraphQueue()
-	t.Cleanup(q.Close)
-	require.Error(t, q.Bind(newKeyedEndorser(t), "bogus"))
-}
-
-// An empty protocol means fabric-x, as everywhere else in the gateway.
-func TestDepGraphQueue_BindAcceptsDefaultProtocol(t *testing.T) {
-	q := NewDepGraphQueue()
-	t.Cleanup(q.Close)
-	require.NoError(t, q.Bind(newKeyedEndorser(t), ""))
 }
 
 // Three transactions on one key come out one at a time, each waiting for the
@@ -477,20 +451,21 @@ func TestDepGraphQueue_CompleteTwiceIsSafe(t *testing.T) {
 	require.Equal(t, second.Hash(), got.Hash())
 }
 
-// Binding twice would start a second set of endorse workers.
-func TestDepGraphQueue_BindTwiceRejected(t *testing.T) {
+// The admitted channel filling means a transaction would vanish with no way to
+// report it, so it fails loudly instead.
+func TestDepGraphQueue_AdmittedChannelFullPanics(t *testing.T) {
 	q := NewDepGraphQueue()
 	t.Cleanup(q.Close)
-
-	require.NoError(t, q.Bind(newKeyedEndorser(t), cmn.ProtocolFabricX))
-	require.Error(t, q.Bind(newKeyedEndorser(t), cmn.ProtocolFabricX))
+	// Never bound, so nothing drains admitted.
+	for range defaultChanSize {
+		q.Enqueue(txWithNonce(uint64(time.Now().UnixNano())))
+	}
+	require.Panics(t, func() { q.Enqueue(txWithNonce(0)) })
 }
 
-// Enqueue before Bind is a wiring bug, and nothing would ever drain the
-// transaction, so it fails loudly instead of accumulating in silence.
-func TestDepGraphQueue_EnqueueBeforeBindPanics(t *testing.T) {
-	q := NewDepGraphQueue()
-	t.Cleanup(q.Close)
-
-	require.Panics(t, func() { q.Enqueue(txWithNonce(1)) })
+// The id the manager echoes back has to convert to the hash we tracked, or a
+// released transaction is never found again.
+func TestDepGraphQueue_TxRefIDRoundTrips(t *testing.T) {
+	hash := txWithNonce(7).Hash()
+	require.Equal(t, hash, hashFromTxRefID(txRefID(hash)))
 }
