@@ -65,7 +65,7 @@ func NewBalancePrimingExecutor(
 		return nil, err
 	}
 
-	stateDB, err := execution.NewStateDB(context.TODO(), reader, namespace, 0, monotonicVersions)
+	stateDB, err := execution.NewStateDB(context.TODO(), reader, namespace, monotonicVersions)
 	if err != nil {
 		reader.Close()
 		return nil, err

@@ -33,6 +33,9 @@ func NewServer(b Backend, filterAPI *filters.FilterAPI) (*rpc.Server, error) {
 		if err := srv.RegisterName("eth", filterAPI); err != nil {
 			return nil, err
 		}
+		if err := srv.RegisterName("eth", NewHeadsAPI(filterAPI)); err != nil {
+			return nil, err
+		}
 	}
 
 	chainID, err := b.ChainID(context.TODO())
@@ -54,10 +57,13 @@ func NewServer(b Backend, filterAPI *filters.FilterAPI) (*rpc.Server, error) {
 // go to srv.WebsocketHandler (nil origins = geth default handshake checks);
 // everything else uses the HTTP stack. Logging wraps the HTTP path only so WS
 // upgrades can Hijack the connection.
-func NewHTTPServer(srv *rpc.Server, addr string) *http.Server {
-	// nil cors disables the CORS middleware; nil vhosts still allows IP Hosts
-	// (127.0.0.1 etc.) via geth's virtualHostHandler.
-	httpHandler := node.NewHTTPHandlerStack(srv, nil, nil, nil)
+//
+// vhosts is the Host-header allowlist checked by geth's virtualHostHandler
+// (see config.Gateway.VHosts); IP Hosts (127.0.0.1 etc.) are always allowed
+// regardless of its contents.
+func NewHTTPServer(srv *rpc.Server, addr string, vhosts []string) *http.Server {
+	// nil cors disables the CORS middleware.
+	httpHandler := node.NewHTTPHandlerStack(srv, nil, vhosts, nil)
 	return &http.Server{
 		Addr: addr,
 		Handler: &rpcTransportHandler{

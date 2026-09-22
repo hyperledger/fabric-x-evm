@@ -11,6 +11,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hyperledger/fabric-x-committer/utils/connection"
+	"github.com/hyperledger/fabric-x-committer/utils/serve"
+
 	"github.com/hyperledger/fabric-x-evm/common"
 	endorsercfg "github.com/hyperledger/fabric-x-evm/endorser/config"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
@@ -53,7 +56,7 @@ func validConfig(t *testing.T) config.Config {
 	return config.Config{
 		Network:   common.Network{Channel: "mychannel", Namespace: "basic"},
 		Committer: client,
-		Gateway: config.Gateway{
+		Gateway: &config.Gateway{
 			Listen:   "0.0.0.0:8545",
 			Identity: identity,
 			Database: config.DB{ConnString: "file:gw.db"},
@@ -89,24 +92,30 @@ func TestConfigValidate(t *testing.T) {
 		{"no orderers", func(c *config.Config) { c.Gateway.Orderers = nil }, "gateway.orderers"},
 		{"orderer nil endpoint", func(c *config.Config) { c.Gateway.Orderers[0].Endpoint = nil }, "endpoint"},
 		{"orderer missing ca cert", func(c *config.Config) { c.Gateway.Orderers[0].TLS.CACertPaths = []string{"/no/ca"} }, "tls.ca-cert-paths"},
-		{"neither endorser nor gateway.endorsers", func(c *config.Config) { c.Endorser = nil }, "one of endorser or gateway.endorsers"},
+		{"gateway requires endorser", func(c *config.Config) { c.Endorser = nil }, "endorser is required when gateway is present"},
 		{"endorser missing name", func(c *config.Config) { c.Endorser.Name = "" }, "name"},
 		{"endorser missing msp-dir", func(c *config.Config) { c.Endorser.Identity.MSPDir = "" }, "msp-dir"},
 		{"endorser missing db", func(c *config.Config) {
 			c.Endorser.Database.ConnString = ""
 			c.Endorser.Database.Database = ""
 		}, "database"},
-		{"split mode: gateway.endorsers set, no embedded endorser is fine", func(c *config.Config) {
+		{"gateway.endorsers alongside the always-present embedded endorser is fine", func(c *config.Config) {
 			c.Gateway.Endorsers = []common.ClientConfig{c.Committer}
-			c.Endorser = nil
 		}, ""},
-		{"split mode: invalid gateway.endorsers entry reported", func(c *config.Config) {
+		{"invalid gateway.endorsers entry reported", func(c *config.Config) {
 			c.Gateway.Endorsers = []common.ClientConfig{{}}
-			c.Endorser = nil
 		}, "gateway.endorsers[0]"},
-		{"both endorser and gateway.endorsers set", func(c *config.Config) {
-			c.Gateway.Endorsers = []common.ClientConfig{c.Committer}
-		}, "mutually exclusive"},
+		{"standalone endorser: no gateway, server set is valid", func(c *config.Config) {
+			c.Gateway = nil
+			c.Endorser.Server = &serve.ServerConfig{Endpoint: connection.Endpoint{Host: "127.0.0.1", Port: 9001}}
+		}, ""},
+		{"standalone endorser: no gateway, no server is rejected", func(c *config.Config) {
+			c.Gateway = nil
+		}, "endorser.server is required"},
+		{"neither gateway nor endorser", func(c *config.Config) {
+			c.Gateway = nil
+			c.Endorser = nil
+		}, "one of gateway or endorser is required"},
 	}
 
 	for _, tt := range tests {

@@ -126,7 +126,7 @@ func snapshotDB(t *testing.T, backend *state.VersionedDB, blockNum uint64) *Stat
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { snapshot.Close() })
-	stateDB, err := NewStateDB(t.Context(), snapshot, Namespace, blockNum, false)
+	stateDB, err := NewStateDB(t.Context(), snapshot, Namespace, false)
 	if err != nil {
 		t.Fatal(err)
 	}

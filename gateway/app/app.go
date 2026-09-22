@@ -8,9 +8,9 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/ethereum/go-ethereum/rpc"
@@ -28,6 +28,7 @@ import (
 	eapp "github.com/hyperledger/fabric-x-evm/endorser/app"
 	eclient "github.com/hyperledger/fabric-x-evm/endorser/client"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
+	eserver "github.com/hyperledger/fabric-x-evm/endorser/server"
 	estorage "github.com/hyperledger/fabric-x-evm/endorser/storage"
 	"github.com/hyperledger/fabric-x-evm/gateway/api"
 	"github.com/hyperledger/fabric-x-evm/gateway/api/filters"
@@ -36,6 +37,7 @@ import (
 	"github.com/hyperledger/fabric-x-evm/gateway/storage"
 	"github.com/hyperledger/fabric-x-evm/gateway/testimpl"
 	"github.com/hyperledger/fabric-x-evm/gateway/testimpl/primer"
+	"github.com/hyperledger/fabric-x-evm/synchronizer"
 )
 
 var appLogger = flogging.MustGetLogger("gateway.app")
@@ -43,8 +45,9 @@ var appLogger = flogging.MustGetLogger("gateway.app")
 // App represents the gateway application with all its components.
 type App struct {
 	cfg           config.Config
-	endorserConns []*eclient.Client // set only in split deployment; closed on Shutdown
-	synchronizer  Synchronizer
+	localEndorser eapi.Service      // this org's own endorser, called in-process
+	endorserConns []*eclient.Client // dialed remotes (other orgs); closed on Shutdown
+	synchronizer  synchronizer.Synchronizer
 	gateway       *core.Gateway
 	chain         *core.Chain
 	filterAPI     *filters.FilterAPI
@@ -91,28 +94,37 @@ func NewTestNodeWithConfig(ctx context.Context, cfg config.Config, testAccountsP
 }
 
 func newApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, enableTestRPC bool, testAccountsPath string) (*App, error) {
-	logger := sdk.NewStdLogger("gateway")
-
-	if len(cfg.Gateway.Endorsers) > 0 {
-		if enableTestRPC {
-			return nil, fmt.Errorf("test RPC is not supported with split deployment (gateway.endorsers configured)")
-		}
-		return newSplitApp(ctx, cfg, gwSigner, logger)
-	}
+	logger := flogging.MustGetLogger("gateway")
 
 	if cfg.Endorser == nil {
-		return nil, fmt.Errorf("one of endorser or gateway.endorsers is required")
+		return nil, fmt.Errorf("endorser is required when gateway is present")
 	}
+
+	// gateway.endorsers additional remotes (other orgs), dialed over gRPC.
+	// Dialed first: it's cheap and lazy (no live server needed to construct
+	// successfully), so a bad remote address fails fast, before the heavier
+	// local endorser construction (MSP signer, on-disk KVS).
+	conns := make([]*eclient.Client, 0, len(cfg.Gateway.Endorsers))
+	closeAll := func() {
+		for _, c := range conns {
+			_ = c.Close()
+		}
+	}
+	remotes := make([]eapi.Service, 0, len(cfg.Gateway.Endorsers))
+	for i, rcfg := range cfg.Gateway.Endorsers {
+		cl, err := eclient.Dial(rcfg)
+		if err != nil {
+			closeAll()
+			return nil, fmt.Errorf("dial endorser %d: %w", i, err)
+		}
+		conns = append(conns, cl)
+		remotes = append(remotes, cl)
+	}
+
 	ecfg := *cfg.Endorser
-	// Test RPC needs a large sequential history window (see testnode); production
-	// only needs a couple of snapshots for the synchronizer.
-	if enableTestRPC {
-		ecfg.Database.HistorySize = 16384
-	} else if ecfg.Database.HistorySize == 0 {
-		ecfg.Database.HistorySize = 2
-	}
 	eSigner, err := identity.SignerFromMSP(ecfg.Identity.MSPDir, ecfg.Identity.MspID)
 	if err != nil {
+		closeAll()
 		return nil, fmt.Errorf("failed to create signer: %w", err)
 	}
 
@@ -123,6 +135,7 @@ func newApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, enableT
 	}
 	end, kvs, builder, err := eapp.NewEndorserCore(ecfg.Database, cfg.Network.Channel, cfg.Network.Namespace, cfg.Network.Protocol, eSigner, evmConfig, enableTestRPC, ecfg)
 	if err != nil {
+		closeAll()
 		return nil, fmt.Errorf("endorser (%s): %w", ecfg.Name, err)
 	}
 
@@ -133,36 +146,7 @@ func newApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, enableT
 		test = &testRPCDeps{kvs: kvs, builders: []endorsement.Builder{builder}, accountsPath: testAccountsPath}
 	}
 
-	return buildApp(ctx, cfg, gwSigner, logger, []eapi.Service{end}, test, kvs)
-}
-
-// newSplitApp builds the gateway in split-deployment mode: every endorsers is
-// dialed over gRPC (co-located ones on localhost, remote ones on their configured address)
-// instead of built in-process. Test RPC is never available here — newApp rejects the
-// combination before we get this far — because there is no in-process endorser KVS to
-// prime, fund or rewind.
-func newSplitApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger) (*App, error) {
-	conns := make([]*eclient.Client, 0, len(cfg.Gateway.Endorsers))
-	closeAll := func() {
-		for _, c := range conns {
-			_ = c.Close()
-		}
-	}
-	for i, ecfg := range cfg.Gateway.Endorsers {
-		cl, err := eclient.Dial(ecfg)
-		if err != nil {
-			closeAll()
-			return nil, fmt.Errorf("dial endorser %d: %w", i, err)
-		}
-		conns = append(conns, cl)
-	}
-
-	endorsers := make([]eapi.Service, len(conns))
-	for i, c := range conns {
-		endorsers[i] = c
-	}
-
-	app, err := buildApp(ctx, cfg, gwSigner, logger, endorsers, nil)
+	app, err := buildApp(ctx, cfg, gwSigner, logger, end, remotes, test, kvs)
 	if err != nil {
 		closeAll()
 		return nil, err
@@ -191,10 +175,10 @@ type testRPCDeps struct {
 	accountsPath string
 }
 
-// buildApp wires up the gateway from pre-built endorsers.
-// extraHandlers are prepended to the synchronizer handler list, ahead of chain/gateway.
-// test enables the test RPC surface; pass nil in production.
-func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, endorsers []eapi.Service, test *testRPCDeps, extraHandlers ...blocks.BlockHandler) (*App, error) {
+// buildApp wires up the gateway from a pre-built local endorser and pre-built remote
+// endorsers. extraHandlers are prepended to the synchronizer handler list, ahead of
+// chain/gateway. test enables the test RPC surface; pass nil in production.
+func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logger sdk.Logger, local eapi.Service, remotes []eapi.Service, test *testRPCDeps, extraHandlers ...blocks.BlockHandler) (*App, error) {
 	orderers := make([]network.OrdererConf, len(cfg.Gateway.Orderers))
 	for i, o := range cfg.Gateway.Orderers {
 		orderers[i] = o.ToOrdererConf()
@@ -211,27 +195,35 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 		return nil, fmt.Errorf("failed to create chain: %w", err)
 	}
 
-	var txQueue core.TxQueueInterface
+	// The test RPC's evm_revert must be able to discard the gate's cached nonces; production leaves it nil.
 	var nonceGate core.NonceSequencer
+	var testGate *testimpl.ResettableGate
 	if test != nil {
-		// The test RPC's snapshot reverts move the ledger nonce out of band, so
-		// the test backend keeps no cached nonce and parks nothing.
-		txQueue = core.NewTxQueue()
-		nonceGate = testimpl.NewPassthroughGate(txQueue)
+		testGate = testimpl.NewResettableGate()
+		nonceGate = testGate
 	}
 	// Gateway owns the BatchSubmitter and will handle its lifecycle
-	gateway, err := BuildGateway(ctx, endorsers, gwSigner, cfg.Network, chain, submitters, cfg.Gateway.SubmitterCount, cfg.Gateway.WorkerCount, txQueue, nonceGate, cfg.Gateway.EndorsementChanSize, 0)
+	gateway, err := BuildGateway(ctx, local, remotes, gwSigner, cfg.Network, chain, submitters, cfg.Gateway.SubmitterCount, cfg.Gateway.WorkerCount, nil, nonceGate, cfg.Gateway.EndorsementChanSize, 0)
 	if err != nil {
 		return nil, err
 	}
+	if testGate != nil {
+		testGate.Bind(func() core.NonceSequencer { return core.NewNonceGate(gateway) })
+	}
 
 	filterAPI := filters.NewFilterAPI(gateway)
+	ok := false
+	defer func() {
+		if !ok {
+			filterAPI.Close()
+		}
+	}()
 
 	// Chain must be called before gateway, to persist blocks before marking transactions complete.
-	handlers := append(extraHandlers, filterAPI, chain, gateway)
-	synchronizer, err := NewSynchronizer(cfg.Network.Protocol, chain, cfg.Network.Channel, cfg.Network.Namespace, cfg.Committer.ToPeerConf(), gwSigner, logger, handlers...)
+	// FilterAPI runs after chain so newHeads can load the stored block (stateRoot etc.).
+	handlers := append(extraHandlers, chain, filterAPI, gateway)
+	syncer, err := synchronizer.New(cfg.Network.Protocol, chain, cfg.Network.Channel, cfg.Network.Namespace, cfg.Committer.ToPeerConf(), gwSigner, logger, handlers...)
 	if err != nil {
-		filterAPI.Close()
 		return nil, fmt.Errorf("failed to create synchronizer: %w", err)
 	}
 
@@ -256,9 +248,8 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 		}
 		appLogger.Infof("Funded %d test accounts with %s wei each", len(testAccountMgr.Addresses), testimpl.DefaultTestAccountBalance.String())
 
-		revertibleKVS, ok := test.kvs.(estorage.Revertible)
-		if !ok {
-			filterAPI.Close()
+		revertibleKVS, okKVS := test.kvs.(estorage.Revertible)
+		if !okKVS {
 			return nil, fmt.Errorf("test RPC enabled but the endorser KVS is not Revertible")
 		}
 
@@ -284,7 +275,7 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 			return nil, fmt.Errorf("failed to create state primer: %w", err)
 		}
 
-		rpcServer, err = testimpl.NewTestServer(gateway, testAccountMgr.Addresses, testAccountMgr.PrivateKeys, revertibleKVS, snapshotStore, gateway.TxQueue, statePrimer, filterAPI)
+		rpcServer, err = testimpl.NewTestServer(gateway, testAccountMgr.Addresses, testAccountMgr.PrivateKeys, revertibleKVS, snapshotStore, gateway.TxQueue, testGate, statePrimer, filterAPI)
 		if err != nil {
 			filterAPI.Close()
 			return nil, err
@@ -298,13 +289,15 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 		}
 	}
 
+	ok = true
 	return &App{
-		cfg:          cfg,
-		synchronizer: synchronizer,
-		gateway:      gateway,
-		chain:        chain,
-		filterAPI:    filterAPI,
-		rpcServer:    rpcServer,
+		cfg:           cfg,
+		localEndorser: local,
+		synchronizer:  syncer,
+		gateway:       gateway,
+		chain:         chain,
+		filterAPI:     filterAPI,
+		rpcServer:     rpcServer,
 	}, nil
 }
 
@@ -318,7 +311,7 @@ func (a *App) Run(ctx context.Context) error {
 	g.Go(func() error { return a.synchronizer.Start(gctx) })
 
 	// Wait for initial sync before serving traffic
-	if err := WaitUntilSynced(gctx, a.synchronizer, a.cfg.Synchronizer.SyncTimeout()); err != nil {
+	if err := synchronizer.WaitUntilSynced(gctx, a.synchronizer, a.cfg.Synchronizer.SyncTimeout()); err != nil {
 		return err
 	}
 
@@ -326,8 +319,21 @@ func (a *App) Run(ctx context.Context) error {
 	appLogger.Debugf("starting gateway with %d workers", a.cfg.Gateway.WorkerCount)
 	a.gateway.Start(gctx)
 
+	// Serve this org's own endorser over gRPC when configured, so other orgs
+	// can reach it. cfg.Endorser itself is nil for the self-contained testnode
+	// which builds its endorser directly.
+	if a.cfg.Endorser != nil && a.cfg.Endorser.Server != nil {
+		g.Go(func() error {
+			return eserver.ServeEndorser(gctx, a.localEndorser, a.cfg.Endorser.Server)
+		})
+	}
+
 	// Create HTTP server before starting goroutine so Shutdown can safely read a.httpServer
-	a.httpServer = api.NewHTTPServer(a.rpcServer, a.cfg.Gateway.Listen)
+	vhosts := a.cfg.Gateway.VHosts()
+	if slices.Contains(vhosts, "*") {
+		appLogger.Warn("gateway.vhosts includes \"*\": JSON-RPC server accepts any Host header (DNS-rebinding protection disabled)")
+	}
+	a.httpServer = api.NewHTTPServer(a.rpcServer, a.cfg.Gateway.Listen, vhosts)
 	g.Go(func() error {
 		if err := a.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			return err
@@ -389,23 +395,5 @@ func (a *App) Shutdown() error {
 	}
 
 	appLogger.Debug("graceful shutdown complete")
-	return nil
-}
-
-// WaitUntilSynced blocks until sync reports Ready or timeout elapses, polling every 100ms.
-func WaitUntilSynced(ctx context.Context, sync Synchronizer, timeout time.Duration) error {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	for {
-		if err := sync.Ready(); err == nil {
-			break
-		}
-		select {
-		case <-ctx.Done():
-			return errors.New("timeout waiting for sync")
-		case <-time.After(100 * time.Millisecond):
-		}
-	}
 	return nil
 }

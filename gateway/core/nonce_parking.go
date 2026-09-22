@@ -25,6 +25,9 @@ const (
 	defaultParkedTTL          = 3 * time.Minute
 	// Cap on cached senders before LRU eviction.
 	defaultMaxSenders = 1 << 20
+	// How often the reaper prunes. Nothing else reclaims: a sender that parks
+	// behind a gap and never comes back is only ever seen again by the reaper.
+	defaultReapInterval = 30 * time.Second
 )
 
 var errTooManyParked = errors.New("too many queued (future-nonce) transactions for sender")
@@ -55,6 +58,7 @@ type nonceGate struct {
 	maxPerSender int
 	maxSenders   int
 	ttl          time.Duration
+	reapEvery    time.Duration
 	now          func() time.Time
 }
 
@@ -133,14 +137,29 @@ func (c *senderCache) lookup(from common.Address) (*senderState, bool) {
 
 func (c *senderCache) size() int { return len(c.entries) }
 
-// evictLRU drops the least-recently-seen senders that evictable admits, while the
-// cache is over max. A held entry is never dropped however the policy votes: its
-// holder is off the lock reading the store and will come back to it.
-func (c *senderCache) evictLRU(max int, evictable func(*senderState) bool) {
+// prune drops parked txs whose gap never filled within ttl, out of byHash as well,
+// then drops the least-recently-seen senders while the cache is over max. Expiry
+// runs first, so a sender whose last parked tx expires here becomes evictable in
+// the same pass.
+//
+// A sender is evictable only once it holds no parked tx and no caller holds it:
+// dropping one strands its parked txs and leaks their byHash entries, and its
+// holder is off the lock reading the store and will come back to the entry.
+// Caller holds nonceGate.mu.
+func (c *senderCache) prune(now time.Time, ttl time.Duration, max int, byHash map[common.Hash]*types.Transaction) {
+	for _, ss := range c.entries {
+		for nonce, p := range ss.parked {
+			if now.Sub(p.parkedAt) > ttl {
+				delete(ss.parked, nonce)
+				delete(byHash, p.tx.Hash())
+			}
+		}
+	}
+
 	for len(c.entries) > max {
 		var oldest *senderState
 		for _, ss := range c.entries {
-			if ss.refs > 0 || !evictable(ss) {
+			if ss.refs > 0 || len(ss.parked) > 0 {
 				continue
 			}
 			if oldest == nil || ss.lastSeen.Before(oldest.lastSeen) {
@@ -154,6 +173,10 @@ func (c *senderCache) evictLRU(max int, evictable func(*senderState) bool) {
 	}
 }
 
+// NewNonceGate returns the default nonce gate for g, for callers that supply their own
+// NonceSequencer to core.New and delegate to it.
+func NewNonceGate(g *Gateway) NonceSequencer { return newNonceGate(g, g.Signer, g.TxQueue) }
+
 func newNonceGate(state stateReader, signer types.Signer, queue enqueuer) *nonceGate {
 	return &nonceGate{
 		state:        state,
@@ -164,6 +187,7 @@ func newNonceGate(state stateReader, signer types.Signer, queue enqueuer) *nonce
 		maxPerSender: defaultMaxParkedPerSender,
 		maxSenders:   defaultMaxSenders,
 		ttl:          defaultParkedTTL,
+		reapEvery:    defaultReapInterval,
 		now:          time.Now,
 	}
 }
@@ -202,7 +226,6 @@ func (g *nonceGate) Admit(ctx context.Context, tx *types.Transaction) error {
 		// a commit is newer than anything the store could have told us.
 		ss.next.raise(seed)
 		next, _ = ss.next.value()
-		g.evictLRU() // cannot drop ss: we still hold it
 	}
 
 	ss.lastSeen = g.now()
@@ -215,8 +238,7 @@ func (g *nonceGate) Admit(ctx context.Context, tx *types.Transaction) error {
 		return nil
 	}
 
-	// Future nonce: park until the gap fills.
-	g.evictExpiredParked(ss)
+	// Future nonce: park until the gap fills. The reaper drops it if it never does.
 	_, replacing := ss.parked[tx.Nonce()]
 	if !replacing && len(ss.parked) >= g.maxPerSender {
 		return errTooManyParked
@@ -275,7 +297,6 @@ func (g *nonceGate) Observe(committed []domain.Transaction) {
 		}
 		g.senders.release(ss)
 	}
-	g.evictLRU()
 }
 
 // IsPending returns a parked transaction by hash, or nil if it is not parked.
@@ -305,22 +326,28 @@ func (g *nonceGate) unpark(ss *senderState, nonce uint64) *types.Transaction {
 	return p.tx
 }
 
-// evictExpiredParked drops parked txs whose gap never filled within the TTL. Caller holds g.mu.
-func (g *nonceGate) evictExpiredParked(ss *senderState) {
-	now := g.now()
-	for nonce, p := range ss.parked {
-		if now.Sub(p.parkedAt) > g.ttl {
-			delete(ss.parked, nonce)
-			delete(g.byHash, p.tx.Hash())
-		}
-	}
+// prune expires parked txs and bounds the sender cache, taking the lock itself.
+// It is the only reclaim path: neither Admit nor Observe evicts, so nothing here
+// depends on a sender coming back.
+func (g *nonceGate) prune() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.senders.prune(g.now(), g.ttl, g.maxSenders, g.byHash)
 }
 
-// evictLRU bounds the sender cache. A sender holding parked txs stays however far
-// over the cap we are: dropping it strands them and leaks their byHash entries.
-// Caller holds g.mu.
-func (g *nonceGate) evictLRU() {
-	g.senders.evictLRU(g.maxSenders, func(ss *senderState) bool {
-		return len(ss.parked) == 0
-	})
+// startReaper runs the reaper in the background.
+func (g *nonceGate) startReaper(ctx context.Context) { go g.reap(ctx) }
+
+// reap prunes every reapEvery until ctx is done.
+func (g *nonceGate) reap(ctx context.Context) {
+	tick := time.NewTicker(g.reapEvery)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			g.prune()
+		}
+	}
 }

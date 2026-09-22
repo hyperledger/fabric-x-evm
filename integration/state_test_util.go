@@ -642,7 +642,7 @@ func makePreStateWithDualState(db ethdb.Database, accounts types.GenesisAlloc, s
 	fabricDBWrapper := storage.NewVersionedDBWrapper(fabricDB)
 	fabricDBSnapshot, _ := fabricDBWrapper.NewSnapshot(new(uint64(1)))
 	defer fabricDBSnapshot.Close()
-	fabricStateDB, _ := execution.NewStateDB(context.TODO(), fabricDBSnapshot, "testns", 0, false)
+	fabricStateDB, _ := execution.NewStateDB(context.TODO(), fabricDBSnapshot, "testns", false)
 
 	// Use DualStateDB instead of plain StateDB for debugging
 	statedb := execution.NewDualStateDB(ethStateDB, fabricStateDB)
@@ -700,7 +700,7 @@ func makePreStateWithDualState(db ethdb.Database, accounts types.GenesisAlloc, s
 	// since we just committed block 0
 	fabricDBSnapshot2, _ := fabricDBWrapper.NewSnapshot(new(uint64(1)))
 	defer fabricDBSnapshot2.Close()
-	fabricStateDB, _ = execution.NewStateDB(context.TODO(), fabricDBSnapshot2, "testns", 1, false)
+	fabricStateDB, _ = execution.NewStateDB(context.TODO(), fabricDBSnapshot2, "testns", false)
 	statedb = execution.NewDualStateDB(ethStateDB, fabricStateDB)
 
 	return StateTestState{statedb, trieDB, snaps}

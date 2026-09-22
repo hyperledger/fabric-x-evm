@@ -4,7 +4,7 @@ Copyright IBM Corp. All Rights Reserved.
 SPDX-License-Identifier: LGPL-3.0-or-later
 */
 
-package common
+package hybridx
 
 import (
 	"bytes"
@@ -16,6 +16,8 @@ import (
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/notification"
+
+	"github.com/hyperledger/fabric-x-evm/common"
 )
 
 var notifLogger = flogging.MustGetLogger("evm.notification")
@@ -62,7 +64,7 @@ func (d *AllTxBatchDispatcher) HandleBatch(ctx context.Context, batch notificati
 			continue
 		}
 
-		if !bytes.Equal(event.InputArgs[0], []byte{byte(ProposalTypeEVMTx)}) {
+		if !bytes.Equal(event.InputArgs[0], []byte{byte(common.ProposalTypeEVMTx)}) {
 			notifLogger.Debugf("Skipping tx %s: not an EVM transaction", event.ID)
 			continue
 		}

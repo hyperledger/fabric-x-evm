@@ -123,7 +123,9 @@ func perfHandlerChain(completionTracker *TxCompletionTracker) integration.Handle
 		// Perf replay submits through NonceBypassGateway, which enqueues straight
 		// past the sequencer, so a real nonce gate would only add per-sender
 		// bookkeeping on every commit without ever gating a submission.
-		gw, err := app.BuildGateway(ctx, ends, gwSigner, cfg.Network, tracker, submitters, cfg.Gateway.SubmitterCount, cfg.Gateway.WorkerCount, txQueue, gwtestimpl.NewPassthroughGate(txQueue), cfg.Gateway.EndorsementChanSize, txPerSec)
+		// ends is caller-ordered [local, remotes...]; see test_helpers.go's
+		// defaultHandlerChain for the same convention.
+		gw, err := app.BuildGateway(ctx, ends[0], ends[1:], gwSigner, cfg.Network, tracker, submitters, cfg.Gateway.SubmitterCount, cfg.Gateway.WorkerCount, txQueue, gwtestimpl.NewPassthroughGate(txQueue), cfg.Gateway.EndorsementChanSize, txPerSec)
 		if err != nil {
 			t.Fatalf("build gateway: %v", err)
 		}
@@ -516,7 +518,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	workChan := make(chan workItem, numOutstandingTx+submittingWorkerCount)
 
 	// Metrics for outstanding transactions
-	var outstandingTxCount int64
+	var outstandingTxCount atomic.Int64
 
 	// Worker pool configuration
 	numWorkers := submittingWorkerCount
@@ -551,7 +553,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 				if err != nil {
 					t.Logf("Transfer %d: SendTransaction error: %v", i, err)
 					atomic.AddInt64(&failCount, 1)
-					atomic.AddInt64(&outstandingTxCount, -1)
+					outstandingTxCount.Add(-1)
 					// Remove from tracking on failure
 					latencyMu.Lock()
 					delete(submissionTimes, txHash)
@@ -587,7 +589,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 				currentFail := atomic.LoadInt64(&failCount)
 				currentSkipped := atomic.LoadInt64(&skippedCount)
 				currentTotal := currentSuccess + currentFail
-				currentOutstanding := atomic.LoadInt64(&outstandingTxCount)
+				currentOutstanding := outstandingTxCount.Load()
 
 				txProcessed := currentTotal - lastLogCount
 				throughput := float64(txProcessed) / elapsed
@@ -643,7 +645,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 		t.Logf("Pre-filling work channel with %d transactions", numOutstandingTx)
 		for range numOutstandingTx {
 			workChan <- workItem{index: dispatched, transfer: window[cursor]}
-			atomic.AddInt64(&outstandingTxCount, 1)
+			outstandingTxCount.Add(1)
 			dispatched++
 			cursor++
 		}
@@ -651,7 +653,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 
 		// Process completions and refill
 		for notif := range completionCh {
-			atomic.AddInt64(&outstandingTxCount, -1)
+			outstandingTxCount.Add(-1)
 
 			// T4: notification received time
 			t4 := time.Now()
@@ -707,7 +709,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 			if cfg.wrapAround {
 				if dispatched >= cfg.totalDispatches {
 					// Check if all outstanding transactions are done
-					if atomic.LoadInt64(&outstandingTxCount) == 0 {
+					if outstandingTxCount.Load() == 0 {
 						t.Logf("All transactions completed, closing work channel")
 						return
 					}
@@ -716,7 +718,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 			} else {
 				if cursor >= len(window) {
 					// Check if all outstanding transactions are done
-					if atomic.LoadInt64(&outstandingTxCount) == 0 {
+					if outstandingTxCount.Load() == 0 {
 						t.Logf("All transactions completed, closing work channel")
 						return
 					}
@@ -726,7 +728,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 
 			// Add next transaction to the channel
 			workChan <- workItem{index: dispatched, transfer: window[cursor]}
-			atomic.AddInt64(&outstandingTxCount, 1)
+			outstandingTxCount.Add(1)
 			dispatched++
 			cursor++
 

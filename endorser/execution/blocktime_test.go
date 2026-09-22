@@ -31,7 +31,7 @@ func TestNewExecutor_UsesProvidedBlockTime(t *testing.T) {
 	}
 	defer reader.Close()
 
-	stateDB, err := NewStateDB(context.Background(), reader, Namespace, 0, false)
+	stateDB, err := NewStateDB(context.Background(), reader, Namespace, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestNewExecutor_ZeroBlockTimeIsRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reader.Close()
-	stateDB, err := NewStateDB(context.Background(), reader, Namespace, 0, false)
+	stateDB, err := NewStateDB(context.Background(), reader, Namespace, false)
 	if err != nil {
 		t.Fatal(err)
 	}

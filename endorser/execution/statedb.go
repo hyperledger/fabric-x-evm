@@ -38,6 +38,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math/big"
+	"slices"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -218,11 +219,11 @@ type StateDB struct {
 	nextRevisionId int
 }
 
-// NewStateDB creates a new StateDB backed by the given ReadStore.
-// If blockNum is 0, the current block number is queried from store.
+// NewStateDB creates a new StateDB backed by the given ReadStore, which is
+// already pinned to the block height the caller wants to read at.
 // monotonicVersions controls MVCC semantics: when true, KVRead versions use the per-key
 // monotonic version counter (Fabric-X); when false, they use (blockNum, txNum) (standard Fabric).
-func NewStateDB(ctx context.Context, store ReadStore, namespace string, blockNum uint64, monotonicVersions bool) (*StateDB, error) {
+func NewStateDB(ctx context.Context, store ReadStore, namespace string, monotonicVersions bool) (*StateDB, error) {
 	return &StateDB{
 		namespace:         namespace,
 		store:             store,
@@ -240,8 +241,8 @@ func NewStateDB(ctx context.Context, store ReadStore, namespace string, blockNum
 // NewStateDBWithDualState creates a StateDB and wraps it with a DualStateDB for testing.
 // This allows tracking both Fabric state and Ethereum trie state evolution.
 // If ethStateDB is nil, a new in-memory ethStateDB is created.
-func NewStateDBWithDualState(ctx context.Context, store ReadStore, namespace string, blockNum uint64, monotonicVersions bool, ethStateDB *ethstate.StateDB) (ExtendedStateDB, error) {
-	fabricStateDB, err := NewStateDB(ctx, store, namespace, blockNum, monotonicVersions)
+func NewStateDBWithDualState(ctx context.Context, store ReadStore, namespace string, monotonicVersions bool, ethStateDB *ethstate.StateDB) (ExtendedStateDB, error) {
+	fabricStateDB, err := NewStateDB(ctx, store, namespace, monotonicVersions)
 	if err != nil {
 		return nil, err
 	}
@@ -278,8 +279,8 @@ func storeKey(addr common.Address, slot common.Hash) string {
 // getStateFromJournal scans the journal backwards to find the latest write for a key.
 // Returns the value and true if found, or nil and false if not found.
 func (s *StateDB) getStateFromJournal(key string) ([]byte, bool) {
-	for i := len(s.journal) - 1; i >= 0; i-- {
-		if w, ok := s.journal[i].(writeEntry); ok && w.write.Key == key {
+	for _, v := range slices.Backward(s.journal) {
+		if w, ok := v.(writeEntry); ok && w.write.Key == key {
 			if w.write.IsDelete {
 				return nil, true
 			}

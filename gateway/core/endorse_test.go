@@ -69,7 +69,7 @@ func (s *stubEndorser) NonceAt(ctx context.Context, _ ethcommon.Address, _ *big.
 }
 
 func newClient(stub *stubEndorser) *EndorsementClient {
-	return &EndorsementClient{endorsers: []api.Service{stub}}
+	return &EndorsementClient{local: stub}
 }
 
 // stubSigner is a gateway Signer that returns fixed bytes, enough for
@@ -82,13 +82,16 @@ func (stubSigner) Serialize() ([]byte, error)  { return []byte("creator"), nil }
 // signingClient is a client wired with a signer so ExecuteTransaction can build
 // an invocation.
 func signingClient(stub *stubEndorser) *EndorsementClient {
-	return &EndorsementClient{
-		endorsers: []api.Service{stub},
-		signer:    stubSigner{},
-		channel:   "ch",
-		namespace: "ns",
-		nsVersion: "1.0",
+	return endorsementClient(stub, nil)
+}
+
+// endorsementClient builds a client
+func endorsementClient(local api.Service, remotes []api.Service) *EndorsementClient {
+	c, err := NewEndorsementClient(local, remotes, stubSigner{}, "ch", "ns", "1.0")
+	if err != nil {
+		panic(err)
 	}
+	return c
 }
 
 func TestCallContract_Status201ReturnsRevertError(t *testing.T) {
@@ -126,15 +129,13 @@ func TestCallContract_Status500IsGenericError(t *testing.T) {
 
 	_, err := c.CallContract(context.Background(), ethereum.CallMsg{}, nil)
 
-	var revert *domain.RevertError
-	if errors.As(err, &revert) {
+	if revert, ok := errors.AsType[*domain.RevertError](err); ok {
 		t.Errorf("non-revert error must not be *RevertError, got %v", revert)
 	}
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	var exec *domain.ExecutionError
-	if errors.As(err, &exec) {
+	if exec, ok := errors.AsType[*domain.ExecutionError](err); ok {
 		t.Errorf("backend fault must not be *ExecutionError, got %v", exec)
 	}
 }
@@ -292,8 +293,7 @@ func TestEstimateGas_EmptyRevertAtCeilingIsAllowanceError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	var rev *domain.RevertError
-	if errors.As(err, &rev) {
+	if rev, ok := errors.AsType[*domain.RevertError](err); ok {
 		t.Errorf("an empty revert must not be treated as a hard *RevertError, got %v", rev)
 	}
 	if !strings.Contains(err.Error(), "gas required exceeds allowance") {
@@ -308,8 +308,7 @@ func TestEstimateGas_RevertPropagates(t *testing.T) {
 	})
 
 	_, err := c.EstimateGas(context.Background(), ethereum.CallMsg{}, nil)
-	var rev *domain.RevertError
-	if !errors.As(err, &rev) {
+	if _, ok := errors.AsType[*domain.RevertError](err); !ok {
 		t.Fatalf("expected *RevertError, got %T (%v)", err, err)
 	}
 }
@@ -325,8 +324,7 @@ func TestEstimateGas_ExecFailurePropagatesAsAllowanceError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	var rev *domain.RevertError
-	if errors.As(err, &rev) {
+	if rev, ok := errors.AsType[*domain.RevertError](err); ok {
 		t.Errorf("a non-revert failure at the ceiling must not be *RevertError, got %v", rev)
 	}
 	if !strings.Contains(err.Error(), "gas required exceeds allowance") {
@@ -361,12 +359,10 @@ func TestCallContract_TransportErrorIsWrapped(t *testing.T) {
 		t.Fatal("expected error")
 	}
 
-	var revert *domain.RevertError
-	if errors.As(err, &revert) {
+	if revert, ok := errors.AsType[*domain.RevertError](err); ok {
 		t.Errorf("transport error must not be *RevertError, got %v", revert)
 	}
-	var exec *domain.ExecutionError
-	if errors.As(err, &exec) {
+	if exec, ok := errors.AsType[*domain.ExecutionError](err); ok {
 		t.Errorf("transport error must not be *ExecutionError, got %v", exec)
 	}
 	if err.Error() != "process call: connection refused" {
@@ -423,13 +419,7 @@ func TestExecuteTransaction_SameTimestampForAllEndorsers(t *testing.T) {
 	pResp := &peer.ProposalResponse{Response: &peer.Response{Status: common.StatusOK}}
 	a := &stubEndorser{execResp: pResp}
 	b := &stubEndorser{execResp: pResp}
-	c := &EndorsementClient{
-		endorsers: []api.Service{a, b},
-		signer:    stubSigner{},
-		channel:   "ch",
-		namespace: "ns",
-		nsVersion: "1.0",
-	}
+	c := endorsementClient(a, []api.Service{b})
 	tx := types.NewTx(&types.LegacyTx{Gas: 21000, GasPrice: big.NewInt(0)})
 
 	before := time.Now()
@@ -501,16 +491,10 @@ func TestExecuteTransaction_RejectionSurvivesCancellationOfOtherEndorsers(t *tes
 		t.Run(shape.name, func(t *testing.T) {
 			rejected := &peer.ProposalResponse{Response: &peer.Response{Status: common.StatusTxRejected, Message: "nonce too low"}}
 
-			// Never released, so this one only ever returns the cancellation. It sits
-			// at index 0, ahead of the endorser that produces the real error.
+			// Never released, so this one only ever returns the cancellation. It is
+			// the local endorser, ahead of the remote that produces the real error.
 			blocked := &blockingEndorser{release: make(chan struct{}), onCancel: shape.onCancel}
-			c := &EndorsementClient{
-				endorsers: []api.Service{blocked, &stubEndorser{execResp: rejected}},
-				signer:    stubSigner{},
-				channel:   "ch",
-				namespace: "ns",
-				nsVersion: "1.0",
-			}
+			c := endorsementClient(blocked, []api.Service{&stubEndorser{execResp: rejected}})
 
 			tx := types.NewTx(&types.LegacyTx{Gas: 21000, GasPrice: big.NewInt(0)})
 			_, err := c.ExecuteTransaction(context.Background(), tx)

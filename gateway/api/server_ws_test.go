@@ -31,6 +31,7 @@ func TestNewServer_RegistersFilterAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := rpc.DialInProc(rpcSrv)
+	t.Cleanup(client.Close)
 
 	var id string
 	if err := client.Call(&id, "eth_newBlockFilter"); err != nil {
@@ -47,7 +48,10 @@ func TestNewServer_RegistersFilterAPI(t *testing.T) {
 
 func newTestHTTPServer(t *testing.T) string {
 	t.Helper()
-	rpcSrv, err := NewServer(&stubBackend{chainID: big.NewInt(4011)}, nil)
+	backend := &stubBackend{chainID: big.NewInt(4011)}
+	filterAPI := filters.NewFilterAPI(backend)
+	t.Cleanup(filterAPI.Close)
+	rpcSrv, err := NewServer(backend, filterAPI)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -55,7 +59,7 @@ func newTestHTTPServer(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	httpSrv := NewHTTPServer(rpcSrv, ln.Addr().String())
+	httpSrv := NewHTTPServer(rpcSrv, ln.Addr().String(), nil)
 	go func() { _ = httpSrv.Serve(ln) }()
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

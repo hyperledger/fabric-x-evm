@@ -201,15 +201,6 @@ func resolveStateBlockRef(blockNumber *big.Int) *uint64 {
 	return &n
 }
 
-// stateDBBlockNum is the uint64 passed into NewStateDB for journal metadata.
-// Latest (nil) uses 0; an explicit height uses that height.
-func stateDBBlockNum(ref *uint64) uint64 {
-	if ref == nil {
-		return 0
-	}
-	return *ref
-}
-
 // newExecutor creates a fresh executor with an isolated StateDB.
 // blockNumber selects the Fabric block height for the state snapshot (nil = latest).
 // blockTime is the Unix second used for EVM block.timestamp (required, non-zero).
@@ -223,7 +214,7 @@ func (e *EVMEngine) newExecutor(blockNumber *big.Int, blockTime uint64) (*Execut
 	}
 
 	// Create StateDB with the reader
-	stateDB, err := NewStateDB(context.TODO(), reader, e.namespace, stateDBBlockNum(ref), e.monotonicVersions)
+	stateDB, err := NewStateDB(context.TODO(), reader, e.namespace, e.monotonicVersions)
 	if err != nil {
 		reader.Close()
 		return nil, err
@@ -254,7 +245,7 @@ func (e *EVMEngine) newSnapshotAt(blockNumber *big.Int) (ExtendedStateDB, ReadSt
 	}
 
 	// Create StateDB with the reader
-	stateDB, err := NewStateDB(context.TODO(), reader, e.namespace, stateDBBlockNum(ref), e.monotonicVersions)
+	stateDB, err := NewStateDB(context.TODO(), reader, e.namespace, e.monotonicVersions)
 	if err != nil {
 		reader.Close()
 		return nil, nil, err

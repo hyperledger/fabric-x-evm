@@ -147,12 +147,6 @@ func TestResolveStateBlockRef(t *testing.T) {
 	if got7 == nil || *got7 != 7 {
 		t.Fatalf("7 -> %v, want pointer to 7", got7)
 	}
-	if stateDBBlockNum(nil) != 0 {
-		t.Fatalf("stateDBBlockNum(nil) want 0")
-	}
-	if stateDBBlockNum(got7) != 7 {
-		t.Fatalf("stateDBBlockNum(7) want 7")
-	}
 }
 
 // TestNewSnapshotAt_ZeroIsExplicitGenesis ensures earliest (block 0) is not remapped

@@ -46,14 +46,14 @@ func FundTestAccounts(ctx context.Context, kvs estorage.KVS, namespace string, a
 		return nil
 	}
 
-	// Latest snapshot (block 0 means latest on current KVS APIs).
+	// Latest snapshot (nil means latest on current KVS APIs).
 	reader, err := kvs.NewSnapshot(nil)
 	if err != nil {
 		return fmt.Errorf("fund test accounts: snapshot: %w", err)
 	}
 	defer reader.Close()
 
-	stateDB, err := execution.NewStateDB(ctx, reader, namespace, 0, true)
+	stateDB, err := execution.NewStateDB(ctx, reader, namespace, true)
 	if err != nil {
 		return fmt.Errorf("fund test accounts: statedb: %w", err)
 	}

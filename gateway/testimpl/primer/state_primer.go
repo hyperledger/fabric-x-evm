@@ -71,7 +71,7 @@ func NewStatePrimer(
 	if err != nil {
 		return nil, err
 	}
-	stateDB, err := execution.NewStateDBWithDualState(context.TODO(), store, namespace, 0, monotonicVersions, nil)
+	stateDB, err := execution.NewStateDBWithDualState(context.TODO(), store, namespace, monotonicVersions, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -279,7 +279,7 @@ func (sp *StatePrimer) Reset() (*StatePrimer, error) {
 		return nil, err
 	}
 	sp.reader = reader
-	stateDB, err := execution.NewStateDBWithDualState(context.TODO(), sp.reader, sp.namespace, 0, sp.monotonicVersions, nil)
+	stateDB, err := execution.NewStateDBWithDualState(context.TODO(), sp.reader, sp.namespace, sp.monotonicVersions, nil)
 	if err != nil {
 		return nil, err
 	}

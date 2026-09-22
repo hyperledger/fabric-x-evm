@@ -1,12 +1,8 @@
-# Gateway config in split-deployment mode (gateway.endorsers set): the
-# gateway dials org1's and org2's endorsers over real gRPC instead of
-# embedding them, one standalone endorser per config file
-# (fabx-2of2-org1.yaml, fabx-2of2-org2.yaml). Paths are relative to the
+# Gateway config with a real multi-org topology: org1's own endorser is
+# embedded (called in-process, matching production) and also served over
+# gRPC so the test can dial it directly; org2 runs as a separate process,
+# dialed as the sole gateway.endorsers remote. Paths are relative to the
 # integration/ package directory (where go test runs).
-#
-# The endorser endpoints below are placeholders - the test binds each
-# endorser's gRPC server to an ephemeral port and overwrites endpoint.port at
-# runtime before building this gateway.
 
 network:
   protocol: fabric-x
@@ -50,20 +46,8 @@ gateway:
         ca-cert-paths:
           - ../testdata/crypto/ordererOrganizations/orderer-org-1/tlsca/tlsca.orderer-org-1-cert.pem
 
-  # Split deployment: dial org1's and org2's endorsers over gRPC rather than
-  # embedding them. Both entries present the gateway's own (org1) client
-  # cert; each endorser's gRPC server is configured to trust both orgs' CAs,
-  # the same way the real committer's routers trust every peer org.
+  # gateway.endorsers are additional remotes: only org2, dialed over gRPC.
   endorsers:
-    - endpoint:
-        host: 127.0.0.1
-        port: 0 # overwritten at runtime with org1 endorser's bound port
-      tls:
-        mode: mtls
-        cert-path: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.crt
-        key-path: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.key
-        ca-cert-paths:
-          - ../testdata/crypto/peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem
     - endpoint:
         host: 127.0.0.1
         port: 0 # overwritten at runtime with org2 endorser's bound port
@@ -73,3 +57,25 @@ gateway:
         key-path: ../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.key
         ca-cert-paths:
           - ../testdata/crypto/peerOrganizations/org2.example.com/tlsca/tlsca.org2.example.com-cert.pem
+
+# org1's own endorser, embedded in this gateway process. server is set purely
+# so a test can dial it directly and prove serving works - nothing in this
+# topology depends on org1's endorser being reachable from outside.
+endorser:
+  name: org1
+  identity:
+    msp-id: Org1MSP
+    msp-dir: ../testdata/crypto/peerOrganizations/org1.example.com/peers/endorser.org1.example.com/msp
+  database:
+    database: memory
+  server:
+    endpoint:
+      host: 127.0.0.1
+      port: 0
+    tls:
+      mode: mtls
+      cert-path: ../testdata/crypto/peerOrganizations/org1.example.com/peers/endorser.org1.example.com/tls/server.crt
+      key-path: ../testdata/crypto/peerOrganizations/org1.example.com/peers/endorser.org1.example.com/tls/server.key
+      ca-cert-paths:
+        - ../testdata/crypto/peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem
+        - ../testdata/crypto/peerOrganizations/org2.example.com/tlsca/tlsca.org2.example.com-cert.pem

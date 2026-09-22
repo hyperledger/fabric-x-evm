@@ -22,6 +22,8 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/tests"
+	evmcommon "github.com/hyperledger/fabric-x-evm/common"
+	eclient "github.com/hyperledger/fabric-x-evm/endorser/client"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
 	"github.com/hyperledger/fabric-x-evm/gateway/testimpl/primer"
@@ -195,14 +197,15 @@ func TestFabricX(t *testing.T) {
 	})
 }
 
-// testTwoOfTwoEndorsementGRPC runs org1's and org2's endorsers as separate,
-// real processes reached over gRPC, and points a split-deployment gateway at
-// both.
+// testTwoOfTwoEndorsementGRPC runs org2's endorser as a separate, real
+// process reached over gRPC, and points a gateway embedding org1's own
+// endorser at it.
+// It also dials org1's own endorser directly, proving the gateway actually
+// serves it to other orgs.
 func testTwoOfTwoEndorsementGRPC(t *testing.T) {
-	org1Addr := startEndorserGRPCServer(t, "fabx-2of2-org1.yaml")
 	org2Addr := startEndorserGRPCServer(t, "fabx-2of2-org2.yaml")
 
-	application, chainConfig := buildSplitGatewayApp(t, "fabx-2of2.yaml", org1Addr, org2Addr)
+	application, chainConfig, org1Addr := buildSplitGatewayApp(t, "fabx-2of2.yaml", org2Addr)
 	gw := application.Gateway()
 
 	ethClient, err := NewEthClient(contracts.HelloMetaData, chainConfig)
@@ -210,18 +213,41 @@ func testTwoOfTwoEndorsementGRPC(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Reads (NonceAt, CallContract, ...) always go to the local endorser --
+	// org1's own, embedded and riding the gateway's synchronizer -- so unlike
+	// a wholly split deployment, no post-commit lag needs waiting out here.
 	addr := deploySmartContract(t, gw, ethClient)
-	// The endorsers sync independently of the gateway, so a commit the gateway has
-	// already recorded is not necessarily visible to them yet. Wait before the call
-	// below, whose nonce is read from an endorser. See waitForReadEndorser.
-	waitForReadEndorser(t, gw, ethClient.Address(), 1)
 
 	greeting := "Hello from a 2-of-2 endorsed transaction"
 	callSmartContract(t, ethClient, addr, gw, "setGreeting", greeting)
-	// Likewise before the query, which an endorser answers from its own state.
-	waitForReadEndorser(t, gw, ethClient.Address(), 2)
 
 	querySmartContractExpect(t, ethClient, addr, &TestHarness{Gateways: []*core.Gateway{gw}}, greeting, "greet")
+
+	// The gateway's own endorser is also reachable directly, over the same
+	// gRPC boundary org2 is reached through -- proving endorser.server actually
+	// serves it, not just that the in-process call path works.
+	org1Cfg := evmcommon.ClientConfig{
+		Endpoint: &evmcommon.Endpoint{Host: "127.0.0.1"},
+		TLS: evmcommon.TLSConfig{
+			Mode:        "mtls",
+			CertPath:    "../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.crt",
+			KeyPath:     "../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/client.key",
+			CACertPaths: []string{"../testdata/crypto/peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem"},
+		},
+	}
+	setDialPort(t, &org1Cfg, org1Addr)
+	org1Client, err := eclient.Dial(org1Cfg)
+	if err != nil {
+		t.Fatalf("dial org1's served endorser: %v", err)
+	}
+	defer org1Client.Close()
+
+	const wantNonce = 2 // deploy (0) + setGreeting (1)
+	if nonce, err := org1Client.NonceAt(t.Context(), ethClient.Address(), nil); err != nil {
+		t.Errorf("NonceAt via org1's served endorser: %v", err)
+	} else if nonce != wantNonce {
+		t.Errorf("nonce via org1's served endorser = %d, want %d", nonce, wantNonce)
+	}
 }
 
 // evmConfig returns an empty EVMConfig, or, if the name of an ethereum fork

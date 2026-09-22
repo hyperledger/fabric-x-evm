@@ -240,16 +240,22 @@ type EvmAPI struct {
 	store    storage.Revertible
 	// Drained before a snapshot or revert touches the ledger; see txFence.
 	fence *txFence
+	// Told when a revert moves the ledger nonces out from under the gateway.
+	nonces NonceResetter
 	// Map snapshot IDs (hex strings) to block numbers
 	snapshots map[string]uint64
 }
 
+// NonceResetter drops the gateway's cached sender nonces; see ResettableGate.
+type NonceResetter interface{ ResetNonces() }
+
 // NewEvmAPI creates a new EVM API instance with LightKVS and Store for state management.
-func NewEvmAPI(lightKVS estorage.Revertible, store storage.Revertible, fence *txFence) *EvmAPI {
+func NewEvmAPI(lightKVS estorage.Revertible, store storage.Revertible, fence *txFence, nonces NonceResetter) *EvmAPI {
 	return &EvmAPI{
 		lightKVS:  lightKVS,
 		store:     store,
 		fence:     fence,
+		nonces:    nonces,
 		snapshots: make(map[string]uint64),
 	}
 }
@@ -318,6 +324,8 @@ func (api *EvmAPI) Revert(ctx context.Context, snapshotID string) (bool, error) 
 		return false, err
 	}
 	defer api.fence.endRewind()
+	// Even a failed revert may have moved nonces; runs before endRewind, while submissions are still fenced.
+	defer api.nonces.ResetNonces()
 
 	hardhatLogger.Debugf("EvmAPI.Revert() all snapshots before revert: %v", api.snapshots)
 

@@ -21,7 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	evmcommon "github.com/hyperledger/fabric-x-evm/common"
+	"github.com/hyperledger/fabric-x-evm/common"
 )
 
 // ── fakes ────────────────────────────────────────────────────────────────────
@@ -177,7 +177,7 @@ func newGate(h *HybridSynchronizer) (*notifGate, *bool) {
 	stopped := new(bool)
 	return &notifGate{
 		hybrid:       h,
-		dispatcher:   evmcommon.NewAllTxBatchDispatcher(&hybridAdapter{h: h}),
+		dispatcher:   NewAllTxBatchDispatcher(&hybridAdapter{h: h}),
 		logger:       sdk.NoOpLogger{},
 		stopDelivery: func() { *stopped = true },
 	}, stopped
@@ -195,7 +195,7 @@ func evmBatch(t *testing.T, blockNum uint64) notification.AllTxBatch {
 			Transaction: blocks.Transaction{
 				ID:        "evm-tx",
 				Status:    blocks.StatusCommitted,
-				InputArgs: [][]byte{{byte(evmcommon.ProposalTypeEVMTx)}, {0xaa}},
+				InputArgs: [][]byte{{byte(common.ProposalTypeEVMTx)}, {0xaa}},
 			},
 			BlockNum: blockNum,
 		}},
