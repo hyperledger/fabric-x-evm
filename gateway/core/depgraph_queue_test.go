@@ -324,8 +324,8 @@ func TestDepGraphQueue_ChainOfClashesReleasesOneAtATime(t *testing.T) {
 	require.Len(t, seen, len(txs), "every contender must eventually be released")
 }
 
-// conflictEnq is how the prototype reports contention: the two that waited are
-// counted, the one that went straight through is not.
+// Contention is reported as the peak number of transactions the graph held on
+// dependencies at once. Two of these three wait; the first does not.
 func TestDepGraphQueue_CountsConflicts(t *testing.T) {
 	q, e := newDepQueue(t)
 	txs := []*types.Transaction{txWithNonce(1), txWithNonce(2), txWithNonce(3)}
@@ -341,6 +341,16 @@ func TestDepGraphQueue_CountsConflicts(t *testing.T) {
 	q.Enqueue(txs[1])
 	q.Enqueue(txs[2])
 
+	// Sample until both contenders are visible as held. The batcher hands them
+	// over on a timer, so they do not reach the graph synchronously with
+	// Enqueue. The bound is a floor, not an equality: the manager counts a
+	// transaction once for its batch-local dependencies and again for its
+	// global ones, so the exact figure depends on how the two were batched.
+	require.Eventually(t, func() bool {
+		q.sampleDepWait()
+		return q.PeakDependentTxs() >= 2
+	}, 2*time.Second, 5*time.Millisecond, "both waiting transactions must show as held")
+
 	require.NoError(t, q.Handle(context.Background(), blockWith(1, first)))
 	requireReady(t, q, 1)
 	second, ok := q.Dequeue()
@@ -348,9 +358,9 @@ func TestDepGraphQueue_CountsConflicts(t *testing.T) {
 	require.NoError(t, q.Handle(context.Background(), blockWith(1, second)))
 	requireReady(t, q, 1)
 
-	_, _, totalEnq, conflicts := q.Stats()
+	_, _, totalEnq, _ := q.Stats()
 	require.Equal(t, 3, totalEnq)
-	require.Equal(t, 2, conflicts, "the two that waited are counted, the first is not")
+	require.GreaterOrEqual(t, q.PeakDependentTxs(), 2, "the peak is a high-water mark, so draining must not clear it")
 }
 
 // Transactions on disjoint keys are not serialised by the scheduler.
@@ -363,9 +373,10 @@ func TestDepGraphQueue_DisjointKeysReportNoConflicts(t *testing.T) {
 	}
 	requireReady(t, q, 20)
 
-	_, _, totalEnq, conflicts := q.Stats()
+	q.sampleDepWait()
+	_, _, totalEnq, _ := q.Stats()
 	require.Equal(t, 20, totalEnq)
-	require.Zero(t, conflicts, "disjoint keys must not be reported as contended")
+	require.Zero(t, q.PeakDependentTxs(), "disjoint keys must not be reported as contended")
 }
 
 // A dropped transaction is invisible to the caller, so the count is the only

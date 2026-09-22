@@ -61,15 +61,9 @@ type txEndorser interface {
 // node is nil until the manager releases it. Feeding a node back is what
 // unblocks its dependents, so it is kept for the whole lifetime rather than
 // dropped at Dequeue, and cleared once fed back so it cannot be sent twice.
-//
-// enqueuedAtBlock is the committed-block count when this transaction arrived.
-// If the count has moved by the time the manager releases it, it waited on
-// something: that is the only signal we have, since the package clears a node's
-// dependencies before handing it over.
 type trackedTx struct {
-	tx              *types.Transaction
-	node            *dependencygraph.TransactionNode
-	enqueuedAtBlock uint64
+	tx   *types.Transaction
+	node *dependencygraph.TransactionNode
 }
 
 // DepGraphQueue is a TxQueueInterface backed by the committer's dependency
@@ -98,8 +92,13 @@ type DepGraphQueue struct {
 	// for free and concurrent senders cannot: numbering and sending are not
 	// atomic together, so a worker descheduled between the two lets a later
 	// batch overtake an earlier one and the constructor spins forever.
-	batchID       uint64
-	blocksHandled atomic.Uint64
+	batchID uint64
+
+	// metrics is the manager's own registry. The package already counts the
+	// transactions its graph is holding, so contention is read from here
+	// rather than guessed at from the outside.
+	metrics     *monitoring.Provider
+	depWaitPeak atomic.Int64
 
 	mu      sync.RWMutex
 	cond    *sync.Cond
@@ -111,11 +110,10 @@ type DepGraphQueue struct {
 	// it. Starting them after the write is the happens-before, so no lock.
 	endorser txEndorser
 
-	total       int
-	invalid     int
-	totalEnq    int
-	conflictEnq int
-	dropped     int
+	total    int
+	invalid  int
+	totalEnq int
+	dropped  int
 
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -138,16 +136,17 @@ func NewDepGraphQueue() *DepGraphQueue {
 	q.ctx, q.cancel = context.WithCancel(context.Background())
 	q.closeOnce = sync.OnceFunc(q.shutdown)
 
+	// Required, not optional: newPerformanceMetrics calls straight through to
+	// the provider, so a nil one panics on construction.
+	q.metrics = monitoring.NewProvider()
+
 	mgr := dependencygraph.NewManager(&dependencygraph.Parameters{
 		IncomingTxs:               q.incoming,
 		OutgoingDepFreeTxsNode:    q.outgoing,
 		IncomingValidatedTxsNode:  q.validated,
 		NumOfLocalDepConstructors: 1,
 		WaitingTxsLimit:           defaultWaitingTxsLimit,
-		// Required, not optional: newPerformanceMetrics calls straight through
-		// to the provider, so a nil one panics on construction. Nothing serves
-		// this registry yet; exposing it is the Phase 2 metrics item.
-		PrometheusMetricsProvider: monitoring.NewProvider(),
+		PrometheusMetricsProvider: q.metrics,
 	})
 
 	q.wg.Go(func() { mgr.Run(q.ctx) })
@@ -195,7 +194,7 @@ func (q *DepGraphQueue) Enqueue(tx *types.Transaction) {
 		// the prototype rather than a transaction quietly disappearing.
 		panic(fmt.Sprintf("dependency manager queue: admitted channel full, tx %s", hash.Hex()))
 	}
-	q.tracked[hash] = &trackedTx{tx: tx, enqueuedAtBlock: q.blocksHandled.Load()}
+	q.tracked[hash] = &trackedTx{tx: tx}
 	q.totalEnq++
 }
 
@@ -311,11 +310,6 @@ func (q *DepGraphQueue) markReady(nodes dependencygraph.TxNodeBatch) {
 			continue
 		}
 		t.node = node
-		// Approximate, and the only signal available: a transaction released in
-		// the same block window it arrived in cannot have waited on anything.
-		if q.blocksHandled.Load() > t.enqueuedAtBlock {
-			q.conflictEnq++
-		}
 		q.ready = append(q.ready, t.tx)
 	}
 	q.cond.Broadcast()
@@ -367,7 +361,7 @@ func (q *DepGraphQueue) Complete(hash common.Hash) {
 // too: either way they are no longer in flight, and holding one back strands
 // everything behind it. The whole block goes in one pass, under one lock.
 func (q *DepGraphQueue) Handle(_ context.Context, block *domain.Block) error {
-	q.blocksHandled.Add(1)
+	q.sampleDepWait()
 	if len(block.Transactions) == 0 {
 		return nil
 	}
@@ -455,11 +449,49 @@ func (q *DepGraphQueue) shutdown() {
 	q.wg.Wait()
 }
 
-// Stats returns committed, invalid, enqueued and conflicting counts.
+// Stats returns committed, invalid and enqueued counts. The conflict slot stays
+// zero: the graph reports contention as a peak, which divided by the enqueued
+// total would not be the rate the shared callers print. PeakDependentTxs has it.
 func (q *DepGraphQueue) Stats() (int, int, int, int) {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
-	return q.total, q.invalid, q.totalEnq, q.conflictEnq
+	return q.total, q.invalid, q.totalEnq, 0
+}
+
+// PeakDependentTxs is the most transactions the graph held on dependencies at
+// once, sampled per block. The manager counts a transaction once for its
+// batch-local dependencies and again for its global ones, so this is a measure
+// of contention rather than a count of distinct transactions.
+func (q *DepGraphQueue) PeakDependentTxs() int { 
+	return int(q.depWaitPeak.Load()) 
+}
+
+// depWaitMetric is the manager's gauge of transactions currently waiting on
+// dependencies, incremented per transaction that acquires one and decremented
+// as dependents are freed.
+const depWaitMetric = "coordinator_dependency_graph_dependent_transactions_queue_size"
+
+// sampleDepWait records the gauge's high-water mark. It is called once per
+// block, which keeps a Gather off the enqueue and release paths.
+func (q *DepGraphQueue) sampleDepWait() {
+	families, err := q.metrics.Registry().Gather()
+	if err != nil {
+		return
+	}
+	for _, f := range families {
+		if f.GetName() != depWaitMetric {
+			continue
+		}
+		for _, m := range f.GetMetric() {
+			waiting := int64(m.GetGauge().GetValue())
+			for {
+				peak := q.depWaitPeak.Load()
+				if waiting <= peak || q.depWaitPeak.CompareAndSwap(peak, waiting) {
+					break
+				}
+			}
+		}
+	}
 }
 
 // Dropped is how many transactions never reached the manager, because the
