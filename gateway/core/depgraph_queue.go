@@ -462,8 +462,8 @@ func (q *DepGraphQueue) Stats() (int, int, int, int) {
 // once, sampled per block. The manager counts a transaction once for its
 // batch-local dependencies and again for its global ones, so this is a measure
 // of contention rather than a count of distinct transactions.
-func (q *DepGraphQueue) PeakDependentTxs() int { 
-	return int(q.depWaitPeak.Load()) 
+func (q *DepGraphQueue) PeakDependentTxs() int {
+	return int(q.depWaitPeak.Load())
 }
 
 // depWaitMetric is the manager's gauge of transactions currently waiting on
