@@ -211,7 +211,21 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 		testGate.Bind(func() core.NonceSequencer { return core.NewNonceGate(gateway) })
 	}
 
-	filterAPI := filters.NewFilterAPI(gateway)
+	filterLimits := filters.DefaultLimits
+	if cfg.Gateway != nil && cfg.Gateway.Filters != nil {
+		mf, mspc, msg := cfg.Gateway.Filters.ResolvedLimits(
+			filters.DefaultLimits.MaxFilters,
+			filters.DefaultLimits.MaxSubscriptionsPerConn,
+			filters.DefaultLimits.MaxSubscriptionsGlobal,
+		)
+		filterLimits = filters.Limits{
+			MaxFilters:              mf,
+			MaxSubscriptionsPerConn: mspc,
+			MaxSubscriptionsGlobal:  msg,
+			MaxFilterBuffer:         filters.DefaultLimits.MaxFilterBuffer,
+		}
+	}
+	filterAPI := filters.NewFilterAPIWithLimits(gateway, filterLimits)
 	ok := false
 	defer func() {
 		if !ok {

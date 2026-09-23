@@ -3555,6 +3555,12 @@
     "flaky": true
   },
   {
+    "id": "RateLimiter SlidingWindow with some capacity tryConsume multiple tryConsume accumulate within the window",
+    "cause": "hardhat-time-rpc",
+    "note": "Bucket/window state depends on real elapsed wall-clock time between txs (evm_increaseTime/evm_setNextBlockTimestamp are no-ops, COMPATIBILITY.md); tests assuming zero/exact elapsed time pick up unintended refill/decay.",
+    "flaky": true
+  },
+  {
     "id": "RelayedCall default (zero) salt direct call to the relayer",
     "cause": "estimate-gas-allowance-not-revert",
     "note": "eth_estimateGas escalates to the 10M ceiling instead of surfacing the revert the test expects; the call is expected to fail, not to need more gas."

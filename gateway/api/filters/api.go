@@ -17,6 +17,7 @@ import (
 	gethfilters "github.com/ethereum/go-ethereum/eth/filters"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
+	"github.com/hyperledger/fabric-x-evm/gateway/api/rpcerr"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 )
@@ -59,10 +60,12 @@ type filter struct {
 type FilterAPI struct {
 	logs    LogQuerier
 	timeout time.Duration
+	limits  Limits
 
 	mu         sync.Mutex
 	filters    map[rpc.ID]*filter
 	headSubs   map[uint64]*headSub
+	connSubs   map[any]int // active newHeads count per WS connection key
 	nextHeadID uint64
 	closed     bool
 
@@ -72,20 +75,32 @@ type FilterAPI struct {
 
 // NewFilterAPI starts the expiry loop. FilterAPI itself is a blocks.BlockHandler.
 func NewFilterAPI(logs LogQuerier) *FilterAPI {
-	return newFilterAPI(logs, defaultTimeout)
+	return newFilterAPI(logs, defaultTimeout, DefaultLimits)
 }
 
 // NewFilterAPIWithTimeout is for tests that need a short expiry.
 func NewFilterAPIWithTimeout(logs LogQuerier, timeout time.Duration) *FilterAPI {
-	return newFilterAPI(logs, timeout)
+	return newFilterAPI(logs, timeout, DefaultLimits)
 }
 
-func newFilterAPI(logs LogQuerier, timeout time.Duration) *FilterAPI {
+// NewFilterAPIWithLimits starts the expiry loop with custom resource caps.
+func NewFilterAPIWithLimits(logs LogQuerier, limits Limits) *FilterAPI {
+	return newFilterAPI(logs, defaultTimeout, limits)
+}
+
+// NewFilterAPIWithTimeoutAndLimits is for tests that need both a short expiry and tight caps.
+func NewFilterAPIWithTimeoutAndLimits(logs LogQuerier, timeout time.Duration, limits Limits) *FilterAPI {
+	return newFilterAPI(logs, timeout, limits)
+}
+
+func newFilterAPI(logs LogQuerier, timeout time.Duration, limits Limits) *FilterAPI {
 	api := &FilterAPI{
 		logs:     logs,
 		timeout:  timeout,
+		limits:   mergePartialLimits(limits),
 		filters:  make(map[rpc.ID]*filter),
 		headSubs: make(map[uint64]*headSub),
+		connSubs: make(map[any]int),
 		quit:     make(chan struct{}),
 	}
 	api.wg.Add(1)
@@ -194,18 +209,33 @@ func (api *FilterAPI) deliverOneLocked(id rpc.ID, b blocks.Block, hash common.Ha
 		f.testDeliver(b)
 		return
 	}
+	capN := api.limits.MaxFilterBuffer
 	switch f.typ {
 	case BlocksSubscription:
-		f.hashes = append(f.hashes, hash)
+		f.hashes = appendCapped(f.hashes, []common.Hash{hash}, capN)
 	case LogsSubscription:
 		matched := matchLogs(blockLogs, f.crit)
 		if len(matched) > 0 {
-			f.logs = append(f.logs, matched...)
+			f.logs = appendCapped(f.logs, matched, capN)
 		}
 	}
 }
 
-func (api *FilterAPI) install(typ Type, crit gethfilters.FilterCriteria) rpc.ID {
+// appendCapped appends items then drops the oldest entries if len exceeds max.
+// max <= 0 leaves the buffer unchanged aside from the append (caller should
+// pass a positive MaxFilterBuffer via mergePartialLimits).
+func appendCapped[T any](buf []T, items []T, max int) []T {
+	buf = append(buf, items...)
+	if max > 0 && len(buf) > max {
+		buf = append([]T(nil), buf[len(buf)-max:]...)
+	}
+	return buf
+}
+
+func (api *FilterAPI) install(typ Type, crit gethfilters.FilterCriteria) (rpc.ID, error) {
+	if len(api.filters) >= api.limits.MaxFilters {
+		return "", rpcerr.LimitExceeded("filter limit of %d reached", api.limits.MaxFilters)
+	}
 	id := rpc.NewID()
 	f := &filter{
 		typ:       typ,
@@ -219,11 +249,11 @@ func (api *FilterAPI) install(typ Type, crit gethfilters.FilterCriteria) rpc.ID 
 		f.logs = make([]*types.Log, 0)
 	}
 	api.filters[id] = f
-	return id
+	return id, nil
 }
 
 // NewBlockFilter creates a filter that notifies on new block hashes.
-func (api *FilterAPI) NewBlockFilter(ctx context.Context) rpc.ID {
+func (api *FilterAPI) NewBlockFilter(ctx context.Context) (rpc.ID, error) {
 	api.mu.Lock()
 	defer api.mu.Unlock()
 	return api.install(BlocksSubscription, gethfilters.FilterCriteria{})
@@ -233,7 +263,7 @@ func (api *FilterAPI) NewBlockFilter(ctx context.Context) rpc.ID {
 func (api *FilterAPI) NewFilter(ctx context.Context, crit gethfilters.FilterCriteria) (rpc.ID, error) {
 	api.mu.Lock()
 	defer api.mu.Unlock()
-	return api.install(LogsSubscription, crit), nil
+	return api.install(LogsSubscription, crit)
 }
 
 // UninstallFilter removes a filter by id. Returns true if it existed.
