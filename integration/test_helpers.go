@@ -163,8 +163,8 @@ type HandlerChainFactory func(
 //  4. Gateway: call TxQueue.Handle to mark any pending Ethereum transactions whose
 //     Fabric tx-ID appears in this block as complete, unblocking waiting callers.
 //
-//  5. Extra handlers (e.g. TxCompletionTracker in perf tests): any caller-supplied
-//     handlers that observe committed blocks for their own purposes.
+//  5. Extra handlers: any caller-supplied handlers that observe committed blocks for
+//     their own purposes.
 func defaultHandlerChain(t *testing.T, ctx context.Context, cfg config.Config, ends []eapi.Service, gwSigner sdk.Signer, submitters []core.Submitter, txQueue core.TxQueueInterface, dbs []storage.KVS) (*core.Gateway, []blocks.BlockHandler, network.BlockHeightReader) {
 	chain, err := core.NewChain(cfg.Gateway.Database.ConnString, cfg.Gateway.Database.TriePath, false)
 	if err != nil {
@@ -560,7 +560,7 @@ func newSplitFileConfigHarness(t *testing.T, logger sdk.Logger, evmConfig execut
 // chainFactory controls the chain store and handler chain wired into the
 // synchronizer. Pass nil to use defaultHandlerChain (SQLite-backed core.Chain).
 // Perf tests supply their own factory to use a lightweight in-memory height
-// tracker and attach a TxCompletionTracker as a tail handler.
+// tracker and a completion handler cheaper than the gateway's.
 func NewFabricXTestHarnessWithNotifications(t *testing.T, logger sdk.Logger, evmConfig execution.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory, txQueue core.TxQueueInterface, chainFactory HandlerChainFactory, confFile string) (*TestHarness, error) {
 	if primeDbPath != "" && !filepath.IsAbs(primeDbPath) {
 		if abs, err := filepath.Abs(primeDbPath); err == nil {
