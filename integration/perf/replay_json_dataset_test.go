@@ -7,6 +7,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package main
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/csv"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	fc "github.com/hyperledger/fabric-x-evm/common"
 	eapi "github.com/hyperledger/fabric-x-evm/endorser/api"
 	econf "github.com/hyperledger/fabric-x-evm/endorser/config"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
@@ -104,14 +106,100 @@ func (m *memHeightTracker) GetLogsByTxHash(_ context.Context, _ []byte) ([]domai
 	return nil, nil
 }
 
+// perfCompleter is the completion handler the perf chain registers in place of the
+// gateway itself. It marks committed transactions complete and reports each one to the
+// test, without running core.ConvertToDomain.
+//
+// Why not just register gw: Gateway.Handle runs ConvertToDomain, which per committed
+// transaction does an RLP decode, a keccak hash, a log decode, and — dominating all of
+// it — a types.Sender secp256k1 public-key recovery (~31 µs of the ~34 µs total,
+// measured). Nothing in this test reads the result of that recovery: the chain store is
+// a memHeightTracker whose query methods all return nil, and the nonce sequencer is
+// gwtestimpl.NewPassthroughGate, whose Observe is a no-op. Since the SDK's AllTxStreamer
+// runs the whole handler chain on one goroutine in block order, that cost is serial and
+// caps throughput directly.
+//
+// It fills only the fields TxQueue.Handle and TxQueueV2.Handle actually consume — TxHash
+// and Status — so TxQueue.Stats(), and therefore the reported invalid_rate, is unchanged.
+// Logs are deliberately not populated: neither queue reads them and memHeightTracker's
+// GetLogs* return nil anyway.
+//
+// NOTE: replacing gw in the chain also drops Gateway.Handle's nonceGate.Observe call.
+// That is safe here only because perfHandlerChain wires a passthrough gate. Do not reuse
+// this with a real nonce gate.
+type perfCompleter struct {
+	q gwcore.TxQueueInterface
+
+	// observe, when non-nil, is called once per committed EVM transaction after the
+	// queue has processed the block. It receives the hash and status this handler has
+	// already decoded, which is what keeps the chain at one RLP decode and one keccak
+	// per transaction: the test's TxCompletionTracker no longer decodes them again.
+	observe func(common.Hash, blocks.Status) error
+}
+
+// Handle implements blocks.BlockHandler.
+func (p *perfCompleter) Handle(ctx context.Context, b blocks.Block) error {
+	block := &domain.Block{
+		BlockNumber:  b.Number,
+		Transactions: make([]domain.Transaction, 0, len(b.Transactions)),
+	}
+	for _, tx := range b.Transactions {
+		// Same skip conditions as ConvertToDomain, so the transaction counts the queue
+		// sees are identical.
+		if len(tx.InputArgs) < 2 || !bytes.Equal(tx.InputArgs[0], []byte{byte(fc.ProposalTypeEVMTx)}) {
+			continue
+		}
+		var ethTx types.Transaction
+		if err := ethTx.UnmarshalBinary(tx.InputArgs[1]); err != nil {
+			// Surfaced rather than skipped (ConvertToDomain panics here): a tx that passed the
+			// EVM-proposal filter but will not decode is a bug, and swallowing it would
+			// instead stall the closed loop on a completion that never arrives.
+			return fmt.Errorf("block %d tx %d: invalid tx: %w", b.Number, tx.Number, err)
+		}
+		// Status predicate copied verbatim from convertTransaction: q.invalid counts
+		// tx.Status == 0, so any drift here would move the reported invalid_rate.
+		status := uint8(0)
+		if tx.Valid() && !fc.IsRevertEvent(tx.Events) && !fc.IsExecFailureEvent(tx.Events) {
+			status = 1
+		}
+		block.Transactions = append(block.Transactions, domain.Transaction{
+			TxHash:         ethTx.Hash().Bytes(),
+			Status:         status,
+			FabricTxStatus: tx.Status,
+		})
+	}
+
+	if err := p.q.Handle(ctx, block); err != nil {
+		return err
+	}
+
+	// Notify the test only after the queue has marked the whole block complete, which is
+	// the ordering the previous [.., gateway, completionTracker] chain had. It matters
+	// under wrap-around replay: the refill loop may resubmit the same transaction hash,
+	// and the queue's dedup map must have released it first.
+	if p.observe == nil {
+		return nil
+	}
+	for i := range block.Transactions {
+		// BytesToHash is a 32-byte copy, not a re-hash.
+		if err := p.observe(common.BytesToHash(block.Transactions[i].TxHash), block.Transactions[i].FabricTxStatus); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // perfHandlerChain is an integration.HandlerChainFactory for perf tests.
-// It wires a memHeightTracker instead of core.Chain (no persistence, no I/O),
-// and appends completionTracker as the last handler so the perf test can observe
-// every committed transaction.
+// It wires a memHeightTracker instead of core.Chain (no persistence, no I/O), and a
+// perfCompleter instead of the gateway, so the single notification goroutine does the
+// minimum work needed to close the test's loop.
 //
 // Handler order:
 //
-//	[endorser KVS…, memHeightTracker, gateway, completionTracker]
+//	[endorser KVS…, memHeightTracker, perfCompleter]
+//
+// completionTracker is not itself a handler: perfCompleter feeds it the hash and status
+// it has already decoded.
 func perfHandlerChain(completionTracker *TxCompletionTracker) integration.HandlerChainFactory {
 	return func(t *testing.T, ctx context.Context, cfg gwconfig.Config, ends []eapi.Service, gwSigner sdk.Signer, submitters []gwcore.Submitter, txQueue gwcore.TxQueueInterface, dbs []estorage.KVS) (*gwcore.Gateway, []blocks.BlockHandler, network.BlockHeightReader) {
 		tracker := new(memHeightTracker)
@@ -130,11 +218,15 @@ func perfHandlerChain(completionTracker *TxCompletionTracker) integration.Handle
 			t.Fatalf("build gateway: %v", err)
 		}
 
-		handlers := make([]blocks.BlockHandler, 0, len(dbs)+3)
+		// gw is still built, started and returned — the test needs it for
+		// NonceBypassGateway, Stop, TxQueue.Stats and state priming — it is just not a
+		// block handler here. perfCompleter does the queue-completion half of
+		// Gateway.Handle without ConvertToDomain; see its doc comment.
+		handlers := make([]blocks.BlockHandler, 0, len(dbs)+2)
 		for _, db := range dbs {
 			handlers = append(handlers, db)
 		}
-		handlers = append(handlers, tracker, gw, completionTracker)
+		handlers = append(handlers, tracker, &perfCompleter{q: txQueue, observe: completionTracker.Observe})
 		return gw, handlers, tracker
 	}
 }
@@ -161,12 +253,27 @@ type txCompletion struct {
 }
 
 // TxCompletionTracker forwards all transaction completion notifications to a single channel.
-// It implements common.BlockHandler to receive notifications from the notification system.
+//
+// It is not a blocks.BlockHandler: perfCompleter, already in the handler chain, calls
+// Observe with the hash and status it decoded, so a committed transaction is decoded and
+// hashed exactly once per block on the notification goroutine.
+//
+// started is an atomic: nothing depends on it jointly with another field.
+//
+// stopped is NOT, because there is an invariant spanning it and the channel: the caller
+// does Stop() and then close(completionCh), and that is only safe if no goroutine can be
+// sitting between "saw stopped == false" and its send. An atomic makes that check and the
+// send two separate steps, which is a send on a closed channel — a panic on the SDK's
+// notification goroutine, at the end of a long run, taking the PERF RESULT line with it.
+// A RWMutex restores the guarantee. The hold is per transaction, not the per-block hold
+// the old code took (blocks carry up to MaxMessageCount, 10000, transactions), so it is
+// ~20ns against the ~34µs/tx this handler chain exists to save.
 type TxCompletionTracker struct {
-	mu           sync.Mutex
 	completionCh chan txCompletion
-	started      bool
-	stopped      bool
+	started      atomic.Bool
+
+	stopMu  sync.RWMutex
+	stopped bool
 }
 
 // NewTxCompletionTracker creates a new tracker with a completion channel.
@@ -182,47 +289,39 @@ func NewTxCompletionTracker(completionCh chan txCompletion) *TxCompletionTracker
 // receive completions (i.e. just before dispatching the first transaction).
 // Completions that arrive before Start is called are silently dropped.
 func (t *TxCompletionTracker) Start() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.started = true
+	t.started.Store(true)
 }
 
 // Stop prevents any further sends to the completion channel. Must be called before
 // closing the channel to avoid panics from in-flight notification goroutines.
 func (t *TxCompletionTracker) Stop() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.stopMu.Lock()
+	defer t.stopMu.Unlock()
 	t.stopped = true
 }
 
-// Handle implements common.BlockHandler. It receives committed transactions and forwards
-// them to the completion channel, reconstructing the Ethereum tx hash from InputArgs.
-func (t *TxCompletionTracker) Handle(ctx context.Context, b blocks.Block) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if !t.started || t.stopped {
+// Observe records one committed transaction, forwarding it to the completion channel.
+// perfCompleter calls it per committed EVM transaction with the hash and status it has
+// already decoded — the tracker does no decoding of its own.
+func (t *TxCompletionTracker) Observe(hash common.Hash, status blocks.Status) error {
+	if !t.started.Load() {
 		return nil
 	}
-	for _, tx := range b.Transactions {
-		var ethTx types.Transaction
-		if len(tx.InputArgs) < 2 {
-			continue
-		}
-		if err := ethTx.UnmarshalBinary(tx.InputArgs[1]); err != nil {
-			continue
-		}
-		notif := txCompletion{
-			EthTxHash: ethTx.Hash(),
-			Status:    tx.Status,
-		}
-		select {
-		case t.completionCh <- notif:
-		default:
-			// Channel full - this shouldn't happen with proper sizing
-			return fmt.Errorf("completion channel full, dropping notification for tx %s", notif.EthTxHash.Hex())
-		}
+	// Held across the send, so Stop() cannot return while a send is pending.
+	t.stopMu.RLock()
+	defer t.stopMu.RUnlock()
+	if t.stopped {
+		return nil
 	}
-	return nil
+	select {
+	case t.completionCh <- txCompletion{EthTxHash: hash, Status: status}:
+		return nil
+	default:
+		// Channel full - this shouldn't happen with proper sizing: the test is a closed
+		// loop, so at most numOutstandingTx completions can be pending at once and the
+		// channel holds numOutstandingTx*2.
+		return fmt.Errorf("completion channel full, dropping notification for tx %s", hash.Hex())
+	}
 }
 
 // balancePrimingEndorserFactory creates endorsers with balance priming support for testing.
@@ -230,6 +329,24 @@ func balancePrimingEndorserFactory(balancePriming *testimpl.BalancePrimingConfig
 	return func(t *testing.T, ecfg econf.Endorser, channel, namespace string, evmConfig execution.EVMConfig, protocol string) integration.EndorserComponents {
 		// Create the base endorser components
 		db, builder, baseEndorser := integration.NewEndorser(t, ecfg, channel, namespace, evmConfig, protocol)
+
+		// The perf harness must run the plain in-memory LightKVS with a one-block history
+		// window. applyUpdates does a maps.Clone of the whole state map per block, so each
+		// retained history slot pins one full-state map structure and costs GC tracing for
+		// the rest of the run.
+		//
+		// integration.NewEndorser passes testImpl=false, so NewEndorserCore builds a bare
+		// LightKVS rather than wrapping it in a RevertibleLightKVS with a 16384-slot
+		// history. Assert both, so a future refactor cannot silently reroute the perf
+		// harness through the testnode path or widen the window.
+		switch kvs := db.(type) {
+		case *estorage.LightKVS:
+			if got := len(kvs.History); got != 1 {
+				t.Fatalf("perf endorser LightKVS history window is %d, want 1", got)
+			}
+		case *estorage.RevertibleLightKVS:
+			t.Fatalf("perf endorser got the testImpl RevertibleLightKVS; NewEndorserCore must be called with testImpl=false")
+		}
 
 		// Extract the base EVMEngine
 		baseEngine, ok := baseEndorser.Engine.(*execution.EVMEngine)
@@ -398,6 +515,13 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 			"Gateway.WorkerCount":    processingWorkerCount,
 			"Gateway.SubmitterCount": ordererSubmitterCount,
 			"Network.Namespace":      *namespace,
+			// One retained state snapshot, not two. This is already what
+			// integration.buildEndorsers picks when the config file leaves history_size
+			// unset (fabx.yaml does), so today it only pins the value: without it the
+			// perf harness would inherit endorser/app's production default of 2 if that
+			// fallback ever went away. The assertion in balancePrimingEndorserFactory
+			// checks the value that actually reaches the KVS.
+			"Endorser.Database.HistorySize": 1,
 		},
 		factory,
 		queue,
@@ -803,7 +927,22 @@ func TestReplayJSONDataset(t *testing.T) {
 	ordererSubmitterCount := *orderers   // Number of goroutines submitting transactions TO the orderer (BatchSubmitter workers)
 	numOutstandingTx := *outstanding     // Maximum number of outstanding transactions
 
-	throughput, failedTxs, totalTxs, invalidRate, conflictRate := runReplayTest(t, processingWorkerCount, submittingWorkerCount, ordererSubmitterCount, numOutstandingTx, replayConfig{windowSize: 1000000}, *gatewayConfig)
+	// Single pass by default, so CI (make perf-smoke, -timeout 600s) is unaffected.
+	// Set PERF_REPLAY_WRAP_COUNT>1 to replay the window repeatedly, which is what a
+	// demo-length run needs — without it the test finishes and the load simply stops.
+	replayCfg := replayConfig{windowSize: 1000000}
+	if wrapCountStr := os.Getenv("PERF_REPLAY_WRAP_COUNT"); wrapCountStr != "" {
+		var wrapCount int64
+		_, err := fmt.Sscanf(wrapCountStr, "%d", &wrapCount)
+		assert.NoError(t, err, "PERF_REPLAY_WRAP_COUNT must be a valid integer")
+		assert.True(t, wrapCount >= 1, "PERF_REPLAY_WRAP_COUNT must be >= 1")
+		if wrapCount > 1 {
+			replayCfg.wrapAround = true
+			replayCfg.wrapCount = wrapCount
+		}
+	}
+
+	throughput, failedTxs, totalTxs, invalidRate, conflictRate := runReplayTest(t, processingWorkerCount, submittingWorkerCount, ordererSubmitterCount, numOutstandingTx, replayCfg, *gatewayConfig)
 
 	// Machine-readable summary parsed by CI to post on the PR.
 	// Format: PERF RESULT throughput=<tx/s> invalid_rate=<0.NNN> conflict_rate=<0.NNN>
