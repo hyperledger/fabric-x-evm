@@ -296,10 +296,11 @@ schedules / delays see a time close to recent `Execute` stamps. Historical block
 not reconstructed.
 
 **Hardhat mine / time RPCs**: On testnode, `hardhat_mine` and `evm_mine` cut empty blocks through
-the in-process network and wait until `eth_blockNumber` advances. The optional `interval` argument
-is accepted but ignored. `evm_increaseTime` and `evm_setNextBlockTimestamp` remain no-ops until
-real EVM timestamp control lands; OZ tests that only advance chain time via those helpers still
-fail for that reason.
+the in-process network and wait until `eth_blockNumber` advances. A single call is capped at 256
+blocks so multi-thousand `mineUpTo` (e.g. OZ Blockhash history window) cannot hang CI. The optional
+`interval` argument is accepted but ignored. `evm_increaseTime` and `evm_setNextBlockTimestamp`
+remain no-ops until real EVM timestamp control lands; OZ tests that only advance chain time via
+those helpers still fail for that reason.
 
 ---
 

@@ -44,6 +44,11 @@ type BlockCutter interface {
 const (
 	mineSyncTimeout  = 2 * time.Minute
 	minePollInterval = 10 * time.Millisecond
+
+	// MaxMineBlocks caps a single hardhat_mine / evm_mine call. Larger values
+	// (OZ Blockhash mineUpTo ~8191) would exceed the CI OZ job timeout.
+	// 256 matches OZ's BLOCKHASH_SERVE_WINDOW so the "recent block" case can still mine.
+	MaxMineBlocks = 256
 )
 
 // HardhatAPI provides Hardhat-specific RPC methods for testing.
@@ -430,12 +435,16 @@ func (api *EvmAPI) Mine(ctx context.Context) (string, error) {
 }
 
 // mineBlocks cuts n empty blocks and waits until backend.BlockNumber reaches
-// start+n. n==0 is a no-op. cutter must be non-nil when n>0.
+// start+n. n==0 is a no-op. cutter must be non-nil when n>0. n above
+// MaxMineBlocks is rejected so CI cannot hang on multi-thousand mineUpTo calls.
 func mineBlocks(ctx context.Context, cutter BlockCutter, numbers interface {
 	BlockNumber(context.Context) (uint64, error)
 }, n uint64) error {
 	if n == 0 {
 		return nil
+	}
+	if n > MaxMineBlocks {
+		return fmt.Errorf("hardhat_mine: refusing %d blocks (max %d per call); large mineUpTo is unsupported on testnode", n, MaxMineBlocks)
 	}
 	if cutter == nil {
 		return fmt.Errorf("hardhat_mine requires a block cutter; only available on testnode")
