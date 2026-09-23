@@ -151,7 +151,7 @@ func (p *perfCompleter) Handle(ctx context.Context, b blocks.Block) error {
 		}
 		var ethTx types.Transaction
 		if err := ethTx.UnmarshalBinary(tx.InputArgs[1]); err != nil {
-			// Surfaced rather than skipped, as ConvertToDomain does: a tx that passed the
+			// Surfaced rather than skipped (ConvertToDomain panics here): a tx that passed the
 			// EVM-proposal filter but will not decode is a bug, and swallowing it would
 			// instead stall the closed loop on a completion that never arrives.
 			return fmt.Errorf("block %d tx %d: invalid tx: %w", b.Number, tx.Number, err)
@@ -258,13 +258,22 @@ type txCompletion struct {
 // Observe with the hash and status it decoded, so a committed transaction is decoded and
 // hashed exactly once per block on the notification goroutine.
 //
-// started and stopped are atomics rather than mutex-guarded fields: there is no invariant
-// spanning the two, and a lock held across a whole block is a long hold on the single
-// notification goroutine when blocks carry up to MaxMessageCount (10000) transactions.
+// started is an atomic: nothing depends on it jointly with another field.
+//
+// stopped is NOT, because there is an invariant spanning it and the channel: the caller
+// does Stop() and then close(completionCh), and that is only safe if no goroutine can be
+// sitting between "saw stopped == false" and its send. An atomic makes that check and the
+// send two separate steps, which is a send on a closed channel — a panic on the SDK's
+// notification goroutine, at the end of a long run, taking the PERF RESULT line with it.
+// A RWMutex restores the guarantee. The hold is per transaction, not the per-block hold
+// the old code took (blocks carry up to MaxMessageCount, 10000, transactions), so it is
+// ~20ns against the ~34µs/tx this handler chain exists to save.
 type TxCompletionTracker struct {
 	completionCh chan txCompletion
 	started      atomic.Bool
-	stopped      atomic.Bool
+
+	stopMu  sync.RWMutex
+	stopped bool
 }
 
 // NewTxCompletionTracker creates a new tracker with a completion channel.
@@ -286,14 +295,22 @@ func (t *TxCompletionTracker) Start() {
 // Stop prevents any further sends to the completion channel. Must be called before
 // closing the channel to avoid panics from in-flight notification goroutines.
 func (t *TxCompletionTracker) Stop() {
-	t.stopped.Store(true)
+	t.stopMu.Lock()
+	defer t.stopMu.Unlock()
+	t.stopped = true
 }
 
 // Observe records one committed transaction, forwarding it to the completion channel.
 // perfCompleter calls it per committed EVM transaction with the hash and status it has
 // already decoded — the tracker does no decoding of its own.
 func (t *TxCompletionTracker) Observe(hash common.Hash, status blocks.Status) error {
-	if !t.started.Load() || t.stopped.Load() {
+	if !t.started.Load() {
+		return nil
+	}
+	// Held across the send, so Stop() cannot return while a send is pending.
+	t.stopMu.RLock()
+	defer t.stopMu.RUnlock()
+	if t.stopped {
 		return nil
 	}
 	select {
