@@ -173,6 +173,10 @@ type testRPCDeps struct {
 
 	// accountsPath is the file the server-side signing keys are loaded from.
 	accountsPath string
+
+	// cutter cuts empty blocks for hardhat_mine / evm_mine on testnode.
+	// Nil on config-based EnableTestRPC; those RPCs then return an error.
+	cutter testimpl.BlockCutter
 }
 
 // buildApp wires up the gateway from a pre-built local endorser and pre-built remote
@@ -222,9 +226,19 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 	// Chain must be called before gateway, to persist blocks before marking transactions complete.
 	// FilterAPI runs after chain so newHeads can load the stored block (stateRoot etc.).
 	handlers := append(extraHandlers, chain, filterAPI, gateway)
-	syncer, err := synchronizer.New(cfg.Network.Protocol, chain, cfg.Network.Channel, cfg.Network.Namespace, cfg.Committer.ToPeerConf(), gwSigner, logger, handlers...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create synchronizer: %w", err)
+	var syncer synchronizer.Synchronizer
+	var errSync error
+	if test != nil && test.cutter != nil {
+		// Self contained testnode (fabrictest + CutBlock): use delivery sync so empty
+		// blocks reach handlers. hybridx switches to AllTxBatch after catch up, and that
+		// path drops empty blocks, so hardhat_mine would never advance eth_blockNumber.
+		// Switch back to hybridx after it picks up fabric-x-common 0.2.9+ empty block support.
+		syncer, errSync = synchronizer.NewDelivery(cfg.Network.Protocol, chain, cfg.Network.Channel, cfg.Committer.ToPeerConf(), gwSigner, logger, handlers...)
+	} else {
+		syncer, errSync = synchronizer.New(cfg.Network.Protocol, chain, cfg.Network.Channel, cfg.Network.Namespace, cfg.Committer.ToPeerConf(), gwSigner, logger, handlers...)
+	}
+	if errSync != nil {
+		return nil, fmt.Errorf("failed to create synchronizer: %w", errSync)
 	}
 
 	// Create RPC server - use test server if explicitly enabled
@@ -275,7 +289,7 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 			return nil, fmt.Errorf("failed to create state primer: %w", err)
 		}
 
-		rpcServer, err = testimpl.NewTestServer(gateway, testAccountMgr.Addresses, testAccountMgr.PrivateKeys, revertibleKVS, snapshotStore, gateway.TxQueue, testGate, statePrimer, filterAPI)
+		rpcServer, err = testimpl.NewTestServer(gateway, testAccountMgr.Addresses, testAccountMgr.PrivateKeys, revertibleKVS, snapshotStore, gateway.TxQueue, testGate, statePrimer, filterAPI, test.cutter)
 		if err != nil {
 			filterAPI.Close()
 			return nil, err

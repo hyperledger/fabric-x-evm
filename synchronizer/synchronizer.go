@@ -19,6 +19,7 @@ import (
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/network"
 	nfab "github.com/hyperledger/fabric-x-sdk/network/fabric"
+	nfabx "github.com/hyperledger/fabric-x-sdk/network/fabricx"
 
 	"github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/synchronizer/hybridx"
@@ -53,6 +54,28 @@ func New(protocol string, db network.BlockHeightReader, channel, namespace strin
 		return nfab.NewSynchronizer(db, channel, committer, signer, logger, handlers...)
 	case common.ProtocolFabricX:
 		return hybridx.New(db, channel, namespace, committer, signer, logger, handlers...)
+	default:
+		return nil, fmt.Errorf("unsupported protocol: %q", protocol)
+	}
+}
+
+// NewDelivery creates a delivery only synchronizer (SDK standard path), not hybridx.
+// Empty blocks from the committer Delivery service are pushed through the handlers.
+// Used by the self contained testnode so hardhat_mine CutBlock empty blocks are seen.
+//
+// Temporary for testnode: switch back to hybridx once it incorporates fabric-x-common
+// 0.2.9 and later (empty block notifications). Until then AllTxBatch drops empty blocks
+// after catch up, so eth_blockNumber never advances on CutBlock.
+func NewDelivery(protocol string, db network.BlockHeightReader, channel string, committer network.PeerConf, signer sdk.Signer, logger sdk.Logger, handlers ...blocks.BlockHandler) (Synchronizer, error) {
+	protocol, err := common.NormalizeProtocol(protocol)
+	if err != nil {
+		return nil, err
+	}
+	switch protocol {
+	case common.ProtocolFabric:
+		return nfab.NewSynchronizer(db, channel, committer, signer, logger, handlers...)
+	case common.ProtocolFabricX:
+		return nfabx.NewSynchronizer(db, channel, committer, signer, logger, handlers...)
 	default:
 		return nil, fmt.Errorf("unsupported protocol: %q", protocol)
 	}

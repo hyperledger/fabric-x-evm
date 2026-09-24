@@ -120,6 +120,7 @@ func NewTestNode(ctx context.Context, tcfg TestNodeConfig) (*App, error) {
 		kvs:          endorserKVS,
 		builders:     []endorsement.Builder{endorserBuilder},
 		accountsPath: tcfg.TestAccountsPath,
+		cutter:       nw,
 	}
 	application, err := buildApp(ctx, cfg, signer, logger, endorser, nil, test, endorserKVS)
 	if err != nil {
