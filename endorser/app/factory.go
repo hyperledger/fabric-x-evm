@@ -46,9 +46,9 @@ func NewEndorserCore(
 
 	// Zero means unset, not "no history": an in-memory KVS with a zero-length
 	// history window can't even serve the current tip. Test RPC needs a large
-	// sequential window (loadFixture/snapshot stretches can commit far more
-	// than a small window between reverts); production only needs a couple of
-	// snapshots for the synchronizer to redeliver into.
+	// window (loadFixture/snapshot stretches can commit far more than a small
+	// window between reverts; older snapshots are forgotten); production only
+	// needs a couple of snapshots for the synchronizer to redeliver into.
 	if dbCfg.HistorySize == 0 {
 		if testImpl {
 			dbCfg.HistorySize = 16384
