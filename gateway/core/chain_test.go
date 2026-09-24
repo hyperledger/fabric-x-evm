@@ -116,7 +116,7 @@ func TestConvertToDomain_InvalidTxDropsLogs(t *testing.T) {
 		Transactions: []blocks.Transaction{{
 			ID:        "tx-bad",
 			Status:    blocks.StatusMVCCConflict, // invalid tx, but events survive from simulation
-			Events:    events,
+			Event:     events,
 			InputArgs: [][]byte{{byte(co.ProposalTypeEVMTx)}, ethb},
 		}},
 	}

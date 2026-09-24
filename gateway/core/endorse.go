@@ -24,6 +24,7 @@ import (
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
+	efab "github.com/hyperledger/fabric-x-sdk/endorsement/fabric"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -37,6 +38,10 @@ type EndorsementClient struct {
 	channel   string
 	namespace string
 	nsVersion string
+	// invocations builds the proposal the endorsers are asked to execute. The
+	// Fabric builder is what endorsement.NewInvocation used to be before the SDK
+	// split it per protocol, so the proposal bytes are unchanged.
+	invocations endorsement.InvocationBuilder
 }
 
 // NewEndorsementClient creates an EndorsementClient from a mandatory local
@@ -47,12 +52,13 @@ func NewEndorsementClient(local api.Service, remotes []api.Service, signer Signe
 	endorsers = append(endorsers, local)
 	endorsers = append(endorsers, remotes...)
 	return &EndorsementClient{
-		local:     local,
-		endorsers: endorsers,
-		signer:    signer,
-		channel:   channel,
-		namespace: namespace,
-		nsVersion: nsVersion,
+		local:       local,
+		endorsers:   endorsers,
+		signer:      signer,
+		channel:     channel,
+		namespace:   namespace,
+		nsVersion:   nsVersion,
+		invocations: efab.NewInvocationBuilder(signer),
 	}, nil
 }
 
@@ -265,7 +271,10 @@ func (e *EndorsementClient) NonceAt(ctx context.Context, account ethcommon.Addre
 	return e.local.NonceAt(ctx, account, blockNumber)
 }
 
-// createInvocation creates an endorsement.Invocation from the given parameters
+// createInvocation creates an endorsement.Invocation from the given parameters.
+// The SDK's nsVersion (the Fabric-X MVCC namespace counter) is left at zero: our
+// nsVersion config is Fabric's chaincode version, which is what the third
+// argument takes.
 func (e *EndorsementClient) createInvocation(args [][]byte) (endorsement.Invocation, error) {
-	return endorsement.NewInvocation(e.signer, e.channel, e.namespace, e.nsVersion, args)
+	return e.invocations.NewInvocation(e.channel, e.namespace, e.nsVersion, 0, args)
 }

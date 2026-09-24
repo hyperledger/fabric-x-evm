@@ -154,11 +154,11 @@ func ConvertToDomain(b blocks.Block) domain.Block {
 			continue
 		}
 		status := uint8(0)
-		if tx.Valid() && !fc.IsRevertEvent(tx.Events) && !fc.IsExecFailureEvent(tx.Events) {
+		if tx.Valid() && !fc.IsRevertEvent(tx.EventName) && !fc.IsExecFailureEvent(tx.EventName) {
 			status = 1
 		}
 
-		etx, err := convertTransaction(tx.InputArgs[1], b.Hash, b.Number, tx.Number, tx.ID, status, tx.Status, tx.Events, &logIndex)
+		etx, err := convertTransaction(tx.InputArgs[1], b.Hash, b.Number, tx.Number, tx.ID, status, tx.Status, tx.Event, &logIndex)
 		if err != nil {
 			panic(err) // we surface this for now instead of swallowing it
 		}

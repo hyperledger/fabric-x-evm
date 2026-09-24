@@ -184,7 +184,7 @@ func newGate(h *HybridSynchronizer) (*notifGate, *bool) {
 }
 
 // evmBatch builds a batch the AllTxBatchDispatcher will actually forward: it drops
-// batches whose events carry no EVM proposal args. The SDK decodes the ChaincodeInput
+// batches whose events carry no EVM proposal args. The SDK decodes the metadata
 // at the network boundary, so events arrive with InputArgs already populated and there
 // is no wire-format metadata to marshal here.
 func evmBatch(t *testing.T, blockNum uint64) notification.AllTxBatch {

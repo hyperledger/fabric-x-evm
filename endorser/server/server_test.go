@@ -326,8 +326,8 @@ func TestExecute_ForwardsInvocation(t *testing.T) {
 	if got.TxID != "tx-1" {
 		t.Errorf("TxID = %q, want tx-1", got.TxID)
 	}
-	if got.CCID.GetName() != "evm" || got.CCID.GetVersion() != "1.0" {
-		t.Errorf("CCID = %v", got.CCID)
+	if got.Namespace != "evm" || got.ChaincodeVersion != "1.0" {
+		t.Errorf("Namespace/ChaincodeVersion = %q/%q", got.Namespace, got.ChaincodeVersion)
 	}
 	if !bytes.Equal(got.ProposalHash, []byte{0xaa}) {
 		t.Errorf("ProposalHash = %x, want aa", got.ProposalHash)

@@ -15,6 +15,7 @@ import (
 	estorage "github.com/hyperledger/fabric-x-evm/endorser/storage"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
+	efab "github.com/hyperledger/fabric-x-sdk/endorsement/fabric"
 )
 
 const testNS = "basic"
@@ -143,7 +144,7 @@ func TestEndorsesWithEveryBuilder(t *testing.T) {
 
 	// Collect endorsements exactly as Commit does, without needing a gateway or
 	// submitter to carry the result anywhere.
-	inv, err := endorsement.NewInvocation(sp.signer, "mychannel", testNS, "1.0", [][]byte{{0xfb}, {0x01}})
+	inv, err := efab.NewInvocationBuilder(sp.signer).NewInvocation("mychannel", testNS, "1.0", 0, [][]byte{{0xfb}, {0x01}})
 	if err != nil {
 		t.Fatalf("NewInvocation: %v", err)
 	}

@@ -18,11 +18,9 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/holiman/uint256"
-	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/state"
-	"google.golang.org/protobuf/proto"
 	_ "modernc.org/sqlite"
 )
 
@@ -330,14 +328,9 @@ func TestEVMEngineExecute_NonRevertFailureIsCommittedNotRejected(t *testing.T) {
 	if len(res.RWS.Writes) == 0 {
 		t.Error("expected RWS to record the sender's nonce increment, got no writes")
 	}
-	// res.Event is the inner event; the SDK Endorse builder wraps it in an
-	// outer ChaincodeEvent (EventName "log") before it is committed - mirror
-	// that here to check it the same way IsExecFailureEvent reads it back.
-	outer, err := proto.Marshal(&peer.ChaincodeEvent{Payload: res.Event, EventName: "log"})
-	if err != nil {
-		t.Fatalf("wrap event: %v", err)
-	}
-	if !common.IsExecFailureEvent(outer) {
-		t.Error("expected Event to be a marked exec-failure event")
+	// res.EventName reaches the block unchanged, so it is read back exactly as
+	// IsExecFailureEvent sees it on the gateway side.
+	if !common.IsExecFailureEvent(res.EventName) {
+		t.Error("expected EventName to mark an exec failure")
 	}
 }

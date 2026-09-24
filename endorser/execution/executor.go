@@ -89,31 +89,25 @@ func (e *EVMEngine) Execute(ctx context.Context, tx *types.Transaction, blockTim
 		switch {
 		case errors.Is(err, vm.ErrExecutionReverted):
 			// Revert: a committed outcome, endorsed with a revert event.
-			event, mErr := fxcommon.MarshalRevert(ret, "", tx.Hash().Hex())
-			if mErr != nil {
-				return endorsement.ExecutionResult{}, fmt.Errorf("marshal revert event: %w", mErr)
-			}
 			return endorsement.ExecutionResult{
-				RWS:     ex.state.Result(),
-				Event:   event,
-				Status:  fxcommon.StatusEVMRevert,
-				Message: err.Error(),
-				Payload: ret,
+				RWS:       ex.state.Result(),
+				Event:     ret,
+				EventName: fxcommon.RevertEventName(tx.Hash().Hex()),
+				Status:    fxcommon.StatusEVMRevert,
+				Message:   err.Error(),
+				Payload:   ret,
 			}, nil
 		case isExecFailure:
 			// Valid tx whose EVM execution faulted without reverting (out of gas,
 			// invalid opcode, ...): also a committed outcome, same shape as a
 			// revert but with no ABI-encoded reason to carry.
-			event, mErr := fxcommon.MarshalExecFailure(ret, "", tx.Hash().Hex())
-			if mErr != nil {
-				return endorsement.ExecutionResult{}, fmt.Errorf("marshal exec-failure event: %w", mErr)
-			}
 			return endorsement.ExecutionResult{
-				RWS:     ex.state.Result(),
-				Event:   event,
-				Status:  fxcommon.StatusExecFailure,
-				Message: err.Error(),
-				Payload: ret,
+				RWS:       ex.state.Result(),
+				Event:     ret,
+				EventName: fxcommon.ExecFailureEventName(tx.Hash().Hex()),
+				Status:    fxcommon.StatusExecFailure,
+				Message:   err.Error(),
+				Payload:   ret,
 			}, nil
 		default:
 			// Pre-execution rejection (bad signature, nonce, ...): never included in a block.

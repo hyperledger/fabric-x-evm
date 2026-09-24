@@ -36,6 +36,7 @@ import (
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
 	eserver "github.com/hyperledger/fabric-x-evm/endorser/server"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
+	efab "github.com/hyperledger/fabric-x-sdk/endorsement/fabric"
 )
 
 const grpcTestChainID int64 = 4011
@@ -181,7 +182,7 @@ func newInvocation(t *testing.T, ethTx *types.Transaction) endorsement.Invocatio
 	if err != nil {
 		t.Fatalf("marshal tx: %v", err)
 	}
-	inv, err := endorsement.NewInvocation(localSigner{}, "mychannel", "basic", "1.0",
+	inv, err := efab.NewInvocationBuilder(localSigner{}).NewInvocation("mychannel", "basic", "1.0", 0,
 		[][]byte{{byte(common.ProposalTypeEVMTx)}, raw})
 	if err != nil {
 		t.Fatalf("new invocation: %v", err)

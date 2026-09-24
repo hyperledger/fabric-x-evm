@@ -49,10 +49,11 @@ func (s *Server) Execute(ctx context.Context, req *endorsementpb.ExecuteRequest)
 func invocation(req *endorsementpb.ExecuteRequest) endorsement.Invocation {
 	i := req.GetInvocation()
 	return endorsement.Invocation{
-		TxID:         i.GetTxId(),
-		Args:         i.GetArgs(),
-		CCID:         &peer.ChaincodeID{Name: i.GetChaincodeName(), Version: i.GetChaincodeVersion()},
-		ProposalHash: req.GetProposalHash(),
+		TxID:             i.GetTxId(),
+		Args:             i.GetArgs(),
+		Namespace:        i.GetChaincodeName(),
+		ChaincodeVersion: i.GetChaincodeVersion(),
+		ProposalHash:     req.GetProposalHash(),
 	}
 }
 

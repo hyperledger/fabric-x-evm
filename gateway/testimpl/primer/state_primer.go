@@ -27,6 +27,7 @@ import (
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
+	efab "github.com/hyperledger/fabric-x-sdk/endorsement/fabric"
 )
 
 type KVSSnapshotter interface {
@@ -238,11 +239,11 @@ func (sp *StatePrimer) Commit(ctx context.Context, wait bool) error {
 
 	// Create the invocation for the priming transaction. Must carry sp.nsVersion (like the
 	// real endorsement path does) or the committer rejects it as INVALID_CHAINCODE.
-	inv, err := endorsement.NewInvocation(
-		sp.signer,
+	inv, err := efab.NewInvocationBuilder(sp.signer).NewInvocation(
 		sp.channel,
 		sp.namespace,
 		sp.nsVersion,
+		0,
 		[][]byte{{byte(lc.ProposalTypeEVMTx)}, ethTxBytes},
 	)
 	if err != nil {

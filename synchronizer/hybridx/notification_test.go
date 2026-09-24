@@ -31,7 +31,7 @@ func (s *stubHandler) Handle(_ context.Context, b blocks.Block) error {
 	return s.err
 }
 
-// evmEvent builds a committed event as the SDK delivers it: the ChaincodeInput has
+// evmEvent builds a committed event as the SDK delivers it: the metadata has
 // already been decoded at the network boundary, so InputArgs holds the proposal-type
 // byte in Args[0] and the raw ethereum-tx bytes (opaque to the dispatcher) in Args[1].
 func evmEvent(txID string, txNum int64, status blocks.Status, propType common.ProposalType, ethTxBytes []byte) notification.CommittedTxEvent {
@@ -76,8 +76,8 @@ func TestHandleBatch_EmptyBatchDoesNothing(t *testing.T) {
 }
 
 // TestHandleBatch_SkipsEventWithoutEthTx covers every way an event can fail to carry
-// an ethereum transaction. Metadata that was absent, or a ChaincodeInput that did not
-// parse, both reach us from the SDK as an event with no InputArgs at all: the
+// an ethereum transaction. Metadata that was absent, or that carried no args,
+// both reach us from the SDK as an event with no InputArgs at all: the
 // dispatcher sees only that outcome, never the wire format behind it.
 func TestHandleBatch_SkipsEventWithoutEthTx(t *testing.T) {
 	for _, tc := range []struct {
@@ -185,13 +185,13 @@ func TestHandleBatch_MultipleHandlersAllReceive(t *testing.T) {
 
 // TestHandleBatch_ForwardsEvents verifies that the revert event (and any other event)
 // reaches the handler untouched. The SDK lifts it out of the wire format into
-// Transaction.Events, exactly as the block parser does on the delivery path; the
+// Transaction.Event, exactly as the block parser does on the delivery path; the
 // dispatcher must pass it straight through. A nil slice means no event was emitted.
 func TestHandleBatch_ForwardsEvents(t *testing.T) {
 	eventPayload := []byte("some-event-bytes")
 
 	withEvent := committedEVMEvent("evm-with-event")
-	withEvent.Events = eventPayload
+	withEvent.Event = eventPayload
 
 	h := &stubHandler{}
 	d := NewAllTxBatchDispatcher(h)
@@ -206,9 +206,9 @@ func TestHandleBatch_ForwardsEvents(t *testing.T) {
 	require.Len(t, h.seen, 1)
 	require.Len(t, h.seen[0].Transactions, 2)
 
-	assert.Equal(t, eventPayload, h.seen[0].Transactions[0].Events,
+	assert.Equal(t, eventPayload, h.seen[0].Transactions[0].Event,
 		"event bytes must be forwarded as-is")
-	assert.Nil(t, h.seen[0].Transactions[1].Events,
+	assert.Nil(t, h.seen[0].Transactions[1].Event,
 		"a tx that emitted no event must leave Events nil")
 }
 
