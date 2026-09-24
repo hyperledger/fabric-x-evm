@@ -116,35 +116,6 @@ func TestHardhatAPI_Mine_MultipleBlocks(t *testing.T) {
 	}
 }
 
-func TestHardhatAPI_Mine_RejectsAboveCap(t *testing.T) {
-	height := uint64(1)
-	cutter := &fakeCutter{height: &height}
-	api := NewHardhatAPI(nil, &mineBackend{height: &height}, cutter)
-
-	n := hexutil.Uint64(MaxMineBlocks + 1)
-	err := api.Mine(context.Background(), &n, nil)
-	if err == nil {
-		t.Fatal("expected error above MaxMineBlocks")
-	}
-	if cutter.cuts != 0 {
-		t.Fatalf("cuts=%d, want 0", cutter.cuts)
-	}
-}
-
-func TestHardhatAPI_Mine_AllowsMaxMineBlocks(t *testing.T) {
-	height := uint64(0)
-	cutter := &fakeCutter{height: &height}
-	api := NewHardhatAPI(nil, &mineBackend{height: &height}, cutter)
-
-	n := hexutil.Uint64(MaxMineBlocks)
-	if err := api.Mine(context.Background(), &n, nil); err != nil {
-		t.Fatal(err)
-	}
-	if cutter.cuts != MaxMineBlocks {
-		t.Fatalf("cuts=%d, want %d", cutter.cuts, MaxMineBlocks)
-	}
-}
-
 func TestHardhatAPI_Mine_WaitsForSync(t *testing.T) {
 	// Cutter advances a private counter; gateway height catches up asynchronously.
 	var gatewayHeight uint64 = 1

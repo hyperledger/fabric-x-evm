@@ -3955,25 +3955,5 @@
   {
     "id": "VotesExtended vote with timestamp run votes workflow getPastTotalSupply returns the correct checkpointed total supply",
     "cause": "execution reverted"
-  },
-  {
-    "id": "Blockhash supported chain old block",
-    "cause": "hardhat-block-rpc",
-    "note": "hardhat_mine caps each call at 256 empty blocks so OZ CI cannot hang on mineUpTo(HISTORY_SERVE_WINDOW~8191). Deltas above MaxMineBlocks return an RPC error."
-  },
-  {
-    "id": "Blockhash supported chain very old block",
-    "cause": "hardhat-block-rpc",
-    "note": "hardhat_mine caps each call at 256 empty blocks so OZ CI cannot hang on mineUpTo(HISTORY_SERVE_WINDOW~8191). Deltas above MaxMineBlocks return an RPC error."
-  },
-  {
-    "id": "Blockhash unsupported chain old block",
-    "cause": "hardhat-block-rpc",
-    "note": "hardhat_mine caps each call at 256 empty blocks so OZ CI cannot hang on mineUpTo(HISTORY_SERVE_WINDOW~8191). Deltas above MaxMineBlocks return an RPC error."
-  },
-  {
-    "id": "Blockhash unsupported chain very old block",
-    "cause": "hardhat-block-rpc",
-    "note": "hardhat_mine caps each call at 256 empty blocks so OZ CI cannot hang on mineUpTo(HISTORY_SERVE_WINDOW~8191). Deltas above MaxMineBlocks return an RPC error."
   }
 ]

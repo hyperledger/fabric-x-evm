@@ -113,9 +113,7 @@ jobs:
   oz-hardhat-compat:
     name: OZ Hardhat Compatibility
     runs-on: ubuntu-latest
-    # Real hardhat_mine (empty CutBlock + sync wait) makes the suite much slower
-    # than the old stub path (~235s). 15m timed out; keep headroom for CI variance.
-    timeout-minutes: 45
+    timeout-minutes: 15 # avg ~4 min (suite itself ~235s, caches restore in seconds)
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
