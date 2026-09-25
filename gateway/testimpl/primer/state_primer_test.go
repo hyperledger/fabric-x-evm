@@ -15,13 +15,14 @@ import (
 	estorage "github.com/hyperledger/fabric-x-evm/endorser/storage"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
+	efabx "github.com/hyperledger/fabric-x-sdk/endorsement/fabricx"
 )
 
 const testNS = "basic"
 
 var primerTestAddr = ethcommon.HexToAddress("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266")
 
-// stubSigner is enough identity for endorsement.NewInvocation to build a proposal;
+// stubSigner is enough identity for fabricx.NewInvocationBuilder to build a proposal;
 // nothing in these tests verifies a signature.
 type stubSigner struct{}
 
@@ -143,7 +144,7 @@ func TestEndorsesWithEveryBuilder(t *testing.T) {
 
 	// Collect endorsements exactly as Commit does, without needing a gateway or
 	// submitter to carry the result anywhere.
-	inv, err := endorsement.NewInvocation(sp.signer, "mychannel", testNS, "1.0", [][]byte{{0xfb}, {0x01}})
+	inv, err := efabx.NewInvocationBuilder(sp.signer).NewInvocation("mychannel", testNS, "1.0", 0, [][]byte{{0xfb}, {0x01}})
 	if err != nil {
 		t.Fatalf("NewInvocation: %v", err)
 	}

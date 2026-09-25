@@ -12,6 +12,9 @@ import (
 	"time"
 
 	sdk "github.com/hyperledger/fabric-x-sdk"
+	"github.com/hyperledger/fabric-x-sdk/endorsement"
+	efab "github.com/hyperledger/fabric-x-sdk/endorsement/fabric"
+	efabx "github.com/hyperledger/fabric-x-sdk/endorsement/fabricx"
 	"github.com/hyperledger/fabric-x-sdk/network"
 	nfab "github.com/hyperledger/fabric-x-sdk/network/fabric"
 	nfabx "github.com/hyperledger/fabric-x-sdk/network/fabricx"
@@ -57,7 +60,11 @@ func NewNetworkSubmitters(ctx context.Context, protocol string, orderers []netwo
 // are also responsible for creating and starting the synchronizer(s) that feed committed
 // blocks to chain/gateway/endorsers.
 func BuildGateway(ctx context.Context, local eapi.Service, remotes []eapi.Service, gwSigner sdk.Signer, netCfg common.Network, chain core.Store, submitters []core.Submitter, submitterCount int, workerCount int, txQueue core.TxQueueInterface, nonceGate core.NonceSequencer, endorsementChanSize int, txPerSec int) (*core.Gateway, error) {
-	ec, err := core.NewEndorsementClient(local, remotes, gwSigner, netCfg.Channel, netCfg.Namespace, netCfg.NsVersion)
+	invBuilder, err := newInvocationBuilder(netCfg.Protocol, gwSigner)
+	if err != nil {
+		return nil, err
+	}
+	ec, err := core.NewEndorsementClient(local, remotes, invBuilder, netCfg.Channel, netCfg.Namespace, netCfg.NsVersion)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create endorsement client: %w", err)
 	}
@@ -80,4 +87,21 @@ func BuildGateway(ctx context.Context, local eapi.Service, remotes []eapi.Servic
 	}
 
 	return gw, nil
+}
+
+// newInvocationBuilder returns the protocol-appropriate InvocationBuilder.
+// Fabric needs a full chaincode proposal (proposal + hash); Fabric-X needs only the header.
+func newInvocationBuilder(protocol string, signer sdk.Signer) (endorsement.InvocationBuilder, error) {
+	protocol, err := common.NormalizeProtocol(protocol)
+	if err != nil {
+		return nil, err
+	}
+	switch protocol {
+	case common.ProtocolFabric:
+		return efab.NewInvocationBuilder(signer), nil
+	case common.ProtocolFabricX:
+		return efabx.NewInvocationBuilder(signer), nil
+	default:
+		return nil, fmt.Errorf("unsupported protocol: %q", protocol)
+	}
 }

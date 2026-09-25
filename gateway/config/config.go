@@ -52,6 +52,10 @@ type Synchronizer struct {
 	// Timeout bounds how long Run waits for the initial sync to complete
 	// before returning an error. Zero means DefaultSyncTimeout.
 	Timeout time.Duration `mapstructure:"timeout" yaml:"timeout"`
+	// AllTxQueueDepth controls how many committed-block batches the
+	// notification stream buffers between the receive loop and the handler
+	// goroutine (fabric-x only). Zero means notification.DefaultQueueDepth.
+	AllTxQueueDepth int `mapstructure:"all-tx-queue-depth" yaml:"all-tx-queue-depth"`
 }
 
 // DefaultSyncTimeout is used when Synchronizer.Timeout is unset.
