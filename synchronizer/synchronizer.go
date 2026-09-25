@@ -42,7 +42,8 @@ type Synchronizer interface {
 // complete.
 //
 // namespace is used by the fabric-x hybrid synchronizer to filter the notification stream.
-func New(protocol string, db network.BlockHeightReader, channel, namespace string, committer network.PeerConf, signer sdk.Signer, logger sdk.Logger, handlers ...blocks.BlockHandler) (Synchronizer, error) {
+// queueDepth is passed to the hybridx AllTxStreamer; pass 0 to use the default.
+func New(protocol string, db network.BlockHeightReader, channel, namespace string, committer network.PeerConf, signer sdk.Signer, logger sdk.Logger, queueDepth int, handlers ...blocks.BlockHandler) (Synchronizer, error) {
 	protocol, err := common.NormalizeProtocol(protocol)
 	if err != nil {
 		return nil, err
@@ -52,7 +53,7 @@ func New(protocol string, db network.BlockHeightReader, channel, namespace strin
 	case common.ProtocolFabric:
 		return nfab.NewSynchronizer(db, channel, committer, signer, logger, handlers...)
 	case common.ProtocolFabricX:
-		return hybridx.New(db, channel, namespace, committer, signer, logger, handlers...)
+		return hybridx.New(db, channel, namespace, committer, signer, logger, queueDepth, handlers...)
 	default:
 		return nil, fmt.Errorf("unsupported protocol: %q", protocol)
 	}

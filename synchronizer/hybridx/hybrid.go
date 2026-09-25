@@ -77,9 +77,10 @@ type deliverySyncer interface {
 // HybridSynchronizer implements the two-phase startup strategy described in
 // the package doc.  It satisfies the app.Synchronizer interface.
 type HybridSynchronizer struct {
-	namespace string
-	logger    sdk.Logger
-	handlers  []blocks.BlockHandler
+	namespace  string
+	logger     sdk.Logger
+	handlers   []blocks.BlockHandler
+	queueDepth int
 
 	delivery  deliverySyncer
 	notifPeer notification.AllTxPeer
@@ -95,6 +96,7 @@ type HybridSynchronizer struct {
 }
 
 // New constructs a HybridSynchronizer.
+// queueDepth controls the AllTxStreamer's internal channel depth; pass 0 for the default.
 // handlers is the initial handler chain fed by both phases.
 func New(
 	db network.BlockHeightReader,
@@ -102,12 +104,14 @@ func New(
 	conf network.PeerConf,
 	signer sdk.Signer,
 	logger sdk.Logger,
+	queueDepth int,
 	handlers ...blocks.BlockHandler,
 ) (*HybridSynchronizer, error) {
 	h := &HybridSynchronizer{
-		namespace: namespace,
-		logger:    logger,
-		handlers:  append([]blocks.BlockHandler(nil), handlers...),
+		namespace:  namespace,
+		logger:     logger,
+		handlers:   append([]blocks.BlockHandler(nil), handlers...),
+		queueDepth: queueDepth,
 	}
 
 	delivery, err := nfabx.NewSynchronizer(db, channel, conf, signer, logger, &deliveryShim{h: h})
@@ -166,7 +170,7 @@ func (h *HybridSynchronizer) Start(ctx context.Context) error {
 		// mid-dispatch would abort that block.
 		stopDelivery: deliveryCancel,
 	}
-	streamer := notification.NewAllTxStreamer(h.notifPeer, []notification.AllTxHandler{gate}, h.logger)
+	streamer := notification.NewAllTxStreamer(h.notifPeer, []notification.AllTxHandler{gate}, h.logger, h.queueDepth)
 
 	notifErrCh := make(chan error, 1)
 	go func() {

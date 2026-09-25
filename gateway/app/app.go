@@ -222,7 +222,7 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 	// Chain must be called before gateway, to persist blocks before marking transactions complete.
 	// FilterAPI runs after chain so newHeads can load the stored block (stateRoot etc.).
 	handlers := append(extraHandlers, chain, filterAPI, gateway)
-	syncer, err := synchronizer.New(cfg.Network.Protocol, chain, cfg.Network.Channel, cfg.Network.Namespace, cfg.Committer.ToPeerConf(), gwSigner, logger, handlers...)
+	syncer, err := synchronizer.New(cfg.Network.Protocol, chain, cfg.Network.Channel, cfg.Network.Namespace, cfg.Committer.ToPeerConf(), gwSigner, logger, cfg.Synchronizer.AllTxQueueDepth, handlers...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create synchronizer: %w", err)
 	}

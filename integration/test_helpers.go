@@ -28,8 +28,6 @@ import (
 	"github.com/ethereum/go-ethereum/rpc"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/msp"
-	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
-	"github.com/hyperledger/fabric-x-common/protoutil"
 	"github.com/hyperledger/fabric-x-evm/common"
 	eapi "github.com/hyperledger/fabric-x-evm/endorser/api"
 	eapp "github.com/hyperledger/fabric-x-evm/endorser/app"
@@ -280,7 +278,7 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 	// The ordering is the responsibility of the chainFactory; see defaultHandlerChain for
 	// the conventional ordering (endorser KVS…, chain store, gateway, extra observers…).
 	if !bypass {
-		sync, err = synchronizer.New(cfg.Network.Protocol, heightReader, cfg.Network.Channel, cfg.Network.Namespace, cfg.Committer.ToPeerConf(), gwSigner, logger, handlers...)
+		sync, err = synchronizer.New(cfg.Network.Protocol, heightReader, cfg.Network.Channel, cfg.Network.Namespace, cfg.Committer.ToPeerConf(), gwSigner, logger, cfg.Synchronizer.AllTxQueueDepth, handlers...)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -662,14 +660,14 @@ func processCommon(t *testing.T, gw *core.Gateway, commit bool, tx *types.Transa
 	return env
 }
 
-func getEndorsedTxForSmartContractCall(t *testing.T, client *EthClient, addr ethcommon.Address, gw *core.Gateway, method string, args ...any) sdk.Endorsement {
+func getEndorsedTxForSmartContractCall(t *testing.T, client *EthClient, addr ethcommon.Address, gw *core.Gateway, method string, args ...any) (sdk.Endorsement, *types.Transaction) {
 	t.Helper()
 	tx, err := client.TxForCall(t.Context(), gw, &addr, method, args...)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	return processCommon(t, gw, false, tx)
+	return processCommon(t, gw, false, tx), tx
 }
 
 // integrationFilters ties a FilterAPI to the gateway that owns it in the
@@ -795,14 +793,8 @@ func querySmartContractExpect(t *testing.T, client *EthClient, addr ethcommon.Ad
 	}
 }
 
-func submit(t *testing.T, gw *core.Gateway, end sdk.Endorsement) {
+func submit(t *testing.T, gw *core.Gateway, end sdk.Endorsement, tx *types.Transaction) {
 	t.Helper()
-
-	// Extract the Ethereum transaction from the proposal
-	tx, err := extractEthTxFromProposal(end.Proposal)
-	if err != nil {
-		t.Error(err)
-	}
 
 	if err := gw.SubmitFabricTx(t.Context(), tx.Hash(), end); err != nil {
 		t.Error(err)
@@ -814,40 +806,6 @@ func submit(t *testing.T, gw *core.Gateway, end sdk.Endorsement) {
 	}
 
 	waitForCommitT(t, ec, tx)
-}
-
-// extractEthTxFromProposal extracts the Ethereum transaction from a peer.Proposal
-func extractEthTxFromProposal(proposal *peer.Proposal) (*types.Transaction, error) {
-	// Unmarshal the proposal payload to get the ChaincodeProposalPayload
-	payload, err := protoutil.UnmarshalChaincodeProposalPayload(proposal.Payload)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal proposal payload: %w", err)
-	}
-
-	// Unmarshal the ChaincodeInvocationSpec from the input
-	cis, err := protoutil.UnmarshalChaincodeInvocationSpec(payload.Input)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal chaincode invocation spec: %w", err)
-	}
-
-	// Get the args - args[0] is the proposal type, args[1] is the serialized eth tx
-	args := cis.ChaincodeSpec.Input.Args
-	if len(args) < 2 {
-		return nil, fmt.Errorf("expected at least 2 args, got %d", len(args))
-	}
-
-	// Check that this is an EVM transaction proposal
-	if len(args[0]) != 1 || args[0][0] != byte(common.ProposalTypeEVMTx) {
-		return nil, fmt.Errorf("not an EVM transaction proposal")
-	}
-
-	// Unmarshal the Ethereum transaction
-	var tx types.Transaction
-	if err := tx.UnmarshalBinary(args[1]); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal ethereum transaction: %w", err)
-	}
-
-	return &tx, nil
 }
 
 func waitForCommitT(t *testing.T, ec *ethclient.Client, tx *types.Transaction) {

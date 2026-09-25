@@ -63,7 +63,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	logger := flogging.MustGetLogger("endorser-" + ecfg.Name)
 	// The synchronizer's sole handler is this endorser's own KVS — no chain,
 	// no gateway to feed, unlike a gateway's process-wide synchronizer.
-	sync, err := synchronizer.New(cfg.Network.Protocol, kvs, cfg.Network.Channel, cfg.Network.Namespace, cfg.Committer.ToPeerConf(), signer, logger, kvs)
+	sync, err := synchronizer.New(cfg.Network.Protocol, kvs, cfg.Network.Channel, cfg.Network.Namespace, cfg.Committer.ToPeerConf(), signer, logger, cfg.Synchronizer.AllTxQueueDepth, kvs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create synchronizer: %w", err)
 	}

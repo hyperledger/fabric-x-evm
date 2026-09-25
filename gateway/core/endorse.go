@@ -31,28 +31,31 @@ import (
 // EndorsementClient forwards ethereum-style transactions and calls
 // to the endorsers and returns their signed fabric-style responses.
 type EndorsementClient struct {
-	local     api.Service
-	endorsers []api.Service // local + remotes, precomputed once for ExecuteTransaction's fan-out
-	signer    Signer
-	channel   string
-	namespace string
-	nsVersion string
+	local      api.Service
+	endorsers  []api.Service // local + remotes, precomputed once for ExecuteTransaction's fan-out
+	invBuilder endorsement.InvocationBuilder
+	channel    string
+	namespace  string
+	nsVersion  string
 }
 
 // NewEndorsementClient creates an EndorsementClient from a mandatory local
 // endorser (called directly in-process) and zero or more remote endorsers
 // (other orgs, called over gRPC).
-func NewEndorsementClient(local api.Service, remotes []api.Service, signer Signer, channel, namespace, nsVersion string) (*EndorsementClient, error) {
+// invBuilder produces the endorsement.Invocation for each transaction; callers
+// should pass fabric.NewInvocationBuilder or fabricx.NewInvocationBuilder
+// depending on the protocol.
+func NewEndorsementClient(local api.Service, remotes []api.Service, invBuilder endorsement.InvocationBuilder, channel, namespace, nsVersion string) (*EndorsementClient, error) {
 	endorsers := make([]api.Service, 0, 1+len(remotes))
 	endorsers = append(endorsers, local)
 	endorsers = append(endorsers, remotes...)
 	return &EndorsementClient{
-		local:     local,
-		endorsers: endorsers,
-		signer:    signer,
-		channel:   channel,
-		namespace: namespace,
-		nsVersion: nsVersion,
+		local:      local,
+		endorsers:  endorsers,
+		invBuilder: invBuilder,
+		channel:    channel,
+		namespace:  namespace,
+		nsVersion:  nsVersion,
 	}, nil
 }
 
@@ -267,5 +270,5 @@ func (e *EndorsementClient) NonceAt(ctx context.Context, account ethcommon.Addre
 
 // createInvocation creates an endorsement.Invocation from the given parameters
 func (e *EndorsementClient) createInvocation(args [][]byte) (endorsement.Invocation, error) {
-	return endorsement.NewInvocation(e.signer, e.channel, e.namespace, e.nsVersion, args)
+	return e.invBuilder.NewInvocation(e.channel, e.namespace, e.nsVersion, 0, args)
 }

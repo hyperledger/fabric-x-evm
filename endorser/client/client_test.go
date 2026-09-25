@@ -17,7 +17,6 @@ import (
 	"github.com/ethereum/go-ethereum"
 	ethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -98,7 +97,7 @@ func TestExecute_MapsResponseAndForwardsRequest(t *testing.T) {
 	tx := types.NewTx(&types.LegacyTx{Nonce: 0, Gas: 21000, GasPrice: big.NewInt(1)})
 	inv := endorsement.Invocation{
 		TxID: "tx1", Args: [][]byte{{0xfb}, {0xaa}},
-		CCID: &peer.ChaincodeID{Name: "ns", Version: "1.0"}, ProposalHash: []byte("ph"),
+		Namespace: "ns", ChaincodeVersion: "1.0", ProposalHash: []byte("ph"),
 	}
 
 	resp, err := c.Execute(context.Background(), inv, tx, time.Now())

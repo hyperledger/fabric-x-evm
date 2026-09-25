@@ -27,6 +27,8 @@ import (
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
+	efab "github.com/hyperledger/fabric-x-sdk/endorsement/fabric"
+	efabx "github.com/hyperledger/fabric-x-sdk/endorsement/fabricx"
 )
 
 type KVSSnapshotter interface {
@@ -43,6 +45,7 @@ type StatePrimer struct {
 	reader            execution.ReadStore
 	namespace         string
 	signer            sdk.Signer
+	invBuilder        endorsement.InvocationBuilder
 	builders          []endorsement.Builder
 	channel           string
 	nsVersion         string
@@ -81,6 +84,13 @@ func NewStatePrimer(
 		return nil, err
 	}
 
+	var invBuilder endorsement.InvocationBuilder
+	if monotonicVersions {
+		invBuilder = efabx.NewInvocationBuilder(signer)
+	} else {
+		invBuilder = efab.NewInvocationBuilder(signer)
+	}
+
 	return &StatePrimer{
 		gw:                gw,
 		submitter:         submitter,
@@ -88,6 +98,7 @@ func NewStatePrimer(
 		kvs:               db,
 		namespace:         namespace,
 		signer:            signer,
+		invBuilder:        invBuilder,
 		builders:          builders,
 		channel:           channel,
 		nsVersion:         nsVersion,
@@ -238,11 +249,11 @@ func (sp *StatePrimer) Commit(ctx context.Context, wait bool) error {
 
 	// Create the invocation for the priming transaction. Must carry sp.nsVersion (like the
 	// real endorsement path does) or the committer rejects it as INVALID_CHAINCODE.
-	inv, err := endorsement.NewInvocation(
-		sp.signer,
+	inv, err := sp.invBuilder.NewInvocation(
 		sp.channel,
 		sp.namespace,
 		sp.nsVersion,
+		0,
 		[][]byte{{byte(lc.ProposalTypeEVMTx)}, ethTxBytes},
 	)
 	if err != nil {

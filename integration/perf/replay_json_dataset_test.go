@@ -395,9 +395,10 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 		evmConfig,
 		"testdata/USDC_contract.json",
 		map[string]any{
-			"Gateway.WorkerCount":    processingWorkerCount,
-			"Gateway.SubmitterCount": ordererSubmitterCount,
-			"Network.Namespace":      *namespace,
+			"Gateway.WorkerCount":          processingWorkerCount,
+			"Gateway.SubmitterCount":       ordererSubmitterCount,
+			"Network.Namespace":            *namespace,
+			"Synchronizer.AllTxQueueDepth": 16384,
 		},
 		factory,
 		queue,
