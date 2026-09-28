@@ -58,6 +58,9 @@ type StatePrimer struct {
 }
 
 // NewStatePrimer creates a new state primer builder.
+//
+// nsVersion is Network.NsVersion. On the Fabric-X path (monotonicVersions=true)
+// it must be a decimal integer; NewStatePrimer returns an error if it is not.
 func NewStatePrimer(
 	gw *core.Gateway,
 	submitter core.Submitter,
@@ -86,6 +89,11 @@ func NewStatePrimer(
 
 	var invBuilder endorsement.InvocationBuilder
 	if monotonicVersions {
+		// Validate that nsVersion is a parseable integer on the Fabric-X path.
+		netCfg := lc.Network{NsVersion: nsVersion}
+		if _, verr := netCfg.NsVersionUint64(); verr != nil {
+			return nil, verr
+		}
 		invBuilder = efabx.NewInvocationBuilder(signer)
 	} else {
 		invBuilder = efab.NewInvocationBuilder(signer)
@@ -249,11 +257,16 @@ func (sp *StatePrimer) Commit(ctx context.Context, wait bool) error {
 
 	// Create the invocation for the priming transaction. Must carry sp.nsVersion (like the
 	// real endorsement path does) or the committer rejects it as INVALID_CHAINCODE.
+	primerNetCfg := lc.Network{NsVersion: sp.nsVersion}
+	nsVersionX, err := primerNetCfg.NsVersionUint64()
+	if err != nil {
+		return err
+	}
 	inv, err := sp.invBuilder.NewInvocation(
 		sp.channel,
 		sp.namespace,
 		sp.nsVersion,
-		0,
+		nsVersionX,
 		[][]byte{{byte(lc.ProposalTypeEVMTx)}, ethTxBytes},
 	)
 	if err != nil {

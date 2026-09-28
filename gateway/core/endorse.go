@@ -36,7 +36,7 @@ type EndorsementClient struct {
 	invBuilder endorsement.InvocationBuilder
 	channel    string
 	namespace  string
-	nsVersion  string
+	nsVersion  string // passed to the InvocationBuilder as chaincodeVersion (Fabric) or nsVersion (Fabric-X)
 }
 
 // NewEndorsementClient creates an EndorsementClient from a mandatory local
@@ -270,5 +270,10 @@ func (e *EndorsementClient) NonceAt(ctx context.Context, account ethcommon.Addre
 
 // createInvocation creates an endorsement.Invocation from the given parameters
 func (e *EndorsementClient) createInvocation(args [][]byte) (endorsement.Invocation, error) {
-	return e.invBuilder.NewInvocation(e.channel, e.namespace, e.nsVersion, 0, args)
+	netCfg := common.Network{NsVersion: e.nsVersion}
+	nsVersionX, err := netCfg.NsVersionUint64()
+	if err != nil {
+		return endorsement.Invocation{}, err
+	}
+	return e.invBuilder.NewInvocation(e.channel, e.namespace, e.nsVersion, nsVersionX, args)
 }

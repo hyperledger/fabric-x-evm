@@ -432,7 +432,7 @@ func NewLocalTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig e
 			Protocol:  protocol,
 			Channel:   "mychannel",
 			Namespace: "basic",
-			NsVersion: "1.0",
+			NsVersion: "0",
 			ChainID:   4011,
 		},
 		Committer:    common.ClientConfig{Endpoint: peer},

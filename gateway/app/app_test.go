@@ -175,7 +175,7 @@ func TestNewApp_ClosesEarlierConnsOnLaterDialFailure(t *testing.T) {
 func fullAppConfig(t *testing.T, dbConnString string) config.Config {
 	t.Helper()
 	return config.Config{
-		Network:   common.Network{Protocol: "fabric-x", Channel: "mychannel", Namespace: "basic", NsVersion: "1.0", ChainID: 4011},
+		Network:   common.Network{Protocol: "fabric-x", Channel: "mychannel", Namespace: "basic", NsVersion: "0", ChainID: 4011},
 		Committer: endpoint(2),
 		Gateway: &config.Gateway{
 			Database:       config.DB{ConnString: dbConnString},

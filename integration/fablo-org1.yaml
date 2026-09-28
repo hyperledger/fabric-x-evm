@@ -6,7 +6,7 @@ network:
   protocol: fabric
   channel: mychannel
   namespace: basic
-  ns-version: "1.0"
+  ns-version: "0"
   chain-id: 4011
 
 logging:

@@ -60,7 +60,7 @@ func NewNetworkSubmitters(ctx context.Context, protocol string, orderers []netwo
 // are also responsible for creating and starting the synchronizer(s) that feed committed
 // blocks to chain/gateway/endorsers.
 func BuildGateway(ctx context.Context, local eapi.Service, remotes []eapi.Service, gwSigner sdk.Signer, netCfg common.Network, chain core.Store, submitters []core.Submitter, submitterCount int, workerCount int, txQueue core.TxQueueInterface, nonceGate core.NonceSequencer, endorsementChanSize int, txPerSec int) (*core.Gateway, error) {
-	invBuilder, err := newInvocationBuilder(netCfg.Protocol, gwSigner)
+	invBuilder, err := newInvocationBuilder(netCfg.Protocol, netCfg.NsVersion, gwSigner)
 	if err != nil {
 		return nil, err
 	}
@@ -90,8 +90,7 @@ func BuildGateway(ctx context.Context, local eapi.Service, remotes []eapi.Servic
 }
 
 // newInvocationBuilder returns the protocol-appropriate InvocationBuilder.
-// Fabric needs a full chaincode proposal (proposal + hash); Fabric-X needs only the header.
-func newInvocationBuilder(protocol string, signer sdk.Signer) (endorsement.InvocationBuilder, error) {
+func newInvocationBuilder(protocol, nsVersion string, signer sdk.Signer) (endorsement.InvocationBuilder, error) {
 	protocol, err := common.NormalizeProtocol(protocol)
 	if err != nil {
 		return nil, err
@@ -100,6 +99,11 @@ func newInvocationBuilder(protocol string, signer sdk.Signer) (endorsement.Invoc
 	case common.ProtocolFabric:
 		return efab.NewInvocationBuilder(signer), nil
 	case common.ProtocolFabricX:
+		// Validate that nsVersion is a parseable integer on the Fabric-X path.
+		netCfg := common.Network{NsVersion: nsVersion}
+		if _, err := netCfg.NsVersionUint64(); err != nil {
+			return nil, err
+		}
 		return efabx.NewInvocationBuilder(signer), nil
 	default:
 		return nil, fmt.Errorf("unsupported protocol: %q", protocol)

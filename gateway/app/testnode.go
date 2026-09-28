@@ -45,7 +45,7 @@ type TestNodeConfig struct {
 const (
 	testNodeChannel   = "mychannel"
 	testNodeNamespace = "basic"
-	testNodeNsVersion = "1.0"
+	testNodeNsVersion = "0"
 )
 
 // NewTestNode builds a fully self-contained App: an in-process fabrictest network,

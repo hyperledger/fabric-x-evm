@@ -145,9 +145,13 @@ func (cfg Config) Validate() error {
 	if cfg.Network.Namespace == "" {
 		errs = append(errs, errors.New("network.namespace is required"))
 	}
-	_, protocolErr := common.NormalizeProtocol(cfg.Network.Protocol)
+	protocol, protocolErr := common.NormalizeProtocol(cfg.Network.Protocol)
 	if protocolErr != nil {
 		errs = append(errs, protocolErr)
+	} else if protocol == common.ProtocolFabricX {
+		if _, err := cfg.Network.NsVersionUint64(); err != nil {
+			errs = append(errs, fmt.Errorf("network: %w", err))
+		}
 	}
 	if err := cfg.Committer.Validate(); err != nil {
 		errs = append(errs, fmt.Errorf("committer: %w", err))

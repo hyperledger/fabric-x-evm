@@ -54,7 +54,20 @@ type Network struct {
 	// Namespace is the namespace for all token transactions.
 	Namespace string `mapstructure:"namespace" yaml:"namespace"`
 
-	// NsVersion is the version of the namespace, usually 1.0.
+	// NsVersion is the namespace version string. Its meaning depends on the
+	// protocol:
+	//
+	//   - Fabric: the chaincode version label (e.g. "1.0"). Any non-empty string
+	//     is accepted.
+	//
+	//   - Fabric-X: the MVCC namespace-version counter stored in _meta. The
+	//     committer rejects transactions whose version does not match the
+	//     namespace's current counter. Zero (the default) is correct for a
+	//     namespace that has never been updated; increment it by one each time
+	//     the namespace key in _meta is bumped.
+	//     The value must be a non-negative integer, optionally written with a
+	//     zero decimal part for compatibility with the Fabric convention
+	//     (e.g. "0", "1", "2.0" are all valid; "1.5" is not).
 	NsVersion string `mapstructure:"ns-version" yaml:"ns-version"`
 
 	// ChainID is the ethereum-style chain ID for this network.
@@ -62,6 +75,32 @@ type Network struct {
 
 	// MaxTxGas caps msg.GasLimit before EVM execution. 0 means unlimited.
 	MaxTxGas uint64 `mapstructure:"max-tx-gas" yaml:"max-tx-gas"`
+}
+
+// NsVersionUint64 parses NsVersion as a Fabric-X MVCC namespace-version counter.
+// It must be called (and must succeed) whenever the Fabric-X protocol is in use;
+// the result is passed to the invocation builder as nsVersion.
+// On the classic Fabric path NsVersion is a free-form chaincode version label and
+// this method is not called.
+//
+// The value may be written as a plain integer ("0", "1") or with a zero decimal
+// part following the Fabric chaincode-version convention ("0.0", "1.0"). A
+// non-zero fractional part (e.g. "1.5") is rejected.
+func (n Network) NsVersionUint64() (uint64, error) {
+	if n.NsVersion == "" {
+		return 0, nil
+	}
+	// Fast path: plain integer.
+	if v, err := strconv.ParseUint(n.NsVersion, 10, 64); err == nil {
+		return v, nil
+	}
+	// Accept "N.0" style (e.g. "1.0") for compatibility with the Fabric
+	// chaincode-version convention that most configs use.
+	f, err := strconv.ParseFloat(n.NsVersion, 64)
+	if err != nil || f < 0 || f != math.Trunc(f) {
+		return 0, fmt.Errorf("network.ns-version %q is not a valid Fabric-X namespace version (must be a non-negative integer, optionally with a zero decimal, e.g. \"0\", \"1\", \"2.0\")", n.NsVersion)
+	}
+	return uint64(f), nil
 }
 
 // IdentityConfig defines the component's MSP.
