@@ -29,7 +29,7 @@ type EthStateDBLogger struct {
 func NewEthStateDBLogger(inner *ethstate.StateDB) *EthStateDBLogger {
 	return &EthStateDBLogger{
 		inner:  inner,
-		logger: flogging.MustGetLogger("EthStateDB"),
+		logger: flogging.MustGetLogger("endorser.execution.eth_statedb"),
 	}
 }
 

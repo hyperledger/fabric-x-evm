@@ -34,7 +34,6 @@ func TestNewExecutor_WrapsStateDBWhenDebugEnabled(t *testing.T) {
 	kvs := &testVersionedDBSnapshotter{db: backend}
 	cfg := EVMConfig{
 		ChainConfig: common.BuildChainConfig(4011),
-		DebugLogs:   true,
 	}
 	eng := NewEVMEngine(Namespace, kvs, cfg, false)
 
@@ -105,29 +104,6 @@ func TestExecute_MaxTxGas(t *testing.T) {
 		t.Fatalf("expected success when MaxTxGas == 0 (unlimited), got: %v", err)
 	} else if gas == 0 {
 		t.Fatal("expected non-zero usedGas on success")
-	}
-}
-
-func TestNewExecutor_BareStateDBWhenDebugDisabled(t *testing.T) {
-	backend, err := state.NewWriteDB(Channel, "file:exec_nodebug?mode=memory&cache=shared")
-	if err != nil {
-		t.Fatal(err)
-	}
-	kvs := &testVersionedDBSnapshotter{db: backend}
-	cfg := EVMConfig{
-		ChainConfig: common.BuildChainConfig(4011),
-		DebugLogs:   false,
-	}
-	eng := NewEVMEngine(Namespace, kvs, cfg, false)
-
-	ex, err := eng.newExecutor(nil, uint64(1_700_000_000))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ex.Close()
-
-	if _, ok := ex.state.(*StateDB); !ok {
-		t.Fatalf("expected *StateDB, got %T", ex.state)
 	}
 }
 

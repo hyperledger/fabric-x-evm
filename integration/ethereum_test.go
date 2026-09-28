@@ -278,7 +278,6 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 	// Create EVMConfig to pass to test harness
 	evmConfig := execution.EVMConfig{
 		ChainConfig: config,
-		DebugLogs:   true,
 	}
 
 	// Create test harness with local backend and state priming, passing evmConfig and block context

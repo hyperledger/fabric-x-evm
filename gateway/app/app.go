@@ -94,7 +94,7 @@ func NewTestNodeWithConfig(ctx context.Context, cfg config.Config, testAccountsP
 }
 
 func newApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, enableTestRPC bool, testAccountsPath string) (*App, error) {
-	logger := flogging.MustGetLogger("gateway")
+	logger := flogging.MustGetLogger("gateway.app")
 
 	if cfg.Endorser == nil {
 		return nil, fmt.Errorf("endorser is required when gateway is present")
@@ -131,7 +131,6 @@ func newApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, enableT
 	evmConfig := execution.EVMConfig{
 		ChainConfig: common.BuildChainConfig(cfg.Network.ChainID),
 		MaxTxGas:    cfg.Network.MaxTxGas,
-		DebugLogs:   ecfg.DebugLogs,
 	}
 	end, kvs, builder, err := eapp.NewEndorserCore(ecfg.Database, cfg.Network.Channel, cfg.Network.Namespace, cfg.Network.Protocol, eSigner, evmConfig, enableTestRPC, ecfg)
 	if err != nil {

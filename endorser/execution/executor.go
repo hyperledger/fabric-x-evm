@@ -23,17 +23,18 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/holiman/uint256"
+	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	fxcommon "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
+
+var logger = flogging.MustGetLogger("endorser.execution")
 
 // EVMConfig holds the configuration for EVM execution.
 type EVMConfig struct {
 	ChainConfig *params.ChainConfig
 	// MaxTxGas caps msg.GasLimit before execution. 0 means unlimited.
 	MaxTxGas uint64
-	// DebugLogs wraps the per-tx StateDB in StateDBLogger when true.
-	DebugLogs bool
 }
 
 // KVSSnapshotter is the port execution uses to obtain a versioned read snapshot
@@ -77,8 +78,10 @@ func NewEVMEngine(namespace string, kvs KVSSnapshotter, evmConfig EVMConfig, mon
 // blockTime is the gateway-supplied Unix second for EVM block.timestamp. It is required
 // (non-zero); the gateway always stamps one value per ExecuteTransaction.
 func (e *EVMEngine) Execute(ctx context.Context, tx *types.Transaction, blockTime uint64) (endorsement.ExecutionResult, error) {
+	logger.Debugf("EVMEngine.Execute() called with tx=%s blockTime=%d", tx.Hash().Hex(), blockTime)
 	ex, err := e.newExecutor(nil, blockTime)
 	if err != nil {
+		logger.Warnf("EVMEngine.Execute() tx=%s failed to create executor: %v", tx.Hash().Hex(), err)
 		return endorsement.ExecutionResult{}, err
 	}
 	defer ex.Close()
@@ -89,6 +92,7 @@ func (e *EVMEngine) Execute(ctx context.Context, tx *types.Transaction, blockTim
 		switch {
 		case errors.Is(err, vm.ErrExecutionReverted):
 			// Revert: a committed outcome, endorsed with a revert event.
+			logger.Debugf("EVMEngine.Execute() tx=%s reverted: %v", tx.Hash().Hex(), err)
 			event, mErr := fxcommon.MarshalRevert(ret, "", tx.Hash().Hex())
 			if mErr != nil {
 				return endorsement.ExecutionResult{}, fmt.Errorf("marshal revert event: %w", mErr)
@@ -104,6 +108,7 @@ func (e *EVMEngine) Execute(ctx context.Context, tx *types.Transaction, blockTim
 			// Valid tx whose EVM execution faulted without reverting (out of gas,
 			// invalid opcode, ...): also a committed outcome, same shape as a
 			// revert but with no ABI-encoded reason to carry.
+			logger.Warnf("EVMEngine.Execute() tx=%s exec failure: %v", tx.Hash().Hex(), err)
 			event, mErr := fxcommon.MarshalExecFailure(ret, "", tx.Hash().Hex())
 			if mErr != nil {
 				return endorsement.ExecutionResult{}, fmt.Errorf("marshal exec-failure event: %w", mErr)
@@ -117,6 +122,7 @@ func (e *EVMEngine) Execute(ctx context.Context, tx *types.Transaction, blockTim
 			}, nil
 		default:
 			// Pre-execution rejection (bad signature, nonce, ...): never included in a block.
+			logger.Warnf("EVMEngine.Execute() tx=%s rejected: %v", tx.Hash().Hex(), err)
 			return endorsement.ExecutionResult{}, err
 		}
 	}
@@ -129,6 +135,7 @@ func (e *EVMEngine) Execute(ctx context.Context, tx *types.Transaction, blockTim
 		}
 	}
 
+	logger.Debugf("EVMEngine.Execute() tx=%s succeeded logs=%d retLen=%d", tx.Hash().Hex(), len(ex.state.Logs()), len(ret))
 	return endorsement.Success(ex.state.Result(), logs, ret), nil
 }
 
@@ -142,14 +149,22 @@ func (e *EVMEngine) Execute(ctx context.Context, tx *types.Transaction, blockTim
 // maxUsedGas is the EVM gas the simulation needed before EIP-3529 refunds are
 // credited; 0 when the call is rejected before ApplyMessage runs.
 func (e *EVMEngine) Call(msg ethereum.CallMsg, blockNumber *big.Int) (ret []byte, maxUsedGas uint64, err error) {
+	logger.Debugf("EVMEngine.Call() called with to=%s blockNumber=%v", msg.To, blockNumber)
 	blockTime := uint64(time.Now().Unix())
 	ex, err := e.newExecutor(blockNumber, blockTime)
 	if err != nil {
+		logger.Warnf("EVMEngine.Call() failed to create executor: %v", err)
 		return nil, 0, err
 	}
 	defer ex.Close()
 
-	return ex.Call(msg)
+	ret, maxUsedGas, err = ex.Call(msg)
+	if err != nil {
+		logger.Warnf("EVMEngine.Call() returning error: %v", err)
+		return ret, maxUsedGas, err
+	}
+	logger.Debugf("EVMEngine.Call() returning %d bytes gasUsed=%d", len(ret), maxUsedGas)
+	return ret, maxUsedGas, nil
 }
 
 func (e *EVMEngine) BalanceAt(_ context.Context, account common.Address, blockNumber *big.Int) (*big.Int, error) {
@@ -219,10 +234,7 @@ func (e *EVMEngine) newExecutor(blockNumber *big.Int, blockTime uint64) (*Execut
 		reader.Close()
 		return nil, err
 	}
-	var state ExtendedStateDB = stateDB
-	if e.evmConfig.DebugLogs {
-		state = NewStateDBLogger(stateDB)
-	}
+	state := NewStateDBLogger(stateDB)
 
 	ex, err := NewExecutor(state, reader, blockNumber, blockTime, e.evmConfig)
 	if err != nil {

@@ -52,7 +52,6 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	evmConfig := execution.EVMConfig{
 		ChainConfig: common.BuildChainConfig(cfg.Network.ChainID),
 		MaxTxGas:    cfg.Network.MaxTxGas,
-		DebugLogs:   ecfg.DebugLogs,
 	}
 
 	end, kvs, _, err := NewEndorserCore(ecfg.Database, cfg.Network.Channel, cfg.Network.Namespace, cfg.Network.Protocol, signer, evmConfig, false, ecfg)
@@ -60,7 +59,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		return nil, fmt.Errorf("endorser (%s): %w", ecfg.Name, err)
 	}
 
-	logger := flogging.MustGetLogger("endorser-" + ecfg.Name)
+	logger := flogging.MustGetLogger("endorser.app." + ecfg.Name)
 	// The synchronizer's sole handler is this endorser's own KVS — no chain,
 	// no gateway to feed, unlike a gateway's process-wide synchronizer.
 	sync, err := synchronizer.New(cfg.Network.Protocol, kvs, cfg.Network.Channel, cfg.Network.Namespace, cfg.Committer.ToPeerConf(), signer, logger, cfg.Synchronizer.AllTxQueueDepth, kvs)

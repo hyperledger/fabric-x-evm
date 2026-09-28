@@ -255,14 +255,14 @@ func testTwoOfTwoEndorsementGRPC(t *testing.T) {
 // for replaying historic ethereum transactions from older forks.
 func evmConfig(fork string) execution.EVMConfig {
 	if len(fork) == 0 {
-		return execution.EVMConfig{DebugLogs: true}
+		return execution.EVMConfig{}
 	}
 	c, _, err := tests.GetChainConfig(fork)
 	if err != nil {
 		fmt.Println(err)
 	}
 
-	return execution.EVMConfig{ChainConfig: c, DebugLogs: true}
+	return execution.EVMConfig{ChainConfig: c}
 }
 
 func testGreeter(t *testing.T, th *TestHarness) {

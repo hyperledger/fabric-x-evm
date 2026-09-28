@@ -15,7 +15,6 @@ import (
 	"testing/synctest"
 	"time"
 
-	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/notification"
 	"github.com/stretchr/testify/assert"
@@ -144,7 +143,6 @@ func (r *recordingHandler) received() []blocks.Block {
 func newHybrid(t *testing.T, delivery *fakeDelivery, peer *fakeNotifPeer, handlers ...blocks.BlockHandler) *HybridSynchronizer {
 	t.Helper()
 	h := &HybridSynchronizer{
-		logger:    sdk.NoOpLogger{},
 		handlers:  append([]blocks.BlockHandler(nil), handlers...),
 		delivery:  delivery,
 		notifPeer: peer,
@@ -178,7 +176,6 @@ func newGate(h *HybridSynchronizer) (*notifGate, *bool) {
 	return &notifGate{
 		hybrid:       h,
 		dispatcher:   NewAllTxBatchDispatcher(&hybridAdapter{h: h}),
-		logger:       sdk.NoOpLogger{},
 		stopDelivery: func() { *stopped = true },
 	}, stopped
 }
@@ -569,7 +566,6 @@ func TestStart_DeliveryErrorIsLogged(t *testing.T) {
 		errDelivery := &errDeliverySyncer{err: errors.New("boom"), done: make(chan struct{})}
 		peer := newFakeNotifPeer()
 		h := &HybridSynchronizer{
-			logger:    sdk.NoOpLogger{},
 			delivery:  errDelivery,
 			notifPeer: peer,
 			notifReq:  &notification.StreamAllRequest{},

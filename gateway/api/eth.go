@@ -86,7 +86,7 @@ func (api *EthAPI) ChainId(ctx context.Context) (*hexutil.Big, error) {
 	logger.Debugf("EthAPI.ChainId() called")
 	chainID, err := api.b.ChainID(ctx)
 	if err != nil {
-		logger.Debugf("EthAPI.ChainId() returning error: %v", err)
+		logger.Warnf("EthAPI.ChainId() returning error: %v", err)
 		return nil, err
 	}
 	result := (*hexutil.Big)(chainID)
@@ -99,7 +99,7 @@ func (api *EthAPI) BlockNumber(ctx context.Context) (hexutil.Uint64, error) {
 	logger.Debugf("EthAPI.BlockNumber() called")
 	num, err := api.b.BlockNumber(ctx)
 	if err != nil {
-		logger.Debugf("EthAPI.BlockNumber() returning error: %v", err)
+		logger.Warnf("EthAPI.BlockNumber() returning error: %v", err)
 		return 0, err
 	}
 	result := hexutil.Uint64(num)
@@ -114,7 +114,7 @@ func (api *EthAPI) GetBlockByNumber(ctx context.Context, num rpc.BlockNumber, fu
 	logger.Debugf("EthAPI.GetBlockByNumber() called with num=%v, full=%v", num, full)
 	b, err := api.b.GetBlockByNumber(ctx, blockNumberToUint64(num), full)
 	if err != nil {
-		logger.Debugf("EthAPI.GetBlockByNumber() returning error: %v", err)
+		logger.Warnf("EthAPI.GetBlockByNumber() returning error: %v", err)
 		return nil, err
 	}
 	result := rpcBlock(b, full)
@@ -129,7 +129,7 @@ func (api *EthAPI) GetBlockByHash(ctx context.Context, hash common.Hash, full bo
 	logger.Debugf("EthAPI.GetBlockByHash() called with hash=%s, full=%v", hash.Hex(), full)
 	b, err := api.b.GetBlockByHash(ctx, hash, full)
 	if err != nil {
-		logger.Debugf("EthAPI.GetBlockByHash() returning error: %v", err)
+		logger.Warnf("EthAPI.GetBlockByHash() returning error: %v", err)
 		return nil, err
 	}
 	result := rpcBlock(b, full)
@@ -144,7 +144,7 @@ func (api *EthAPI) GetBlockTransactionCountByHash(ctx context.Context, hash comm
 	logger.Debugf("EthAPI.GetBlockTransactionCountByHash() called with hash=%s", hash.Hex())
 	c, err := api.b.GetBlockTxCountByHash(ctx, hash)
 	if err != nil {
-		logger.Debugf("EthAPI.GetBlockTransactionCountByHash() returning error: %v", err)
+		logger.Warnf("EthAPI.GetBlockTransactionCountByHash() returning error: %v", err)
 		return nil, err
 	}
 	u := hexutil.Uint(c)
@@ -157,7 +157,7 @@ func (api *EthAPI) GetBlockTransactionCountByNumber(ctx context.Context, num rpc
 	logger.Debugf("EthAPI.GetBlockTransactionCountByNumber() called with num=%v", num)
 	c, err := api.b.GetBlockTxCountByNumber(ctx, blockNumberToUint64(num))
 	if err != nil {
-		logger.Debugf("EthAPI.GetBlockTransactionCountByNumber() returning error: %v", err)
+		logger.Warnf("EthAPI.GetBlockTransactionCountByNumber() returning error: %v", err)
 		return nil, err
 	}
 	u := hexutil.Uint(c)
@@ -172,12 +172,12 @@ func (api *EthAPI) GetBalance(ctx context.Context, address common.Address, block
 	logger.Debugf("EthAPI.GetBalance() called with address=%s", address.Hex())
 	blockNum, err := api.blockNumberOrHashToBlockNumber(ctx, block)
 	if err != nil {
-		logger.Debugf("EthAPI.GetBalance() returning error: %v", err)
+		logger.Warnf("EthAPI.GetBalance() returning error: %v", err)
 		return nil, err
 	}
 	b, err := api.b.BalanceAt(ctx, address, blockNum)
 	if err != nil {
-		logger.Debugf("EthAPI.GetBalance() returning error: %v", err)
+		logger.Warnf("EthAPI.GetBalance() returning error: %v", err)
 		return nil, err
 	}
 	result := (*hexutil.Big)(b)
@@ -190,12 +190,12 @@ func (api *EthAPI) GetCode(ctx context.Context, addr common.Address, block rpc.B
 	logger.Debugf("EthAPI.GetCode() called with addr=%s", addr.Hex())
 	blockNum, err := api.blockNumberOrHashToBlockNumber(ctx, block)
 	if err != nil {
-		logger.Debugf("EthAPI.GetCode() returning error: %v", err)
+		logger.Warnf("EthAPI.GetCode() returning error: %v", err)
 		return nil, err
 	}
 	code, err := api.b.CodeAt(ctx, addr, blockNum)
 	if err != nil {
-		logger.Debugf("EthAPI.GetCode() returning error: %v", err)
+		logger.Warnf("EthAPI.GetCode() returning error: %v", err)
 		return nil, err
 	}
 	result := (hexutil.Bytes)(code)
@@ -228,17 +228,17 @@ func (api *EthAPI) GetStorageAt(ctx context.Context, addr common.Address, hexSlo
 	logger.Debugf("EthAPI.GetStorageAt() called with addr=%s, slot=%s", addr.Hex(), hexSlot)
 	slot, err := DecodeStorageWord("storage key", hexSlot)
 	if err != nil {
-		logger.Debugf("EthAPI.GetStorageAt() returning error: %v", err)
+		logger.Warnf("EthAPI.GetStorageAt() returning error: %v", err)
 		return nil, err
 	}
 	blockNum, err := api.blockNumberOrHashToBlockNumber(ctx, block)
 	if err != nil {
-		logger.Debugf("EthAPI.GetStorageAt() returning error: %v", err)
+		logger.Warnf("EthAPI.GetStorageAt() returning error: %v", err)
 		return nil, err
 	}
 	data, err := api.b.StorageAt(ctx, addr, slot, blockNum)
 	if err != nil {
-		logger.Debugf("EthAPI.GetStorageAt() returning error: %v", err)
+		logger.Warnf("EthAPI.GetStorageAt() returning error: %v", err)
 		return nil, err
 	}
 	result := (hexutil.Bytes)(data)
@@ -251,12 +251,12 @@ func (api *EthAPI) GetTransactionCount(ctx context.Context, address common.Addre
 	logger.Debugf("EthAPI.GetTransactionCount() called with address=%s", address.Hex())
 	blockNum, err := api.blockNumberOrHashToBlockNumber(ctx, blockNrOrHash)
 	if err != nil {
-		logger.Debugf("EthAPI.GetTransactionCount() returning error: %v", err)
+		logger.Warnf("EthAPI.GetTransactionCount() returning error: %v", err)
 		return nil, err
 	}
 	nonce, err := api.b.NonceAt(ctx, address, blockNum)
 	if err != nil {
-		logger.Debugf("EthAPI.GetTransactionCount() returning error: %v", err)
+		logger.Warnf("EthAPI.GetTransactionCount() returning error: %v", err)
 		return nil, err
 	}
 	n := hexutil.Uint64(nonce)
@@ -271,14 +271,14 @@ func (api *EthAPI) SendRawTransaction(ctx context.Context, input hexutil.Bytes) 
 	logger.Debugf("EthAPI.SendRawTransaction() called")
 	tx := new(types.Transaction)
 	if err := tx.UnmarshalBinary(input); err != nil {
-		logger.Debugf("EthAPI.SendRawTransaction() returning error: %v", err)
+		logger.Warnf("EthAPI.SendRawTransaction() returning error: %v", err)
 		return common.Hash{}, rpcerr.InvalidParams("invalid raw transaction: %v", err)
 	}
 	if b, err := tx.MarshalJSON(); err == nil {
 		logger.Debugf("EthAPI.SendRawTransaction() tx: %s", string(b))
 	}
 	if err := api.b.SendTransaction(ctx, tx); err != nil {
-		logger.Debugf("EthAPI.SendRawTransaction() returning error: %v", err)
+		logger.Warnf("EthAPI.SendRawTransaction() returning error: %v", err)
 		return common.Hash{}, classifyValidationError(err)
 	}
 	hash := tx.Hash()
@@ -291,7 +291,7 @@ func (api *EthAPI) GetTransactionByHash(ctx context.Context, hash common.Hash) (
 	logger.Debugf("EthAPI.GetTransactionByHash() called with hash=%s", hash.Hex())
 	tx, err := api.b.TransactionByHash(ctx, hash)
 	if err != nil {
-		logger.Debugf("EthAPI.GetTransactionByHash() returning error: %v", err)
+		logger.Warnf("EthAPI.GetTransactionByHash() returning error: %v", err)
 		return nil, err
 	}
 	result := rpcTransaction(tx)
@@ -306,7 +306,7 @@ func (api *EthAPI) GetTransactionByBlockHashAndIndex(ctx context.Context, hash c
 	logger.Debugf("EthAPI.GetTransactionByBlockHashAndIndex() called with hash=%s, idx=%d", hash.Hex(), idx)
 	tx, err := api.b.GetTransactionByBlockHashAndIndex(ctx, hash, int64(idx))
 	if err != nil {
-		logger.Debugf("EthAPI.GetTransactionByBlockHashAndIndex() returning error: %v", err)
+		logger.Warnf("EthAPI.GetTransactionByBlockHashAndIndex() returning error: %v", err)
 		return nil, err
 	}
 	result := rpcTransaction(tx)
@@ -321,7 +321,7 @@ func (api *EthAPI) GetTransactionByBlockNumberAndIndex(ctx context.Context, num 
 	logger.Debugf("EthAPI.GetTransactionByBlockNumberAndIndex() called with num=%v, idx=%d", num, idx)
 	tx, err := api.b.GetTransactionByBlockNumberAndIndex(ctx, blockNumberToUint64(num), int64(idx))
 	if err != nil {
-		logger.Debugf("EthAPI.GetTransactionByBlockNumberAndIndex() returning error: %v", err)
+		logger.Warnf("EthAPI.GetTransactionByBlockNumberAndIndex() returning error: %v", err)
 		return nil, err
 	}
 	result := rpcTransaction(tx)
@@ -336,14 +336,12 @@ func (api *EthAPI) GetTransactionReceipt(ctx context.Context, hash common.Hash) 
 	logger.Debugf("EthAPI.GetTransactionReceipt() called with hash=%s", hash.Hex())
 	r, err := api.b.TransactionByHash(ctx, hash)
 	if err != nil {
-		logger.Debugf("EthAPI.GetTransactionReceipt() returning error: %v", err)
+		logger.Warnf("EthAPI.GetTransactionReceipt() returning error: %v", err)
 		return nil, err
 	}
 	result := receipt(r)
 	if resultJSON, err := json.Marshal(result); err == nil {
 		logger.Debugf("EthAPI.GetTransactionReceipt() returning: %s", string(resultJSON))
-	} else {
-		logger.Debugf("EthAPI.GetTransactionReceipt() returning nada")
 	}
 	return result, nil
 }
@@ -361,22 +359,24 @@ func (api *EthAPI) GetBlockReceipts(ctx context.Context, block rpc.BlockNumberOr
 		b, err = api.b.GetBlockByNumber(ctx, blockNumberToUint64(num), false)
 	}
 	if err != nil {
-		logger.Debugf("EthAPI.GetBlockReceipts() returning error: %v", err)
+		logger.Warnf("EthAPI.GetBlockReceipts() returning error: %v", err)
 		return nil, err
 	}
 	if b == nil {
+		logger.Debugf("EthAPI.GetBlockReceipts() returning nil (block not found)")
 		return nil, nil
 	}
 
 	receipts := make([]*rpcReceipt, 0, len(b.Transactions))
 	if len(b.Transactions) == 0 {
+		logger.Debugf("EthAPI.GetBlockReceipts() returning 0 receipts (empty block)")
 		return receipts, nil
 	}
 
 	// The block query loads the transactions but not their logs; fetch those for the whole block at once.
 	logs, err := api.b.GetLogs(ctx, domain.LogFilter{FromBlock: &b.BlockNumber, ToBlock: &b.BlockNumber})
 	if err != nil {
-		logger.Debugf("EthAPI.GetBlockReceipts() returning error: %v", err)
+		logger.Warnf("EthAPI.GetBlockReceipts() returning error: %v", err)
 		return nil, err
 	}
 	logsByTx := make(map[common.Hash][]domain.Log)
@@ -390,7 +390,9 @@ func (api *EthAPI) GetBlockReceipts(ctx context.Context, block rpc.BlockNumberOr
 		tx.Logs = logsByTx[hash]
 		r := receipt(&tx)
 		if r == nil {
-			return nil, fmt.Errorf("tx %s in block %d has no block hash", hash.Hex(), b.BlockNumber)
+			err := fmt.Errorf("tx %s in block %d has no block hash", hash.Hex(), b.BlockNumber)
+			logger.Warnf("EthAPI.GetBlockReceipts() returning error: %v", err)
+			return nil, err
 		}
 		receipts = append(receipts, r)
 	}
@@ -403,18 +405,18 @@ func (api *EthAPI) Call(ctx context.Context, args map[string]any, block rpc.Bloc
 	logger.Debugf("EthAPI.Call() called with args=%v", args)
 	callMsg, err := argsToCallMsg(args)
 	if err != nil {
-		logger.Debugf("EthAPI.Call() returning error: %v", err)
+		logger.Warnf("EthAPI.Call() returning error: %v", err)
 		return nil, err
 	}
 	blockNum, err := api.blockNumberOrHashToBlockNumber(ctx, block)
 	if err != nil {
-		logger.Debugf("EthAPI.Call() returning error: %v", err)
+		logger.Warnf("EthAPI.Call() returning error: %v", err)
 		return nil, err
 	}
 	logger.Debugf("EthAPI.Call() using blockNum %d", blockNum)
 	ret, err := api.b.CallContract(ctx, callMsg, blockNum)
 	if err != nil {
-		logger.Debugf("EthAPI.Call() returning error: %v", err)
+		logger.Warnf("EthAPI.Call() returning error: %v", err)
 		return nil, classifyCallError(err)
 	}
 	logger.Debugf("EthAPI.Call() returning: %s (len=%d)", hexutil.Bytes(ret).String(), len(ret))
@@ -429,7 +431,7 @@ func (api *EthAPI) EstimateGas(ctx context.Context, args map[string]any, block *
 
 	callMsg, err := argsToCallMsg(args)
 	if err != nil {
-		logger.Debugf("EthAPI.EstimateGas() returning error: %v", err)
+		logger.Warnf("EthAPI.EstimateGas() returning error: %v", err)
 		return nil, err
 	}
 	blockRef := rpc.BlockNumberOrHashWithNumber(rpc.LatestBlockNumber)
@@ -438,7 +440,7 @@ func (api *EthAPI) EstimateGas(ctx context.Context, args map[string]any, block *
 	}
 	blockNum, err := api.blockNumberOrHashToBlockNumber(ctx, blockRef)
 	if err != nil {
-		logger.Debugf("EthAPI.EstimateGas() returning error: %v", err)
+		logger.Warnf("EthAPI.EstimateGas() returning error: %v", err)
 		return nil, err
 	}
 
@@ -446,7 +448,7 @@ func (api *EthAPI) EstimateGas(ctx context.Context, args map[string]any, block *
 	// Reverts and other execution failures surface as JSON-RPC errors, same as eth_call.
 	gas, err := api.b.EstimateGas(ctx, callMsg, blockNum)
 	if err != nil {
-		logger.Debugf("EthAPI.EstimateGas() returning error: %v", err)
+		logger.Warnf("EthAPI.EstimateGas() returning error: %v", err)
 		return nil, classifyCallError(err)
 	}
 	u := hexutil.Uint64(gas)
@@ -522,7 +524,7 @@ func (api *EthAPI) GetLogs(ctx context.Context, crit filters.FilterCriteria) ([]
 	if needHead {
 		h, err := api.b.BlockNumber(ctx)
 		if err != nil {
-			logger.Debugf("EthAPI.GetLogs() returning error: %v", err)
+			logger.Warnf("EthAPI.GetLogs() returning error: %v", err)
 			return nil, err
 		}
 		head = h
@@ -531,7 +533,7 @@ func (api *EthAPI) GetLogs(ctx context.Context, crit filters.FilterCriteria) ([]
 
 	logs, err := api.b.GetLogs(ctx, query)
 	if err != nil {
-		logger.Debugf("EthAPI.GetLogs() returning error: %v", err)
+		logger.Warnf("EthAPI.GetLogs() returning error: %v", err)
 		return nil, err
 	}
 

@@ -17,12 +17,15 @@ import (
 	ethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/endorser/config"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
+
+var logger = flogging.MustGetLogger("endorser.core")
 
 // Endorser implements the ProcessProposal API to simulate the execution of ethereum transaction
 type Endorser struct {
@@ -78,8 +81,10 @@ func New(engine *execution.EVMEngine, builder endorsement.Builder, cfg config.En
 // It is required, validated against the endorser's clock skew window, and applied as-is
 // (no clamping) so all endorsers share the same value.
 func (f *Endorser) Execute(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction, timestamp time.Time) (*peer.ProposalResponse, error) {
+	logger.Debugf("Endorser.Execute() called with tx=%s timestamp=%s", ethTx.Hash().Hex(), timestamp.UTC().Format(time.RFC3339))
 	if err := validateRequestTimestamp(timestamp, f.clock(), f.maxFuture, f.maxPast); err != nil {
 		// Application outcome: invalid request from a misbehaving/skewed gateway.
+		logger.Warnf("Endorser.Execute() tx=%s invalid timestamp: %v", ethTx.Hash().Hex(), err)
 		return response(nil, execution.NewTxRejected(err)), nil
 	}
 
@@ -87,6 +92,7 @@ func (f *Endorser) Execute(ctx context.Context, inv endorsement.Invocation, ethT
 	// Signature and nonce are validated inside the engine during execution.
 	res, err := f.Engine.Execute(ctx, ethTx, blockTime)
 	if err != nil {
+		logger.Warnf("Endorser.Execute() tx=%s execution error: %v", ethTx.Hash().Hex(), err)
 		return response(nil, err), nil
 	}
 
@@ -94,8 +100,10 @@ func (f *Endorser) Execute(ctx context.Context, inv endorsement.Invocation, ethT
 	// rides in the response (500) like every other outcome, not as a Go error.
 	resp, err := f.builder.Endorse(inv, res)
 	if err != nil {
+		logger.Errorf("Endorser.Execute() tx=%s endorse signing failed: %v", ethTx.Hash().Hex(), err)
 		return response(nil, fmt.Errorf("endorse: %w", err)), nil
 	}
+	logger.Debugf("Endorser.Execute() tx=%s endorsed successfully status=%d", ethTx.Hash().Hex(), resp.Response.Status)
 	return resp, nil
 }
 
@@ -130,10 +138,13 @@ func validateRequestTimestamp(ts, now time.Time, maxFuture, maxPast time.Duratio
 // maxUsedGas is the EVM gas the simulation needed before EIP-3529 refunds are
 // credited.
 func (f *Endorser) Call(ctx context.Context, msg *ethereum.CallMsg, blockNumber *big.Int) (ret []byte, maxUsedGas uint64, err error) {
+	logger.Debugf("Endorser.Call() called with to=%s blockNumber=%v", msg.To, blockNumber)
 	res, gas, err := f.Engine.Call(*msg, blockNumber)
 	if err != nil {
+		logger.Warnf("Endorser.Call() returning error: %v", err)
 		return res, gas, &common.CallError{Status: classify(err), Message: err.Error(), Data: res}
 	}
+	logger.Debugf("Endorser.Call() returning %d bytes gasUsed=%d", len(res), gas)
 	return res, gas, nil
 }
 

@@ -8,8 +8,6 @@ package integration
 
 import (
 	"math/big"
-	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -17,30 +15,22 @@ import (
 
 	"github.com/hyperledger/fabric-x-evm/gateway/testimpl/primer"
 	"github.com/hyperledger/fabric-x-evm/integration/contracts"
+	"github.com/hyperledger/fabric-x-evm/synchronizer/hybridx"
 )
 
-// switchWatchingLogger wraps TestLogger and additionally closes switched the
-// first time it observes hybridx's "switching to notification" log line, so
-// tests can wait on the switch without reaching into HybridSynchronizer's
-// unexported state.
-type switchWatchingLogger struct {
-	TestLogger
-	once     sync.Once
-	switched chan struct{}
-}
-
-func newSwitchWatchingLogger(t *testing.T) *switchWatchingLogger {
-	return &switchWatchingLogger{
-		TestLogger: TestLogger{T: t},
-		switched:   make(chan struct{}),
+// waitForSwitch returns a channel that closes when the HybridSynchronizer
+// embedded in th switches from delivery to notification mode.
+// Must be called before traffic is generated so the OnSwitch callback is
+// registered before the switch can happen.
+func waitForSwitch(t *testing.T, th *TestHarness) <-chan struct{} {
+	t.Helper()
+	h, ok := th.Synchronizer.(*hybridx.HybridSynchronizer)
+	if !ok {
+		t.Fatal("synchronizer is not a *hybridx.HybridSynchronizer")
 	}
-}
-
-func (l *switchWatchingLogger) Infof(format string, v ...any) {
-	l.TestLogger.Infof(format, v...)
-	if strings.HasPrefix(format, "hybridx: switching to notification") {
-		l.once.Do(func() { close(l.switched) })
-	}
+	switched := make(chan struct{})
+	h.OnSwitch(func() { close(switched) })
+	return switched
 }
 
 // testHybridSwitchesToNotification verifies, against a real fabric-x committer,
@@ -51,12 +41,12 @@ func (l *switchWatchingLogger) Infof(format string, v ...any) {
 // notification path's block-hash placeholder end-to-end against the real
 // committer rather than the fabrictest fake the unit tests use.
 func testHybridSwitchesToNotification(t *testing.T) {
-	logs := newSwitchWatchingLogger(t)
-	th, err := newFileConfigHarness(t, logs, evmConfig(""), "", "fabx.yaml", nil)
+	th, err := newFileConfigHarness(t, TestLogger{T: t}, evmConfig(""), "", "fabx.yaml", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { th.Stop() })
+	switched := waitForSwitch(t, th)
 
 	node := th.Gateways[0]
 	ethClient, err := NewEthClient(contracts.CounterMetaData, th.ethChainConfig)
@@ -75,7 +65,7 @@ func testHybridSwitchesToNotification(t *testing.T) {
 	}
 
 	select {
-	case <-logs.switched:
+	case <-switched:
 		t.Log("hybridx switched to notification mode")
 	case <-time.After(10 * time.Second):
 		t.Fatal("hybridx never switched to notification mode under continuous traffic")
@@ -92,12 +82,12 @@ func testHybridSwitchesToNotification(t *testing.T) {
 // Metadata[1] event extraction fix: in fabric-x format the revert event is
 // carried in Metadata[1] of the notification batch, not in a BlindWrite.
 func testHybridRevertAfterSwitch(t *testing.T) {
-	logs := newSwitchWatchingLogger(t)
-	th, err := newFileConfigHarness(t, logs, evmConfig(""), "", "fabx.yaml", nil)
+	th, err := newFileConfigHarness(t, TestLogger{T: t}, evmConfig(""), "", "fabx.yaml", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { th.Stop() })
+	switched := waitForSwitch(t, th)
 
 	node := th.Gateways[0]
 	ethClient, err := NewEthClient(contracts.CounterMetaData, th.ethChainConfig)
@@ -117,7 +107,7 @@ func testHybridRevertAfterSwitch(t *testing.T) {
 	}
 
 	select {
-	case <-logs.switched:
+	case <-switched:
 		t.Log("hybridx switched to notification mode; now testing revert on notification path")
 	case <-time.After(10 * time.Second):
 		t.Fatal("hybridx never switched to notification mode")

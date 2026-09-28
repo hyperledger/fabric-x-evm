@@ -20,7 +20,7 @@ import (
 	"github.com/hyperledger/fabric-x-evm/common"
 )
 
-var notifLogger = flogging.MustGetLogger("evm.notification")
+var notifLogger = flogging.MustGetLogger("synchronizer.hybridx.notification")
 
 // BlockHandler defines the interface for handlers that
 // process committed blocks delivered via the AllTxStreamer path

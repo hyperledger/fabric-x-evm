@@ -303,6 +303,7 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 		ethChainConfig: evmConfig.ChainConfig,
 		Primer:         sp,
 		DBs:            dbs,
+		Synchronizer:   sync,
 	}
 
 	if err := th.PrimeStateFromJSON(t.Context(), primeDBPath, !bypass); err != nil {
@@ -701,6 +702,7 @@ type TestHarness struct {
 	endorsers      []eapi.Service
 	ethChainConfig *params.ChainConfig
 	Primer         *primer.StatePrimer
+	Synchronizer   synchronizer.Synchronizer
 }
 
 func (th *TestHarness) Stop() error {

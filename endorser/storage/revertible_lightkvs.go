@@ -128,21 +128,34 @@ func (kvs *RevertibleLightKVS) Get(namespace, key string) (*blocks.WriteRecord, 
 // The replay guard itself mirrors LightKVS.Handle exactly: older blocks are
 // skipped unverified, and a tip redelivery goes through verifyReplay.
 func (kvs *RevertibleLightKVS) Handle(ctx context.Context, b blocks.Block) error {
+	revertLogger.Debugf("RevertibleLightKVS.Handle() block=%d txs=%d", b.Number, len(b.Transactions))
 	current := kvs.Current.Load()
 	if !current.Placeholder && b.Number < current.BlockNumber {
+		revertLogger.Debugf("RevertibleLightKVS.Handle() block=%d skipped (current=%d)", b.Number, current.BlockNumber)
 		return nil
 	}
 
 	var updates []KeyValueVersion
 	for _, tx := range b.Transactions {
+		if !tx.Valid() {
+			revertLogger.Warnf("RevertibleLightKVS.Handle() block=%d txID=%s fabric-invalid status=%s reason=%q", b.Number, tx.ID, tx.Status, tx.Reason)
+		}
 		collectWrites(&updates, tx.NsRWS, b.Number, uint64(tx.Number), tx.ID, tx.Valid())
 	}
 
 	if !current.Placeholder && b.Number == current.BlockNumber {
-		return verifyReplay(current, updates)
+		if err := verifyReplay(current, updates); err != nil {
+			revertLogger.Warnf("RevertibleLightKVS.Handle() block=%d replay mismatch: %v", b.Number, err)
+			return err
+		}
+		return nil
 	}
 
-	return kvs.applyBlockSequential(b.Number, updates)
+	if err := kvs.applyBlockSequential(b.Number, updates); err != nil {
+		revertLogger.Warnf("RevertibleLightKVS.Handle() block=%d apply error: %v", b.Number, err)
+		return err
+	}
+	return nil
 }
 
 // applyBlockSequential computes a new snapshot at blockNum from updates,

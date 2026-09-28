@@ -35,8 +35,6 @@ type Endorser struct {
 	Identity common.IdentityConfig `mapstructure:"identity"  yaml:"identity"`
 	// Database stores the world state.
 	Database DB `mapstructure:"database"  yaml:"database"`
-	// DebugLogs enables per-tx StateDB DEBUG logging via StateDBLogger.
-	DebugLogs bool `mapstructure:"debug-logs" yaml:"debug-logs"`
 	// MaxTimestampFuture is how far ahead of local time a request timestamp may
 	// be. Zero means DefaultTimestampFutureSkew.
 	MaxTimestampFuture time.Duration `mapstructure:"max-timestamp-future" yaml:"max-timestamp-future"`

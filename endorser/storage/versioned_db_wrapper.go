@@ -9,10 +9,13 @@ package storage
 import (
 	"context"
 
+	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/state"
 )
+
+var vdbLogger = flogging.MustGetLogger("endorser.storage.versioned_db")
 
 // VersionedDBWrapper wraps a VersionedDB to implement execution.KVSSnapshotter.
 // It provides snapshot isolation by capturing the current block number
@@ -65,8 +68,17 @@ type VersionedDBSnapshot struct {
 // The snapshot's block number is automatically appended as the lastBlock
 // parameter when calling the underlying VersionedDB.Get method.
 func (s *VersionedDBSnapshot) Get(namespace, key string) (*blocks.WriteRecord, error) {
-	// Use the VersionedDB's Get method with the snapshot's block number
-	return s.db.Get(namespace, key, s.blockNumber)
+	rec, err := s.db.Get(namespace, key, s.blockNumber)
+	if err != nil {
+		vdbLogger.Warnf("VersionedDBSnapshot.Get() ns=%s key=%s error: %v", namespace, key, err)
+		return nil, err
+	}
+	if rec == nil {
+		vdbLogger.Debugf("VersionedDBSnapshot.Get() ns=%s key=%s not found (block=%d)", namespace, key, s.blockNumber)
+		return nil, nil
+	}
+	vdbLogger.Debugf("VersionedDBSnapshot.Get() ns=%s key=%s block=%d isDelete=%t valueLen=%d", namespace, key, rec.BlockNum, rec.IsDelete, len(rec.Value))
+	return rec, nil
 }
 
 // Close is a no-op for VersionedDBSnapshot since VersionedDB doesn't

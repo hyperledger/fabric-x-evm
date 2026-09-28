@@ -9,7 +9,6 @@ package core
 import (
 	"context"
 	"fmt"
-	"log"
 	"math"
 	"math/big"
 	"sync"
@@ -143,6 +142,7 @@ func New(ec *EndorsementClient, batchSubmitter *BatchSubmitter, store Store, cha
 
 // Start initializes the worker pool to process transactions from the queue
 func (g *Gateway) Start(ctx context.Context) {
+	logger.Infof("Gateway.Start() starting %d workers", g.workerCount)
 	// The default gate reclaims abandoned parked transactions in the background.
 	// It stops with ctx rather than with Stop: Stop waits on wg, which the reaper
 	// must not hold up. A supplied sequencer has nothing to reap.
@@ -191,13 +191,17 @@ func (g *Gateway) processTx(ctx context.Context, tx *types.Transaction) error {
 // SendTransaction runs geth-style pre-flight validation, then enqueues the tx
 // for async endorse/submit. Mirrors eth_sendRawTransaction's failure model.
 func (g *Gateway) SendTransaction(ctx context.Context, tx *types.Transaction) error {
+	logger.Debugf("Gateway.SendTransaction() called with tx=%s", tx.Hash().Hex())
 	if err := ValidateTx(tx, g.ChainConfig, g.Signer); err != nil {
+		logger.Warnf("Gateway.SendTransaction() validation error for tx=%s: %v", tx.Hash().Hex(), err)
 		return err
 	}
 	// Reject a resubmission already in the queue or parked awaiting an earlier nonce.
 	if g.TxQueue.IsPending(tx.Hash()) != nil || g.nonceGate.IsPending(tx.Hash()) != nil {
+		logger.Warnf("Gateway.SendTransaction() tx=%s already pending", tx.Hash().Hex())
 		return domain.ErrTransactionAlreadyPending
 	}
+	logger.Debugf("Gateway.SendTransaction() admitted tx=%s", tx.Hash().Hex())
 	return g.nonceGate.Admit(ctx, tx)
 }
 
@@ -396,6 +400,7 @@ func (g *Gateway) GetLogs(ctx context.Context, query domain.LogFilter) ([]domain
 // Stop performs an orderly shutdown of the gateway.
 // It closes the transaction queue, waits for all workers to finish, and closes the batch submitter.
 func (g *Gateway) Stop() error {
+	logger.Infof("Gateway.Stop() shutting down")
 	var err error
 	g.stopOnce.Do(func() {
 		// Close the queue to signal workers to stop
@@ -411,8 +416,9 @@ func (g *Gateway) Stop() error {
 
 	total, invalid, totalEnq, conflictEnq := g.TxQueue.Stats()
 	if total > 0 {
-		log.Println("gw stats: valid/invalid/invalid rate ", total, invalid, float64(invalid)/float64(total))
-		log.Println("gw stats: total/conflicting/conflicting rate", totalEnq, conflictEnq, float64(conflictEnq)/float64(totalEnq))
+		logger.Infof("Gateway.Stop() stats: processed=%d invalid=%d (%.1f%%) enqueued=%d conflicting=%d (%.1f%%)",
+			total, invalid, 100*float64(invalid)/float64(total),
+			totalEnq, conflictEnq, 100*float64(conflictEnq)/float64(totalEnq))
 	}
 
 	return err
