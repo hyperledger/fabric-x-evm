@@ -3,6 +3,12 @@
 ---
 server:
   endpoint: :7001
+  # The committer defaults to 5000 req/s, burst 1000. An endorser reading from
+  # the query service sends several reads per transaction, which blows through
+  # that, so tests turn it off (0). In production, size it to the endorsers.
+  rate-limit:
+    requests-per-second: 0
+    burst: 0
   tls:
     mode: mtls
     cert-path: /node-tls/server.crt
@@ -32,8 +38,11 @@ database:
     max-interval: 60s
     max-elapsed-time: 15m
 
-min-batch-keys: 1024
-max-batch-wait: 100ms
+# Defaults (1024 / 100ms) are tuned for bulk readers. An endorser reads one key
+# at a time, so it never fills a batch and every read would wait out the window;
+# answer each read as soon as it arrives instead.
+min-batch-keys: 1
+max-batch-wait: 100us
 view-aggregation-window: 100ms
 max-aggregated-views: 1024
 max-view-timeout: 10s
