@@ -159,7 +159,7 @@ func (p *perfCompleter) Handle(ctx context.Context, b blocks.Block) error {
 		// Status predicate copied verbatim from convertTransaction: q.invalid counts
 		// tx.Status == 0, so any drift here would move the reported invalid_rate.
 		status := uint8(0)
-		if tx.Valid() && !fc.IsRevertEvent(tx.Events) && !fc.IsExecFailureEvent(tx.Events) {
+		if tx.Valid() && !fc.IsRevertEvent(tx.EventName) && !fc.IsExecFailureEvent(tx.EventName) {
 			status = 1
 		}
 		block.Transactions = append(block.Transactions, domain.Transaction{

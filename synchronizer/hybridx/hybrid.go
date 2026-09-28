@@ -112,7 +112,6 @@ func New(
 	db network.BlockHeightReader,
 	channel, namespace string,
 	conf network.PeerConf,
-	signer sdk.Signer,
 	logger sdk.Logger,
 	queueDepth int,
 	handlers ...blocks.BlockHandler,
@@ -123,12 +122,12 @@ func New(
 		queueDepth: queueDepth,
 	}
 
-	delivery, err := nfabx.NewSynchronizer(db, channel, conf, signer, logger, &deliveryShim{h: h})
+	delivery, err := nfabx.NewSynchronizer(db, channel, conf, logger, &deliveryShim{h: h})
 	if err != nil {
 		return nil, fmt.Errorf("hybridx: create delivery synchronizer: %w", err)
 	}
 
-	notifPeer, err := nfabx.NewPeer(conf, channel, signer)
+	notifPeer, err := nfabx.NewPeer(conf, channel)
 	if err != nil {
 		return nil, fmt.Errorf("hybridx: create notification peer: %w", err)
 	}

@@ -93,32 +93,26 @@ func (e *EVMEngine) Execute(ctx context.Context, tx *types.Transaction, blockTim
 		case errors.Is(err, vm.ErrExecutionReverted):
 			// Revert: a committed outcome, endorsed with a revert event.
 			logger.Debugf("EVMEngine.Execute() tx=%s reverted: %v", tx.Hash().Hex(), err)
-			event, mErr := fxcommon.MarshalRevert(ret, "", tx.Hash().Hex())
-			if mErr != nil {
-				return endorsement.ExecutionResult{}, fmt.Errorf("marshal revert event: %w", mErr)
-			}
 			return endorsement.ExecutionResult{
-				RWS:     ex.state.Result(),
-				Event:   event,
-				Status:  fxcommon.StatusEVMRevert,
-				Message: err.Error(),
-				Payload: ret,
+				RWS:       ex.state.Result(),
+				Event:     ret,
+				EventName: fxcommon.RevertEventName(tx.Hash().Hex()),
+				Status:    fxcommon.StatusEVMRevert,
+				Message:   err.Error(),
+				Payload:   ret,
 			}, nil
 		case isExecFailure:
 			// Valid tx whose EVM execution faulted without reverting (out of gas,
 			// invalid opcode, ...): also a committed outcome, same shape as a
 			// revert but with no ABI-encoded reason to carry.
 			logger.Warnf("EVMEngine.Execute() tx=%s exec failure: %v", tx.Hash().Hex(), err)
-			event, mErr := fxcommon.MarshalExecFailure(ret, "", tx.Hash().Hex())
-			if mErr != nil {
-				return endorsement.ExecutionResult{}, fmt.Errorf("marshal exec-failure event: %w", mErr)
-			}
 			return endorsement.ExecutionResult{
-				RWS:     ex.state.Result(),
-				Event:   event,
-				Status:  fxcommon.StatusExecFailure,
-				Message: err.Error(),
-				Payload: ret,
+				RWS:       ex.state.Result(),
+				Event:     ret,
+				EventName: fxcommon.ExecFailureEventName(tx.Hash().Hex()),
+				Status:    fxcommon.StatusExecFailure,
+				Message:   err.Error(),
+				Payload:   ret,
 			}, nil
 		default:
 			// Pre-execution rejection (bad signature, nonce, ...): never included in a block.
@@ -136,7 +130,7 @@ func (e *EVMEngine) Execute(ctx context.Context, tx *types.Transaction, blockTim
 	}
 
 	logger.Debugf("EVMEngine.Execute() tx=%s succeeded logs=%d retLen=%d", tx.Hash().Hex(), len(ex.state.Logs()), len(ret))
-	return endorsement.Success(ex.state.Result(), logs, ret), nil
+	return endorsement.Success(ex.state.Result(), fxcommon.LogsEventName(logs), logs, ret), nil
 }
 
 // Call executes a read-only call (eth_call semantics) against the state at blockNumber

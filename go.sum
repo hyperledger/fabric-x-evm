@@ -231,8 +231,8 @@ github.com/hyperledger/fabric-x-committer v1.0.4 h1:qR742OKEOeZwM9Y4fcGC+I0OxiUY
 github.com/hyperledger/fabric-x-committer v1.0.4/go.mod h1:Oe6uzkM7tOPLpkELwoPldrv6GRJSLqWv6t1s09Ca64k=
 github.com/hyperledger/fabric-x-common v0.2.8 h1:gTKJlORCjZjZo+4gPAvOUjTlOYBG8GToy3BTMLOI7sA=
 github.com/hyperledger/fabric-x-common v0.2.8/go.mod h1:f30Yws3c5Cg22yHLy2oT2XR0wwZI+JdqbUqB2fwFIsM=
-github.com/hyperledger/fabric-x-sdk v0.1.1-0.20260924145912-52cf0209537c h1:6bTdlTPdnQtQolycJAluETDKIxkQOOrIRYsTp0i1jFQ=
-github.com/hyperledger/fabric-x-sdk v0.1.1-0.20260924145912-52cf0209537c/go.mod h1:HjHb2pv3fS2OBkVmnPp1eIl/AEJQkjRLTJ6EpjzDPOE=
+github.com/hyperledger/fabric-x-sdk v0.1.1-0.20260929101041-f5b45c286a8f h1:GYHR+VCbV/6KbT7SkjMg5DiYU8dvS9Jw292BXT0ZzmU=
+github.com/hyperledger/fabric-x-sdk v0.1.1-0.20260929101041-f5b45c286a8f/go.mod h1:iQ2oGoQ0r2Ld/uxtYj2bwc+n3olvHgK7LXtj7Ni7Zps=
 github.com/ianlancetaylor/demangle v0.0.0-20200824232613-28f6c0f3b639/go.mod h1:aSSvb/t6k1mPoxDqO4vJh6VOCGPwU4O0C2/Eqndh1Sc=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=

@@ -59,7 +59,7 @@ func New(protocol string, db network.BlockHeightReader, channel, namespace strin
 	case common.ProtocolFabric:
 		return nfab.NewSynchronizer(db, channel, committer, signer, logger, handler)
 	case common.ProtocolFabricX:
-		return hybridx.New(db, channel, namespace, committer, signer, logger, queueDepth, handler)
+		return hybridx.New(db, channel, namespace, committer, logger, queueDepth, handler)
 	default:
 		return nil, fmt.Errorf("unsupported protocol: %q", protocol)
 	}
@@ -86,7 +86,7 @@ func NewDelivery(protocol string, db network.BlockHeightReader, channel, namespa
 	case common.ProtocolFabric:
 		return nfab.NewSynchronizer(db, channel, committer, signer, logger, handler)
 	case common.ProtocolFabricX:
-		return nfabx.NewSynchronizer(db, channel, committer, signer, logger, handler)
+		return nfabx.NewSynchronizer(db, channel, committer, logger, handler)
 	default:
 		return nil, fmt.Errorf("unsupported protocol: %q", protocol)
 	}

@@ -48,15 +48,13 @@ func mustEthTxBytes(t *testing.T) []byte {
 
 func mustLogEvents(t *testing.T, logs []state.Log) []byte {
 	t.Helper()
+	// The SDK carries the endorsement's event through verbatim, so a
+	// successful transaction's event bytes are the JSON logs themselves.
 	payload, err := json.Marshal(logs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ev, err := fc.MarshalLogs(payload, "evmcc", "tx-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return ev
+	return payload
 }
 
 func bytes32(b byte) []byte {
@@ -88,7 +86,7 @@ func TestLogsFromBlock_HappyAndSkips(t *testing.T) {
 				Number:    1,
 				Status:    blocks.StatusMVCCConflict,
 				InputArgs: [][]byte{{byte(fc.ProposalTypeEVMTx)}, rawTx},
-				Events:    events,
+				Event:     events,
 			},
 			{
 				Number:    2,
@@ -99,13 +97,13 @@ func TestLogsFromBlock_HappyAndSkips(t *testing.T) {
 				Number:    3,
 				Status:    blocks.StatusCommitted,
 				InputArgs: [][]byte{{byte(fc.ProposalTypeEVMTx)}, []byte("not-rlp")},
-				Events:    events,
+				Event:     events,
 			},
 			{
 				Number:    4,
 				Status:    blocks.StatusCommitted,
 				InputArgs: [][]byte{{byte(fc.ProposalTypeEVMTx)}, rawTx},
-				Events:    events,
+				Event:     events,
 			},
 		},
 	}
@@ -127,15 +125,6 @@ func TestLogsFromBlock_HappyAndSkips(t *testing.T) {
 
 func TestLogsFromBlock_RevertSkipped(t *testing.T) {
 	rawTx := mustEthTxBytes(t)
-	inner, err := fc.MarshalRevert([]byte("boom"), "evmcc", "tx-rev")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Endorser wraps the revert marker in an outer "log" ChaincodeEvent.
-	outer, err := fc.MarshalLogs(inner, "evmcc", "tx-rev")
-	if err != nil {
-		t.Fatal(err)
-	}
 	b := blocks.Block{
 		Number: 1,
 		Hash:   bytes32(1),
@@ -143,7 +132,8 @@ func TestLogsFromBlock_RevertSkipped(t *testing.T) {
 			Number:    0,
 			Status:    blocks.StatusCommitted,
 			InputArgs: [][]byte{{byte(fc.ProposalTypeEVMTx)}, rawTx},
-			Events:    outer,
+			Event:     []byte("boom"),
+			EventName: fc.RevertEventName("tx-rev"),
 		}},
 	}
 	if got := logsFromBlock(b); len(got) != 0 {
@@ -215,8 +205,8 @@ func TestLogFilter_LivePathViaHandle(t *testing.T) {
 		Number: 3,
 		Hash:   bytes32(3),
 		Transactions: []blocks.Transaction{
-			{Number: 0, Status: blocks.StatusCommitted, InputArgs: [][]byte{{byte(fc.ProposalTypeEVMTx)}, rawTx}, Events: miss},
-			{Number: 1, Status: blocks.StatusCommitted, InputArgs: [][]byte{{byte(fc.ProposalTypeEVMTx)}, rawTx}, Events: events},
+			{Number: 0, Status: blocks.StatusCommitted, InputArgs: [][]byte{{byte(fc.ProposalTypeEVMTx)}, rawTx}, Event: miss},
+			{Number: 1, Status: blocks.StatusCommitted, InputArgs: [][]byte{{byte(fc.ProposalTypeEVMTx)}, rawTx}, Event: events},
 		},
 	})
 

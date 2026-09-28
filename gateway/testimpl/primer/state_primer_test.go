@@ -151,7 +151,7 @@ func TestEndorsesWithEveryBuilder(t *testing.T) {
 	rws := sp.Writes()
 	var responses []*peer.ProposalResponse
 	for _, b := range sp.builders {
-		presp, err := b.Endorse(inv, endorsement.Success(rws, nil, nil))
+		presp, err := b.Endorse(inv, endorsement.Success(rws, "", nil, nil))
 		if err != nil {
 			t.Fatalf("Endorse: %v", err)
 		}

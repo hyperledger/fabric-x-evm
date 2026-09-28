@@ -276,7 +276,7 @@ func (sp *StatePrimer) Commit(ctx context.Context, wait bool) error {
 	// Collect endorsements from all builders
 	var presps []*pb.ProposalResponse
 	for _, builder := range sp.builders {
-		presp, err := builder.Endorse(inv, endorsement.Success(sp.stateDB.Result(), nil, nil))
+		presp, err := builder.Endorse(inv, endorsement.Success(sp.stateDB.Result(), "", nil, nil))
 		if err != nil {
 			return err
 		}

@@ -45,7 +45,7 @@ func NewNetworkSubmitters(ctx context.Context, protocol string, orderers []netwo
 		case common.ProtocolFabric:
 			submitters[i], err = nfab.NewSubmitter(ctx, orderers, gwSigner, time.Duration(0), logger)
 		case common.ProtocolFabricX:
-			submitters[i], err = nfabx.NewSubmitter(ctx, orderers, time.Duration(0), logger)
+			submitters[i], err = nfabx.NewSubmitter(ctx, orderers, gwSigner, time.Duration(0), logger)
 		default:
 			return nil, fmt.Errorf("unsupported protocol: %q", protocol)
 		}
