@@ -22,7 +22,7 @@ var batchLogger = flogging.MustGetLogger("gateway.core.batch_submitter")
 
 // SubmissionTimestamps is an optional map for tracking submission timestamps.
 // If non-nil, timestamps are recorded when transactions are submitted to the orderer.
-// Key: Ethereum transaction hash, Value: T2 timestamp (when submitted to orderer)
+// Key: Ethereum transaction hash, Value: T3 timestamp (when submitted to orderer)
 var SubmissionTimestamps map[common.Hash]time.Time
 
 // SubmissionTimestampsMu protects access to SubmissionTimestamps
@@ -165,7 +165,7 @@ func (bs *BatchSubmitter) worker(ctx context.Context, workerID int, wg *sync.Wai
 			if !ok {
 				return
 			}
-			if err := bs.submitOne(ctx, workerID, end.End); err != nil {
+			if err := bs.submitOne(ctx, workerID, end); err != nil {
 				batchLogger.Errorf("Worker %d: submit failed: %v", workerID, err)
 				if bs.completer != nil {
 					bs.completer.Complete(end.Hash)
@@ -175,7 +175,7 @@ func (bs *BatchSubmitter) worker(ctx context.Context, workerID int, wg *sync.Wai
 	}
 }
 
-func (bs *BatchSubmitter) submitOne(ctx context.Context, workerID int, end sdk.Endorsement) error {
+func (bs *BatchSubmitter) submitOne(ctx context.Context, workerID int, tx EndorsedTx) error {
 	// Wait for rate limiter to allow this submission (if enabled)
 	if bs.rateLimiter != nil {
 		if err := bs.rateLimiter.Wait(ctx); err != nil {
@@ -183,9 +183,17 @@ func (bs *BatchSubmitter) submitOne(ctx context.Context, workerID int, end sdk.E
 		}
 	}
 
+	// T3 is recorded after the rate limiter so that the time a submission spends
+	// throttled is attributed to the gateway and not to the backend.
+	SubmissionTimestampsMu.Lock()
+	if m := SubmissionTimestamps; m != nil {
+		m[tx.Hash] = time.Now()
+	}
+	SubmissionTimestampsMu.Unlock()
+
 	var txid string
 	t0 := time.Now()
-	err := bs.submitters[workerID].Submit(ctx, end)
+	err := bs.submitters[workerID].Submit(ctx, tx.End)
 	batchLogger.Debugf("[SUBMIT] worker=%d txid=%s submit_took=%v", workerID, txid, time.Since(t0))
 	return err
 }

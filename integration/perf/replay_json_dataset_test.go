@@ -494,7 +494,11 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	// Enable T3 timestamp tracking in batch_submitter (when submitted to orderer)
 	gwcore.SubmissionTimestamps = make(map[common.Hash]time.Time)
 	defer func() {
+		// Submitter workers are still live here: gw.Stop() runs from t.Cleanup, which
+		// fires after this defer. Take the mutex so the nil-out is not a data race.
+		gwcore.SubmissionTimestampsMu.Lock()
 		gwcore.SubmissionTimestamps = nil // Clean up after test
+		gwcore.SubmissionTimestampsMu.Unlock()
 	}()
 
 	runtime.GC()
