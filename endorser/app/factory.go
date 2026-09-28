@@ -13,6 +13,7 @@ import (
 	"github.com/hyperledger/fabric-x-evm/endorser/config"
 	"github.com/hyperledger/fabric-x-evm/endorser/core"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
+	"github.com/hyperledger/fabric-x-evm/endorser/query"
 	"github.com/hyperledger/fabric-x-evm/endorser/storage"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
@@ -78,8 +79,14 @@ func NewEndorserCore(
 			return nil, nil, nil, fmt.Errorf("failed to initialize store: %w", err)
 		}
 		kvs = pebbleKVS
+	case config.DBQueryService:
+		client, err := query.NewGRPCClient(*dbCfg.QueryService, query.Connections)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("failed to connect to query service: %w", err)
+		}
+		kvs = query.NewKVS(client, namespace)
 	default:
-		return nil, nil, nil, fmt.Errorf("invalid endorser database type %q, must be one of %q, %q, %q", dbCfg.Database, config.DBSQLite, config.DBMemory, config.DBPebble)
+		return nil, nil, nil, fmt.Errorf("invalid endorser database type %q, must be one of %q, %q, %q, %q", dbCfg.Database, config.DBSQLite, config.DBMemory, config.DBPebble, config.DBQueryService)
 	}
 
 	var builder endorsement.Builder
