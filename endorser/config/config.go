@@ -70,6 +70,13 @@ const (
 	DBMemory = "memory"
 	// DBPebble is the pebble-backed PebbleKVS. Persistent; supports both protocols.
 	DBPebble = "pebble"
+	// DBQueryService keeps no local state and reads from the committer's query
+	// service. Fabric-X only. The query service's defaults are tuned for bulk
+	// reads: set min-batch-keys and max-batch-wait low, or every read waits the
+	// full batch window; keep view-aggregation-window short, or snapshots are
+	// stale; and raise its rate limit to fit the endorsers' reads (see
+	// testdata/config/committer-query-service.yaml).
+	DBQueryService = "query-service"
 )
 
 // DB holds the database path for an endorser.
@@ -77,10 +84,13 @@ type DB struct {
 	Database    string `mapstructure:"database" yaml:"database"`
 	ConnString  string `mapstructure:"connection-string" yaml:"connection-string"`
 	HistorySize int    `mapstructure:"history_size" yaml:"history_size"` // number of historical snapshots to keep (default: 2; test RPC uses a large value)
+	// QueryService is where DBQueryService reads from.
+	QueryService *common.ClientConfig `mapstructure:"query-service" yaml:"query-service"`
 }
 
 // Validate checks that required fields are set and values are within acceptable ranges.
-func (cfg Endorser) Validate() error {
+// protocol is the network protocol (network.protocol), which some databases depend on.
+func (cfg Endorser) Validate(protocol string) error {
 	var errs []error
 
 	if cfg.Name == "" {
@@ -97,6 +107,16 @@ func (cfg Endorser) Validate() error {
 	}
 	if cfg.Database.Database == DBPebble && cfg.Database.ConnString == "" {
 		errs = append(errs, errors.New("database.connection-string (data directory) is required for pebble"))
+	}
+	if cfg.Database.Database == DBQueryService {
+		if p, _ := common.NormalizeProtocol(protocol); p != common.ProtocolFabricX {
+			errs = append(errs, fmt.Errorf("database.database %q requires protocol %q", DBQueryService, common.ProtocolFabricX))
+		}
+		if cfg.Database.QueryService == nil {
+			errs = append(errs, errors.New("database.query-service is required for query-service"))
+		} else if err := cfg.Database.QueryService.Validate(); err != nil {
+			errs = append(errs, fmt.Errorf("database.query-service: %w", err))
+		}
 	}
 	if cfg.Server != nil {
 		if err := validateServerConfig(cfg.Server); err != nil {

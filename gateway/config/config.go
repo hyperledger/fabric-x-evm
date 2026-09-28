@@ -204,7 +204,7 @@ func (cfg Config) Validate() error {
 	}
 
 	if cfg.Endorser != nil {
-		errs = append(errs, cfg.Endorser.Validate())
+		errs = append(errs, cfg.Endorser.Validate(cfg.Network.Protocol))
 		// A standalone endorser (no gateway) is unreachable, and therefore
 		// pointless, without a gRPC server. A gateway's own embedded endorser
 		// has no such requirement — serving it is optional, config-gated on

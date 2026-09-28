@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math/big"
 	"os"
 	"sync"
@@ -24,6 +25,7 @@ import (
 	"github.com/ethereum/go-ethereum/tests"
 	evmcommon "github.com/hyperledger/fabric-x-evm/common"
 	eclient "github.com/hyperledger/fabric-x-evm/endorser/client"
+	econf "github.com/hyperledger/fabric-x-evm/endorser/config"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
 	"github.com/hyperledger/fabric-x-evm/gateway/testimpl/primer"
@@ -182,6 +184,29 @@ func TestFabricX(t *testing.T) {
 			tc.fn(t, th)
 		})
 	}
+
+	// The same cases with the endorser reading state from the committer's query
+	// service instead of keeping its own copy.
+	t.Run("query_service_endorser", func(t *testing.T) {
+		for _, tc := range cases {
+			if tc.primeDbPath != "" {
+				continue // priming writes to the endorser's store, which this backend does not have
+			}
+			t.Run(tc.name, func(t *testing.T) {
+				overrides := map[string]any{
+					"Endorser.Database.Database":     econf.DBQueryService,
+					"Endorser.Database.QueryService": queryServiceConfig(),
+				}
+				maps.Copy(overrides, tc.overrides)
+				th, err := newFileConfigHarness(t, TestLogger{T: t}, evmConfig(tc.fork), "", "fabx.yaml", overrides)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { th.Stop() })
+				tc.fn(t, th)
+			})
+		}
+	})
 
 	// A successful commit here needs signatures from both org1 and org2.
 	t.Run("two_of_two_endorsement_policy", func(t *testing.T) {
@@ -1177,4 +1202,19 @@ func testPendingTransactionStatus(t *testing.T, th *TestHarness) {
 	}
 
 	t.Logf("Transaction successfully committed (isPending=false)")
+}
+
+// queryServiceConfig reaches the test committer's query service with the same
+// client identity fabx.yaml uses for the committer.
+func queryServiceConfig() *evmcommon.ClientConfig {
+	const user = "../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/"
+	return &evmcommon.ClientConfig{
+		Endpoint: &evmcommon.Endpoint{Host: "127.0.0.1", Port: 7001},
+		TLS: evmcommon.TLSConfig{
+			Mode:        "mtls",
+			CertPath:    user + "client.crt",
+			KeyPath:     user + "client.key",
+			CACertPaths: []string{"../testdata/crypto/peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem"},
+		},
+	}
 }

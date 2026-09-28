@@ -3,6 +3,12 @@
 ---
 server:
   endpoint: :7001
+  # The committer defaults to 5000 req/s, burst 1000. An endorser reading from
+  # the query service sends several reads per transaction, which blows through
+  # that, so tests turn it off (0). In production, size it to the endorsers.
+  rate-limit:
+    requests-per-second: 0
+    burst: 0
   tls:
     mode: mtls
     cert-path: /node-tls/server.crt
@@ -22,7 +28,9 @@ database:
   database: "sc_db"
   tls:
     mode: none
-  max-connections: 10
+  # Views opened within one aggregation window share a database transaction,
+  # so a short window needs more connections.
+  max-connections: 32
   min-connections: 5
   load-balance: false
   retry:
@@ -32,9 +40,14 @@ database:
     max-interval: 60s
     max-elapsed-time: 15m
 
-min-batch-keys: 1024
-max-batch-wait: 100ms
-view-aggregation-window: 100ms
+# Defaults (1024 / 100ms) are tuned for bulk readers. An endorser reads one key
+# at a time, so it never fills a batch and every read would wait out the window;
+# answer each read as soon as it arrives instead.
+min-batch-keys: 1
+max-batch-wait: 100us
+# Views opened within this window share one snapshot, so a view can be up to
+# this old. Keep it short so endorsers read fresh state.
+view-aggregation-window: 10ms
 max-aggregated-views: 1024
 max-view-timeout: 10s
 max-active-views: 4096
