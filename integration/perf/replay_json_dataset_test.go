@@ -499,10 +499,15 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	// - Fabric: Traditional block-based synchronization
 	// - Fabric-X: Notification-based (MemoryStore + NotificationDispatcher)
 	// th, err := integration.NewLocalTestHarnessWithFactoryAndTxQueue(t, integration.TestLogger{T: t}, evmConfig, "testdata/USDC_contract.json", "fabric", map[string]any{"Gateway.WorkerCount": processingWorkerCount, "Gateway.SubmitterCount": ordererSubmitterCount, "Network.Namespace": *namespace}, factory, gwcore.NewTxQueueV2())
+	allTxQueueDepth := 16384
+
 	var queue gwcore.TxQueueInterface
 	switch {
 	case *depgraph:
-		queue = gwcore.NewDepGraphQueue(nil)
+		queue = gwcore.NewDepGraphQueue(&gwcore.DepGraphQueueConfig{
+			EndorseWorkers: &processingWorkerCount,
+			ChanSize:       &allTxQueueDepth,
+		})
 	case *oldqueue:
 		queue = gwcore.NewTxQueue()
 	default:
@@ -519,7 +524,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 			"Gateway.WorkerCount":          processingWorkerCount,
 			"Gateway.SubmitterCount":       ordererSubmitterCount,
 			"Network.Namespace":            *namespace,
-			"Synchronizer.AllTxQueueDepth": 16384,
+			"Synchronizer.AllTxQueueDepth": allTxQueueDepth,
 			// One retained state snapshot, not two. This is already what
 			// integration.buildEndorsers picks when the config file leaves history_size
 			// unset (fabx.yaml does), so today it only pins the value: without it the
