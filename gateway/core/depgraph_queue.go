@@ -130,6 +130,10 @@ type DepGraphQueue struct {
 	tracked map[common.Hash]*trackedTx
 	done    bool
 
+	// Statistics
+	total   int
+	invalid int
+
 	// endorser is written once by Bind, which then starts the workers that read
 	// it. Starting them after the write is the happens-before, so no lock.
 	endorser txEndorser
@@ -321,7 +325,7 @@ func (q *DepGraphQueue) batchLoop() {
 		case q.incoming <- batch:
 			depGraphLogger.Debugf("DepGraphQueue.batchLoop() batch id=%d sent to dependency manager", batch.ID)
 		case <-q.ctx.Done():
-			depGraphLogger.Errorf("failed to send batch id=%d to dependency manager: context done: %v", batch.ID, q.ctx.Err())
+			depGraphLogger.Warnf("failed to send batch id=%d to dependency manager: context done: %v", batch.ID, q.ctx.Err())
 		}
 		pending = make([]*servicepb.TxWithRef, 0, q.batchThreshold)
 	}
@@ -441,19 +445,20 @@ func (q *DepGraphQueue) Handle(_ context.Context, block *domain.Block) error {
 	}
 
 	hashes := make([]common.Hash, 0, len(block.Transactions))
-	invalid := 0
 	for _, tx := range block.Transactions {
-		hashes = append(hashes, common.BytesToHash(tx.TxHash))
+		q.total++
 		if tx.Status == 0 {
-			invalid++
+			q.invalid++
 		}
+
+		hashes = append(hashes, common.BytesToHash(tx.TxHash))
 	}
 
 	q.mu.Lock()
 	nodes := q.takeNodesLocked(hashes)
 	q.mu.Unlock()
 
-	depGraphLogger.Debugf("DepGraphQueue.Handle() releasing %d nodes (total txs=%d, invalid=%d)", len(nodes), len(hashes), invalid)
+	depGraphLogger.Debugf("DepGraphQueue.Handle() releasing %d nodes (total txs=%d)", len(nodes), len(hashes))
 	q.release(nodes)
 	return nil
 }
@@ -529,6 +534,6 @@ func (q *DepGraphQueue) shutdown() {
 // zero: the graph reports contention as a peak, which divided by the enqueued
 // total would not be the rate the shared callers print. PeakDependentTxs has it.
 func (q *DepGraphQueue) Stats() (int, int, int, int) {
-	// TODO: pull these stats from the dependency manager
-	return 0, 0, 0, 0
+	// TODO: pull missing stats from the dependency manager
+	return q.total, q.invalid, 0, 0
 }
