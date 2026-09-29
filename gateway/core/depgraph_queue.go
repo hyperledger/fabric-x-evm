@@ -21,9 +21,8 @@ import (
 	"github.com/hyperledger/fabric-x-committer/service/coordinator/dependencygraph"
 	"github.com/hyperledger/fabric-x-committer/utils/monitoring"
 	"github.com/hyperledger/fabric-x-common/api/committerpb"
-	sdk "github.com/hyperledger/fabric-x-sdk"
-
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
+	sdk "github.com/hyperledger/fabric-x-sdk"
 )
 
 var depGraphLogger = flogging.MustGetLogger("gateway.core.depgraph_queue")
@@ -44,6 +43,16 @@ const (
 	defaultBatchThreshold = 64
 	defaultBatchTimeout   = 10 * time.Millisecond
 )
+
+// DepGraphQueueConfig configures parameters for DepGraphQueue.
+// All fields are optional pointers; nil fields fall back to default values.
+type DepGraphQueueConfig struct {
+	EndorseWorkers  *int
+	ChanSize        *int
+	WaitingTxsLimit *int
+	BatchThreshold  *int
+	BatchTimeout    *time.Duration
+}
 
 // txRefID is the id the manager knows a transaction by. TxRef.TxId is a plain
 // string the manager never interprets, so this queue puts the Ethereum hash
@@ -115,6 +124,10 @@ type DepGraphQueue struct {
 	metrics     *monitoring.Provider
 	depWaitPeak atomic.Int64
 
+	endorseWorkers int
+	batchThreshold int
+	batchTimeout   time.Duration
+
 	mu      sync.RWMutex
 	cond    *sync.Cond
 	ready   []*types.Transaction
@@ -137,15 +150,44 @@ type DepGraphQueue struct {
 }
 
 // NewDepGraphQueue starts the dependency manager and the goroutines feeding it.
+// An optional cfg pointer can be passed to override default queue settings;
+// passing nil or leaving individual pointer fields nil uses the defaults.
 // Bind must be called before the first Enqueue.
-func NewDepGraphQueue() *DepGraphQueue {
+func NewDepGraphQueue(cfg *DepGraphQueueConfig) *DepGraphQueue {
+	endorseWorkers := defaultEndorseWorkers
+	chanSize := defaultChanSize
+	waitingTxsLimit := defaultWaitingTxsLimit
+	batchThreshold := defaultBatchThreshold
+	batchTimeout := defaultBatchTimeout
+
+	if cfg != nil {
+		if cfg.EndorseWorkers != nil {
+			endorseWorkers = *cfg.EndorseWorkers
+		}
+		if cfg.ChanSize != nil {
+			chanSize = *cfg.ChanSize
+		}
+		if cfg.WaitingTxsLimit != nil {
+			waitingTxsLimit = *cfg.WaitingTxsLimit
+		}
+		if cfg.BatchThreshold != nil {
+			batchThreshold = *cfg.BatchThreshold
+		}
+		if cfg.BatchTimeout != nil {
+			batchTimeout = *cfg.BatchTimeout
+		}
+	}
+
 	q := &DepGraphQueue{
-		incoming:  make(chan *dependencygraph.TransactionBatch, defaultChanSize),
-		outgoing:  make(chan dependencygraph.TxNodeBatch, defaultChanSize),
-		validated: make(chan dependencygraph.TxNodeBatch, defaultChanSize),
-		admitted:  make(chan *types.Transaction, defaultChanSize),
-		endorsed:  make(chan *servicepb.TxWithRef, defaultChanSize),
-		tracked:   make(map[common.Hash]*trackedTx),
+		incoming:       make(chan *dependencygraph.TransactionBatch, chanSize),
+		outgoing:       make(chan dependencygraph.TxNodeBatch, chanSize),
+		validated:      make(chan dependencygraph.TxNodeBatch, chanSize),
+		admitted:       make(chan *types.Transaction, chanSize),
+		endorsed:       make(chan *servicepb.TxWithRef, chanSize),
+		tracked:        make(map[common.Hash]*trackedTx),
+		endorseWorkers: endorseWorkers,
+		batchThreshold: batchThreshold,
+		batchTimeout:   batchTimeout,
 	}
 	q.cond = sync.NewCond(&q.mu)
 	q.ctx, q.cancel = context.WithCancel(context.Background())
@@ -160,7 +202,7 @@ func NewDepGraphQueue() *DepGraphQueue {
 		OutgoingDepFreeTxsNode:    q.outgoing,
 		IncomingValidatedTxsNode:  q.validated,
 		NumOfLocalDepConstructors: 1,
-		WaitingTxsLimit:           defaultWaitingTxsLimit,
+		WaitingTxsLimit:           waitingTxsLimit,
 		PrometheusMetricsProvider: q.metrics,
 	})
 
@@ -179,7 +221,7 @@ func NewDepGraphQueue() *DepGraphQueue {
 func (q *DepGraphQueue) Bind(e txEndorser) {
 	q.endorser = e
 
-	for range defaultEndorseWorkers {
+	for range q.endorseWorkers {
 		q.wg.Go(q.endorseLoop)
 	}
 	q.wg.Go(q.batchLoop)
@@ -264,10 +306,10 @@ func (q *DepGraphQueue) submitToManager(tx *types.Transaction) {
 // order without a lock. It packs whatever the endorse workers produce, sending
 // at the threshold or on the timeout so a thin stream is not held up.
 func (q *DepGraphQueue) batchLoop() {
-	ticker := time.NewTicker(defaultBatchTimeout)
+	ticker := time.NewTicker(q.batchTimeout)
 	defer ticker.Stop()
 
-	pending := make([]*servicepb.TxWithRef, 0, defaultBatchThreshold)
+	pending := make([]*servicepb.TxWithRef, 0, q.batchThreshold)
 	flush := func() {
 		if len(pending) == 0 {
 			return
@@ -280,7 +322,7 @@ func (q *DepGraphQueue) batchLoop() {
 		case q.incoming <- batch:
 		case <-q.ctx.Done():
 		}
-		pending = make([]*servicepb.TxWithRef, 0, defaultBatchThreshold)
+		pending = make([]*servicepb.TxWithRef, 0, q.batchThreshold)
 	}
 
 	for {
@@ -289,7 +331,7 @@ func (q *DepGraphQueue) batchLoop() {
 			return
 		case tx := <-q.endorsed:
 			pending = append(pending, tx)
-			if len(pending) >= defaultBatchThreshold {
+			if len(pending) >= q.batchThreshold {
 				flush()
 			}
 		case <-ticker.C:

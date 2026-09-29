@@ -72,7 +72,7 @@ func (e *keyedEndorser) ExecuteTransaction(_ context.Context, tx *types.Transact
 func newDepQueue(t *testing.T) (*DepGraphQueue, *keyedEndorser) {
 	t.Helper()
 	e := newKeyedEndorser(t)
-	q := NewDepGraphQueue()
+	q := NewDepGraphQueue(nil)
 	q.Bind(e)
 	t.Cleanup(q.Close)
 	return q, e
@@ -465,7 +465,7 @@ func TestDepGraphQueue_CompleteTwiceIsSafe(t *testing.T) {
 // The admitted channel filling means a transaction would vanish with no way to
 // report it, so it fails loudly instead.
 func TestDepGraphQueue_AdmittedChannelFullPanics(t *testing.T) {
-	q := NewDepGraphQueue()
+	q := NewDepGraphQueue(nil)
 	t.Cleanup(q.Close)
 	// Never bound, so nothing drains admitted.
 	for range defaultChanSize {

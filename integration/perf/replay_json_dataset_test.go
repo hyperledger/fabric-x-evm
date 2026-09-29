@@ -502,7 +502,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	var queue gwcore.TxQueueInterface
 	switch {
 	case *depgraph:
-		queue = gwcore.NewDepGraphQueue()
+		queue = gwcore.NewDepGraphQueue(nil)
 	case *oldqueue:
 		queue = gwcore.NewTxQueue()
 	default:
