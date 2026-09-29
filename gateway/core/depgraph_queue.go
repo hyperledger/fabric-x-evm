@@ -117,9 +117,7 @@ type DepGraphQueue struct {
 	// batch overtake an earlier one and the constructor spins forever.
 	batchID uint64
 
-	// metrics is the manager's own registry. The package already counts the
-	// transactions its graph is holding, so contention is read from here
-	// rather than guessed at from the outside.
+	// metrics is the manager's own registry.
 	metrics *monitoring.Provider
 
 	endorseWorkers int
@@ -212,6 +210,7 @@ func NewDepGraphQueue(cfg *DepGraphQueueConfig) *DepGraphQueue {
 // written before the goroutines that read it exist. That ordering is what makes
 // the field safe to read without a lock.
 func (q *DepGraphQueue) Bind(e txEndorser) {
+	depGraphLogger.Infof("DepGraphQueue.Bind() starting %d endorse workers", q.endorseWorkers)
 	q.endorser = e
 
 	for range q.endorseWorkers {
@@ -225,14 +224,17 @@ func (q *DepGraphQueue) Bind(e txEndorser) {
 // an endorse worker rather than here.
 func (q *DepGraphQueue) Enqueue(tx *types.Transaction) {
 	hash := tx.Hash()
+	depGraphLogger.Debugf("DepGraphQueue.Enqueue() called with tx %s", hash.Hex())
 
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	if q.done {
+		depGraphLogger.Warnf("DepGraphQueue.Enqueue() tx %s ignored: queue is closed", hash.Hex())
 		return
 	}
 	if _, dup := q.tracked[hash]; dup {
+		depGraphLogger.Warnf("DepGraphQueue.Enqueue() tx %s ignored: already tracked", hash.Hex())
 		return
 	}
 
@@ -267,6 +269,7 @@ func (q *DepGraphQueue) endorseLoop() {
 // so there is nowhere to report it (#379).
 func (q *DepGraphQueue) submitToManager(tx *types.Transaction) {
 	hash := tx.Hash()
+	depGraphLogger.Debugf("DepGraphQueue.submitToManager() endorsing tx %s", hash.Hex())
 
 	end, err := q.endorser.ExecuteTransaction(q.ctx, tx)
 	if err != nil {
@@ -281,6 +284,7 @@ func (q *DepGraphQueue) submitToManager(tx *types.Transaction) {
 	// production.
 	content, err := txContent(end)
 	if err != nil {
+		depGraphLogger.Errorf("read-write set for tx %s: %v", hash.Hex(), err)
 		panic(fmt.Sprintf("dependency manager queue: read-write set for tx %s: %v", hash.Hex(), err))
 	}
 
@@ -289,7 +293,9 @@ func (q *DepGraphQueue) submitToManager(tx *types.Transaction) {
 		Ref:     &committerpb.TxRef{TxId: txRefID(hash)},
 		Content: content,
 	}:
+		depGraphLogger.Debugf("DepGraphQueue.submitToManager() tx %s queued for batching", hash.Hex())
 	case <-q.ctx.Done():
+		depGraphLogger.Errorf("failed to queue tx %s for batching: context done: %v", hash.Hex(), q.ctx.Err())
 		q.drop(hash)
 	}
 }
@@ -310,9 +316,12 @@ func (q *DepGraphQueue) batchLoop() {
 		// against a zero-valued atomic, so a batch numbered 0 never lands.
 		q.batchID++
 		batch := &dependencygraph.TransactionBatch{ID: q.batchID, Txs: pending}
+		depGraphLogger.Debugf("DepGraphQueue.batchLoop() sending batch id=%d with %d txs to dependency manager", batch.ID, len(batch.Txs))
 		select {
 		case q.incoming <- batch:
+			depGraphLogger.Debugf("DepGraphQueue.batchLoop() batch id=%d sent to dependency manager", batch.ID)
 		case <-q.ctx.Done():
+			depGraphLogger.Errorf("failed to send batch id=%d to dependency manager: context done: %v", batch.ID, q.ctx.Err())
 		}
 		pending = make([]*servicepb.TxWithRef, 0, q.batchThreshold)
 	}
@@ -343,6 +352,7 @@ func (q *DepGraphQueue) drainReleased() {
 			if !ok {
 				return
 			}
+			depGraphLogger.Debugf("DepGraphQueue.drainReleased() received %d clash-free nodes from dependency manager", len(nodes))
 			q.markReady(nodes)
 		}
 	}
@@ -359,20 +369,25 @@ func (q *DepGraphQueue) markReady(nodes dependencygraph.TxNodeBatch) {
 			// Only this queue sets TxId, so anything else means the manager and
 			// the queue disagree about the reference. Loud for the prototype;
 			// see #386.
+			depGraphLogger.Errorf("unrecognised tx ref %q received from dependency manager", id)
 			panic(fmt.Sprintf("dependency manager queue: unrecognised tx ref %q", id))
 		}
 		t, tracked := q.tracked[hash]
 		if !tracked {
+			depGraphLogger.Warnf("DepGraphQueue.markReady() tx %s node received from dependency manager but not tracked", hash.Hex())
 			continue
 		}
 		t.node = node
 		q.ready = append(q.ready, t.tx)
+		depGraphLogger.Debugf("DepGraphQueue.markReady() tx %s marked ready", hash.Hex())
 	}
 	q.cond.Broadcast()
 }
 
 // Dequeue blocks until the manager releases a transaction, or the queue closes.
 func (q *DepGraphQueue) Dequeue() (*types.Transaction, bool) {
+	depGraphLogger.Debugf("DepGraphQueue.Dequeue() called")
+
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -380,12 +395,14 @@ func (q *DepGraphQueue) Dequeue() (*types.Transaction, bool) {
 		q.cond.Wait()
 	}
 	if len(q.ready) == 0 {
+		depGraphLogger.Debugf("DepGraphQueue.Dequeue() returning false (closed)")
 		return nil, false
 	}
 
 	tx := q.ready[0]
 	q.ready[0] = nil
 	q.ready = q.ready[1:]
+	depGraphLogger.Debugf("DepGraphQueue.Dequeue() returning tx %s", tx.Hash().Hex())
 	return tx, true
 }
 
@@ -410,6 +427,7 @@ func (q *DepGraphQueue) InFlight() int {
 // A submission that failed never reaches a block, so without this anything
 // waiting on it would wait forever.
 func (q *DepGraphQueue) Complete(hash common.Hash) {
+	depGraphLogger.Debugf("DepGraphQueue.Complete() called with tx %s", hash.Hex())
 	q.release(q.takeNodes(hash))
 }
 
@@ -417,6 +435,7 @@ func (q *DepGraphQueue) Complete(hash common.Hash) {
 // too: either way they are no longer in flight, and holding one back strands
 // everything behind it. The whole block goes in one pass, under one lock.
 func (q *DepGraphQueue) Handle(_ context.Context, block *domain.Block) error {
+	depGraphLogger.Debugf("DepGraphQueue.Handle() called with block containing %d txs", len(block.Transactions))
 	if len(block.Transactions) == 0 {
 		return nil
 	}
@@ -434,6 +453,7 @@ func (q *DepGraphQueue) Handle(_ context.Context, block *domain.Block) error {
 	nodes := q.takeNodesLocked(hashes)
 	q.mu.Unlock()
 
+	depGraphLogger.Debugf("DepGraphQueue.Handle() releasing %d nodes (total txs=%d, invalid=%d)", len(nodes), len(hashes), invalid)
 	q.release(nodes)
 	return nil
 }
@@ -453,6 +473,7 @@ func (q *DepGraphQueue) takeNodesLocked(hashes []common.Hash) dependencygraph.Tx
 	for _, hash := range hashes {
 		t, ok := q.tracked[hash]
 		if !ok {
+			depGraphLogger.Warnf("DepGraphQueue.takeNodesLocked() tx %s not tracked", hash.Hex())
 			continue
 		}
 		if t.node != nil {
@@ -482,6 +503,7 @@ func (q *DepGraphQueue) drop(hash common.Hash) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if _, ok := q.tracked[hash]; !ok {
+		depGraphLogger.Warnf("DepGraphQueue.drop() tx %s not tracked", hash.Hex())
 		return
 	}
 	delete(q.tracked, hash)
@@ -492,6 +514,7 @@ func (q *DepGraphQueue) drop(hash common.Hash) {
 func (q *DepGraphQueue) Close() { q.closeOnce() }
 
 func (q *DepGraphQueue) shutdown() {
+	depGraphLogger.Infof("DepGraphQueue shutting down")
 	q.mu.Lock()
 	q.done = true
 	q.cond.Broadcast()
@@ -499,6 +522,7 @@ func (q *DepGraphQueue) shutdown() {
 
 	q.cancel()
 	q.wg.Wait()
+	depGraphLogger.Infof("DepGraphQueue shutdown complete")
 }
 
 // Stats returns committed, invalid and enqueued counts. The conflict slot stays
