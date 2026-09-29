@@ -47,7 +47,7 @@ const (
 )
 
 // DepGraphQueueConfig configures parameters for DepGraphQueue.
-// All fields are optional pointers; nil fields fall back to default values.
+// All fields are optional; zero values fall back to defaults.
 //
 // Every field must be positive. None of them has a sensible zero: a zero is
 // always a misconfiguration rather than a request for "unlimited", and each one
@@ -55,14 +55,14 @@ const (
 // substitutes the default rather than propagating that, so a bad value costs
 // tuning and not availability.
 type DepGraphQueueConfig struct {
-	EndorseWorkers  *int
-	ChanSize        *int
-	WaitingTxsLimit *int
-	BatchThreshold  *int
-	BatchTimeout    *time.Duration
+	EndorseWorkers  int
+	ChanSize        int
+	WaitingTxsLimit int
+	BatchThreshold  int
+	BatchTimeout    time.Duration
 }
 
-// positiveOrDefault resolves one optional override. A nil pointer is the
+// positiveOrDefault resolves one optional override. A zero value is the
 // documented way to ask for the default; a non-positive one is a mistake, and
 // the specific ways each field breaks are why none of them is passed through:
 // zero EndorseWorkers leaves nothing draining admitted until Enqueue panics on a
@@ -70,16 +70,15 @@ type DepGraphQueueConfig struct {
 // almost immediately, a zero WaitingTxsLimit parks the manager's first Acquire
 // forever, a negative BatchThreshold panics in make(), and a non-positive
 // BatchTimeout panics in time.NewTicker.
-func positiveOrDefault[T int | time.Duration](name string, override *T, def T) T {
-	if override == nil {
+func positiveOrDefault[T int | time.Duration](name string, override T, def T) T {
+	if override <= 0 {
+		if override < 0 {
+			depGraphLogger.Warnf(
+				"DepGraphQueueConfig.%s must be positive, got %v; falling back to %v", name, override, def)
+		}
 		return def
 	}
-	if *override <= 0 {
-		depGraphLogger.Warnf(
-			"DepGraphQueueConfig.%s must be positive, got %v; falling back to %v", name, *override, def)
-		return def
-	}
-	return *override
+	return override
 }
 
 // txRefID is the id the manager knows a transaction by. TxRef.TxId is a plain

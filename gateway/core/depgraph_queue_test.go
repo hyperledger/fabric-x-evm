@@ -434,9 +434,6 @@ func TestDepGraphQueue_TxRefIDRoundTrips(t *testing.T) {
 // Every config field has a way of taking the queue down when it is not positive,
 // so the constructor substitutes the default instead of passing the value on.
 func TestDepGraphQueue_NonPositiveConfigFallsBackToDefaults(t *testing.T) {
-	zero, negative := 0, -1
-	zeroDur, negativeDur := time.Duration(0), -time.Millisecond
-
 	for _, tc := range []struct {
 		name string
 		cfg  *DepGraphQueueConfig
@@ -444,19 +441,19 @@ func TestDepGraphQueue_NonPositiveConfigFallsBackToDefaults(t *testing.T) {
 		// A zero ChanSize leaves admitted unbuffered and a zero BatchTimeout
 		// panics in time.NewTicker; the negative cases reach make() and NewTicker
 		// with a negative argument, which panics outright.
-		{"zero workers", &DepGraphQueueConfig{EndorseWorkers: &zero}},
-		{"zero chan size", &DepGraphQueueConfig{ChanSize: &zero}},
-		{"zero waiting limit", &DepGraphQueueConfig{WaitingTxsLimit: &zero}},
-		{"zero batch threshold", &DepGraphQueueConfig{BatchThreshold: &zero}},
-		{"zero batch timeout", &DepGraphQueueConfig{BatchTimeout: &zeroDur}},
-		{"negative workers", &DepGraphQueueConfig{EndorseWorkers: &negative}},
-		{"negative chan size", &DepGraphQueueConfig{ChanSize: &negative}},
-		{"negative waiting limit", &DepGraphQueueConfig{WaitingTxsLimit: &negative}},
-		{"negative batch threshold", &DepGraphQueueConfig{BatchThreshold: &negative}},
-		{"negative batch timeout", &DepGraphQueueConfig{BatchTimeout: &negativeDur}},
+		{"zero workers", &DepGraphQueueConfig{EndorseWorkers: 0}},
+		{"zero chan size", &DepGraphQueueConfig{ChanSize: 0}},
+		{"zero waiting limit", &DepGraphQueueConfig{WaitingTxsLimit: 0}},
+		{"zero batch threshold", &DepGraphQueueConfig{BatchThreshold: 0}},
+		{"zero batch timeout", &DepGraphQueueConfig{BatchTimeout: 0}},
+		{"negative workers", &DepGraphQueueConfig{EndorseWorkers: -1}},
+		{"negative chan size", &DepGraphQueueConfig{ChanSize: -1}},
+		{"negative waiting limit", &DepGraphQueueConfig{WaitingTxsLimit: -1}},
+		{"negative batch threshold", &DepGraphQueueConfig{BatchThreshold: -1}},
+		{"negative batch timeout", &DepGraphQueueConfig{BatchTimeout: -time.Millisecond}},
 		{"all at once", &DepGraphQueueConfig{
-			EndorseWorkers: &negative, ChanSize: &zero, WaitingTxsLimit: &zero,
-			BatchThreshold: &negative, BatchTimeout: &negativeDur,
+			EndorseWorkers: -1, ChanSize: 0, WaitingTxsLimit: 0,
+			BatchThreshold: -1, BatchTimeout: -time.Millisecond,
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -485,16 +482,14 @@ func TestDepGraphQueue_NonPositiveConfigFallsBackToDefaults(t *testing.T) {
 
 // Explicit positive values are honoured; only the broken ones are replaced.
 func TestDepGraphQueue_PositiveConfigIsHonoured(t *testing.T) {
-	workers, chanSize, limit, threshold := 2, 16, 32, 4
-	timeout := 5 * time.Millisecond
 	q := NewDepGraphQueue(&DepGraphQueueConfig{
-		EndorseWorkers: &workers, ChanSize: &chanSize,
-		WaitingTxsLimit: &limit, BatchThreshold: &threshold, BatchTimeout: &timeout,
+		EndorseWorkers: 2, ChanSize: 16,
+		WaitingTxsLimit: 32, BatchThreshold: 4, BatchTimeout: 5 * time.Millisecond,
 	})
 	t.Cleanup(q.Close)
 
-	require.Equal(t, workers, q.endorseWorkers)
-	require.Equal(t, threshold, q.batchThreshold)
-	require.Equal(t, timeout, q.batchTimeout)
-	require.Equal(t, chanSize, cap(q.admitted))
+	require.Equal(t, 2, q.endorseWorkers)
+	require.Equal(t, 4, q.batchThreshold)
+	require.Equal(t, 5*time.Millisecond, q.batchTimeout)
+	require.Equal(t, 16, cap(q.admitted))
 }

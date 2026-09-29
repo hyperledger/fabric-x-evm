@@ -505,8 +505,8 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	switch {
 	case *depgraph:
 		queue = gwcore.NewDepGraphQueue(&gwcore.DepGraphQueueConfig{
-			EndorseWorkers: &processingWorkerCount,
-			ChanSize:       &allTxQueueDepth,
+			EndorseWorkers: processingWorkerCount,
+			ChanSize:       allTxQueueDepth,
 		})
 	case *oldqueue:
 		queue = gwcore.NewTxQueue()
