@@ -95,6 +95,23 @@ func TestEndorserValidate(t *testing.T) {
 			e.Database.Database = ""
 			e.Database.ConnString = ""
 		}, "database"},
+		{"query-service missing config", func(e *config.Endorser) {
+			e.Database = config.DB{Database: config.DBQueryService}
+		}, "database.query-service is required"},
+		{"query-service missing endpoint", func(e *config.Endorser) {
+			e.Database = config.DB{Database: config.DBQueryService, QueryService: &common.ClientConfig{}}
+		}, "database.query-service: endpoint is required"},
+		{"query-service ca-cert-path not exist", func(e *config.Endorser) {
+			e.Database = config.DB{Database: config.DBQueryService, QueryService: &common.ClientConfig{
+				Endpoint: &common.Endpoint{Host: "127.0.0.1", Port: 7001},
+				TLS:      common.TLSConfig{CACertPaths: []string{"/no/such/ca.pem"}},
+			}}
+		}, "database.query-service: tls.ca-cert-paths"},
+		{"valid query-service", func(e *config.Endorser) {
+			e.Database = config.DB{Database: config.DBQueryService, QueryService: &common.ClientConfig{
+				Endpoint: &common.Endpoint{Host: "127.0.0.1", Port: 7001},
+			}}
+		}, ""},
 		{"valid with server", func(e *config.Endorser) {
 			e.Server = validServerConfig(t)
 		}, ""},

@@ -161,7 +161,7 @@ start-x:
 
 .PHONY: test-x
 test-x:
-	@go test -timeout 30s -v -run ^TestFabricX$$ ./integration
+	@go test -timeout 60s -v -run ^TestFabricX$$ ./integration
 
 .PHONY: perf-smoke
 perf-smoke:

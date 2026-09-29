@@ -11,12 +11,15 @@ import (
 	"fmt"
 
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
+	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/identity"
+	nfabx "github.com/hyperledger/fabric-x-sdk/network/fabricx"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/endorser/core"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
+	"github.com/hyperledger/fabric-x-evm/endorser/query"
 	"github.com/hyperledger/fabric-x-evm/endorser/server"
 	"github.com/hyperledger/fabric-x-evm/endorser/storage"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
@@ -58,6 +61,18 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	end, kvs, _, err := NewEndorserCore(ecfg.Database, cfg.Network.Channel, cfg.Network.Namespace, cfg.Network.Protocol, signer, evmConfig, false, ecfg)
 	if err != nil {
 		return nil, fmt.Errorf("endorser (%s): %w", ecfg.Name, err)
+	}
+
+	// A query-service store keeps nothing from blocks, so there is nothing to
+	// replay: start at the committer's tip instead of block 0.
+	if q, ok := kvs.(*query.KVS); ok {
+		height, err := committerHeight(ctx, cfg, signer)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read committer height: %w", err)
+		}
+		if height > 0 {
+			q.SetBlockNumber(height - 1)
+		}
 	}
 
 	logger := flogging.MustGetLogger("endorser-" + ecfg.Name)
@@ -116,4 +131,13 @@ func (a *App) Shutdown() error {
 
 	standaloneLogger.Debug("graceful shutdown complete")
 	return nil
+}
+
+func committerHeight(ctx context.Context, cfg config.Config, signer sdk.Signer) (uint64, error) {
+	peer, err := nfabx.NewPeer(cfg.Committer.ToPeerConf(), cfg.Network.Channel, signer)
+	if err != nil {
+		return 0, err
+	}
+	defer peer.Close()
+	return peer.BlockHeight(ctx)
 }
