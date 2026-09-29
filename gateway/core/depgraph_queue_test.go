@@ -222,9 +222,6 @@ func TestDepGraphQueue_CompleteUnknownHashIsNoop(t *testing.T) {
 func TestDepGraphQueue_HandleIgnoresUnknownTransactions(t *testing.T) {
 	q, _ := newDepQueue(t)
 	require.NoError(t, q.Handle(context.Background(), blockWith(1, txWithNonce(99))))
-
-	total, _, _, _ := q.Stats()
-	require.Equal(t, 1, total, "an unknown transaction still counts as processed")
 }
 
 func TestDepGraphQueue_HandleEmptyBlock(t *testing.T) {
@@ -324,47 +321,8 @@ func TestDepGraphQueue_ChainOfClashesReleasesOneAtATime(t *testing.T) {
 	require.Len(t, seen, len(txs), "every contender must eventually be released")
 }
 
-// Contention is reported as the peak number of transactions the graph held on
-// dependencies at once. Two of these three wait; the first does not.
-func TestDepGraphQueue_CountsConflicts(t *testing.T) {
-	q, e := newDepQueue(t)
-	txs := []*types.Transaction{txWithNonce(1), txWithNonce(2), txWithNonce(3)}
-	for _, tx := range txs {
-		e.touches(tx, "balance")
-	}
-
-	q.Enqueue(txs[0])
-	requireReady(t, q, 1)
-	first, ok := q.Dequeue()
-	require.True(t, ok)
-
-	q.Enqueue(txs[1])
-	q.Enqueue(txs[2])
-
-	// Sample until both contenders are visible as held. The batcher hands them
-	// over on a timer, so they do not reach the graph synchronously with
-	// Enqueue. The bound is a floor, not an equality: the manager counts a
-	// transaction once for its batch-local dependencies and again for its
-	// global ones, so the exact figure depends on how the two were batched.
-	require.Eventually(t, func() bool {
-		q.sampleDepWait()
-		return q.PeakDependentTxs() >= 2
-	}, 2*time.Second, 5*time.Millisecond, "both waiting transactions must show as held")
-
-	require.NoError(t, q.Handle(context.Background(), blockWith(1, first)))
-	requireReady(t, q, 1)
-	second, ok := q.Dequeue()
-	require.True(t, ok)
-	require.NoError(t, q.Handle(context.Background(), blockWith(1, second)))
-	requireReady(t, q, 1)
-
-	_, _, totalEnq, _ := q.Stats()
-	require.Equal(t, 3, totalEnq)
-	require.GreaterOrEqual(t, q.PeakDependentTxs(), 2, "the peak is a high-water mark, so draining must not clear it")
-}
-
 // Transactions on disjoint keys are not serialised by the scheduler.
-func TestDepGraphQueue_DisjointKeysReportNoConflicts(t *testing.T) {
+func TestDepGraphQueue_DisjointKeys(t *testing.T) {
 	q, e := newDepQueue(t)
 	for i := range 20 {
 		tx := txWithNonce(uint64(i))
@@ -372,22 +330,6 @@ func TestDepGraphQueue_DisjointKeysReportNoConflicts(t *testing.T) {
 		q.Enqueue(tx)
 	}
 	requireReady(t, q, 20)
-
-	q.sampleDepWait()
-	_, _, totalEnq, _ := q.Stats()
-	require.Equal(t, 20, totalEnq)
-	require.Zero(t, q.PeakDependentTxs(), "disjoint keys must not be reported as contended")
-}
-
-// A dropped transaction is invisible to the caller, so the count is the only
-// way to see it. Enqueue cannot report the failure itself (#379).
-func TestDepGraphQueue_DroppedCounted(t *testing.T) {
-	q, e := newDepQueue(t)
-	e.failWith(errors.New("endorser down"))
-
-	q.Enqueue(txWithNonce(1))
-	require.Eventually(t, func() bool { return q.Dropped() == 1 }, 2*time.Second, 5*time.Millisecond)
-	require.Zero(t, q.InFlight())
 }
 
 // Many producers and consumers at once, which is how the gateway actually

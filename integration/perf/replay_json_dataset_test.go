@@ -916,11 +916,6 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	if totalEnq > 0 {
 		conflictRate = float64(conflictEnq) / float64(totalEnq)
 	}
-	// The dependency manager queue reports contention as a peak rather than a
-	// per-enqueue rate, so it is logged on its own line.
-	if dq, ok := th.Gateways[0].TxQueue.(*gwcore.DepGraphQueue); ok {
-		t.Logf("depgraph queue: peak transactions held on dependencies %d", dq.PeakDependentTxs())
-	}
 
 	// Return metrics (throughput, failed count, total dispatched transfers, invalidRate, conflictRate)
 	return overallThroughput, finalFail, dispatched, invalidRate, conflictRate

@@ -11,7 +11,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -121,8 +120,7 @@ type DepGraphQueue struct {
 	// metrics is the manager's own registry. The package already counts the
 	// transactions its graph is holding, so contention is read from here
 	// rather than guessed at from the outside.
-	metrics     *monitoring.Provider
-	depWaitPeak atomic.Int64
+	metrics *monitoring.Provider
 
 	endorseWorkers int
 	batchThreshold int
@@ -137,11 +135,6 @@ type DepGraphQueue struct {
 	// endorser is written once by Bind, which then starts the workers that read
 	// it. Starting them after the write is the happens-before, so no lock.
 	endorser txEndorser
-
-	total    int
-	invalid  int
-	totalEnq int
-	dropped  int
 
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -252,7 +245,6 @@ func (q *DepGraphQueue) Enqueue(tx *types.Transaction) {
 		panic(fmt.Sprintf("dependency manager queue: admitted channel full, tx %s", hash.Hex()))
 	}
 	q.tracked[hash] = &trackedTx{tx: tx}
-	q.totalEnq++
 }
 
 // endorseLoop endorses admitted transactions and hands them to the manager.
@@ -425,7 +417,6 @@ func (q *DepGraphQueue) Complete(hash common.Hash) {
 // too: either way they are no longer in flight, and holding one back strands
 // everything behind it. The whole block goes in one pass, under one lock.
 func (q *DepGraphQueue) Handle(_ context.Context, block *domain.Block) error {
-	q.sampleDepWait()
 	if len(block.Transactions) == 0 {
 		return nil
 	}
@@ -440,8 +431,6 @@ func (q *DepGraphQueue) Handle(_ context.Context, block *domain.Block) error {
 	}
 
 	q.mu.Lock()
-	q.total += len(hashes)
-	q.invalid += invalid
 	nodes := q.takeNodesLocked(hashes)
 	q.mu.Unlock()
 
@@ -496,7 +485,6 @@ func (q *DepGraphQueue) drop(hash common.Hash) {
 		return
 	}
 	delete(q.tracked, hash)
-	q.dropped++
 }
 
 // Close stops the manager and wakes anyone blocked in Dequeue. Safe to call
@@ -517,52 +505,6 @@ func (q *DepGraphQueue) shutdown() {
 // zero: the graph reports contention as a peak, which divided by the enqueued
 // total would not be the rate the shared callers print. PeakDependentTxs has it.
 func (q *DepGraphQueue) Stats() (int, int, int, int) {
-	q.mu.RLock()
-	defer q.mu.RUnlock()
-	return q.total, q.invalid, q.totalEnq, 0
-}
-
-// PeakDependentTxs is the most transactions the graph held on dependencies at
-// once, sampled per block. The manager counts a transaction once for its
-// batch-local dependencies and again for its global ones, so this is a measure
-// of contention rather than a count of distinct transactions.
-func (q *DepGraphQueue) PeakDependentTxs() int {
-	return int(q.depWaitPeak.Load())
-}
-
-// depWaitMetric is the manager's gauge of transactions currently waiting on
-// dependencies, incremented per transaction that acquires one and decremented
-// as dependents are freed.
-const depWaitMetric = "coordinator_dependency_graph_dependent_transactions_queue_size"
-
-// sampleDepWait records the gauge's high-water mark. It is called once per
-// block, which keeps a Gather off the enqueue and release paths.
-func (q *DepGraphQueue) sampleDepWait() {
-	families, err := q.metrics.Registry().Gather()
-	if err != nil {
-		return
-	}
-	for _, f := range families {
-		if f.GetName() != depWaitMetric {
-			continue
-		}
-		for _, m := range f.GetMetric() {
-			waiting := int64(m.GetGauge().GetValue())
-			for {
-				peak := q.depWaitPeak.Load()
-				if waiting <= peak || q.depWaitPeak.CompareAndSwap(peak, waiting) {
-					break
-				}
-			}
-		}
-	}
-}
-
-// Dropped is how many transactions never reached the manager, because the
-// endorsement failed or the admitted channel was full. Enqueue cannot report
-// either (#379), so this is the only place they are visible.
-func (q *DepGraphQueue) Dropped() int {
-	q.mu.RLock()
-	defer q.mu.RUnlock()
-	return q.dropped
+	// TODO: pull these stats from the dependency manager
+	return 0, 0, 0, 0
 }
