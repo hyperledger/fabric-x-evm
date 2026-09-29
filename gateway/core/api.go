@@ -103,7 +103,8 @@ type Store interface {
 }
 
 // New creates a new Ethereum Gateway.
-// If txQueue is nil, NewTxQueue() will be used as the default.
+// txQueue must not be nil; callers are responsible for constructing it with the
+// appropriate config (see BuildGateway).
 // If nonceGate is nil, the default nonce gate will be used: it parks future-nonce
 // transactions and releases them in nonce order as earlier nonces commit. Test
 // harnesses supply their own (see gateway/testimpl).
@@ -112,11 +113,6 @@ type Store interface {
 func New(ec *EndorsementClient, batchSubmitter *BatchSubmitter, store Store, chainID int64, workerCount int, txQueue TxQueueInterface, nonceGate NonceSequencer, endorsementChan chan EndorsedTx) (*Gateway, error) {
 	if workerCount <= 0 {
 		workerCount = 1
-	}
-
-	// Use default TxQueue if none provided
-	if txQueue == nil {
-		txQueue = NewTxQueue()
 	}
 
 	cid := big.NewInt(chainID)

@@ -13,6 +13,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/hyperledger/fabric-x-evm/gateway/config"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/stretchr/testify/require"
@@ -28,8 +29,15 @@ type errHandleQueue struct {
 func (q *errHandleQueue) Handle(context.Context, *domain.Block) error { return q.err }
 
 func TestNew_InitializesNonceGate(t *testing.T) {
-	// workerCount 0, a nil queue and a nil gate exercise all constructor defaults.
-	g, err := New(nil, nil, nil, testChainID, 0, nil, nil, nil)
+	// workerCount 0 and a nil gate exercise the constructor defaults for those.
+	q := NewDepGraphQueue(&config.DepGraphQueue{
+		EndorseWorkers:  1,
+		ChanSize:        1,
+		WaitingTxsLimit: 1,
+		BatchThreshold:  1,
+		BatchTimeout:    1,
+	})
+	g, err := New(nil, nil, nil, testChainID, 0, q, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, g.nonceGate)
 	require.NotNil(t, g.TxQueue)
@@ -104,7 +112,14 @@ func TestSendTransaction_ParkedResubmissionRejected(t *testing.T) {
 func TestNew_SuppliedNonceGateReplacesDefault(t *testing.T) {
 	supplied := &countingSequencer{}
 
-	g, err := New(nil, nil, nil, testChainID, 1, nil, supplied, nil)
+	q := NewDepGraphQueue(&config.DepGraphQueue{
+		EndorseWorkers:  1,
+		ChanSize:        1,
+		WaitingTxsLimit: 1,
+		BatchThreshold:  1,
+		BatchTimeout:    1,
+	})
+	g, err := New(nil, nil, nil, testChainID, 1, q, supplied, nil)
 	require.NoError(t, err)
 	require.Same(t, supplied, g.nonceGate)
 

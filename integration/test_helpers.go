@@ -176,12 +176,12 @@ func defaultHandlerChain(t *testing.T, ctx context.Context, cfg config.Config, e
 	}
 	// Tests prime and revert ledger state out of band, so the harness parks nothing.
 	if txQueue == nil {
-		txQueue = core.NewTxQueue()
+		txQueue = core.NewDepGraphQueue(&cfg.Gateway.DepGraphQueue)
 	}
 	// ends is caller-ordered [local, remotes...], matching production's own
 	// invariant (see gateway/config's "Local endorser is a distinct field"
 	// decision) — position 0 is the local endorser.
-	gw, err := app.BuildGateway(ctx, ends[0], ends[1:], gwSigner, cfg.Network, chain, submitters, cfg.Gateway.SubmitterCount, cfg.Gateway.WorkerCount, txQueue, testimpl.NewPassthroughGate(txQueue), cfg.Gateway.EndorsementChanSize, txPerSec)
+	gw, err := app.BuildGateway(ctx, ends[0], ends[1:], gwSigner, cfg.Network, chain, submitters, cfg.Gateway.SubmitterCount, cfg.Gateway.WorkerCount, txQueue, testimpl.NewPassthroughGate(txQueue), cfg.Gateway.EndorsementChanSize, txPerSec, nil)
 	if err != nil {
 		t.Fatalf("build gateway: %v", err)
 	}

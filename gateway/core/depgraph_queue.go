@@ -20,6 +20,7 @@ import (
 	"github.com/hyperledger/fabric-x-committer/service/coordinator/dependencygraph"
 	"github.com/hyperledger/fabric-x-committer/utils/monitoring"
 	"github.com/hyperledger/fabric-x-common/api/committerpb"
+	"github.com/hyperledger/fabric-x-evm/gateway/config"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 )
@@ -46,22 +47,6 @@ const (
 	defaultBatchTimeout   = 10 * time.Millisecond
 )
 
-// DepGraphQueueConfig configures parameters for DepGraphQueue.
-// All fields are optional; zero values fall back to defaults.
-//
-// Every field must be positive. None of them has a sensible zero: a zero is
-// always a misconfiguration rather than a request for "unlimited", and each one
-// either panics on construction or wedges the queue. NewDepGraphQueue warns and
-// substitutes the default rather than propagating that, so a bad value costs
-// tuning and not availability.
-type DepGraphQueueConfig struct {
-	EndorseWorkers  int
-	ChanSize        int
-	WaitingTxsLimit int
-	BatchThreshold  int
-	BatchTimeout    time.Duration
-}
-
 // positiveOrDefault resolves one optional override. A zero value is the
 // documented way to ask for the default; a non-positive one is a mistake, and
 // the specific ways each field breaks are why none of them is passed through:
@@ -74,7 +59,7 @@ func positiveOrDefault[T int | time.Duration](name string, override T, def T) T 
 	if override <= 0 {
 		if override < 0 {
 			depGraphLogger.Warnf(
-				"DepGraphQueueConfig.%s must be positive, got %v; falling back to %v", name, override, def)
+				"config.DepGraphQueue.%s must be positive, got %v; falling back to %v", name, override, def)
 		}
 		return def
 	}
@@ -173,12 +158,11 @@ type DepGraphQueue struct {
 }
 
 // NewDepGraphQueue starts the dependency manager and the goroutines feeding it.
-// An optional cfg pointer can be passed to override default queue settings;
-// passing nil or leaving individual pointer fields nil uses the defaults.
+// cfg may be nil, in which case all fields fall back to built-in defaults.
 // Bind must be called before the first Enqueue.
-func NewDepGraphQueue(cfg *DepGraphQueueConfig) *DepGraphQueue {
+func NewDepGraphQueue(cfg *config.DepGraphQueue) *DepGraphQueue {
 	if cfg == nil {
-		cfg = &DepGraphQueueConfig{}
+		cfg = &config.DepGraphQueue{}
 	}
 	endorseWorkers := positiveOrDefault("EndorseWorkers", cfg.EndorseWorkers, defaultEndorseWorkers)
 	chanSize := positiveOrDefault("ChanSize", cfg.ChanSize, defaultChanSize)

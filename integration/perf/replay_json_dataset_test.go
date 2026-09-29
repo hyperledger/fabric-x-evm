@@ -213,7 +213,7 @@ func perfHandlerChain(completionTracker *TxCompletionTracker) integration.Handle
 		// bookkeeping on every commit without ever gating a submission.
 		// ends is caller-ordered [local, remotes...]; see test_helpers.go's
 		// defaultHandlerChain for the same convention.
-		gw, err := app.BuildGateway(ctx, ends[0], ends[1:], gwSigner, cfg.Network, tracker, submitters, cfg.Gateway.SubmitterCount, cfg.Gateway.WorkerCount, txQueue, gwtestimpl.NewPassthroughGate(txQueue), cfg.Gateway.EndorsementChanSize, txPerSec)
+		gw, err := app.BuildGateway(ctx, ends[0], ends[1:], gwSigner, cfg.Network, tracker, submitters, cfg.Gateway.SubmitterCount, cfg.Gateway.WorkerCount, txQueue, gwtestimpl.NewPassthroughGate(txQueue), cfg.Gateway.EndorsementChanSize, txPerSec, nil)
 		if err != nil {
 			t.Fatalf("build gateway: %v", err)
 		}
@@ -504,7 +504,7 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	var queue gwcore.TxQueueInterface
 	switch {
 	case *depgraph:
-		queue = gwcore.NewDepGraphQueue(&gwcore.DepGraphQueueConfig{
+		queue = gwcore.NewDepGraphQueue(&gwconfig.DepGraphQueue{
 			EndorseWorkers: processingWorkerCount,
 			ChanSize:       allTxQueueDepth,
 		})

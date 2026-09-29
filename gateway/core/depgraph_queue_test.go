@@ -19,6 +19,7 @@ import (
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyperledger/fabric-x-evm/gateway/config"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 )
 
@@ -436,22 +437,22 @@ func TestDepGraphQueue_TxRefIDRoundTrips(t *testing.T) {
 func TestDepGraphQueue_NonPositiveConfigFallsBackToDefaults(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		cfg  *DepGraphQueueConfig
+		cfg  *config.DepGraphQueue
 	}{
 		// A zero ChanSize leaves admitted unbuffered and a zero BatchTimeout
 		// panics in time.NewTicker; the negative cases reach make() and NewTicker
 		// with a negative argument, which panics outright.
-		{"zero workers", &DepGraphQueueConfig{EndorseWorkers: 0}},
-		{"zero chan size", &DepGraphQueueConfig{ChanSize: 0}},
-		{"zero waiting limit", &DepGraphQueueConfig{WaitingTxsLimit: 0}},
-		{"zero batch threshold", &DepGraphQueueConfig{BatchThreshold: 0}},
-		{"zero batch timeout", &DepGraphQueueConfig{BatchTimeout: 0}},
-		{"negative workers", &DepGraphQueueConfig{EndorseWorkers: -1}},
-		{"negative chan size", &DepGraphQueueConfig{ChanSize: -1}},
-		{"negative waiting limit", &DepGraphQueueConfig{WaitingTxsLimit: -1}},
-		{"negative batch threshold", &DepGraphQueueConfig{BatchThreshold: -1}},
-		{"negative batch timeout", &DepGraphQueueConfig{BatchTimeout: -time.Millisecond}},
-		{"all at once", &DepGraphQueueConfig{
+		{"zero workers", &config.DepGraphQueue{EndorseWorkers: 0}},
+		{"zero chan size", &config.DepGraphQueue{ChanSize: 0}},
+		{"zero waiting limit", &config.DepGraphQueue{WaitingTxsLimit: 0}},
+		{"zero batch threshold", &config.DepGraphQueue{BatchThreshold: 0}},
+		{"zero batch timeout", &config.DepGraphQueue{BatchTimeout: 0}},
+		{"negative workers", &config.DepGraphQueue{EndorseWorkers: -1}},
+		{"negative chan size", &config.DepGraphQueue{ChanSize: -1}},
+		{"negative waiting limit", &config.DepGraphQueue{WaitingTxsLimit: -1}},
+		{"negative batch threshold", &config.DepGraphQueue{BatchThreshold: -1}},
+		{"negative batch timeout", &config.DepGraphQueue{BatchTimeout: -time.Millisecond}},
+		{"all at once", &config.DepGraphQueue{
 			EndorseWorkers: -1, ChanSize: 0, WaitingTxsLimit: 0,
 			BatchThreshold: -1, BatchTimeout: -time.Millisecond,
 		}},
@@ -482,7 +483,7 @@ func TestDepGraphQueue_NonPositiveConfigFallsBackToDefaults(t *testing.T) {
 
 // Explicit positive values are honoured; only the broken ones are replaced.
 func TestDepGraphQueue_PositiveConfigIsHonoured(t *testing.T) {
-	q := NewDepGraphQueue(&DepGraphQueueConfig{
+	q := NewDepGraphQueue(&config.DepGraphQueue{
 		EndorseWorkers: 2, ChanSize: 16,
 		WaitingTxsLimit: 32, BatchThreshold: 4, BatchTimeout: 5 * time.Millisecond,
 	})

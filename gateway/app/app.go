@@ -205,8 +205,7 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 		testGate = testimpl.NewResettableGate()
 		nonceGate = testGate
 	}
-	// Gateway owns the BatchSubmitter and will handle its lifecycle
-	gateway, err := BuildGateway(ctx, local, remotes, gwSigner, cfg.Network, chain, submitters, cfg.Gateway.SubmitterCount, cfg.Gateway.WorkerCount, nil, nonceGate, cfg.Gateway.EndorsementChanSize, 0)
+	gateway, err := BuildGateway(ctx, local, remotes, gwSigner, cfg.Network, chain, submitters, cfg.Gateway.SubmitterCount, cfg.Gateway.WorkerCount, nil, nonceGate, cfg.Gateway.EndorsementChanSize, 0, &cfg.Gateway.DepGraphQueue)
 	if err != nil {
 		return nil, err
 	}

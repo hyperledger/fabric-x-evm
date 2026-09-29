@@ -21,6 +21,7 @@ import (
 
 	"github.com/hyperledger/fabric-x-evm/common"
 	eapi "github.com/hyperledger/fabric-x-evm/endorser/api"
+	"github.com/hyperledger/fabric-x-evm/gateway/config"
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
 )
 
@@ -59,7 +60,7 @@ func NewNetworkSubmitters(ctx context.Context, protocol string, orderers []netwo
 // from a pre-built local endorser, remote endorsers, chain store, and submitters. Callers
 // are also responsible for creating and starting the synchronizer(s) that feed committed
 // blocks to chain/gateway/endorsers.
-func BuildGateway(ctx context.Context, local eapi.Service, remotes []eapi.Service, gwSigner sdk.Signer, netCfg common.Network, chain core.Store, submitters []core.Submitter, submitterCount int, workerCount int, txQueue core.TxQueueInterface, nonceGate core.NonceSequencer, endorsementChanSize int, txPerSec int) (*core.Gateway, error) {
+func BuildGateway(ctx context.Context, local eapi.Service, remotes []eapi.Service, gwSigner sdk.Signer, netCfg common.Network, chain core.Store, submitters []core.Submitter, submitterCount int, workerCount int, txQueue core.TxQueueInterface, nonceGate core.NonceSequencer, endorsementChanSize int, txPerSec int, queueCfg *config.DepGraphQueue) (*core.Gateway, error) {
 	invBuilder, err := newInvocationBuilder(netCfg.Protocol, netCfg.NsVersion, gwSigner)
 	if err != nil {
 		return nil, err
@@ -73,7 +74,7 @@ func BuildGateway(ctx context.Context, local eapi.Service, remotes []eapi.Servic
 		endorsementChanSize = 1000
 	}
 	if txQueue == nil {
-		txQueue = core.NewTxQueue()
+		txQueue = core.NewDepGraphQueue(queueCfg)
 	}
 	// The dependency-manager queue endorses on the way in, to learn which keys a
 	// transaction touches. It is built before the endorsement client exists, so

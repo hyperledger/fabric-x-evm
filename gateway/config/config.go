@@ -121,6 +121,17 @@ type Gateway struct {
 	WorkerCount         int `mapstructure:"worker-count"  yaml:"worker-count"`
 	SubmitterCount      int `mapstructure:"submitter-count" yaml:"submitter-count"`
 	EndorsementChanSize int `mapstructure:"endorsement-chan-size"  yaml:"endorsement-chan-size"`
+
+	DepGraphQueue DepGraphQueue `mapstructure:"dep-graph-queue" yaml:"dep-graph-queue"`
+}
+
+// DepGraphQueue configures parameters for the dependency graph transaction queue.
+type DepGraphQueue struct {
+	EndorseWorkers  int           `mapstructure:"endorse-workers"   yaml:"endorse-workers"`
+	ChanSize        int           `mapstructure:"chan-size"         yaml:"chan-size"`
+	WaitingTxsLimit int           `mapstructure:"waiting-txs-limit" yaml:"waiting-txs-limit"`
+	BatchThreshold  int           `mapstructure:"batch-threshold"   yaml:"batch-threshold"`
+	BatchTimeout    time.Duration `mapstructure:"batch-timeout"     yaml:"batch-timeout"`
 }
 
 // DefaultVhosts is used when Gateway.Vhosts is unset.
