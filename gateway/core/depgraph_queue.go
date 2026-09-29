@@ -33,8 +33,11 @@ const (
 	// defaultChanSize buffers each hop. The manager sizes an internal channel
 	// from cap(IncomingTxs), so an unbuffered one would starve it.
 	defaultChanSize = 1024
-	// defaultWaitingTxsLimit caps what the graph holds. It must exceed
-	// defaultBatchThreshold or Acquire blocks forever.
+	// defaultWaitingTxsLimit caps what the graph holds. Only a positive value
+	// works: the manager's Acquire waits for one free slot and then subtracts the
+	// whole batch, so it parks forever on a limit of zero and nothing can ever
+	// release it. A limit below defaultBatchThreshold merely lets a batch overdraw
+	// the counter, which serialises batches rather than breaking them.
 	defaultWaitingTxsLimit = 1 << 16
 	// defaultBatchThreshold and defaultBatchTimeout size the batches handed to
 	// the manager: send at the threshold, or on the timeout if traffic is thin.
@@ -45,12 +48,38 @@ const (
 
 // DepGraphQueueConfig configures parameters for DepGraphQueue.
 // All fields are optional pointers; nil fields fall back to default values.
+//
+// Every field must be positive. None of them has a sensible zero: a zero is
+// always a misconfiguration rather than a request for "unlimited", and each one
+// either panics on construction or wedges the queue. NewDepGraphQueue warns and
+// substitutes the default rather than propagating that, so a bad value costs
+// tuning and not availability.
 type DepGraphQueueConfig struct {
 	EndorseWorkers  *int
 	ChanSize        *int
 	WaitingTxsLimit *int
 	BatchThreshold  *int
 	BatchTimeout    *time.Duration
+}
+
+// positiveOrDefault resolves one optional override. A nil pointer is the
+// documented way to ask for the default; a non-positive one is a mistake, and
+// the specific ways each field breaks are why none of them is passed through:
+// zero EndorseWorkers leaves nothing draining admitted until Enqueue panics on a
+// full channel, a zero ChanSize makes that channel unbuffered so the panic comes
+// almost immediately, a zero WaitingTxsLimit parks the manager's first Acquire
+// forever, a negative BatchThreshold panics in make(), and a non-positive
+// BatchTimeout panics in time.NewTicker.
+func positiveOrDefault[T int | time.Duration](name string, override *T, def T) T {
+	if override == nil {
+		return def
+	}
+	if *override <= 0 {
+		depGraphLogger.Warnf(
+			"DepGraphQueueConfig.%s must be positive, got %v; falling back to %v", name, *override, def)
+		return def
+	}
+	return *override
 }
 
 // txRefID is the id the manager knows a transaction by. TxRef.TxId is a plain
@@ -149,28 +178,23 @@ type DepGraphQueue struct {
 // passing nil or leaving individual pointer fields nil uses the defaults.
 // Bind must be called before the first Enqueue.
 func NewDepGraphQueue(cfg *DepGraphQueueConfig) *DepGraphQueue {
-	endorseWorkers := defaultEndorseWorkers
-	chanSize := defaultChanSize
-	waitingTxsLimit := defaultWaitingTxsLimit
-	batchThreshold := defaultBatchThreshold
-	batchTimeout := defaultBatchTimeout
+	if cfg == nil {
+		cfg = &DepGraphQueueConfig{}
+	}
+	endorseWorkers := positiveOrDefault("EndorseWorkers", cfg.EndorseWorkers, defaultEndorseWorkers)
+	chanSize := positiveOrDefault("ChanSize", cfg.ChanSize, defaultChanSize)
+	waitingTxsLimit := positiveOrDefault("WaitingTxsLimit", cfg.WaitingTxsLimit, defaultWaitingTxsLimit)
+	batchThreshold := positiveOrDefault("BatchThreshold", cfg.BatchThreshold, defaultBatchThreshold)
+	batchTimeout := positiveOrDefault("BatchTimeout", cfg.BatchTimeout, defaultBatchTimeout)
 
-	if cfg != nil {
-		if cfg.EndorseWorkers != nil {
-			endorseWorkers = *cfg.EndorseWorkers
-		}
-		if cfg.ChanSize != nil {
-			chanSize = *cfg.ChanSize
-		}
-		if cfg.WaitingTxsLimit != nil {
-			waitingTxsLimit = *cfg.WaitingTxsLimit
-		}
-		if cfg.BatchThreshold != nil {
-			batchThreshold = *cfg.BatchThreshold
-		}
-		if cfg.BatchTimeout != nil {
-			batchTimeout = *cfg.BatchTimeout
-		}
+	// Legal but slow, so it is worth saying out loud rather than validating away:
+	// the manager takes a batch once one slot is free and then subtracts the whole
+	// batch, so a limit under the threshold admits one batch at a time and waits
+	// for it to drain before looking at the next.
+	if waitingTxsLimit < batchThreshold {
+		depGraphLogger.Warnf(
+			"DepGraphQueue: WaitingTxsLimit %d is below BatchThreshold %d, so batches will be admitted one at a time",
+			waitingTxsLimit, batchThreshold)
 	}
 
 	q := &DepGraphQueue{
@@ -432,7 +456,10 @@ func (q *DepGraphQueue) InFlight() int {
 // waiting on it would wait forever.
 func (q *DepGraphQueue) Complete(hash common.Hash) {
 	depGraphLogger.Debugf("DepGraphQueue.Complete() called with tx %s", hash.Hex())
-	q.release(q.takeNodes(hash))
+	q.mu.Lock()
+	nodes := q.takeNodes([]common.Hash{hash})
+	q.mu.Unlock()
+	q.release(nodes)
 }
 
 // Handle tells the manager which transactions committed. Rejected ones go back
@@ -455,7 +482,7 @@ func (q *DepGraphQueue) Handle(_ context.Context, block *domain.Block) error {
 	}
 
 	q.mu.Lock()
-	nodes := q.takeNodesLocked(hashes)
+	nodes := q.takeNodes(hashes)
 	q.mu.Unlock()
 
 	depGraphLogger.Debugf("DepGraphQueue.Handle() releasing %d nodes (total txs=%d)", len(nodes), len(hashes))
@@ -463,17 +490,10 @@ func (q *DepGraphQueue) Handle(_ context.Context, block *domain.Block) error {
 	return nil
 }
 
-// takeNodes untracks one transaction and returns its node if it has one.
-func (q *DepGraphQueue) takeNodes(hash common.Hash) dependencygraph.TxNodeBatch {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	return q.takeNodesLocked([]common.Hash{hash})
-}
-
-// takeNodesLocked untracks each hash and collects the nodes that still need
-// feeding back. Clearing node is what makes a second Complete a no-op.
-// Caller holds q.mu.
-func (q *DepGraphQueue) takeNodesLocked(hashes []common.Hash) dependencygraph.TxNodeBatch {
+// takeNodes untracks each hash and collects their nodes that still need
+// feeding back. Clearing a node is what makes a second Complete a no-op.
+// Caller must hold q.mu.
+func (q *DepGraphQueue) takeNodes(hashes []common.Hash) dependencygraph.TxNodeBatch {
 	var nodes dependencygraph.TxNodeBatch
 	for _, hash := range hashes {
 		t, ok := q.tracked[hash]

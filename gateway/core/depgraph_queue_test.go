@@ -430,3 +430,71 @@ func TestDepGraphQueue_TxRefIDRoundTrips(t *testing.T) {
 		require.False(t, ok, "must reject %q", bad)
 	}
 }
+
+// Every config field has a way of taking the queue down when it is not positive,
+// so the constructor substitutes the default instead of passing the value on.
+func TestDepGraphQueue_NonPositiveConfigFallsBackToDefaults(t *testing.T) {
+	zero, negative := 0, -1
+	zeroDur, negativeDur := time.Duration(0), -time.Millisecond
+
+	for _, tc := range []struct {
+		name string
+		cfg  *DepGraphQueueConfig
+	}{
+		// A zero ChanSize leaves admitted unbuffered and a zero BatchTimeout
+		// panics in time.NewTicker; the negative cases reach make() and NewTicker
+		// with a negative argument, which panics outright.
+		{"zero workers", &DepGraphQueueConfig{EndorseWorkers: &zero}},
+		{"zero chan size", &DepGraphQueueConfig{ChanSize: &zero}},
+		{"zero waiting limit", &DepGraphQueueConfig{WaitingTxsLimit: &zero}},
+		{"zero batch threshold", &DepGraphQueueConfig{BatchThreshold: &zero}},
+		{"zero batch timeout", &DepGraphQueueConfig{BatchTimeout: &zeroDur}},
+		{"negative workers", &DepGraphQueueConfig{EndorseWorkers: &negative}},
+		{"negative chan size", &DepGraphQueueConfig{ChanSize: &negative}},
+		{"negative waiting limit", &DepGraphQueueConfig{WaitingTxsLimit: &negative}},
+		{"negative batch threshold", &DepGraphQueueConfig{BatchThreshold: &negative}},
+		{"negative batch timeout", &DepGraphQueueConfig{BatchTimeout: &negativeDur}},
+		{"all at once", &DepGraphQueueConfig{
+			EndorseWorkers: &negative, ChanSize: &zero, WaitingTxsLimit: &zero,
+			BatchThreshold: &negative, BatchTimeout: &negativeDur,
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			q := NewDepGraphQueue(tc.cfg)
+			t.Cleanup(q.Close)
+
+			require.Equal(t, defaultEndorseWorkers, q.endorseWorkers)
+			require.Equal(t, defaultBatchThreshold, q.batchThreshold)
+			require.Equal(t, defaultBatchTimeout, q.batchTimeout)
+			require.Equal(t, defaultChanSize, cap(q.admitted))
+
+			// A defaulted WaitingTxsLimit is the one that cannot be read back off
+			// the struct, so drive a transaction through to prove Acquire is not
+			// parked on an empty slot pool.
+			e := newKeyedEndorser(t)
+			q.Bind(e)
+			tx := txWithNonce(1)
+			q.Enqueue(tx)
+			requireReady(t, q, 1)
+			got, ok := q.Dequeue()
+			require.True(t, ok)
+			require.Equal(t, tx.Hash(), got.Hash())
+		})
+	}
+}
+
+// Explicit positive values are honoured; only the broken ones are replaced.
+func TestDepGraphQueue_PositiveConfigIsHonoured(t *testing.T) {
+	workers, chanSize, limit, threshold := 2, 16, 32, 4
+	timeout := 5 * time.Millisecond
+	q := NewDepGraphQueue(&DepGraphQueueConfig{
+		EndorseWorkers: &workers, ChanSize: &chanSize,
+		WaitingTxsLimit: &limit, BatchThreshold: &threshold, BatchTimeout: &timeout,
+	})
+	t.Cleanup(q.Close)
+
+	require.Equal(t, workers, q.endorseWorkers)
+	require.Equal(t, threshold, q.batchThreshold)
+	require.Equal(t, timeout, q.batchTimeout)
+	require.Equal(t, chanSize, cap(q.admitted))
+}
