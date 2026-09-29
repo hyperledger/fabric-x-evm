@@ -2351,6 +2351,60 @@
     "flaky": true
   },
   {
+    "id": "GovernorCountingOverridable using $ERC20VotesExtendedTimestampMock cast override vote override after delegate vote",
+    "cause": "hardhat-time-rpc",
+    "note": "Timing-sensitive: the \"before each\" hook races real wall-clock time (evm_increaseTime/evm_setNextBlockTimestamp are no-ops) so the proposal hasn't advanced to Active state yet, causing execution to revert. Downstream of the same root cause as the hook-level flake above.",
+    "flaky": true
+  },
+  {
+    "id": "GovernorCountingOverridable using $ERC20VotesExtendedTimestampMock cast override vote override before delegate vote",
+    "cause": "hardhat-time-rpc",
+    "note": "Timing-sensitive: the \"before each\" hook races real wall-clock time (evm_increaseTime/evm_setNextBlockTimestamp are no-ops) so the proposal hasn't advanced to Active state yet, causing execution to revert. Downstream of the same root cause as the hook-level flake above.",
+    "flaky": true
+  },
+  {
+    "id": "GovernorCountingOverridable using $ERC20VotesExtendedTimestampMock cast override vote override before and after delegate vote",
+    "cause": "hardhat-time-rpc",
+    "note": "Timing-sensitive: the \"before each\" hook races real wall-clock time (evm_increaseTime/evm_setNextBlockTimestamp are no-ops) so the proposal hasn't advanced to Active state yet, causing execution to revert. Downstream of the same root cause as the hook-level flake above.",
+    "flaky": true
+  },
+  {
+    "id": "GovernorCountingOverridable using $ERC20VotesExtendedTimestampMock cast override vote vote (with delegated balance) and override (with self balance) are independent",
+    "cause": "hardhat-time-rpc",
+    "note": "Timing-sensitive: the \"before each\" hook races real wall-clock time (evm_increaseTime/evm_setNextBlockTimestamp are no-ops) so the proposal hasn't advanced to Active state yet, causing execution to revert. Downstream of the same root cause as the hook-level flake above.",
+    "flaky": true
+  },
+  {
+    "id": "GovernorCountingOverridable using $ERC20VotesExtendedTimestampMock cast override vote can not override vote twice",
+    "cause": "hardhat-time-rpc",
+    "note": "Timing-sensitive: the \"before each\" hook races real wall-clock time (evm_increaseTime/evm_setNextBlockTimestamp are no-ops) so the proposal hasn't advanced to Active state yet, causing execution to revert. Downstream of the same root cause as the hook-level flake above.",
+    "flaky": true
+  },
+  {
+    "id": "GovernorCountingOverridable using $ERC20VotesExtendedTimestampMock cast override vote can not vote twice",
+    "cause": "hardhat-time-rpc",
+    "note": "Timing-sensitive: the \"before each\" hook races real wall-clock time (evm_increaseTime/evm_setNextBlockTimestamp are no-ops) so the proposal hasn't advanced to Active state yet, causing execution to revert. Downstream of the same root cause as the hook-level flake above.",
+    "flaky": true
+  },
+  {
+    "id": "GovernorCountingOverridable using $ERC20VotesExtendedTimestampMock cast override vote invalid vote type override vote",
+    "cause": "hardhat-time-rpc",
+    "note": "Timing-sensitive: proposal is in Pending state (not Active) when the vote is cast because evm_increaseTime is a no-op; reverts with GovernorUnexpectedProposalState instead of the expected GovernorInvalidVoteType. Downstream of the same root cause as the hook-level flake above.",
+    "flaky": true
+  },
+  {
+    "id": "GovernorCountingOverridable using $ERC20VotesExtendedTimestampMock cast override vote invalid vote type traditional vote",
+    "cause": "hardhat-time-rpc",
+    "note": "Timing-sensitive: proposal is in Pending state (not Active) when the vote is cast because evm_increaseTime is a no-op; reverts with GovernorUnexpectedProposalState instead of the expected GovernorInvalidVoteType. Downstream of the same root cause as the hook-level flake above.",
+    "flaky": true
+  },
+  {
+    "id": "GovernorCountingOverridable using $ERC20VotesExtendedTimestampMock cast override vote by signature EOA signature",
+    "cause": "hardhat-time-rpc",
+    "note": "Timing-sensitive: the \"before each\" hook races real wall-clock time (evm_increaseTime/evm_setNextBlockTimestamp are no-ops) so the proposal hasn't advanced to Active state yet, causing execution to revert. Downstream of the same root cause as the hook-level flake above.",
+    "flaky": true
+  },
+  {
     "id": "GovernorCountingOverridable using $ERC20VotesExtendedTimestampMock nominal is unaffected",
     "cause": "hardhat-time-rpc",
     "note": "Timing-sensitive: propose->vote->queue->execute needs real wall-clock time for votingDelay/votingPeriod/timelock-delay, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md). Fast execution reaches the next step too soon and reverts, but passes if the run is slow enough for real time to catch up -- confirmed flipping under a CPU-throttled run.",
