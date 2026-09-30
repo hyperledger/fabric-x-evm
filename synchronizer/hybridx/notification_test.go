@@ -32,15 +32,16 @@ func (s *stubHandler) Handle(_ context.Context, b blocks.Block) error {
 }
 
 // evmEvent builds a committed event as the SDK delivers it: the metadata has
-// already been decoded at the network boundary, so InputArgs holds the proposal-type
-// byte in Args[0] and the raw ethereum-tx bytes (opaque to the dispatcher) in Args[1].
-func evmEvent(txID string, txNum int64, status blocks.Status, propType common.ProposalType, ethTxBytes []byte) notification.CommittedTxEvent {
+// already been decoded at the network boundary, so EventName holds the marker and
+// InputArgs the raw ethereum-tx bytes (opaque to the dispatcher).
+func evmEvent(txID string, txNum int64, status blocks.Status, eventName string, ethTxBytes []byte) notification.CommittedTxEvent {
 	return notification.CommittedTxEvent{
 		Transaction: blocks.Transaction{
 			ID:        txID,
 			Number:    txNum,
 			Status:    status,
-			InputArgs: [][]byte{{byte(propType)}, ethTxBytes},
+			EventName: eventName,
+			InputArgs: [][]byte{ethTxBytes},
 		},
 	}
 }
@@ -86,7 +87,7 @@ func TestHandleBatch_SkipsEventWithoutEthTx(t *testing.T) {
 	}{
 		{"no metadata or undecodable metadata", nil},
 		{"empty args", [][]byte{}},
-		{"proposal type but no eth tx", [][]byte{{byte(common.ProposalTypeEVMTx)}}},
+		{"old two-arg layout", [][]byte{{0xfb}, {0xaa}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := &stubHandler{}
@@ -94,7 +95,7 @@ func TestHandleBatch_SkipsEventWithoutEthTx(t *testing.T) {
 			err := d.HandleBatch(context.Background(), notification.AllTxBatch{
 				BlockNumber: 1,
 				Events: []notification.CommittedTxEvent{{
-					Transaction: blocks.Transaction{ID: "tx-no-eth", InputArgs: tc.args},
+					Transaction: blocks.Transaction{ID: "tx-no-eth", EventName: common.ProposalTypeEVMTx, InputArgs: tc.args},
 				}},
 			})
 			require.NoError(t, err)
@@ -104,13 +105,13 @@ func TestHandleBatch_SkipsEventWithoutEthTx(t *testing.T) {
 }
 
 func TestHandleBatch_SkipsNonEVMTx(t *testing.T) {
-	// Args[0] is a made-up proposal type, not common.ProposalTypeEVMTx.
+	// The event name is not common.ProposalTypeEVMTx.
 	h := &stubHandler{}
 	d := NewAllTxBatchDispatcher(h)
 	err := d.HandleBatch(context.Background(), notification.AllTxBatch{
 		BlockNumber: 1,
 		Events: []notification.CommittedTxEvent{
-			evmEvent("tx-not-evm", 0, blocks.StatusCommitted, common.ProposalType(0x01), []byte{0xde, 0xad}),
+			evmEvent("tx-not-evm", 0, blocks.StatusCommitted, "event", []byte{0xde, 0xad}),
 		},
 	})
 	require.NoError(t, err)
@@ -124,7 +125,7 @@ func TestHandleBatch_DispatchesOnlyEVMTxsFromMixedBatch(t *testing.T) {
 		BlockNumber: 42,
 		Events: []notification.CommittedTxEvent{
 			evmEvent("evm-1", 0, blocks.StatusCommitted, common.ProposalTypeEVMTx, []byte{0xaa}),
-			evmEvent("non-evm", 1, blocks.StatusCommitted, common.ProposalType(0x01), []byte{0xbb}),
+			evmEvent("non-evm", 1, blocks.StatusCommitted, "event", []byte{0xbb}),
 			evmEvent("evm-2", 2, blocks.StatusMVCCConflict, common.ProposalTypeEVMTx, []byte{0xcc}),
 		},
 	})
@@ -140,8 +141,8 @@ func TestHandleBatch_DispatchesOnlyEVMTxsFromMixedBatch(t *testing.T) {
 	assert.Equal(t, int64(0), b.Transactions[0].Number)
 	assert.True(t, b.Transactions[0].Valid(), "COMMITTED tx is Valid")
 	assert.Equal(t, blocks.StatusCommitted, b.Transactions[0].Status)
-	require.Len(t, b.Transactions[0].InputArgs, 2)
-	assert.Equal(t, []byte{0xaa}, b.Transactions[0].InputArgs[1])
+	require.Len(t, b.Transactions[0].InputArgs, 1)
+	assert.Equal(t, []byte{0xaa}, b.Transactions[0].InputArgs[0])
 
 	assert.Equal(t, "evm-2", b.Transactions[1].ID)
 	assert.Equal(t, int64(2), b.Transactions[1].Number)

@@ -6,13 +6,8 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 package common
 
-type ProposalType byte
-
-const (
-	ProposalTypeEVMTx ProposalType = 0xfb
-	ProposalTypeCall
-	ProposalTypeState
-)
+// ProposalTypeEVMTx is the event name that marks a transaction as an EVM transaction.
+const ProposalTypeEVMTx = "evm_tx"
 
 const (
 	StatusOK          int32 = 200

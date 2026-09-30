@@ -7,7 +7,6 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package main
 
 import (
-	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/csv"
@@ -146,20 +145,21 @@ func (p *perfCompleter) Handle(ctx context.Context, b blocks.Block) error {
 	for _, tx := range b.Transactions {
 		// Same skip conditions as ConvertToDomain, so the transaction counts the queue
 		// sees are identical.
-		if len(tx.InputArgs) < 2 || !bytes.Equal(tx.InputArgs[0], []byte{byte(fc.ProposalTypeEVMTx)}) {
+		ethTxBytes, ok := fc.EVMTx(tx)
+		if !ok {
 			continue
 		}
 		var ethTx types.Transaction
-		if err := ethTx.UnmarshalBinary(tx.InputArgs[1]); err != nil {
+		if err := ethTx.UnmarshalBinary(ethTxBytes); err != nil {
 			// Surfaced rather than skipped (ConvertToDomain panics here): a tx that passed the
 			// EVM-proposal filter but will not decode is a bug, and swallowing it would
 			// instead stall the closed loop on a completion that never arrives.
 			return fmt.Errorf("block %d tx %d: invalid tx: %w", b.Number, tx.Number, err)
 		}
-		// Status predicate copied verbatim from convertTransaction: q.invalid counts
-		// tx.Status == 0, so any drift here would move the reported invalid_rate.
+		// Same status predicate as ConvertToDomain: q.invalid counts tx.Status == 0,
+		// so any drift here would move the reported invalid_rate.
 		status := uint8(0)
-		if tx.Valid() && !fc.IsRevertEvent(tx.EventName) && !fc.IsExecFailureEvent(tx.EventName) {
+		if succeeded, _ := fc.ExecutionOutcome(tx); succeeded {
 			status = 1
 		}
 		block.Transactions = append(block.Transactions, domain.Transaction{

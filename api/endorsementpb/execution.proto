@@ -1,0 +1,39 @@
+/*
+Copyright IBM Corp. All Rights Reserved.
+
+SPDX-License-Identifier: LGPL-3.0-or-later
+*/
+
+syntax = "proto3";
+
+option go_package = "github.com/hyperledger/fabric-x-evm/api/endorsementpb";
+
+package endorsementpb;
+
+// ExecutionStatus is the outcome of executing an EVM transaction.
+enum ExecutionStatus {
+    EXECUTION_STATUS_UNSPECIFIED = 0;
+    EXECUTION_STATUS_SUCCESS = 1;
+    EXECUTION_STATUS_REVERTED = 2;
+    // Valid transaction whose execution failed without reverting (out of gas,
+    // invalid opcode, ...).
+    EXECUTION_STATUS_EXEC_FAILED = 3;
+    // Invalid transaction, rejected before execution. Never written on-chain,
+    // since a rejected transaction is not submitted; reserved for completeness.
+    EXECUTION_STATUS_REJECTED = 4;
+}
+
+// ExecutionMetadata is the execution outcome the endorser stores in the
+// transaction Payload.
+message ExecutionMetadata {
+    ExecutionStatus status = 1;
+
+    // Revert return data for a revert; empty otherwise.
+    bytes reason = 2;
+
+    // EVM gas used, after refunds.
+    uint64 gas_used = 3;
+
+    // Unix seconds the transaction executed at (EVM block.timestamp).
+    uint64 timestamp = 4;
+}

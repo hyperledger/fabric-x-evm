@@ -31,6 +31,8 @@ CREATE TABLE
         status INTEGER NOT NULL CHECK (status IN (0, 1)), -- failed, success
         fabric_tx_id TEXT NOT NULL UNIQUE,
         fabric_tx_status INTEGER NOT NULL,
+        gas_used BIGINT NOT NULL CHECK (gas_used >= 0),
+        cumulative_gas_used BIGINT NOT NULL CHECK (cumulative_gas_used >= 0),
         FOREIGN KEY (block_number) REFERENCES blocks (block_number)
     );
 

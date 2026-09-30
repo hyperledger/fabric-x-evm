@@ -74,12 +74,12 @@ func receipt(r *domain.Transaction) *rpcReceipt {
 	return &rpcReceipt{
 		Receipt: types.Receipt{
 			Status:            uint64(r.Status),
-			CumulativeGasUsed: 0,
+			CumulativeGasUsed: r.CumulativeGasUsed,
 			// Bloom:             types.Bloom(r.LogsBloom),
 			Logs:              logs,
 			TxHash:            common.BytesToHash(r.TxHash),
 			ContractAddress:   contractAddr,
-			GasUsed:           0,
+			GasUsed:           r.GasUsed,
 			Type:              uint8(r.TxType()),
 			PostState:         nil,
 			EffectiveGasPrice: big.NewInt(0),
