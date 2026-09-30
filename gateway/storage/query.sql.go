@@ -126,7 +126,7 @@ func (q *Queries) GetBlockTxCountByNumber(ctx context.Context, blockNumber int64
 
 const getFullTransactionByHash = `-- name: GetFullTransactionByHash :one
 SELECT
-    tx_hash, block_hash, block_number, tx_index, raw_tx, from_address, to_address, contract_address, status, fabric_tx_id, fabric_tx_status
+    tx_hash, block_hash, block_number, tx_index, raw_tx, from_address, to_address, contract_address, status, fabric_tx_id, fabric_tx_status, gas_used, cumulative_gas_used
 FROM
     transactions
 WHERE
@@ -150,6 +150,8 @@ func (q *Queries) GetFullTransactionByHash(ctx context.Context, txHash []byte) (
 		&i.Status,
 		&i.FabricTxID,
 		&i.FabricTxStatus,
+		&i.GasUsed,
+		&i.CumulativeGasUsed,
 	)
 	return i, err
 }
@@ -220,7 +222,7 @@ func (q *Queries) GetLogsByTxHash(ctx context.Context, txHash []byte) ([]GetLogs
 
 const getTransactionByBlockHashAndIndex = `-- name: GetTransactionByBlockHashAndIndex :one
 SELECT
-    tx_hash, block_hash, block_number, tx_index, raw_tx, from_address, to_address, contract_address, status, fabric_tx_id, fabric_tx_status
+    tx_hash, block_hash, block_number, tx_index, raw_tx, from_address, to_address, contract_address, status, fabric_tx_id, fabric_tx_status, gas_used, cumulative_gas_used
 FROM
     transactions
 WHERE
@@ -250,13 +252,15 @@ func (q *Queries) GetTransactionByBlockHashAndIndex(ctx context.Context, arg Get
 		&i.Status,
 		&i.FabricTxID,
 		&i.FabricTxStatus,
+		&i.GasUsed,
+		&i.CumulativeGasUsed,
 	)
 	return i, err
 }
 
 const getTransactionByBlockNumberAndIndex = `-- name: GetTransactionByBlockNumberAndIndex :one
 SELECT
-    tx_hash, block_hash, block_number, tx_index, raw_tx, from_address, to_address, contract_address, status, fabric_tx_id, fabric_tx_status
+    tx_hash, block_hash, block_number, tx_index, raw_tx, from_address, to_address, contract_address, status, fabric_tx_id, fabric_tx_status, gas_used, cumulative_gas_used
 FROM
     transactions
 WHERE
@@ -286,13 +290,15 @@ func (q *Queries) GetTransactionByBlockNumberAndIndex(ctx context.Context, arg G
 		&i.Status,
 		&i.FabricTxID,
 		&i.FabricTxStatus,
+		&i.GasUsed,
+		&i.CumulativeGasUsed,
 	)
 	return i, err
 }
 
 const getTransactionByHash = `-- name: GetTransactionByHash :one
 SELECT
-    tx_hash, block_hash, block_number, tx_index, raw_tx, from_address, to_address, contract_address, status, fabric_tx_id, fabric_tx_status
+    tx_hash, block_hash, block_number, tx_index, raw_tx, from_address, to_address, contract_address, status, fabric_tx_id, fabric_tx_status, gas_used, cumulative_gas_used
 FROM
     transactions
 WHERE
@@ -316,13 +322,15 @@ func (q *Queries) GetTransactionByHash(ctx context.Context, txHash []byte) (Tran
 		&i.Status,
 		&i.FabricTxID,
 		&i.FabricTxStatus,
+		&i.GasUsed,
+		&i.CumulativeGasUsed,
 	)
 	return i, err
 }
 
 const getTransactionsByBlockHash = `-- name: GetTransactionsByBlockHash :many
 SELECT
-    t.tx_hash, t.block_hash, t.block_number, t.tx_index, t.raw_tx, t.from_address, t.to_address, t.contract_address, t.status, t.fabric_tx_id, t.fabric_tx_status
+    t.tx_hash, t.block_hash, t.block_number, t.tx_index, t.raw_tx, t.from_address, t.to_address, t.contract_address, t.status, t.fabric_tx_id, t.fabric_tx_status, t.gas_used, t.cumulative_gas_used
 FROM
     transactions t
     JOIN blocks b ON t.block_number = b.block_number
@@ -353,6 +361,8 @@ func (q *Queries) GetTransactionsByBlockHash(ctx context.Context, blockHash []by
 			&i.Status,
 			&i.FabricTxID,
 			&i.FabricTxStatus,
+			&i.GasUsed,
+			&i.CumulativeGasUsed,
 		); err != nil {
 			return nil, err
 		}
@@ -369,7 +379,7 @@ func (q *Queries) GetTransactionsByBlockHash(ctx context.Context, blockHash []by
 
 const getTransactionsByBlockNumber = `-- name: GetTransactionsByBlockNumber :many
 SELECT
-    tx_hash, block_hash, block_number, tx_index, raw_tx, from_address, to_address, contract_address, status, fabric_tx_id, fabric_tx_status
+    tx_hash, block_hash, block_number, tx_index, raw_tx, from_address, to_address, contract_address, status, fabric_tx_id, fabric_tx_status, gas_used, cumulative_gas_used
 FROM
     transactions
 WHERE
@@ -399,6 +409,8 @@ func (q *Queries) GetTransactionsByBlockNumber(ctx context.Context, blockNumber 
 			&i.Status,
 			&i.FabricTxID,
 			&i.FabricTxStatus,
+			&i.GasUsed,
+			&i.CumulativeGasUsed,
 		); err != nil {
 			return nil, err
 		}
@@ -511,24 +523,28 @@ INSERT INTO
         contract_address,
         status,
         fabric_tx_id,
-        fabric_tx_status
+        fabric_tx_status,
+        gas_used,
+        cumulative_gas_used
     )
 VALUES
-    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (tx_hash) DO NOTHING
+    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (tx_hash) DO NOTHING
 `
 
 type InsertTransactionParams struct {
-	TxHash          []byte
-	BlockHash       []byte
-	BlockNumber     int64
-	TxIndex         int64
-	RawTx           []byte
-	FromAddress     []byte
-	ToAddress       []byte
-	ContractAddress []byte
-	Status          int64
-	FabricTxID      string
-	FabricTxStatus  int64
+	TxHash            []byte
+	BlockHash         []byte
+	BlockNumber       int64
+	TxIndex           int64
+	RawTx             []byte
+	FromAddress       []byte
+	ToAddress         []byte
+	ContractAddress   []byte
+	Status            int64
+	FabricTxID        string
+	FabricTxStatus    int64
+	GasUsed           int64
+	CumulativeGasUsed int64
 }
 
 func (q *Queries) InsertTransaction(ctx context.Context, arg InsertTransactionParams) error {
@@ -544,6 +560,8 @@ func (q *Queries) InsertTransaction(ctx context.Context, arg InsertTransactionPa
 		arg.Status,
 		arg.FabricTxID,
 		arg.FabricTxStatus,
+		arg.GasUsed,
+		arg.CumulativeGasUsed,
 	)
 	return err
 }

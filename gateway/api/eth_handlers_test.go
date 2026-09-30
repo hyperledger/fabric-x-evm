@@ -579,13 +579,15 @@ func TestGetTransactionReceipt_Confirmed(t *testing.T) {
 	api := NewEthAPI(&stubBackend{
 		txByHash: map[common.Hash]*domain.Transaction{
 			testTxHash: {
-				TxHash:      testTxHash.Bytes(),
-				RawTx:       raw,
-				FromAddress: testAddr.Bytes(),
-				ToAddress:   testAddr.Bytes(),
-				BlockHash:   testBlockHash.Bytes(),
-				BlockNumber: 5,
-				Status:      1,
+				TxHash:            testTxHash.Bytes(),
+				RawTx:             raw,
+				FromAddress:       testAddr.Bytes(),
+				ToAddress:         testAddr.Bytes(),
+				BlockHash:         testBlockHash.Bytes(),
+				BlockNumber:       5,
+				Status:            1,
+				GasUsed:           21000,
+				CumulativeGasUsed: 42000,
 			},
 		},
 	})
@@ -595,6 +597,9 @@ func TestGetTransactionReceipt_Confirmed(t *testing.T) {
 	}
 	if got == nil || got.From != testAddr {
 		t.Fatalf("receipt = %+v", got)
+	}
+	if got.GasUsed != 21000 || got.CumulativeGasUsed != 42000 {
+		t.Errorf("gas = %d/%d, want 21000/42000", got.GasUsed, got.CumulativeGasUsed)
 	}
 }
 

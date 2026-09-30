@@ -8,53 +8,53 @@ package common
 
 import (
 	"encoding/json"
-	"strings"
 
+	"github.com/hyperledger/fabric-x-evm/api/endorsementpb"
+	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/state"
+	"google.golang.org/protobuf/proto"
 )
 
-// eventNameRevertPrefix is the prefix of the event name used to signal an EVM
-// revert. The transaction hash is appended so the full name is unique per
-// transaction and cannot be forged by an EVM contract.
-const eventNameRevertPrefix = "revert:"
-
-// eventNameExecFailurePrefix marks a valid tx whose EVM execution otherwise
-// faulted (out of gas, invalid opcode, ...) - mined like a revert, but with
-// no ABI-encoded reason to carry.
-const eventNameExecFailurePrefix = "execfail:"
-
-// eventNameLogs names the event a successful transaction carries its logs in.
-const eventNameLogs = "event"
-
-// LogsEventName names a successful transaction's logs, or "" if it emitted none.
-func LogsEventName(logs []byte) string {
-	if len(logs) == 0 {
-		return ""
+// EVMTx returns the Ethereum transaction bytes of tx, or false if tx is not an
+// EVM transaction.
+func EVMTx(tx blocks.Transaction) ([]byte, bool) {
+	if tx.EventName != ProposalTypeEVMTx || len(tx.InputArgs) != 1 {
+		return nil, false
 	}
-	return eventNameLogs
+	return tx.InputArgs[0], true
 }
 
-// RevertEventName is the event name the endorser sets on an EVM revert.
-func RevertEventName(txID string) string { return eventNameRevertPrefix + txID }
-
-// ExecFailureEventName is the event name the endorser sets on an execution
-// failure that did not revert.
-func ExecFailureEventName(txID string) string { return eventNameExecFailurePrefix + txID }
-
-// IsRevertEvent reports whether an event name signals an EVM revert.
-func IsRevertEvent(eventName string) bool {
-	return strings.HasPrefix(eventName, eventNameRevertPrefix)
+// MarshalExecutionMetadata encodes the execution outcome for a transaction's
+// Payload. Encoding is deterministic so every endorser produces the same bytes.
+func MarshalExecutionMetadata(md *endorsementpb.ExecutionMetadata) ([]byte, error) {
+	return proto.MarshalOptions{Deterministic: true}.Marshal(md)
 }
 
-// IsExecFailureEvent reports whether an event name signals a valid tx whose
-// EVM execution faulted without reverting.
-func IsExecFailureEvent(eventName string) bool {
-	return strings.HasPrefix(eventName, eventNameExecFailurePrefix)
+// UnmarshalExecutionMetadata decodes the execution outcome from a transaction's Payload.
+func UnmarshalExecutionMetadata(payload []byte) (*endorsementpb.ExecutionMetadata, error) {
+	md := &endorsementpb.ExecutionMetadata{}
+	if err := proto.Unmarshal(payload, md); err != nil {
+		return nil, err
+	}
+	return md, nil
+}
+
+// ExecutionOutcome reports whether a committed EVM transaction succeeded and the
+// gas it used. A transaction Fabric did not commit never ran on-chain, so it used
+// no gas; neither did one whose Payload does not decode.
+func ExecutionOutcome(tx blocks.Transaction) (succeeded bool, gasUsed uint64) {
+	if !tx.Valid() {
+		return false, 0
+	}
+	md, err := UnmarshalExecutionMetadata(tx.Payload)
+	if err != nil {
+		return false, 0
+	}
+	return md.GetStatus() == endorsementpb.ExecutionStatus_EXECUTION_STATUS_SUCCESS, md.GetGasUsed()
 }
 
 // UnmarshalLogs converts a transaction's event payload back to a list of logs.
-// Only a successful transaction carries logs here; a revert carries its return
-// data instead, so callers must check the event name first.
+// Only a successful transaction carries logs.
 func UnmarshalLogs(event []byte) ([]state.Log, error) {
 	if len(event) == 0 {
 		return []state.Log{}, nil

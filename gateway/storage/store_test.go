@@ -75,8 +75,8 @@ func insertTestLog(t *testing.T, store *Store, blockNum uint64, txHash, address 
 		}
 		fabricTxID := fmt.Sprintf("fabric-tx-%x", txHash[:8])
 		if _, err := store.DB.ExecContext(t.Context(), `
-			INSERT INTO transactions (tx_hash, block_hash, block_number, tx_index, raw_tx, from_address, to_address, contract_address, status, fabric_tx_id, fabric_tx_status)
-			VALUES (?, NULL, ?, ?, ?, ?, NULL, NULL, ?, ?, 0)`,
+			INSERT INTO transactions (tx_hash, block_hash, block_number, tx_index, raw_tx, from_address, to_address, contract_address, status, fabric_tx_id, fabric_tx_status, gas_used, cumulative_gas_used)
+			VALUES (?, NULL, ?, ?, ?, ?, NULL, NULL, ?, ?, 0, 0, 0)`,
 			txHash, blockNum, txIndex, []byte{0x01}, makeAddress(0x11), 1, fabricTxID); err != nil {
 			t.Fatalf("failed to insert parent transaction for log: %v", err)
 		}
@@ -424,9 +424,9 @@ func insertTestTransaction(t *testing.T, store *Store, blockNum uint64, blockHas
 	// Use txHash to create unique fabric_tx_id
 	fabricTxID := fmt.Sprintf("fabric-tx-%x", txHash[:8])
 	_, err := store.DB.ExecContext(t.Context(), `
-		INSERT INTO transactions (tx_hash, block_hash, block_number, tx_index, raw_tx, from_address, to_address, contract_address, status, fabric_tx_id, fabric_tx_status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		txHash, blockHash, blockNum, txIndex, []byte{0x01, 0x02}, makeAddress(0x11), makeAddress(0x22), nil, 1, fabricTxID, 0)
+		INSERT INTO transactions (tx_hash, block_hash, block_number, tx_index, raw_tx, from_address, to_address, contract_address, status, fabric_tx_id, fabric_tx_status, gas_used, cumulative_gas_used)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		txHash, blockHash, blockNum, txIndex, []byte{0x01, 0x02}, makeAddress(0x11), makeAddress(0x22), nil, 1, fabricTxID, 0, 0, 0)
 	if err != nil {
 		t.Fatalf("failed to insert transaction: %v", err)
 	}
@@ -755,16 +755,18 @@ func TestInsertBlock_WithTransactionsAndLogs(t *testing.T) {
 		Timestamp:   1234567890,
 		Transactions: []domain.Transaction{
 			{
-				TxHash:         txHash,
-				BlockHash:      blockHash,
-				BlockNumber:    100,
-				TxIndex:        0,
-				RawTx:          []byte{0x01, 0x02, 0x03},
-				FromAddress:    makeAddress(0x11),
-				ToAddress:      makeAddress(0x22),
-				Status:         1,
-				FabricTxID:     "fabric-123",
-				FabricTxStatus: blocks.StatusCommitted,
+				TxHash:            txHash,
+				BlockHash:         blockHash,
+				BlockNumber:       100,
+				TxIndex:           0,
+				RawTx:             []byte{0x01, 0x02, 0x03},
+				FromAddress:       makeAddress(0x11),
+				ToAddress:         makeAddress(0x22),
+				Status:            1,
+				FabricTxID:        "fabric-123",
+				FabricTxStatus:    blocks.StatusCommitted,
+				GasUsed:           21000,
+				CumulativeGasUsed: 42000,
 				Logs: []domain.Log{
 					{
 						BlockNumber: 100,
@@ -812,6 +814,9 @@ func TestInsertBlock_WithTransactionsAndLogs(t *testing.T) {
 	}
 	if retrievedBlock.Transactions[0].FabricTxID != "fabric-123" {
 		t.Errorf("expected fabric tx id 'fabric-123', got %s", retrievedBlock.Transactions[0].FabricTxID)
+	}
+	if got := retrievedBlock.Transactions[0]; got.GasUsed != 21000 || got.CumulativeGasUsed != 42000 {
+		t.Errorf("gas = %d/%d, want 21000/42000", got.GasUsed, got.CumulativeGasUsed)
 	}
 
 	// Verify logs were inserted

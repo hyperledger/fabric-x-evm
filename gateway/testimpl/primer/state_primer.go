@@ -21,6 +21,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/holiman/uint256"
 	pb "github.com/hyperledger/fabric-protos-go-apiv2/peer"
+	"github.com/hyperledger/fabric-x-evm/api/endorsementpb"
 	lc "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
@@ -267,8 +268,15 @@ func (sp *StatePrimer) Commit(ctx context.Context, wait bool) error {
 		sp.namespace,
 		sp.nsVersion,
 		nsVersionX,
-		[][]byte{{byte(lc.ProposalTypeEVMTx)}, ethTxBytes},
+		[][]byte{ethTxBytes},
 	)
+	if err != nil {
+		return err
+	}
+
+	res, err := execution.NewResult(sp.stateDB.Result(), nil, &endorsementpb.ExecutionMetadata{
+		Status: endorsementpb.ExecutionStatus_EXECUTION_STATUS_SUCCESS,
+	}, "")
 	if err != nil {
 		return err
 	}
@@ -276,7 +284,7 @@ func (sp *StatePrimer) Commit(ctx context.Context, wait bool) error {
 	// Collect endorsements from all builders
 	var presps []*pb.ProposalResponse
 	for _, builder := range sp.builders {
-		presp, err := builder.Endorse(inv, endorsement.Success(sp.stateDB.Result(), "", nil, nil))
+		presp, err := builder.Endorse(inv, res)
 		if err != nil {
 			return err
 		}

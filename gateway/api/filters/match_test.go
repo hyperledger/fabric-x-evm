@@ -16,6 +16,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	gethfilters "github.com/ethereum/go-ethereum/eth/filters"
+	"github.com/hyperledger/fabric-x-evm/api/endorsementpb"
 	fc "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/state"
@@ -57,6 +58,17 @@ func mustLogEvents(t *testing.T, logs []state.Log) []byte {
 	return payload
 }
 
+const succeeded = endorsementpb.ExecutionStatus_EXECUTION_STATUS_SUCCESS
+
+func mustPayload(t *testing.T, status endorsementpb.ExecutionStatus) []byte {
+	t.Helper()
+	b, err := fc.MarshalExecutionMetadata(&endorsementpb.ExecutionMetadata{Status: status})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
 func bytes32(b byte) []byte {
 	h := make([]byte, 32)
 	h[31] = b
@@ -85,24 +97,32 @@ func TestLogsFromBlock_HappyAndSkips(t *testing.T) {
 			{
 				Number:    1,
 				Status:    blocks.StatusMVCCConflict,
-				InputArgs: [][]byte{{byte(fc.ProposalTypeEVMTx)}, rawTx},
+				EventName: fc.ProposalTypeEVMTx,
+				InputArgs: [][]byte{rawTx},
+				Payload:   mustPayload(t, succeeded),
 				Event:     events,
 			},
 			{
 				Number:    2,
 				Status:    blocks.StatusCommitted,
-				InputArgs: [][]byte{{byte(fc.ProposalTypeEVMTx)}, rawTx},
+				EventName: fc.ProposalTypeEVMTx,
+				InputArgs: [][]byte{rawTx},
+				Payload:   mustPayload(t, succeeded),
 			},
 			{
 				Number:    3,
 				Status:    blocks.StatusCommitted,
-				InputArgs: [][]byte{{byte(fc.ProposalTypeEVMTx)}, []byte("not-rlp")},
+				EventName: fc.ProposalTypeEVMTx,
+				InputArgs: [][]byte{[]byte("not-rlp")},
+				Payload:   mustPayload(t, succeeded),
 				Event:     events,
 			},
 			{
 				Number:    4,
 				Status:    blocks.StatusCommitted,
-				InputArgs: [][]byte{{byte(fc.ProposalTypeEVMTx)}, rawTx},
+				EventName: fc.ProposalTypeEVMTx,
+				InputArgs: [][]byte{rawTx},
+				Payload:   mustPayload(t, succeeded),
 				Event:     events,
 			},
 		},
@@ -123,21 +143,33 @@ func TestLogsFromBlock_HappyAndSkips(t *testing.T) {
 	}
 }
 
-func TestLogsFromBlock_RevertSkipped(t *testing.T) {
+// Only a successful execution emits logs, whatever the event carries.
+func TestLogsFromBlock_UnsuccessfulSkipped(t *testing.T) {
 	rawTx := mustEthTxBytes(t)
-	b := blocks.Block{
-		Number: 1,
-		Hash:   bytes32(1),
-		Transactions: []blocks.Transaction{{
-			Number:    0,
-			Status:    blocks.StatusCommitted,
-			InputArgs: [][]byte{{byte(fc.ProposalTypeEVMTx)}, rawTx},
-			Event:     []byte("boom"),
-			EventName: fc.RevertEventName("tx-rev"),
-		}},
-	}
-	if got := logsFromBlock(b); len(got) != 0 {
-		t.Fatalf("revert should yield no logs, got %d", len(got))
+	events := mustLogEvents(t, []state.Log{{Address: common.HexToAddress("0xaa").Bytes()}})
+	for name, payload := range map[string][]byte{
+		"revert":       mustPayload(t, endorsementpb.ExecutionStatus_EXECUTION_STATUS_REVERTED),
+		"exec failure": mustPayload(t, endorsementpb.ExecutionStatus_EXECUTION_STATUS_EXEC_FAILED),
+		"no payload":   nil,
+		"bad payload":  {0xff, 0xff},
+	} {
+		t.Run(name, func(t *testing.T) {
+			b := blocks.Block{
+				Number: 1,
+				Hash:   bytes32(1),
+				Transactions: []blocks.Transaction{{
+					Number:    0,
+					Status:    blocks.StatusCommitted,
+					EventName: fc.ProposalTypeEVMTx,
+					InputArgs: [][]byte{rawTx},
+					Payload:   payload,
+					Event:     events,
+				}},
+			}
+			if got := logsFromBlock(b); len(got) != 0 {
+				t.Fatalf("want no logs, got %d", len(got))
+			}
+		})
 	}
 }
 
@@ -205,8 +237,8 @@ func TestLogFilter_LivePathViaHandle(t *testing.T) {
 		Number: 3,
 		Hash:   bytes32(3),
 		Transactions: []blocks.Transaction{
-			{Number: 0, Status: blocks.StatusCommitted, InputArgs: [][]byte{{byte(fc.ProposalTypeEVMTx)}, rawTx}, Event: miss},
-			{Number: 1, Status: blocks.StatusCommitted, InputArgs: [][]byte{{byte(fc.ProposalTypeEVMTx)}, rawTx}, Event: events},
+			{Number: 0, Status: blocks.StatusCommitted, EventName: fc.ProposalTypeEVMTx, InputArgs: [][]byte{rawTx}, Payload: mustPayload(t, succeeded), Event: miss},
+			{Number: 1, Status: blocks.StatusCommitted, EventName: fc.ProposalTypeEVMTx, InputArgs: [][]byte{rawTx}, Payload: mustPayload(t, succeeded), Event: events},
 		},
 	})
 

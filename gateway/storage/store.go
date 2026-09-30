@@ -58,17 +58,19 @@ func toDomainBlock(b Block) domain.Block {
 
 func toStorageTransaction(t domain.Transaction) (InsertTransactionParams, []InsertLogParams) {
 	txp := InsertTransactionParams{
-		TxHash:          t.TxHash,
-		BlockHash:       t.BlockHash,
-		BlockNumber:     int64(t.BlockNumber),
-		TxIndex:         t.TxIndex,
-		RawTx:           t.RawTx,
-		FromAddress:     t.FromAddress,
-		ToAddress:       t.ToAddress,
-		ContractAddress: t.ContractAddress,
-		Status:          int64(t.Status),
-		FabricTxID:      t.FabricTxID,
-		FabricTxStatus:  int64(t.FabricTxStatus),
+		TxHash:            t.TxHash,
+		BlockHash:         t.BlockHash,
+		BlockNumber:       int64(t.BlockNumber),
+		TxIndex:           t.TxIndex,
+		RawTx:             t.RawTx,
+		FromAddress:       t.FromAddress,
+		ToAddress:         t.ToAddress,
+		ContractAddress:   t.ContractAddress,
+		Status:            int64(t.Status),
+		FabricTxID:        t.FabricTxID,
+		FabricTxStatus:    int64(t.FabricTxStatus),
+		GasUsed:           int64(t.GasUsed),
+		CumulativeGasUsed: int64(t.CumulativeGasUsed),
 	}
 	lp := make([]InsertLogParams, len(t.Logs))
 	for i, l := range t.Logs {
@@ -79,17 +81,19 @@ func toStorageTransaction(t domain.Transaction) (InsertTransactionParams, []Inse
 
 func toDomainTransaction(t Transaction) domain.Transaction {
 	return domain.Transaction{
-		TxHash:          t.TxHash,
-		BlockHash:       t.BlockHash,
-		BlockNumber:     uint64(t.BlockNumber),
-		TxIndex:         t.TxIndex,
-		RawTx:           t.RawTx,
-		FromAddress:     t.FromAddress,
-		ToAddress:       t.ToAddress,
-		ContractAddress: t.ContractAddress,
-		FabricTxID:      t.FabricTxID,
-		FabricTxStatus:  blocks.Status(t.FabricTxStatus),
-		Status:          uint8(t.Status),
+		TxHash:            t.TxHash,
+		BlockHash:         t.BlockHash,
+		BlockNumber:       uint64(t.BlockNumber),
+		TxIndex:           t.TxIndex,
+		RawTx:             t.RawTx,
+		FromAddress:       t.FromAddress,
+		ToAddress:         t.ToAddress,
+		ContractAddress:   t.ContractAddress,
+		FabricTxID:        t.FabricTxID,
+		FabricTxStatus:    blocks.Status(t.FabricTxStatus),
+		Status:            uint8(t.Status),
+		GasUsed:           uint64(t.GasUsed),
+		CumulativeGasUsed: uint64(t.CumulativeGasUsed),
 	}
 }
 

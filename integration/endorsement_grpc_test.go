@@ -183,7 +183,7 @@ func newInvocation(t *testing.T, ethTx *types.Transaction) endorsement.Invocatio
 		t.Fatalf("marshal tx: %v", err)
 	}
 	inv, err := fabricx.NewInvocationBuilder(localSigner{}).NewInvocation("mychannel", "basic", "1.0", 0,
-		[][]byte{{byte(common.ProposalTypeEVMTx)}, raw})
+		[][]byte{raw})
 	if err != nil {
 		t.Fatalf("new invocation: %v", err)
 	}

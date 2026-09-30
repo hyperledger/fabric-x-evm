@@ -28,15 +28,17 @@ type Log struct {
 }
 
 type Transaction struct {
-	TxHash          []byte
-	BlockHash       []byte
-	BlockNumber     int64
-	TxIndex         int64
-	RawTx           []byte
-	FromAddress     []byte
-	ToAddress       []byte
-	ContractAddress []byte
-	Status          int64
-	FabricTxID      string
-	FabricTxStatus  int64
+	TxHash            []byte
+	BlockHash         []byte
+	BlockNumber       int64
+	TxIndex           int64
+	RawTx             []byte
+	FromAddress       []byte
+	ToAddress         []byte
+	ContractAddress   []byte
+	Status            int64
+	FabricTxID        string
+	FabricTxStatus    int64
+	GasUsed           int64
+	CumulativeGasUsed int64
 }

@@ -395,7 +395,8 @@ moving `toBlock`, will wait indefinitely if no transaction activity is happening
 | `transactionHash`, `blockHash`, `blockNumber`, `transactionIndex` | real data |
 | `from`, `to`, `contractAddress` | real data |
 | `logs` | real data |
-| `cumulativeGasUsed`, `gasUsed`, `effectiveGasPrice` | `0` |
+| `cumulativeGasUsed`, `gasUsed` | real data (gas used after refunds) |
+| `effectiveGasPrice` | `0` |
 | `logsBloom` | `0x` + 512 zeros |
 | `postState` | not set |
 

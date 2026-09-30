@@ -192,7 +192,8 @@ func evmBatch(t *testing.T, blockNum uint64) notification.AllTxBatch {
 			Transaction: blocks.Transaction{
 				ID:        "evm-tx",
 				Status:    blocks.StatusCommitted,
-				InputArgs: [][]byte{{byte(common.ProposalTypeEVMTx)}, {0xaa}},
+				EventName: common.ProposalTypeEVMTx,
+				InputArgs: [][]byte{{0xaa}},
 			},
 			BlockNum: blockNum,
 		}},

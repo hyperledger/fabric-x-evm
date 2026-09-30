@@ -24,7 +24,9 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/holiman/uint256"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
+	"github.com/hyperledger/fabric-x-evm/api/endorsementpb"
 	fxcommon "github.com/hyperledger/fabric-x-evm/common"
+	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
 
@@ -73,7 +75,7 @@ func NewEVMEngine(namespace string, kvs KVSSnapshotter, evmConfig EVMConfig, mon
 // the Fabric read-write set, and any EVM logs emitted.
 // State is always read from the latest block: endorsement must simulate against current state
 // so that the resulting read-write set passes MVCC validation at commit time.
-// Reverts produce a valid endorsement (Status 201 + revert event) instead of an error.
+// Reverts produce a valid endorsement (Status 201, reverted in Payload) instead of an error.
 //
 // blockTime is the gateway-supplied Unix second for EVM block.timestamp. It is required
 // (non-zero); the gateway always stamps one value per ExecuteTransaction.
@@ -86,34 +88,28 @@ func (e *EVMEngine) Execute(ctx context.Context, tx *types.Transaction, blockTim
 	}
 	defer ex.Close()
 
-	ret, err := ex.Send(tx)
+	ret, usedGas, err := ex.Send(tx)
 	if err != nil {
 		_, isExecFailure := errors.AsType[*ExecFailure](err)
 		switch {
 		case errors.Is(err, vm.ErrExecutionReverted):
-			// Revert: a committed outcome, endorsed with a revert event.
+			// Revert: a committed outcome, carrying the revert data as its reason.
 			logger.Debugf("EVMEngine.Execute() tx=%s reverted: %v", tx.Hash().Hex(), err)
-			return endorsement.ExecutionResult{
-				RWS:       ex.state.Result(),
-				Event:     ret,
-				EventName: fxcommon.RevertEventName(tx.Hash().Hex()),
-				Status:    fxcommon.StatusEVMRevert,
-				Message:   err.Error(),
-				Payload:   ret,
-			}, nil
+			return NewResult(ex.state.Result(), nil, &endorsementpb.ExecutionMetadata{
+				Status:    endorsementpb.ExecutionStatus_EXECUTION_STATUS_REVERTED,
+				Reason:    ret,
+				GasUsed:   usedGas,
+				Timestamp: blockTime,
+			}, err.Error())
 		case isExecFailure:
 			// Valid tx whose EVM execution faulted without reverting (out of gas,
-			// invalid opcode, ...): also a committed outcome, same shape as a
-			// revert but with no ABI-encoded reason to carry.
+			// invalid opcode, ...): also a committed outcome, with no reason to carry.
 			logger.Warnf("EVMEngine.Execute() tx=%s exec failure: %v", tx.Hash().Hex(), err)
-			return endorsement.ExecutionResult{
-				RWS:       ex.state.Result(),
-				Event:     ret,
-				EventName: fxcommon.ExecFailureEventName(tx.Hash().Hex()),
-				Status:    fxcommon.StatusExecFailure,
-				Message:   err.Error(),
-				Payload:   ret,
-			}, nil
+			return NewResult(ex.state.Result(), nil, &endorsementpb.ExecutionMetadata{
+				Status:    endorsementpb.ExecutionStatus_EXECUTION_STATUS_EXEC_FAILED,
+				GasUsed:   usedGas,
+				Timestamp: blockTime,
+			}, err.Error())
 		default:
 			// Pre-execution rejection (bad signature, nonce, ...): never included in a block.
 			logger.Warnf("EVMEngine.Execute() tx=%s rejected: %v", tx.Hash().Hex(), err)
@@ -121,16 +117,37 @@ func (e *EVMEngine) Execute(ctx context.Context, tx *types.Transaction, blockTim
 		}
 	}
 
-	var logs []byte
-	if l := ex.state.Logs(); len(l) > 0 {
-		logs, err = json.Marshal(l)
-		if err != nil {
+	logger.Debugf("EVMEngine.Execute() tx=%s succeeded logs=%d gasUsed=%d", tx.Hash().Hex(), len(ex.state.Logs()), usedGas)
+	return NewResult(ex.state.Result(), ex.state.Logs(), &endorsementpb.ExecutionMetadata{
+		Status:    endorsementpb.ExecutionStatus_EXECUTION_STATUS_SUCCESS,
+		GasUsed:   usedGas,
+		Timestamp: blockTime,
+	}, "")
+}
+
+// NewResult builds the endorsement result of an executed EVM transaction: the
+// EVM marker as event name, the logs as event, and md in Payload.
+func NewResult(rws blocks.ReadWriteSet, logs []Log, md *endorsementpb.ExecutionMetadata, message string) (endorsement.ExecutionResult, error) {
+	var event []byte
+	if len(logs) > 0 {
+		var err error
+		if event, err = json.Marshal(logs); err != nil {
 			return endorsement.ExecutionResult{}, fmt.Errorf("marshal logs: %w", err)
 		}
 	}
+	payload, err := fxcommon.MarshalExecutionMetadata(md)
+	if err != nil {
+		return endorsement.ExecutionResult{}, fmt.Errorf("marshal execution metadata: %w", err)
+	}
 
-	logger.Debugf("EVMEngine.Execute() tx=%s succeeded logs=%d retLen=%d", tx.Hash().Hex(), len(ex.state.Logs()), len(ret))
-	return endorsement.Success(ex.state.Result(), fxcommon.LogsEventName(logs), logs, ret), nil
+	res := endorsement.Success(rws, fxcommon.ProposalTypeEVMTx, event, payload)
+	switch md.GetStatus() {
+	case endorsementpb.ExecutionStatus_EXECUTION_STATUS_REVERTED:
+		res.Status, res.Message = fxcommon.StatusEVMRevert, message
+	case endorsementpb.ExecutionStatus_EXECUTION_STATUS_EXEC_FAILED:
+		res.Status, res.Message = fxcommon.StatusExecFailure, message
+	}
+	return res, nil
 }
 
 // Call executes a read-only call (eth_call semantics) against the state at blockNumber
@@ -413,7 +430,8 @@ func callMsgToMessage(msg ethereum.CallMsg, baseFee *big.Int, skipNonceCheck, sk
 // forwarded gas, and masking it would let gas-estimation's verification
 // trust a false success for an out-of-gas candidate.
 func (h *Executor) Call(msg ethereum.CallMsg) (ret []byte, maxUsedGas uint64, err error) {
-	return h.execute(callMsgToMessage(msg, h.BlockCtx.BaseFee, true, true))
+	ret, _, maxUsedGas, err = h.execute(callMsgToMessage(msg, h.BlockCtx.BaseFee, true, true))
+	return ret, maxUsedGas, err
 }
 
 // PrepareMessage is the transaction gate: it recovers the sender (validating the
@@ -441,23 +459,24 @@ func (h *Executor) PrepareMessage(tx *types.Transaction) (*core.Message, error) 
 }
 
 // Send validates nonce, converts tx to a message, applies production defaults, and executes.
-func (h *Executor) Send(tx *types.Transaction) ([]byte, error) {
+// usedGas is the gas the transaction used, after refunds.
+func (h *Executor) Send(tx *types.Transaction) (ret []byte, usedGas uint64, err error) {
 	msg, err := h.PrepareMessage(tx)
 	if err != nil {
 		// Invalid transaction rejected before execution (bad signature, nonce, ...).
-		return nil, &TxRejected{err: err}
+		return nil, 0, &TxRejected{err: err}
 	}
 
-	// Return the raw EVM result: on a revert that ret is the revert data (used to
-	// build the revert event); on other faults geth leaves it empty.
-	ret, _, err := h.execute(msg)
-	return ret, err
+	// Return the raw EVM result: on a revert that ret is the revert data; on
+	// other faults geth leaves it empty.
+	ret, usedGas, _, err = h.execute(msg)
+	return ret, usedGas, err
 }
 
 // execute applies production defaults then runs the EVM via ApplyMessage.
 // Gas prices are always zeroed (free gas) so buyGas never requires ETH balance.
 // If MaxTxGas is set, msg.GasLimit is capped before execution.
-func (h *Executor) execute(msg *core.Message) (ret []byte, maxUsedGas uint64, err error) {
+func (h *Executor) execute(msg *core.Message) (ret []byte, usedGas, maxUsedGas uint64, err error) {
 	if msg.GasLimit == 0 {
 		msg.GasLimit = 5_000_000
 	}
@@ -477,10 +496,11 @@ func (h *Executor) execute(msg *core.Message) (ret []byte, maxUsedGas uint64, er
 
 // ApplyMessage runs msg on the EVM exactly as provided, without production defaults.
 // Use this in test infrastructure (testimpl) when real gas pricing is needed.
-// maxUsedGas is go-ethereum's ExecutionResult.MaxUsedGas: gas needed before
-// EIP-3529 refunds are credited (0 if rejected before ApplyMessage). See
-// Call's doc comment for why.
-func (h *Executor) ApplyMessage(msg *core.Message) (ret []byte, maxUsedGas uint64, err error) {
+// usedGas is the gas used after refunds, as a receipt reports it. maxUsedGas is
+// go-ethereum's ExecutionResult.MaxUsedGas: gas needed before EIP-3529 refunds
+// are credited. Both are 0 if rejected before ApplyMessage. See Call's doc
+// comment for why.
+func (h *Executor) ApplyMessage(msg *core.Message) (ret []byte, usedGas, maxUsedGas uint64, err error) {
 	evm := vm.NewEVM(h.BlockCtx, h.state, h.ChainCfg, vm.Config{})
 
 	// Snapshot before execution mirrors geth's approach and allows reverting on error.
@@ -498,7 +518,7 @@ func (h *Executor) ApplyMessage(msg *core.Message) (ret []byte, maxUsedGas uint6
 		// (nonce, funds, intrinsic gas, ...) and would never be accepted in a block.
 		// Snapshot revert mirrors geth.
 		h.state.RevertToSnapshot(snapshot)
-		return nil, 0, &TxRejected{err: err}
+		return nil, 0, 0, &TxRejected{err: err}
 	}
 
 	if result.Err != nil {
@@ -508,13 +528,13 @@ func (h *Executor) ApplyMessage(msg *core.Message) (ret []byte, maxUsedGas uint6
 		// rejection.
 		if errors.Is(result.Err, vm.ErrExecutionReverted) {
 			if reason, uErr := abi.UnpackRevert(result.ReturnData); uErr == nil {
-				return result.ReturnData, result.MaxUsedGas, fmt.Errorf("%w: %v", vm.ErrExecutionReverted, reason)
+				return result.ReturnData, result.UsedGas, result.MaxUsedGas, fmt.Errorf("%w: %v", vm.ErrExecutionReverted, reason)
 			}
-			return result.ReturnData, result.MaxUsedGas, result.Err
+			return result.ReturnData, result.UsedGas, result.MaxUsedGas, result.Err
 		}
-		return result.ReturnData, result.MaxUsedGas, &ExecFailure{err: result.Err}
+		return result.ReturnData, result.UsedGas, result.MaxUsedGas, &ExecFailure{err: result.Err}
 	}
-	return result.ReturnData, result.MaxUsedGas, nil
+	return result.ReturnData, result.UsedGas, result.MaxUsedGas, nil
 }
 
 // TxRejected tags an invalid transaction rejected before execution (nonce, funds,

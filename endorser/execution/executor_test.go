@@ -7,6 +7,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package execution
 
 import (
+	"bytes"
 	"context"
 	"math/big"
 	"testing"
@@ -18,8 +19,10 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/holiman/uint256"
+	"github.com/hyperledger/fabric-x-evm/api/endorsementpb"
 	"github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
+	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	"github.com/hyperledger/fabric-x-sdk/state"
 	_ "modernc.org/sqlite"
 )
@@ -82,14 +85,14 @@ func TestExecute_MaxTxGas(t *testing.T) {
 	// MaxTxGas below intrinsic gas (21000 for a simple transfer) → must fail
 	ex := newExecutor(1_000)
 	defer ex.Close()
-	if _, _, err := ex.execute(msg()); err == nil {
+	if _, _, _, err := ex.execute(msg()); err == nil {
 		t.Fatal("expected error when MaxTxGas < intrinsic gas, got nil")
 	}
 
 	// MaxTxGas at exactly intrinsic gas → simple transfer must succeed
 	ex2 := newExecutor(21_000)
 	defer ex2.Close()
-	if _, gas, err := ex2.execute(msg()); err != nil {
+	if _, gas, _, err := ex2.execute(msg()); err != nil {
 		t.Fatalf("expected success when MaxTxGas == intrinsic gas, got: %v", err)
 	} else if gas == 0 {
 		t.Fatal("expected non-zero usedGas on success")
@@ -98,7 +101,7 @@ func TestExecute_MaxTxGas(t *testing.T) {
 	// MaxTxGas = 0 (unlimited) → declared gas used as-is, must succeed
 	ex3 := newExecutor(0)
 	defer ex3.Close()
-	if _, gas, err := ex3.execute(msg()); err != nil {
+	if _, gas, _, err := ex3.execute(msg()); err != nil {
 		t.Fatalf("expected success when MaxTxGas == 0 (unlimited), got: %v", err)
 	} else if gas == 0 {
 		t.Fatal("expected non-zero usedGas on success")
@@ -214,38 +217,7 @@ func TestNewExecutor_NegativeBlockNumberResolvesToLatest(t *testing.T) {
 // gas than it actually needs on resubmission, since EIP-3529's refund is
 // only credited to the final bill and is never spendable mid-execution.
 func TestCall_ReportsPreRefundGasNotPostRefund(t *testing.T) {
-	backend, err := state.NewWriteDB(Channel, "file:exec_refund?mode=memory&cache=shared")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	contract := newAddress()
-	slot := ethcommon.HexToHash("0x00")
-	// PUSH1 0x00; PUSH1 0x00; SSTORE; STOP -- clears slot 0 to zero.
-	code := []byte{0x60, 0x00, 0x60, 0x00, 0x55, 0x00}
-
-	// Prime the slot with a nonzero original value and commit it, so the
-	// SSTORE-to-zero below actually earns an EIP-3529 clear refund: the
-	// refund only applies when the slot's value *before this transaction*
-	// was nonzero.
-	setup := snapshotDB(t, backend, 0)
-	setup.CreateAccount(contract)
-	setup.SetCode(contract, code, tracing.CodeChangeContractCreation)
-	setup.SetState(contract, slot, ethcommon.HexToHash("0x01"))
-	err = backend.UpdateWorldState(t.Context(), blocks.Block{
-		Number: 0,
-		Transactions: []blocks.Transaction{{
-			ID: "setup", Number: 0, Status: blocks.StatusCommitted,
-			NsRWS: []blocks.NsReadWriteSet{{Namespace: Namespace, RWS: setup.Result()}},
-		}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	kvs := &testVersionedDBSnapshotter{db: backend}
-	cfg := EVMConfig{ChainConfig: common.BuildChainConfig(4011)}
-	eng := NewEVMEngine(Namespace, kvs, cfg, false)
+	eng, contract := newClearingContractEngine(t, "exec_refund")
 
 	ex, err := eng.newExecutor(nil, uint64(1_700_000_000))
 	if err != nil {
@@ -266,6 +238,78 @@ func TestCall_ReportsPreRefundGasNotPostRefund(t *testing.T) {
 	if gotGas != want {
 		t.Errorf("gas = %d, want %d (the pre-refund figure)", gotGas, want)
 	}
+}
+
+// A receipt reports gas after refunds, unlike Call: Execute must carry UsedGas.
+func TestEVMEngineExecute_ReportsPostRefundGas(t *testing.T) {
+	eng, contract := newClearingContractEngine(t, "exec_post_refund")
+
+	res, err := eng.Execute(t.Context(), signTestTx(t, types.NewTransaction(0, contract, big.NewInt(0), 100_000, big.NewInt(1), nil)), 1_700_000_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 26,006 before refunds minus the 4,800 clear refund (under the 1/5 cap).
+	const want = 21_206
+	if got := mustExecutionMetadata(t, res).GetGasUsed(); got != want {
+		t.Errorf("gas used = %d, want %d (the post-refund figure)", got, want)
+	}
+}
+
+// newClearingContractEngine returns an engine whose ledger holds a contract that
+// clears storage slot 0. The slot is primed nonzero and committed, so clearing
+// it earns an EIP-3529 refund: the refund only applies when the slot's value
+// *before this transaction* was nonzero.
+func newClearingContractEngine(t *testing.T, dbName string) (*EVMEngine, ethcommon.Address) {
+	t.Helper()
+	backend := newTestBackend(t, dbName)
+
+	contract := newAddress()
+	// PUSH1 0x00; PUSH1 0x00; SSTORE; STOP -- clears slot 0 to zero.
+	code := []byte{0x60, 0x00, 0x60, 0x00, 0x55, 0x00}
+
+	setup := snapshotDB(t, backend, 0)
+	setup.CreateAccount(contract)
+	setup.SetCode(contract, code, tracing.CodeChangeContractCreation)
+	setup.SetState(contract, ethcommon.HexToHash("0x00"), ethcommon.HexToHash("0x01"))
+	err := backend.UpdateWorldState(t.Context(), blocks.Block{
+		Number: 0,
+		Transactions: []blocks.Transaction{{
+			ID: "setup", Number: 0, Status: blocks.StatusCommitted,
+			NsRWS: []blocks.NsReadWriteSet{{Namespace: Namespace, RWS: setup.Result()}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return newTestEngine(backend), contract
+}
+
+func newTestBackend(t *testing.T, dbName string) *state.VersionedDB {
+	t.Helper()
+	backend, err := state.NewWriteDB(Channel, "file:"+dbName+"?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return backend
+}
+
+func newTestEngine(backend *state.VersionedDB) *EVMEngine {
+	return NewEVMEngine(Namespace, &testVersionedDBSnapshotter{db: backend}, EVMConfig{ChainConfig: common.BuildChainConfig(4011)}, false)
+}
+
+// signTestTx signs tx with a fresh key, so its nonce 0 matches an empty account.
+func signTestTx(t *testing.T, tx *types.Transaction) *types.Transaction {
+	t.Helper()
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed, err := types.SignTx(tx, types.NewEIP155Signer(big.NewInt(4011)), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return signed
 }
 
 // TestEVMEngineExecute_NonRevertFailureIsCommittedNotRejected verifies that a
@@ -304,9 +348,105 @@ func TestEVMEngineExecute_NonRevertFailureIsCommittedNotRejected(t *testing.T) {
 	if len(res.RWS.Writes) == 0 {
 		t.Error("expected RWS to record the sender's nonce increment, got no writes")
 	}
-	// res.EventName reaches the block unchanged, so it is read back exactly as
-	// IsExecFailureEvent sees it on the gateway side.
-	if !common.IsExecFailureEvent(res.EventName) {
-		t.Error("expected EventName to mark an exec failure")
+	// The outcome travels in Payload; invalid opcode burns all the gas.
+	md := mustExecutionMetadata(t, res)
+	if md.GetStatus() != endorsementpb.ExecutionStatus_EXECUTION_STATUS_EXEC_FAILED {
+		t.Errorf("payload status = %v, want exec failed", md.GetStatus())
+	}
+	if md.GetGasUsed() != 100_000 {
+		t.Errorf("gas used = %d, want 100000", md.GetGasUsed())
+	}
+	if len(md.GetReason()) != 0 {
+		t.Errorf("reason = %x, want empty", md.GetReason())
+	}
+}
+
+// mustExecutionMetadata checks the EVM marker and decodes the outcome from Payload.
+func mustExecutionMetadata(t *testing.T, res endorsement.ExecutionResult) *endorsementpb.ExecutionMetadata {
+	t.Helper()
+	if res.EventName != common.ProposalTypeEVMTx {
+		t.Errorf("EventName = %q, want %q", res.EventName, common.ProposalTypeEVMTx)
+	}
+	md, err := common.UnmarshalExecutionMetadata(res.Payload)
+	if err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if md.GetTimestamp() != 1_700_000_000 {
+		t.Errorf("timestamp = %d, want 1700000000", md.GetTimestamp())
+	}
+	return md
+}
+
+// executeCreation runs a contract creation with the given init code on an empty ledger.
+func executeCreation(t *testing.T, dbName string, initCode []byte) endorsement.ExecutionResult {
+	t.Helper()
+	eng := newTestEngine(newTestBackend(t, dbName))
+	res, err := eng.Execute(t.Context(), signTestTx(t, types.NewContractCreation(0, big.NewInt(0), 100_000, big.NewInt(1), initCode)), 1_700_000_000)
+	if err != nil {
+		t.Fatalf("expected a committed outcome, got error: %v", err)
+	}
+	return res
+}
+
+// A revert is committed with its return data as the reason and the gas it used.
+func TestEVMEngineExecute_RevertCarriesReasonInPayload(t *testing.T) {
+	// PUSH4 0xdeadbeef; PUSH1 0; MSTORE; PUSH1 4; PUSH1 28; REVERT
+	res := executeCreation(t, "exec_revert", []byte{0x63, 0xde, 0xad, 0xbe, 0xef, 0x60, 0x00, 0x52, 0x60, 0x04, 0x60, 0x1c, 0xfd})
+
+	if res.Status != common.StatusEVMRevert {
+		t.Errorf("Status = %d, want %d (StatusEVMRevert)", res.Status, common.StatusEVMRevert)
+	}
+	if len(res.Event) != 0 {
+		t.Errorf("Event = %x, want none on a revert", res.Event)
+	}
+	md := mustExecutionMetadata(t, res)
+	if md.GetStatus() != endorsementpb.ExecutionStatus_EXECUTION_STATUS_REVERTED {
+		t.Errorf("payload status = %v, want reverted", md.GetStatus())
+	}
+	if !bytes.Equal(md.GetReason(), []byte{0xde, 0xad, 0xbe, 0xef}) {
+		t.Errorf("reason = %x, want deadbeef", md.GetReason())
+	}
+	if md.GetGasUsed() == 0 || md.GetGasUsed() >= 100_000 {
+		t.Errorf("gas used = %d, want between intrinsic and the limit", md.GetGasUsed())
+	}
+}
+
+// A success carries its logs as the event and the outcome in Payload.
+func TestEVMEngineExecute_SuccessCarriesLogsAndGas(t *testing.T) {
+	// LOG0 of 0 bytes, then STOP
+	res := executeCreation(t, "exec_success", []byte{0x60, 0x00, 0x60, 0x00, 0xa0, 0x00})
+
+	if res.Status != common.StatusOK {
+		t.Errorf("Status = %d, want %d", res.Status, common.StatusOK)
+	}
+	logs, err := common.UnmarshalLogs(res.Event)
+	if err != nil || len(logs) != 1 {
+		t.Fatalf("logs = %v (err %v), want one", logs, err)
+	}
+	md := mustExecutionMetadata(t, res)
+	if md.GetStatus() != endorsementpb.ExecutionStatus_EXECUTION_STATUS_SUCCESS {
+		t.Errorf("payload status = %v, want success", md.GetStatus())
+	}
+	if md.GetGasUsed() == 0 || len(md.GetReason()) != 0 {
+		t.Errorf("gas used = %d reason = %x, want non-zero gas and no reason", md.GetGasUsed(), md.GetReason())
+	}
+}
+
+// Two endorsers executing the same tx must produce identical Payload bytes.
+func TestEVMEngineExecute_PayloadIsDeterministic(t *testing.T) {
+	eng := newTestEngine(newTestBackend(t, "exec_determinism"))
+	// LOG0 of 0 bytes, then STOP
+	signed := signTestTx(t, types.NewContractCreation(0, big.NewInt(0), 100_000, big.NewInt(1), []byte{0x60, 0x00, 0x60, 0x00, 0xa0, 0x00}))
+
+	a, err := eng.Execute(t.Context(), signed, 1_700_000_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := eng.Execute(t.Context(), signed, 1_700_000_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(a.Payload, b.Payload) {
+		t.Errorf("payloads differ: %x vs %x", a.Payload, b.Payload)
 	}
 }

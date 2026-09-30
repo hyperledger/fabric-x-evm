@@ -14,6 +14,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/hyperledger/fabric-x-evm/api/endorsementpb"
 	co "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	sdkstate "github.com/hyperledger/fabric-x-sdk/state"
@@ -39,6 +40,17 @@ func marshaledEthTx(t *testing.T, key *ecdsa.PrivateKey, to common.Address, valu
 	return b
 }
 
+func execPayload(t *testing.T, status endorsementpb.ExecutionStatus, gasUsed uint64) []byte {
+	t.Helper()
+	b, err := co.MarshalExecutionMetadata(&endorsementpb.ExecutionMetadata{Status: status, GasUsed: gasUsed})
+	require.NoError(t, err)
+	return b
+}
+
+func succeededPayload(t *testing.T) []byte {
+	return execPayload(t, endorsementpb.ExecutionStatus_EXECUTION_STATUS_SUCCESS, 21000)
+}
+
 // --- convertToDomain ---
 
 func TestConvertToDomain_ValidTx(t *testing.T) {
@@ -56,7 +68,9 @@ func TestConvertToDomain_ValidTx(t *testing.T) {
 			ID:        "tx-1",
 			Number:    0,
 			Status:    blocks.StatusCommitted,
-			InputArgs: [][]byte{{byte(co.ProposalTypeEVMTx)}, ethb},
+			EventName: co.ProposalTypeEVMTx,
+			InputArgs: [][]byte{ethb},
+			Payload:   succeededPayload(t),
 		}},
 	}
 
@@ -83,7 +97,9 @@ func TestConvertToDomain_InvalidTxStatus(t *testing.T) {
 		Transactions: []blocks.Transaction{{
 			ID:        "tx-bad",
 			Status:    blocks.StatusMVCCConflict, // invalid tx
-			InputArgs: [][]byte{{byte(co.ProposalTypeEVMTx)}, ethb},
+			EventName: co.ProposalTypeEVMTx,
+			InputArgs: [][]byte{ethb},
+			Payload:   succeededPayload(t),
 		}},
 	}
 
@@ -117,7 +133,9 @@ func TestConvertToDomain_InvalidTxDropsLogs(t *testing.T) {
 			ID:        "tx-bad",
 			Status:    blocks.StatusMVCCConflict, // invalid tx, but events survive from simulation
 			Event:     events,
-			InputArgs: [][]byte{{byte(co.ProposalTypeEVMTx)}, ethb},
+			EventName: co.ProposalTypeEVMTx,
+			InputArgs: [][]byte{ethb},
+			Payload:   succeededPayload(t),
 		}},
 	}
 
@@ -128,12 +146,18 @@ func TestConvertToDomain_InvalidTxDropsLogs(t *testing.T) {
 	assert.Empty(t, got.Transactions[0].Logs)
 }
 
-func TestConvertToDomain_SkipsInsufficientInputArgs(t *testing.T) {
+func TestConvertToDomain_SkipsNonEVMTx(t *testing.T) {
+	key, err := crypto.GenerateKey()
+	require.NoError(t, err)
+	ethb := marshaledEthTx(t, key, common.HexToAddress("0x1111111111111111111111111111111111111111"), big.NewInt(100))
+
 	b := blocks.Block{
 		Number: 1,
 		Transactions: []blocks.Transaction{
-			{ID: "tx-no-args", Status: blocks.StatusCommitted, InputArgs: nil},
-			{ID: "tx-one-arg", Status: blocks.StatusCommitted, InputArgs: [][]byte{[]byte("only-one")}},
+			{ID: "tx-no-args", Status: blocks.StatusCommitted, EventName: co.ProposalTypeEVMTx, InputArgs: nil},
+			{ID: "tx-no-marker", Status: blocks.StatusCommitted, InputArgs: [][]byte{ethb}},
+			{ID: "tx-other-event", Status: blocks.StatusCommitted, EventName: "event", InputArgs: [][]byte{ethb}},
+			{ID: "tx-old-layout", Status: blocks.StatusCommitted, EventName: co.ProposalTypeEVMTx, InputArgs: [][]byte{{0xfb}, ethb}},
 		},
 	}
 
@@ -142,13 +166,60 @@ func TestConvertToDomain_SkipsInsufficientInputArgs(t *testing.T) {
 	assert.Len(t, got.Transactions, 0)
 }
 
+// Status and gas come from the Payload; cumulative gas adds up in block order.
+func TestConvertToDomain_StatusAndGasFromPayload(t *testing.T) {
+	key, err := crypto.GenerateKey()
+	require.NoError(t, err)
+	to := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	tx := func(id string, nonce uint64, status blocks.Status, payload []byte) blocks.Transaction {
+		signed, err := types.SignTx(types.NewTransaction(nonce, to, big.NewInt(1), 21000, big.NewInt(0), nil), types.HomesteadSigner{}, key)
+		require.NoError(t, err)
+		raw, err := signed.MarshalBinary()
+		require.NoError(t, err)
+		return blocks.Transaction{ID: id, Status: status, EventName: co.ProposalTypeEVMTx, InputArgs: [][]byte{raw}, Payload: payload}
+	}
+
+	b := blocks.Block{
+		Number: 1,
+		Transactions: []blocks.Transaction{
+			tx("ok", 0, blocks.StatusCommitted, execPayload(t, endorsementpb.ExecutionStatus_EXECUTION_STATUS_SUCCESS, 21000)),
+			tx("revert", 1, blocks.StatusCommitted, execPayload(t, endorsementpb.ExecutionStatus_EXECUTION_STATUS_REVERTED, 30000)),
+			tx("execfail", 2, blocks.StatusCommitted, execPayload(t, endorsementpb.ExecutionStatus_EXECUTION_STATUS_EXEC_FAILED, 50000)),
+			tx("mvcc", 3, blocks.StatusMVCCConflict, execPayload(t, endorsementpb.ExecutionStatus_EXECUTION_STATUS_SUCCESS, 40000)),
+			tx("no-payload", 4, blocks.StatusCommitted, nil),
+			tx("bad-payload", 5, blocks.StatusCommitted, []byte{0xff, 0xff}),
+		},
+	}
+
+	got := ConvertToDomain(b)
+
+	require.Len(t, got.Transactions, 6)
+	want := []struct {
+		status          uint8
+		gas, cumulative uint64
+	}{
+		{1, 21000, 21000},
+		{0, 30000, 51000},
+		{0, 50000, 101000},
+		{0, 0, 101000}, // never ran on-chain
+		{0, 0, 101000},
+		{0, 0, 101000},
+	}
+	for i, w := range want {
+		etx := got.Transactions[i]
+		assert.Equal(t, w.status, etx.Status, "%s status", etx.FabricTxID)
+		assert.Equal(t, w.gas, etx.GasUsed, "%s gas", etx.FabricTxID)
+		assert.Equal(t, w.cumulative, etx.CumulativeGasUsed, "%s cumulative gas", etx.FabricTxID)
+	}
+}
+
 func TestConvertToDomain_SkipsInvalidEthBytes(t *testing.T) {
 	b := blocks.Block{
 		Number: 1,
 		Transactions: []blocks.Transaction{{
 			ID:        "tx-bad-bytes",
 			Status:    blocks.StatusCommitted,
-			InputArgs: [][]byte{nil, []byte("not-an-eth-tx")},
+			InputArgs: [][]byte{[]byte("not-an-eth-tx")},
 		}},
 	}
 

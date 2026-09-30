@@ -8,13 +8,11 @@ package testimpl
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 
 	ethstate "github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
-	fxcommon "github.com/hyperledger/fabric-x-evm/common"
+	"github.com/hyperledger/fabric-x-evm/api/endorsementpb"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
@@ -79,18 +77,14 @@ func (w *ExecutorWrapper) Execute(tx *types.Transaction) (endorsement.ExecutionR
 		return endorsement.ExecutionResult{}, err
 	}
 
-	ret, _, err := w.Executor.ApplyMessage(msg)
+	_, usedGas, _, err := w.Executor.ApplyMessage(msg)
 	if err != nil {
 		return endorsement.ExecutionResult{}, err
 	}
 
-	var logs []byte
-	if l := w.state.Logs(); len(l) > 0 {
-		logs, err = json.Marshal(l)
-		if err != nil {
-			return endorsement.ExecutionResult{}, errors.New("error marshaling logs")
-		}
-	}
-
-	return endorsement.Success(w.state.Result(), fxcommon.LogsEventName(logs), logs, ret), nil
+	return execution.NewResult(w.state.Result(), w.state.Logs(), &endorsementpb.ExecutionMetadata{
+		Status:    endorsementpb.ExecutionStatus_EXECUTION_STATUS_SUCCESS,
+		GasUsed:   usedGas,
+		Timestamp: w.Executor.BlockCtx.Time,
+	}, "")
 }

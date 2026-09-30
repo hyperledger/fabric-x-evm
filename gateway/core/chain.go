@@ -7,7 +7,6 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package core
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
@@ -149,21 +148,27 @@ func ConvertToDomain(b blocks.Block) domain.Block {
 	}
 
 	logIndex := int64(0) // logIndex is the index of the log in the block
+	cumulativeGas := uint64(0)
 	for _, tx := range b.Transactions {
 		// retrieve the Ethereum transaction from the chaincode invocation
-		if len(tx.InputArgs) < 2 || !bytes.Equal(tx.InputArgs[0], []byte{byte(fc.ProposalTypeEVMTx)}) {
+		ethTxBytes, ok := fc.EVMTx(tx)
+		if !ok {
 			// skip non-eth tx
 			continue
 		}
+		succeeded, gasUsed := fc.ExecutionOutcome(tx)
 		status := uint8(0)
-		if tx.Valid() && !fc.IsRevertEvent(tx.EventName) && !fc.IsExecFailureEvent(tx.EventName) {
+		if succeeded {
 			status = 1
 		}
+		cumulativeGas += gasUsed
 
-		etx, err := convertTransaction(tx.InputArgs[1], b.Hash, b.Number, tx.Number, tx.ID, status, tx.Status, tx.Event, &logIndex)
+		etx, err := convertTransaction(ethTxBytes, b.Hash, b.Number, tx.Number, tx.ID, status, tx.Status, tx.Event, &logIndex)
 		if err != nil {
 			panic(err) // we surface this for now instead of swallowing it
 		}
+		etx.GasUsed = gasUsed
+		etx.CumulativeGasUsed = cumulativeGas
 
 		ebl.Transactions = append(ebl.Transactions, etx)
 	}
