@@ -21,6 +21,7 @@ import (
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-evm/api/endorsementpb"
 	"github.com/hyperledger/fabric-x-evm/common"
+	"github.com/hyperledger/fabric-x-evm/endorser/api"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
 
@@ -31,13 +32,13 @@ func (s *Server) Execute(ctx context.Context, req *endorsementpb.ExecuteRequest)
 	if err := tx.UnmarshalBinary(req.GetEthereumTx()); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "unmarshal tx: %v", err)
 	}
-	// Proto3 default 0 means "unset"; map to time.Time{} so the endorser
-	// returns a clear "timestamp is required" application error.
-	var ts time.Time
+	// Proto3 default 0 means "unset"; map to time.Time{} / 0 so the endorser
+	// returns a clear "is required" application error.
+	env := api.BlockEnv{Number: req.GetBlockNumber()}
 	if sec := req.GetTimestamp(); sec != 0 {
-		ts = time.Unix(sec, 0).UTC()
+		env.Time = time.Unix(sec, 0).UTC()
 	}
-	resp, err := s.svc.Execute(ctx, invocation(req), tx, ts)
+	resp, err := s.svc.Execute(ctx, invocation(req), tx, env)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "execute: %v", err)
 	}

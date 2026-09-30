@@ -40,6 +40,10 @@ message ExecuteRequest {
     // Unix seconds for EVM block.timestamp. Set once by the gateway at request
     // construction so all endorsers share the same value.
     int64 timestamp = 4;
+
+    // EVM block.number for execution. Set once by the gateway (its height + 1)
+    // so all endorsers share the same value.
+    uint64 block_number = 5;
 }
 
 // Invocation carries the parts of the sender's invocation that the endorsement

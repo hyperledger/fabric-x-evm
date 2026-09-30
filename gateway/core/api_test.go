@@ -11,8 +11,13 @@ import (
 	"math"
 	"math/big"
 	"testing"
+	"time"
 
+	"github.com/ethereum/go-ethereum"
 	ethcommon "github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
+	"github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -120,6 +125,35 @@ func TestSendTransaction_DuplicateRejected(t *testing.T) {
 	require.ErrorIs(t, err, domain.ErrTransactionAlreadyPending)
 
 	assert.NotNil(t, g.TxQueue.IsPending(tx.Hash()))
+}
+
+// A transaction executes in the next block, stamped with the current time.
+func TestExecuteEthTx_UsesNextBlock(t *testing.T) {
+	stub := &stubEndorser{execResp: &peer.ProposalResponse{Response: &peer.Response{Status: common.StatusOK}}}
+	g := &Gateway{store: &stubStore{blockNumber: 42}, endorsers: signingClient(stub)}
+	tx := types.NewTx(&types.LegacyTx{Gas: 21000, GasPrice: big.NewInt(0)})
+
+	before := time.Now()
+	_, err := g.ExecuteEthTx(context.Background(), tx)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(43), stub.lastEnv.Number)
+	assert.WithinDuration(t, before, stub.lastEnv.Time, time.Second)
+}
+
+// Latest estimates run against the next block, the one Execute will use;
+// explicit block numbers pass through.
+func TestEstimateGas_LatestUsesNextBlock(t *testing.T) {
+	stub := &stubEndorser{callGas: 21000}
+	g := &Gateway{store: &stubStore{blockNumber: 42}, endorsers: newClient(stub)}
+	ctx := context.Background()
+
+	_, err := g.EstimateGas(ctx, ethereum.CallMsg{}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, big.NewInt(43), stub.lastCallBlock)
+
+	_, err = g.EstimateGas(ctx, ethereum.CallMsg{}, big.NewInt(10))
+	require.NoError(t, err)
+	assert.Equal(t, big.NewInt(10), stub.lastCallBlock)
 }
 
 // The gateway's state readers forward straight to the endorsers.

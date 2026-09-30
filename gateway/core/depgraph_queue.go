@@ -88,9 +88,10 @@ func hashFromTxRefID(id string) (common.Hash, bool) {
 	return common.BytesToHash(raw), true
 }
 
-// txEndorser produces the read-write set the manager schedules on.
+// txEndorser produces the read-write set the manager schedules on. Satisfied by
+// *Gateway, so this endorsement uses the same block context as the real one.
 type txEndorser interface {
-	ExecuteTransaction(ctx context.Context, tx *types.Transaction) (sdk.Endorsement, error)
+	ExecuteEthTx(ctx context.Context, tx *types.Transaction) (sdk.Endorsement, error)
 }
 
 // trackedTx is one transaction between Enqueue and Complete.
@@ -213,9 +214,9 @@ func NewDepGraphQueue(cfg *config.DepGraphQueue) *DepGraphQueue {
 	return q
 }
 
-// Bind supplies the endorsement client and starts the goroutines that use it.
+// Bind supplies the endorser and starts the goroutines that use it.
 // It is separate from the constructor because BuildGateway only creates the
-// client after the queue.
+// gateway after the queue.
 //
 // The workers start here rather than in the constructor so that the endorser is
 // written before the goroutines that read it exist. That ordering is what makes
@@ -282,7 +283,7 @@ func (q *DepGraphQueue) submitToManager(tx *types.Transaction) {
 	hash := tx.Hash()
 	depGraphLogger.Debugf("DepGraphQueue.submitToManager() endorsing tx %s", hash.Hex())
 
-	end, err := q.endorser.ExecuteTransaction(q.ctx, tx)
+	end, err := q.endorser.ExecuteEthTx(q.ctx, tx)
 	if err != nil {
 		depGraphLogger.Errorf("endorse tx %s: %v", hash.Hex(), err)
 		q.drop(hash)

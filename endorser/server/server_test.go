@@ -13,7 +13,6 @@ import (
 	"math/big"
 	"net"
 	"testing"
-	"time"
 
 	"github.com/ethereum/go-ethereum"
 	ethcommon "github.com/ethereum/go-ethereum/common"
@@ -28,6 +27,7 @@ import (
 
 	"github.com/hyperledger/fabric-x-evm/api/endorsementpb"
 	"github.com/hyperledger/fabric-x-evm/common"
+	"github.com/hyperledger/fabric-x-evm/endorser/api"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
 
@@ -49,12 +49,12 @@ type stubService struct {
 	gotInv   endorsement.Invocation
 	gotMsg   *ethereum.CallMsg
 	gotBlock *big.Int
-	gotTS    time.Time
+	gotEnv   api.BlockEnv
 }
 
-func (s *stubService) Execute(_ context.Context, inv endorsement.Invocation, _ *types.Transaction, ts time.Time) (*peer.ProposalResponse, error) {
+func (s *stubService) Execute(_ context.Context, inv endorsement.Invocation, _ *types.Transaction, env api.BlockEnv) (*peer.ProposalResponse, error) {
 	s.gotInv = inv
-	s.gotTS = ts
+	s.gotEnv = env
 	return s.execResp, s.execErr
 }
 func (s *stubService) Call(_ context.Context, msg *ethereum.CallMsg, blockNumber *big.Int) ([]byte, uint64, error) {
@@ -254,9 +254,9 @@ func TestExecute_MapsProposalResponse(t *testing.T) {
 	}
 }
 
-// Proto timestamp 0 is "unset" and becomes a zero time.Time; a non-zero Unix
-// second is forwarded to the service.
-func TestExecute_ForwardsTimestamp(t *testing.T) {
+// Proto timestamp / block number 0 is "unset" and becomes a zero value; set
+// values are forwarded to the service.
+func TestExecute_ForwardsBlockEnv(t *testing.T) {
 	svc := &stubService{execResp: &peer.ProposalResponse{Response: &peer.Response{Status: common.StatusOK}}}
 	client := newTestClient(t, svc)
 
@@ -266,16 +266,16 @@ func TestExecute_ForwardsTimestamp(t *testing.T) {
 	if _, err := client.Execute(context.Background(), &endorsementpb.ExecuteRequest{EthereumTx: raw, Timestamp: 0}); err != nil {
 		t.Fatalf("timestamp 0: %v", err)
 	}
-	if !svc.gotTS.IsZero() {
-		t.Errorf("timestamp 0: got %v, want zero time", svc.gotTS)
+	if svc.gotEnv != (api.BlockEnv{}) {
+		t.Errorf("unset: got %+v, want zero BlockEnv", svc.gotEnv)
 	}
 
 	want := int64(1_700_000_123)
-	if _, err := client.Execute(context.Background(), &endorsementpb.ExecuteRequest{EthereumTx: raw, Timestamp: want}); err != nil {
-		t.Fatalf("timestamp set: %v", err)
+	if _, err := client.Execute(context.Background(), &endorsementpb.ExecuteRequest{EthereumTx: raw, Timestamp: want, BlockNumber: 9}); err != nil {
+		t.Fatalf("set: %v", err)
 	}
-	if svc.gotTS.Unix() != want {
-		t.Errorf("timestamp = %d, want %d", svc.gotTS.Unix(), want)
+	if svc.gotEnv.Time.Unix() != want || svc.gotEnv.Number != 9 {
+		t.Errorf("env = %+v, want time %d number 9", svc.gotEnv, want)
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"math"
 	"math/big"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
@@ -19,6 +20,7 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	cmn "github.com/hyperledger/fabric-x-evm/common"
+	eapi "github.com/hyperledger/fabric-x-evm/endorser/api"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
@@ -209,13 +211,37 @@ func (g *Gateway) CallContract(ctx context.Context, call ethereum.CallMsg, block
 }
 
 // EstimateGas simulates a call against the endorser and returns EVM usedGas.
+// Latest/pending estimates run against the next block, like ExecuteEthTx, so
+// block.number-dependent gas (e.g. a new Votes checkpoint) is not underestimated.
 func (g *Gateway) EstimateGas(ctx context.Context, call ethereum.CallMsg, blockNumber *big.Int) (uint64, error) {
+	if blockNumber == nil || blockNumber.Sign() < 0 {
+		next, err := g.nextBlockNumber(ctx)
+		if err != nil {
+			return 0, err
+		}
+		blockNumber = new(big.Int).SetUint64(next)
+	}
 	return g.endorsers.EstimateGas(ctx, call, blockNumber)
 }
 
 // ExecuteEthTx requests endorsements for the submitted ethereum-style transaction.
+// It executes as part of the next block: EVM block.number is the current height + 1,
+// block.timestamp is now.
 func (g *Gateway) ExecuteEthTx(ctx context.Context, tx *types.Transaction) (sdk.Endorsement, error) {
-	return g.endorsers.ExecuteTransaction(ctx, tx)
+	next, err := g.nextBlockNumber(ctx)
+	if err != nil {
+		return sdk.Endorsement{}, err
+	}
+	return g.endorsers.ExecuteTransaction(ctx, tx, eapi.BlockEnv{Number: next, Time: time.Now()})
+}
+
+// nextBlockNumber is the block a transaction submitted now is expected to land in.
+func (g *Gateway) nextBlockNumber(ctx context.Context) (uint64, error) {
+	height, err := g.store.BlockNumber(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("block number: %w", err)
+	}
+	return height + 1, nil
 }
 
 // SubmitFabricTx submits a Fabric envelope via the BatchSubmitter. hash is the originating

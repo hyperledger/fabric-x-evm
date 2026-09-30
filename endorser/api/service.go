@@ -24,6 +24,14 @@ import (
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
 
+// BlockEnv is the EVM block context the gateway picks once per transaction.
+type BlockEnv struct {
+	// Number is EVM block.number: the gateway's ledger height + 1.
+	Number uint64
+	// Time is EVM block.timestamp (wall time, truncated to the Unix second).
+	Time time.Time
+}
+
 // Service is one typed method per endorser function, mirroring the EVM engine.
 // Execute is the only method that produces an endorsement; the read-only
 // methods return plain values.
@@ -35,14 +43,14 @@ type Service interface {
 	// Execute endorses an Ethereum transaction. The signed response carries the
 	// outcome in its Status (OK, revert, rejected, exec failure, server error).
 	//
-	// timestamp is the gateway-supplied wall time used as EVM block.timestamp.
-	// Every endorser must receive the same value so RWsets match.
-	// The endorser validates it against a configured clock skew window.
+	// env is the gateway-supplied EVM block context. Every endorser must receive
+	// the same value so RWsets match; each validates it against its own clock
+	// and ledger height.
 	//
 	// It returns a *peer.ProposalResponse because the gateway packages it into
 	// an sdk.Endorsement, and both SDK packagers require one. Dropping it
 	// depends on the fabricx.TxPackager change tracked for the client PR.
-	Execute(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction, timestamp time.Time) (*peer.ProposalResponse, error)
+	Execute(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction, env BlockEnv) (*peer.ProposalResponse, error)
 
 	// Call runs a read-only eth_call. On an EVM revert or a failed execution it
 	// returns a *common.CallError; the revert payload is returned alongside it.

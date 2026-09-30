@@ -43,8 +43,11 @@ type EVMConfig struct {
 // NewSnapshot takes an optional block height: nil means latest committed state;
 // a non-nil value means that exact height (including 0 for genesis / earliest).
 // Callers must not use 0 as a "latest" sentinel.
+//
+// BlockNumber returns the latest committed height.
 type KVSSnapshotter interface {
 	NewSnapshot(blockNumber *uint64) (ReadStore, error)
+	BlockNumber(ctx context.Context) (uint64, error)
 }
 
 // EVMEngine manages EVM execution and state reads for an endorser.
@@ -69,17 +72,23 @@ func NewEVMEngine(namespace string, kvs KVSSnapshotter, evmConfig EVMConfig, mon
 	}
 }
 
+// BlockNumber returns the latest committed block height of the endorser's state.
+func (e *EVMEngine) BlockNumber(ctx context.Context) (uint64, error) {
+	return e.kvs.BlockNumber(ctx)
+}
+
 // Execute runs a state-changing transaction and returns the EVM result,
 // the Fabric read-write set, and any EVM logs emitted.
 // State is always read from the latest block: endorsement must simulate against current state
 // so that the resulting read-write set passes MVCC validation at commit time.
 // Reverts produce a valid endorsement (Status 201 + revert event) instead of an error.
 //
-// blockTime is the gateway-supplied Unix second for EVM block.timestamp. It is required
-// (non-zero); the gateway always stamps one value per ExecuteTransaction.
-func (e *EVMEngine) Execute(ctx context.Context, tx *types.Transaction, blockTime uint64) (endorsement.ExecutionResult, error) {
-	logger.Debugf("EVMEngine.Execute() called with tx=%s blockTime=%d", tx.Hash().Hex(), blockTime)
-	ex, err := e.newExecutor(nil, blockTime)
+// blockNumber and blockTime are the gateway-supplied EVM block.number and block.timestamp
+// (Unix second). blockTime is required (non-zero); the gateway always stamps one value per
+// ExecuteTransaction.
+func (e *EVMEngine) Execute(ctx context.Context, tx *types.Transaction, blockNumber, blockTime uint64) (endorsement.ExecutionResult, error) {
+	logger.Debugf("EVMEngine.Execute() called with tx=%s blockNumber=%d blockTime=%d", tx.Hash().Hex(), blockNumber, blockTime)
+	ex, err := e.newExecutor(nil, new(big.Int).SetUint64(blockNumber), blockTime)
 	if err != nil {
 		logger.Warnf("EVMEngine.Execute() tx=%s failed to create executor: %v", tx.Hash().Hex(), err)
 		return endorsement.ExecutionResult{}, err
@@ -134,7 +143,8 @@ func (e *EVMEngine) Execute(ctx context.Context, tx *types.Transaction, blockTim
 }
 
 // Call executes a read-only call (eth_call semantics) against the state at blockNumber
-// (0 / nil = latest). The EVM block context is not reconstructed for historical blocks —
+// (nil = latest). NUMBER is blockNumber, or the latest committed height for latest.
+// The rest of the EVM block context is not reconstructed for historical blocks —
 // with all forks enabled from block 0 this is harmless.
 //
 // TIMESTAMP uses the endorser's wall clock (Unix seconds) so view functions see a time
@@ -145,7 +155,15 @@ func (e *EVMEngine) Execute(ctx context.Context, tx *types.Transaction, blockTim
 func (e *EVMEngine) Call(msg ethereum.CallMsg, blockNumber *big.Int) (ret []byte, maxUsedGas uint64, err error) {
 	logger.Debugf("EVMEngine.Call() called with to=%s blockNumber=%v", msg.To, blockNumber)
 	blockTime := uint64(time.Now().Unix())
-	ex, err := e.newExecutor(blockNumber, blockTime)
+	evmNumber := blockNumber
+	if blockNumber == nil || blockNumber.Sign() < 0 { // latest
+		height, err := e.kvs.BlockNumber(context.TODO())
+		if err != nil {
+			return nil, 0, fmt.Errorf("latest block number: %w", err)
+		}
+		evmNumber = new(big.Int).SetUint64(height)
+	}
+	ex, err := e.newExecutor(blockNumber, evmNumber, blockTime)
 	if err != nil {
 		logger.Warnf("EVMEngine.Call() failed to create executor: %v", err)
 		return nil, 0, err
@@ -211,10 +229,10 @@ func resolveStateBlockRef(blockNumber *big.Int) *uint64 {
 }
 
 // newExecutor creates a fresh executor with an isolated StateDB.
-// blockNumber selects the Fabric block height for the state snapshot (nil = latest).
-// blockTime is the Unix second used for EVM block.timestamp (required, non-zero).
-func (e *EVMEngine) newExecutor(blockNumber *big.Int, blockTime uint64) (*Executor, error) {
-	ref := resolveStateBlockRef(blockNumber)
+// stateRef selects the Fabric block height for the state snapshot (nil = latest).
+// evmNumber and blockTime are EVM block.number and block.timestamp (blockTime required, non-zero).
+func (e *EVMEngine) newExecutor(stateRef, evmNumber *big.Int, blockTime uint64) (*Executor, error) {
+	ref := resolveStateBlockRef(stateRef)
 
 	// Begin a new reader to get snapshot isolation
 	reader, err := e.kvs.NewSnapshot(ref)
@@ -230,7 +248,7 @@ func (e *EVMEngine) newExecutor(blockNumber *big.Int, blockTime uint64) (*Execut
 	}
 	state := NewStateDBLogger(stateDB)
 
-	ex, err := NewExecutor(state, reader, blockNumber, blockTime, e.evmConfig)
+	ex, err := NewExecutor(state, reader, evmNumber, blockTime, e.evmConfig)
 	if err != nil {
 		reader.Close()
 		return nil, err

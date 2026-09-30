@@ -55,7 +55,7 @@ func (e *keyedEndorser) calls() int {
 	return e.n
 }
 
-func (e *keyedEndorser) ExecuteTransaction(_ context.Context, tx *types.Transaction) (sdk.Endorsement, error) {
+func (e *keyedEndorser) ExecuteEthTx(_ context.Context, tx *types.Transaction) (sdk.Endorsement, error) {
 	e.mu.Lock()
 	e.n++
 	err, keys := e.err, e.keys[tx.Hash()]

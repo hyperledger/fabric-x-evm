@@ -76,12 +76,6 @@ func BuildGateway(ctx context.Context, local eapi.Service, remotes []eapi.Servic
 	if txQueue == nil {
 		txQueue = core.NewDepGraphQueue(queueCfg)
 	}
-	// The dependency-manager queue endorses on the way in, to learn which keys a
-	// transaction touches. It is built before the endorsement client exists, so
-	// the client is bound here rather than passed to its constructor.
-	if dq, ok := txQueue.(*core.DepGraphQueue); ok {
-		dq.Bind(ec)
-	}
 	endorsementChan := make(chan core.EndorsedTx, endorsementChanSize)
 	// txQueue as Completer: a submission failure means the tx will never reach a block, so
 	// it must be completed here instead of leaking forever waiting for a commit that won't come.
@@ -91,6 +85,12 @@ func BuildGateway(ctx context.Context, local eapi.Service, remotes []eapi.Servic
 	gw, err := core.New(ec, batchSubmitter, chain, netCfg.ChainID, workerCount, txQueue, nonceGate, endorsementChan)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gateway: %w", err)
+	}
+	// The dependency-manager queue endorses on the way in, to learn which keys a
+	// transaction touches. It is built before the gateway exists, so the gateway
+	// is bound here rather than passed to its constructor.
+	if dq, ok := txQueue.(*core.DepGraphQueue); ok {
+		dq.Bind(gw)
 	}
 
 	return gw, nil

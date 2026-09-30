@@ -27,6 +27,13 @@ const (
 	DefaultTimestampPastSkew = 60 * time.Second
 )
 
+// Defaults for gateway-supplied EVM block.number validation, in blocks relative
+// to the endorser's height + 1. They absorb sync lag between gateway and endorser.
+const (
+	DefaultBlockNumberAhead  = 5
+	DefaultBlockNumberBehind = 20
+)
+
 // Endorser contains configuration for the embedded endorser peer.
 type Endorser struct {
 	// Name is purely used for logging.
@@ -41,6 +48,12 @@ type Endorser struct {
 	// MaxTimestampPast is how far behind local time a request timestamp may be.
 	// Zero means DefaultTimestampPastSkew.
 	MaxTimestampPast time.Duration `mapstructure:"max-timestamp-past" yaml:"max-timestamp-past"`
+	// MaxBlockNumberAhead is how far a request block number may be ahead of the
+	// endorser's height + 1. Zero means DefaultBlockNumberAhead.
+	MaxBlockNumberAhead uint64 `mapstructure:"max-block-number-ahead" yaml:"max-block-number-ahead"`
+	// MaxBlockNumberBehind is how far a request block number may be behind the
+	// endorser's height + 1. Zero means DefaultBlockNumberBehind.
+	MaxBlockNumberBehind uint64 `mapstructure:"max-block-number-behind" yaml:"max-block-number-behind"`
 	// Server configures the gRPC server this endorser is reached on by other
 	// orgs' gateways. Nil means it is never served over gRPC.
 	Server *serve.ServerConfig `mapstructure:"server" yaml:"server"`
@@ -60,6 +73,22 @@ func (cfg Endorser) TimestampPastSkew() time.Duration {
 		return DefaultTimestampPastSkew
 	}
 	return cfg.MaxTimestampPast
+}
+
+// BlockNumberAhead returns the configured ahead window, or the default.
+func (cfg Endorser) BlockNumberAhead() uint64 {
+	if cfg.MaxBlockNumberAhead == 0 {
+		return DefaultBlockNumberAhead
+	}
+	return cfg.MaxBlockNumberAhead
+}
+
+// BlockNumberBehind returns the configured behind window, or the default.
+func (cfg Endorser) BlockNumberBehind() uint64 {
+	if cfg.MaxBlockNumberBehind == 0 {
+		return DefaultBlockNumberBehind
+	}
+	return cfg.MaxBlockNumberBehind
 }
 
 // Supported values for DB.Database.

@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"math/big"
 	"sync"
-	"time"
 
 	"github.com/ethereum/go-ethereum"
 	ethcommon "github.com/ethereum/go-ethereum/common"
@@ -59,7 +58,9 @@ func NewEndorsementClient(local api.Service, remotes []api.Service, invBuilder e
 	}, nil
 }
 
-func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Transaction) (sdk.Endorsement, error) {
+// ExecuteTransaction endorses tx on every endorser. They all execute with the same
+// env so their RWsets match.
+func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Transaction, env api.BlockEnv) (sdk.Endorsement, error) {
 	// Marshal the transaction for the invocation args
 	ethTxBytes, err := tx.MarshalBinary()
 	if err != nil {
@@ -72,9 +73,6 @@ func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Tra
 		return sdk.Endorsement{}, err
 	}
 
-	// Single timestamp for all endorsers so RWsets match.
-	reqTime := time.Now()
-
 	// Derive a cancellable context so goroutines can stop early on error
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -85,7 +83,7 @@ func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Tra
 
 	for i, end := range e.endorsers {
 		processEndorsement := func(index int, endorser api.Service) {
-			pResp, err := endorser.Execute(ctx, inv, tx, reqTime)
+			pResp, err := endorser.Execute(ctx, inv, tx, env)
 			if err != nil {
 				// A Go error is a transport/delivery failure (e.g. gRPC), not a tx outcome.
 				errs[index] = fmt.Errorf("call endorser: %w", err)
