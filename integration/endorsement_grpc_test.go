@@ -80,7 +80,7 @@ func startGRPCServer(t *testing.T, svc eapi.Service, certs mtlsCerts) string {
 	addr := cfg.GRPC.Endpoint.Address()
 
 	ctx := t.Context()
-	srv := eserver.New(svc)
+	srv := eserver.New(svc, nil)
 	go func() {
 		if err := srv.Serve(ctx, cfg); err != nil && ctx.Err() == nil {
 			t.Logf("server exited: %v", err)

@@ -23,8 +23,13 @@ import (
 	"testing"
 	"time"
 
+	ethcommon "github.com/ethereum/go-ethereum/common"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/health"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/status"
 
 	"github.com/hyperledger/fabric-x-evm/common"
 )
@@ -133,7 +138,8 @@ func serveHostnameOnlyTLS(t *testing.T, hostname string) (addr, caPath string) {
 // and returns the resulting error.
 func probe(t *testing.T, c *Client) error {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// A failed handshake now waits out the deadline (WaitForReady), so keep it short.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	return c.conn.Invoke(ctx, "/probe/Probe", &struct{}{}, &struct{}{})
 }
@@ -215,5 +221,135 @@ func TestDial_InvalidCertContent_ReturnsBuildError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "build transport credentials") {
 		t.Errorf("error = %q, want it to mention building transport credentials", err.Error())
+	}
+}
+
+// A call made while the endorser is down must wait for it to come back rather
+// than fail fast with Unavailable, as after a container or pod restart.
+func TestDial_CallWaitsForRestartedEndorser(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := lis.Addr().(*net.TCPAddr)
+	_ = lis.Close() // endorser is down
+
+	c, err := Dial(common.ClientConfig{Endpoint: &common.Endpoint{Host: "127.0.0.1", Port: addr.Port}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.NonceAt(context.Background(), ethcommon.Address{}, nil)
+		done <- err
+	}()
+
+	time.Sleep(time.Second) // let the first connection attempts fail
+	lis, err = net.Listen("tcp", addr.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := grpc.NewServer()
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(srv.Stop)
+
+	// The server registers no services, so reaching it yields Unimplemented.
+	if err := <-done; status.Code(err) != codes.Unimplemented {
+		t.Fatalf("call error = %v, want Unimplemented from the restarted server", err)
+	}
+}
+
+// dialHealthServer serves a health service reporting status and dials it.
+func dialHealthServer(t *testing.T, status healthpb.HealthCheckResponse_ServingStatus) *Client {
+	t.Helper()
+	c, _ := dialHealth(t, status)
+	return c
+}
+
+func dialHealth(t *testing.T, status healthpb.HealthCheckResponse_ServingStatus) (*Client, *health.Server) {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hs := health.NewServer()
+	hs.SetServingStatus("", status)
+	srv := grpc.NewServer()
+	healthpb.RegisterHealthServer(srv, hs)
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(srv.Stop)
+
+	c, err := Dial(common.ClientConfig{Endpoint: &common.Endpoint{Host: "127.0.0.1", Port: lis.Addr().(*net.TCPAddr).Port}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	return c, hs
+}
+
+func TestProbe_HealthyEndorser(t *testing.T) {
+	if err := dialHealthServer(t, healthpb.HealthCheckResponse_SERVING).Probe(context.Background()); err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+}
+
+// A reachable endorser that is not synced must not probe as healthy.
+func TestProbe_NotServingIsAnError(t *testing.T) {
+	err := dialHealthServer(t, healthpb.HealthCheckResponse_NOT_SERVING).Probe(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "NOT_SERVING") {
+		t.Fatalf("Probe error = %v, want NOT_SERVING", err)
+	}
+}
+
+// A TLS misconfiguration must surface through Probe with its cause, not as a bare timeout.
+func TestProbe_ReportsTLSFailure(t *testing.T) {
+	addr, caPath := serveHostnameOnlyTLS(t, "endorser.example.com")
+	c := dialHostnameOnlyServer(t, addr, caPath, "")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	err := c.Probe(ctx)
+	if err == nil || !strings.Contains(err.Error(), "certificate") {
+		t.Fatalf("Probe error = %v, want it to name the certificate failure", err)
+	}
+}
+
+// Monitor reports the initial state and then only transitions, so an endorser
+// that becomes ready after startup is logged as such.
+func TestMonitor_ReportsTransitions(t *testing.T) {
+	c, hs := dialHealth(t, healthpb.HealthCheckResponse_NOT_SERVING)
+
+	changes := make(chan error, 10)
+	ctx := t.Context()
+	go c.Monitor(ctx, 10*time.Millisecond, func(err error) { changes <- err })
+
+	next := func() error {
+		t.Helper()
+		select {
+		case err := <-changes:
+			return err
+		case <-time.After(2 * time.Second):
+			t.Fatal("no health change reported")
+			return nil
+		}
+	}
+
+	if err := next(); err == nil {
+		t.Fatal("first report = healthy, want NOT_SERVING")
+	}
+	hs.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
+	if err := next(); err != nil {
+		t.Fatalf("report after recovery = %v, want healthy", err)
+	}
+	hs.SetServingStatus("", healthpb.HealthCheckResponse_NOT_SERVING)
+	if err := next(); err == nil {
+		t.Fatal("report after degradation = healthy, want NOT_SERVING")
+	}
+
+	time.Sleep(50 * time.Millisecond) // several probes, no change
+	if len(changes) != 0 {
+		t.Fatalf("%d reports without a health change", len(changes))
 	}
 }

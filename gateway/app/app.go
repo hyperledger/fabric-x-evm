@@ -313,6 +313,24 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 	}, nil
 }
 
+// endorserHealthInterval is how often remote endorser health is re-checked.
+const endorserHealthInterval = 5 * time.Second
+
+// monitorRemoteEndorsers logs each remote endorser's health at startup and on
+// every change, so misconfiguration (e.g. TLS) and recovery both show up.
+func (a *App) monitorRemoteEndorsers(ctx context.Context) {
+	for i, c := range a.endorserConns {
+		addr := a.cfg.Gateway.Endorsers[i].Endpoint.Address()
+		go c.Monitor(ctx, endorserHealthInterval, func(err error) {
+			if err != nil {
+				appLogger.Warnf("remote endorser %s is not reachable or not ready: %v", addr, err)
+				return
+			}
+			appLogger.Infof("remote endorser %s is ready", addr)
+		})
+	}
+}
+
 // Run starts the application and blocks until a signal is received or a fatal error occurs.
 func (a *App) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
@@ -321,6 +339,7 @@ func (a *App) Run(ctx context.Context) error {
 	g, gctx := errgroup.WithContext(ctx)
 
 	g.Go(func() error { return a.synchronizer.Start(gctx) })
+	a.monitorRemoteEndorsers(gctx)
 
 	// Wait for initial sync before serving traffic
 	if err := synchronizer.WaitUntilSynced(gctx, a.synchronizer, a.cfg.Synchronizer.SyncTimeout()); err != nil {
@@ -336,7 +355,7 @@ func (a *App) Run(ctx context.Context) error {
 	// which builds its endorser directly.
 	if a.cfg.Endorser != nil && a.cfg.Endorser.Server != nil {
 		g.Go(func() error {
-			return eserver.ServeEndorser(gctx, a.localEndorser, a.cfg.Endorser.Server)
+			return eserver.ServeEndorser(gctx, a.localEndorser, a.synchronizer.Ready, a.cfg.Endorser.Server)
 		})
 	}
 

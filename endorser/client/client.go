@@ -9,6 +9,7 @@ package client
 
 import (
 	"context"
+	"fmt"
 	"math/big"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"google.golang.org/grpc"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
 	"github.com/hyperledger/fabric-x-evm/api/endorsementpb"
 	"github.com/hyperledger/fabric-x-evm/common"
@@ -40,6 +42,45 @@ func (c *Client) Close() error {
 		return nil
 	}
 	return c.conn.Close()
+}
+
+// Probe checks the endorser's health service, surfacing connection errors such as TLS failures.
+func (c *Client) Probe(ctx context.Context) error {
+	resp, err := healthpb.NewHealthClient(c.conn).Check(ctx, &healthpb.HealthCheckRequest{})
+	if err != nil {
+		return err
+	}
+	if s := resp.GetStatus(); s != healthpb.HealthCheckResponse_SERVING {
+		return fmt.Errorf("endorser health: %s", s)
+	}
+	return nil
+}
+
+// Monitor probes the endorser every interval until ctx is done and calls
+// onChange with the probe result on the first probe and whenever health flips.
+func (c *Client) Monitor(ctx context.Context, interval time.Duration, onChange func(err error)) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	first := true
+	wasHealthy := false
+	for {
+		pctx, cancel := context.WithTimeout(ctx, interval)
+		err := c.Probe(pctx)
+		cancel()
+		if ctx.Err() != nil {
+			return
+		}
+		if healthy := err == nil; first || healthy != wasHealthy {
+			onChange(err)
+			first = false
+			wasHealthy = healthy
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
 }
 
 // Execute endorses an Ethereum transaction. A gRPC error is a transport fault;

@@ -23,6 +23,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
@@ -80,7 +81,7 @@ func newTestClient(t *testing.T, svc *stubService) endorsementpb.EvmEndorsementC
 	t.Helper()
 	lis := bufconn.Listen(1024 * 1024)
 	gs := grpc.NewServer()
-	endorsementpb.RegisterEvmEndorsementServer(gs, New(svc))
+	endorsementpb.RegisterEvmEndorsementServer(gs, New(svc, nil))
 	go func() { _ = gs.Serve(lis) }()
 	t.Cleanup(gs.Stop)
 
@@ -395,12 +396,87 @@ func TestCall_ForwardsAllFields(t *testing.T) {
 // RegisterService exposes both the endorsement and health services.
 func TestRegisterService(t *testing.T) {
 	gs := grpc.NewServer()
-	New(&stubService{}).RegisterService(serve.Servers{GRPC: gs})
+	New(&stubService{}, nil).RegisterService(serve.Servers{GRPC: gs})
 
 	info := gs.GetServiceInfo()
 	for _, name := range []string{"endorsementpb.EvmEndorsement", "grpc.health.v1.Health"} {
 		if _, ok := info[name]; !ok {
 			t.Errorf("%s not registered", name)
 		}
+	}
+}
+
+// With no enforcement policy configured, the server must admit the endorser
+// client's keepalive pings instead of gRPC's 5m streams-only default.
+func TestWithKeepalivePolicy_DefaultAdmitsClientPings(t *testing.T) {
+	params := &serve.ServerKeepAliveParamsConfig{Time: time.Minute}
+	cfg := &Config{GRPC: serve.ServerConfig{KeepAlive: &serve.ServerKeepAliveConfig{Params: params}}}
+
+	got := withKeepalivePolicy(cfg).GRPC.KeepAlive
+	if p := got.EnforcementPolicy; p == nil || p.MinTime != minPingInterval || !p.PermitWithoutStream {
+		t.Fatalf("enforcement policy = %+v, want min-time %s permitting pings without streams", p, minPingInterval)
+	}
+	if got.Params != params {
+		t.Error("configured keepalive params were dropped")
+	}
+	if cfg.GRPC.KeepAlive.EnforcementPolicy != nil {
+		t.Error("caller's config was mutated")
+	}
+}
+
+func TestWithKeepalivePolicy_KeepsConfiguredPolicy(t *testing.T) {
+	policy := &serve.ServerKeepAliveEnforcementPolicyConfig{MinTime: time.Minute}
+	cfg := &Config{GRPC: serve.ServerConfig{KeepAlive: &serve.ServerKeepAliveConfig{EnforcementPolicy: policy}}}
+
+	if got := withKeepalivePolicy(cfg).GRPC.KeepAlive.EnforcementPolicy; got != policy {
+		t.Fatalf("enforcement policy = %+v, want the configured one", got)
+	}
+}
+
+func healthStatus(t *testing.T, s *Server) healthpb.HealthCheckResponse_ServingStatus {
+	t.Helper()
+	resp, err := s.health.Check(context.Background(), &healthpb.HealthCheckRequest{})
+	if err != nil {
+		t.Fatalf("health check: %v", err)
+	}
+	return resp.GetStatus()
+}
+
+// Health must follow the synchronizer: an endorser that is not synced must not
+// report SERVING, or clients and probes would route endorsements to stale state.
+func TestHealth_FollowsReadiness(t *testing.T) {
+	var notReady error = errors.New("syncing")
+	s := New(&stubService{}, func() error { return notReady })
+
+	s.updateHealth()
+	if got := healthStatus(t, s); got != healthpb.HealthCheckResponse_NOT_SERVING {
+		t.Fatalf("status while syncing = %v, want NOT_SERVING", got)
+	}
+
+	notReady = nil
+	s.updateHealth()
+	if got := healthStatus(t, s); got != healthpb.HealthCheckResponse_SERVING {
+		t.Fatalf("status when ready = %v, want SERVING", got)
+	}
+}
+
+func TestHealth_NilReadyAlwaysServes(t *testing.T) {
+	s := New(&stubService{}, nil)
+	s.updateHealth()
+	if got := healthStatus(t, s); got != healthpb.HealthCheckResponse_SERVING {
+		t.Fatalf("status = %v, want SERVING", got)
+	}
+}
+
+func TestHealth_NotServingAfterShutdown(t *testing.T) {
+	s := New(&stubService{}, nil)
+	s.updateHealth()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	s.trackHealth(ctx) // returns once it has seen ctx done
+
+	if got := healthStatus(t, s); got != healthpb.HealthCheckResponse_NOT_SERVING {
+		t.Fatalf("status after shutdown = %v, want NOT_SERVING", got)
 	}
 }
