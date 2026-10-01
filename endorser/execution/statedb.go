@@ -806,7 +806,7 @@ func (s *StateDB) Witness() *stateless.Witness { return nil }
 
 func (s *StateDB) AccessEvents() *ethstate.AccessEvents { return nil }
 
-func (s *StateDB) Finalise(deleteEmptyObjects bool) *bal.StateAccessList { return nil }
+func (s *StateDB) Finalise(deleteEmptyObjects bool) *bal.ConstructionBlockAccessList { return nil }
 
 func (s *StateDB) Touch(addr common.Address) {
 	// It doesn't affect the control flow, so we don't add a read dependency to the read/write set.
@@ -851,3 +851,5 @@ func bytesToUint64(b []byte) uint64 {
 	}
 	return binary.BigEndian.Uint64(b)
 }
+
+func (s *StateDB) SetTxContext(common.Hash, int, uint32) {}

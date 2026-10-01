@@ -207,11 +207,6 @@ func (l *StateDBLogger) IsNewContract(addr common.Address) bool {
 	return result
 }
 
-func (l *StateDBLogger) LogsForBurnAccounts() []*types.Log {
-	l.logger.Debugf("LogsForBurnAccounts")
-	return l.inner.LogsForBurnAccounts()
-}
-
 func (l *StateDBLogger) Prepare(rules params.Rules, sender, coinbase common.Address, dest *common.Address, precompiles []common.Address, txAccesses types.AccessList) {
 	destStr := "nil"
 	if dest != nil {
@@ -253,7 +248,7 @@ func (l *StateDBLogger) AccessEvents() *ethstate.AccessEvents {
 	return l.inner.AccessEvents()
 }
 
-func (l *StateDBLogger) Finalise(deleteEmptyObjects bool) *bal.StateAccessList {
+func (l *StateDBLogger) Finalise(deleteEmptyObjects bool) *bal.ConstructionBlockAccessList {
 	l.logger.Debugf("Finalise: deleteEmptyObjects=%t", deleteEmptyObjects)
 	return l.inner.Finalise(deleteEmptyObjects)
 }
@@ -272,3 +267,7 @@ func (l *StateDBLogger) Logs() []Log {
 
 // Ensure StateDBLogger implements ExtendedStateDB
 var _ ExtendedStateDB = (*StateDBLogger)(nil)
+
+func (l *StateDBLogger) SetTxContext(h common.Hash, i int, bai uint32) {
+	l.inner.SetTxContext(h, i, bai)
+}

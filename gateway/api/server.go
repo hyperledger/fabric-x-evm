@@ -63,7 +63,7 @@ func NewServer(b Backend, filterAPI *filters.FilterAPI) (*rpc.Server, error) {
 // regardless of its contents.
 func NewHTTPServer(srv *rpc.Server, addr string, vhosts []string) *http.Server {
 	// nil cors disables the CORS middleware.
-	httpHandler := node.NewHTTPHandlerStack(srv, nil, vhosts, nil)
+	httpHandler := node.NewHTTPHandlerStack(srv, nil, vhosts, nil, false)
 	return &http.Server{
 		Addr: addr,
 		Handler: &rpcTransportHandler{

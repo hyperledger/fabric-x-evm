@@ -419,7 +419,7 @@ func (d *DualStateDB) AccessEvents() *ethstate.AccessEvents {
 
 // Finalise finalizes both state implementations.
 // Returns the StateAccessList from the SnapshotDB (the canonical source).
-func (d *DualStateDB) Finalise(deleteEmptyObjects bool) *bal.StateAccessList {
+func (d *DualStateDB) Finalise(deleteEmptyObjects bool) *bal.ConstructionBlockAccessList {
 	d.logger.Debugf("Finalise: deleteEmptyObjects=%t", deleteEmptyObjects)
 	d.ethStateDB.Finalise(deleteEmptyObjects)
 	result := d.snapshotDB.Finalise(deleteEmptyObjects)
@@ -443,4 +443,9 @@ func (d *DualStateDB) Logs() []Log {
 	result := d.snapshotDB.Logs()
 	d.logger.Debugf("Logs: returning result len=%d", len(result))
 	return result
+}
+
+func (d *DualStateDB) SetTxContext(h common.Hash, i int, bai uint32) {
+	d.ethStateDB.SetTxContext(h, i, bai)
+	d.snapshotDB.SetTxContext(h, i, bai)
 }
