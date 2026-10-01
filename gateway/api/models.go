@@ -26,6 +26,9 @@ type rpcReceipt struct {
 // MarshalJSON ensures that the required fields are all present in the correct form,
 // preserving the embedded fields and correct handling of nil values.
 func (r *rpcReceipt) MarshalJSON() ([]byte, error) {
+	if r == nil {
+		return []byte("null"), nil
+	}
 	base, err := json.Marshal(r.Receipt)
 	if err != nil {
 		return nil, err
@@ -106,6 +109,9 @@ type RPCTransaction struct {
 
 // MarshalJSON marshals the transaction with block metadata
 func (r *RPCTransaction) MarshalJSON() ([]byte, error) {
+	if r == nil {
+		return []byte("null"), nil
+	}
 	// Marshal the embedded transaction first
 	txJSON, err := r.tx.MarshalJSON()
 	if err != nil {
