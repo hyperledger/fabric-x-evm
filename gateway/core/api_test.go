@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	ethcommon "github.com/ethereum/go-ethereum/common"
+	"github.com/hyperledger/fabric-x-evm/gateway/config"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -120,6 +121,30 @@ func TestSendTransaction_DuplicateRejected(t *testing.T) {
 	require.ErrorIs(t, err, domain.ErrTransactionAlreadyPending)
 
 	assert.NotNil(t, g.TxQueue.IsPending(tx.Hash()))
+}
+
+// A full queue reaches the eth_sendRawTransaction caller as an error instead of
+// crashing the gateway, and nothing is left tracked for the client to wait on.
+func TestSendTransaction_QueueFullRejected(t *testing.T) {
+	key := newKey(t)
+	cfg, signer := chainCtx(t)
+
+	q := NewDepGraphQueue(&config.DepGraphQueue{ChanSize: 1})
+	t.Cleanup(q.Close)
+	g := &Gateway{
+		ChainConfig: cfg,
+		Signer:      signer,
+		TxQueue:     q,
+		endorsers:   newClient(nonceStub()),
+	}
+	g.nonceGate = newNonceGate(g, g.Signer, g.TxQueue)
+
+	// Never bound, so the first tx fills the one-slot admitted channel.
+	require.NoError(t, g.SendTransaction(context.Background(), newValidTx(t, key, validTxOpts{nonce: 0})))
+
+	other := newValidTx(t, newKey(t), validTxOpts{nonce: 0})
+	require.ErrorIs(t, g.SendTransaction(context.Background(), other), domain.ErrQueueFull)
+	assert.Nil(t, g.TxQueue.IsPending(other.Hash()))
 }
 
 // The gateway's state readers forward straight to the endorsers.

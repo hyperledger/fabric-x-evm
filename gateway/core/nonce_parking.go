@@ -34,7 +34,7 @@ var errTooManyParked = errors.New("too many queued (future-nonce) transactions f
 
 // enqueuer receives a ready transaction.
 type enqueuer interface {
-	Enqueue(tx *types.Transaction)
+	Enqueue(tx *types.Transaction) error
 }
 
 // NonceSequencer gates a sender's transactions by nonce.
@@ -234,8 +234,7 @@ func (g *nonceGate) Admit(ctx context.Context, tx *types.Transaction) error {
 	case tx.Nonce() < next:
 		return fmt.Errorf("%w: next nonce %d, tx nonce %d", ethcore.ErrNonceTooLow, next, tx.Nonce())
 	case tx.Nonce() == next:
-		g.queue.Enqueue(tx)
-		return nil
+		return g.queue.Enqueue(tx)
 	}
 
 	// Future nonce: park until the gap fills. The reaper drops it if it never does.
@@ -293,7 +292,11 @@ func (g *nonceGate) Observe(committed []domain.Transaction) {
 			}
 		}
 		if tx := g.unpark(ss, next); tx != nil {
-			g.queue.Enqueue(tx)
+			// No caller to report to here. Dropping rather than re-parking lets the
+			// client resubmit at once: the nonce has not moved.
+			if err := g.queue.Enqueue(tx); err != nil && !errors.Is(err, domain.ErrTransactionAlreadyPending) {
+				logger.Errorf("nonce gate: dropped released tx %s: %v", tx.Hash().Hex(), err)
+			}
 		}
 		g.senders.release(ss)
 	}

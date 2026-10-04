@@ -15,6 +15,13 @@ var ErrUnprotectedTx = errors.New("only replay-protected (EIP-155) transactions 
 // is already queued or in-progress; the caller should not resubmit it.
 var ErrTransactionAlreadyPending = errors.New("transaction already pending")
 
+// ErrQueueFull signals that the gateway cannot take more transactions right
+// now; the caller may retry later.
+var ErrQueueFull = errors.New("transaction queue is full")
+
+// ErrQueueClosed signals that the gateway is shutting down.
+var ErrQueueClosed = errors.New("transaction queue is closed")
+
 // ErrNonceLookup wraps a backend failure to fetch the sender's nonce, so the
 // API layer can distinguish backend faults from tx-rejection causes.
 var ErrNonceLookup = errors.New("look up nonce")

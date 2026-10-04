@@ -143,8 +143,8 @@ func TestTxQueueV2_Enqueue_DuplicateTransaction(t *testing.T) {
 	q := NewTxQueueV2()
 	tx := testTxV2(1)
 
-	q.Enqueue(tx)
-	q.Enqueue(tx) // Enqueue same transaction again
+	require.NoError(t, q.Enqueue(tx))
+	require.ErrorIs(t, q.Enqueue(tx), domain.ErrTransactionAlreadyPending)
 
 	// Should only be added once
 	assert.Equal(t, 1, q.readyList.Len())

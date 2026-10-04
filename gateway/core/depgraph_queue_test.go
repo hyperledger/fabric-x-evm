@@ -261,12 +261,12 @@ func TestDepGraphQueue_EndorsementFailureDropsTransaction(t *testing.T) {
 	require.Zero(t, readyCount(q))
 }
 
-func TestDepGraphQueue_DuplicateEnqueueIgnored(t *testing.T) {
+func TestDepGraphQueue_DuplicateEnqueueRejected(t *testing.T) {
 	q, e := newDepQueue(t)
 	tx := txWithNonce(1)
 
-	q.Enqueue(tx)
-	q.Enqueue(tx)
+	require.NoError(t, q.Enqueue(tx))
+	require.ErrorIs(t, q.Enqueue(tx), domain.ErrTransactionAlreadyPending)
 	requireReady(t, q, 1)
 
 	require.Equal(t, 1, q.InFlight())
@@ -286,11 +286,11 @@ func TestDepGraphQueue_BatchesAreReleased(t *testing.T) {
 	requireReady(t, q, 2)
 }
 
-func TestDepGraphQueue_EnqueueAfterCloseIsIgnored(t *testing.T) {
+func TestDepGraphQueue_EnqueueAfterCloseIsRejected(t *testing.T) {
 	q, _ := newDepQueue(t)
 	q.Close()
 
-	require.NotPanics(t, func() { q.Enqueue(txWithNonce(1)) })
+	require.ErrorIs(t, q.Enqueue(txWithNonce(1)), domain.ErrQueueClosed)
 	require.Zero(t, q.InFlight())
 }
 
@@ -405,16 +405,20 @@ func TestDepGraphQueue_CompleteTwiceIsSafe(t *testing.T) {
 	require.Equal(t, second.Hash(), got.Hash())
 }
 
-// The admitted channel filling means a transaction would vanish with no way to
-// report it, so it fails loudly instead.
-func TestDepGraphQueue_AdmittedChannelFullPanics(t *testing.T) {
+// A full admitted channel is reported to the caller instead of crashing the
+// gateway, and the rejected transaction is not left tracked.
+func TestDepGraphQueue_AdmittedChannelFullIsRejected(t *testing.T) {
 	q := NewDepGraphQueue(nil)
 	t.Cleanup(q.Close)
 	// Never bound, so nothing drains admitted.
-	for range defaultChanSize {
-		q.Enqueue(txWithNonce(uint64(time.Now().UnixNano())))
+	for i := range defaultChanSize {
+		require.NoError(t, q.Enqueue(txWithNonce(uint64(i))))
 	}
-	require.Panics(t, func() { q.Enqueue(txWithNonce(0)) })
+
+	overflow := txWithNonce(uint64(defaultChanSize))
+	require.ErrorIs(t, q.Enqueue(overflow), domain.ErrQueueFull)
+	require.Nil(t, q.IsPending(overflow.Hash()), "a rejected tx must not stay tracked")
+	require.Equal(t, defaultChanSize, q.InFlight())
 }
 
 // The id the manager echoes back has to convert to the hash we tracked, or a

@@ -52,6 +52,7 @@ func TestClassifyValidationError_TxRejectionsMapToTxRejected(t *testing.T) {
 		{"unsupported tx type", ethcore.ErrTxTypeNotSupported},
 		{"init code too large", vm.ErrMaxInitCodeSizeExceeded},
 		{"invalid sender", fmt.Errorf("%w: bad sig", txpool.ErrInvalidSender)},
+		{"queue full", domain.ErrQueueFull},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

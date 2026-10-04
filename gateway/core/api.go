@@ -37,8 +37,8 @@ type Submitter interface {
 // TxQueueInterface defines the interface that transaction queue implementations must satisfy.
 // This allows switching between different queue implementations (e.g., TxQueue and TxQueueV2).
 type TxQueueInterface interface {
-	// Enqueue adds a transaction to the queue
-	Enqueue(tx *types.Transaction)
+	// Enqueue adds a transaction to the queue. An error means it was not added.
+	Enqueue(tx *types.Transaction) error
 
 	// Dequeue removes and returns a transaction from the queue
 	// Returns (transaction, true) if successful, or (nil, false) if queue is closed

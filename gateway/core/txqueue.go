@@ -54,28 +54,29 @@ func NewTxQueue() *TxQueue {
 	return q
 }
 
-// Enqueue adds a transaction to the queue, ignoring one already queued or in
-// progress. The IsPending pre-check in SendTransaction is not atomic with this
-// insert, so two concurrent submissions of the same transaction can both reach
-// here; dropping the second saves an endorse/submit round that MVCC would
-// reject at commit anyway.
+// Enqueue adds a transaction to the queue, rejecting one already queued or in
+// progress with ErrTransactionAlreadyPending. The IsPending pre-check in
+// SendTransaction is not atomic with this insert, so two concurrent submissions
+// of the same transaction can both reach here; rejecting the second saves an
+// endorse/submit round that MVCC would reject at commit anyway.
 // This method uses a write lock to ensure exclusive access when modifying the queue.
-func (q *TxQueue) Enqueue(tx *types.Transaction) {
+func (q *TxQueue) Enqueue(tx *types.Transaction) error {
 	txHash := tx.Hash()
 
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	if _, tracked := q.queuedMap[txHash]; tracked {
-		return
+		return domain.ErrTransactionAlreadyPending
 	}
 	if _, tracked := q.inProgressMap[txHash]; tracked {
-		return
+		return domain.ErrTransactionAlreadyPending
 	}
 
 	q.pendingQueue = append(q.pendingQueue, tx)
 	q.queuedMap[txHash] = tx
 	q.cond.Signal() // Wake up one waiting worker
+	return nil
 }
 
 // Dequeue removes a transaction from the pending queue and moves it to the in-progress map.

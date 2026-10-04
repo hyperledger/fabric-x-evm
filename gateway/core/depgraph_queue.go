@@ -233,7 +233,7 @@ func (q *DepGraphQueue) Bind(e txEndorser) {
 // Enqueue accepts a transaction for scheduling. It must not block: the nonce
 // gate calls it while holding its own write lock, so the endorsement happens on
 // an endorse worker rather than here.
-func (q *DepGraphQueue) Enqueue(tx *types.Transaction) {
+func (q *DepGraphQueue) Enqueue(tx *types.Transaction) error {
 	hash := tx.Hash()
 	depGraphLogger.Debugf("DepGraphQueue.Enqueue() called with tx %s", hash.Hex())
 
@@ -241,23 +241,24 @@ func (q *DepGraphQueue) Enqueue(tx *types.Transaction) {
 	defer q.mu.Unlock()
 
 	if q.done {
-		depGraphLogger.Warnf("DepGraphQueue.Enqueue() tx %s ignored: queue is closed", hash.Hex())
-		return
+		depGraphLogger.Warnf("DepGraphQueue.Enqueue() tx %s rejected: queue is closed", hash.Hex())
+		return domain.ErrQueueClosed
 	}
 	if _, dup := q.tracked[hash]; dup {
-		depGraphLogger.Warnf("DepGraphQueue.Enqueue() tx %s ignored: already tracked", hash.Hex())
-		return
+		depGraphLogger.Warnf("DepGraphQueue.Enqueue() tx %s rejected: already tracked", hash.Hex())
+		return domain.ErrTransactionAlreadyPending
 	}
 
 	select {
 	case q.admitted <- tx:
 	default:
-		// Enqueue cannot report this (#379) and the nonce gate holds its own
-		// lock while calling us, so blocking is not an option either. Loud for
-		// the prototype rather than a transaction quietly disappearing.
-		panic(fmt.Sprintf("dependency manager queue: admitted channel full, tx %s", hash.Hex()))
+		// Blocking is not an option: the nonce gate holds its own lock while
+		// calling us. The caller reports it, and the client can retry.
+		depGraphLogger.Warnf("DepGraphQueue.Enqueue() tx %s rejected: admitted channel full", hash.Hex())
+		return domain.ErrQueueFull
 	}
 	q.tracked[hash] = &trackedTx{tx: tx}
+	return nil
 }
 
 // endorseLoop endorses admitted transactions and hands them to the manager.
@@ -276,8 +277,8 @@ func (q *DepGraphQueue) endorseLoop() {
 }
 
 // submitToManager endorses for a read-write set and hands the result to the
-// batcher. A failure here drops the transaction: Enqueue has no error return,
-// so there is nowhere to report it (#379).
+// batcher. A failure here drops the transaction: Enqueue has already returned,
+// so, like a failed processTx, it is logged and the client can resubmit.
 func (q *DepGraphQueue) submitToManager(tx *types.Transaction) {
 	hash := tx.Hash()
 	depGraphLogger.Debugf("DepGraphQueue.submitToManager() endorsing tx %s", hash.Hex())

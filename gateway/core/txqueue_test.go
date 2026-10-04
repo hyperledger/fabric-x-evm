@@ -57,8 +57,8 @@ func TestTxQueue_EnqueueIgnoresDuplicateOfQueuedTx(t *testing.T) {
 	q := NewTxQueue()
 	tx := testTx(1)
 
-	q.Enqueue(tx)
-	q.Enqueue(tx)
+	require.NoError(t, q.Enqueue(tx))
+	require.ErrorIs(t, q.Enqueue(tx), domain.ErrTransactionAlreadyPending)
 
 	assert.Len(t, q.pendingQueue, 1)
 	assert.Len(t, q.queuedMap, 1)
@@ -74,7 +74,7 @@ func TestTxQueue_EnqueueIgnoresDuplicateOfInProgressTx(t *testing.T) {
 	_, ok := q.Dequeue()
 	require.True(t, ok)
 
-	q.Enqueue(tx)
+	require.ErrorIs(t, q.Enqueue(tx), domain.ErrTransactionAlreadyPending)
 
 	assert.Len(t, q.pendingQueue, 0)
 	assert.Len(t, q.inProgressMap, 1)

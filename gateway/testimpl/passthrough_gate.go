@@ -25,8 +25,7 @@ type passthroughGate struct {
 
 // Admit enqueues every transaction, parking none.
 func (g passthroughGate) Admit(_ context.Context, tx *types.Transaction) error {
-	g.queue.Enqueue(tx)
-	return nil
+	return g.queue.Enqueue(tx)
 }
 
 // Observe has nothing to release, since nothing is ever parked.

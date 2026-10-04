@@ -129,7 +129,7 @@ func NewTxQueueV2() *TxQueueV2 {
 // in-flight (ready or pending) transactions. Conflicts with waiting transactions
 // are ignored to allow "queue jumping" for independent transaction chains.
 // If there are conflicts with in-flight transactions, it's placed in the Waiting list.
-func (q *TxQueueV2) Enqueue(tx *types.Transaction) {
+func (q *TxQueueV2) Enqueue(tx *types.Transaction) error {
 	// Compute hash and participants outside the lock
 	txHash := tx.Hash()
 	participants := participantsForTx(tx)
@@ -153,7 +153,7 @@ func (q *TxQueueV2) Enqueue(tx *types.Transaction) {
 
 	// Check if already tracked
 	if _, exists := q.hashMap[txHash]; exists {
-		return
+		return domain.ErrTransactionAlreadyPending
 	}
 
 	// Find conflicts with in-flight transactions (ready or pending only)
@@ -220,6 +220,7 @@ func (q *TxQueueV2) Enqueue(tx *types.Transaction) {
 	for _, participant := range entry.participants {
 		q.participantMap[participant] = append(q.participantMap[participant], entry)
 	}
+	return nil
 }
 
 // Dequeue removes a transaction from the ready list and moves it to the pending map.
