@@ -2205,14 +2205,6 @@
     "messagePattern": "^transaction 0x[0-9a-fA-F]+ was dropped before it committed$"
   },
   {
-    "id": "Votes-family before-each-hook dropped-tx race",
-    "cause": "concurrent-tx-race",
-    "note": "Same dropped-before-commit race as the Governor-family before-each entry, observed on ERC20Votes/Votes Compound workflow fixtures where the before-each hook submits txs that can be dropped instead of getting a failed receipt. Matched by signature because which exact Votes variant flakes is not deterministic.",
-    "flaky": true,
-    "idPattern": "^(ERC20Votes|ERC721Votes|Votes|VotesExtended)\\b.*\"before each\" hook for \"",
-    "messagePattern": "^transaction 0x[0-9a-fA-F]+ was dropped before it committed$"
-  },
-  {
     "id": "GovernorCountingFractional using $ERC20Votes \"before each\" hook for \"deployment check\"",
     "cause": "concurrent-tx-race",
     "note": "Predicted, not yet observed failing: this fixture uses the same vulnerable pattern confirmed racy elsewhere (GovernorHelper.delegate()'s Promise.all of dependent writes, no confirmation wait -- the endorsement-time read snapshot goes stale before commit).",
@@ -2351,25 +2343,7 @@
     "flaky": true
   },
   {
-    "id": "GovernorCountingOverridable using $ERC20VotesExtendedTimestampMock cast override vote override after delegate vote",
-    "cause": "hardhat-time-rpc",
-    "note": "Timing-sensitive: the \"before each\" hook races real wall-clock time (evm_increaseTime/evm_setNextBlockTimestamp are no-ops) so the proposal hasn't advanced to Active state yet, causing execution to revert. Downstream of the same root cause as the hook-level flake above.",
-    "flaky": true
-  },
-  {
-    "id": "GovernorCountingOverridable using $ERC20VotesExtendedTimestampMock cast override vote override before delegate vote",
-    "cause": "hardhat-time-rpc",
-    "note": "Timing-sensitive: the \"before each\" hook races real wall-clock time (evm_increaseTime/evm_setNextBlockTimestamp are no-ops) so the proposal hasn't advanced to Active state yet, causing execution to revert. Downstream of the same root cause as the hook-level flake above.",
-    "flaky": true
-  },
-  {
-    "id": "GovernorCountingOverridable using $ERC20VotesExtendedTimestampMock cast override vote override before and after delegate vote",
-    "cause": "hardhat-time-rpc",
-    "note": "Timing-sensitive: the \"before each\" hook races real wall-clock time (evm_increaseTime/evm_setNextBlockTimestamp are no-ops) so the proposal hasn't advanced to Active state yet, causing execution to revert. Downstream of the same root cause as the hook-level flake above.",
-    "flaky": true
-  },
-  {
-    "id": "GovernorCountingOverridable using $ERC20VotesExtendedTimestampMock cast override vote vote (with delegated balance) and override (with self balance) are independent",
+    "id": "GovernorCountingOverridable using $ERC20VotesExtendedTimestampMock cast override vote by signature EOA signature",
     "cause": "hardhat-time-rpc",
     "note": "Timing-sensitive: the \"before each\" hook races real wall-clock time (evm_increaseTime/evm_setNextBlockTimestamp are no-ops) so the proposal hasn't advanced to Active state yet, causing execution to revert. Downstream of the same root cause as the hook-level flake above.",
     "flaky": true
@@ -2399,7 +2373,25 @@
     "flaky": true
   },
   {
-    "id": "GovernorCountingOverridable using $ERC20VotesExtendedTimestampMock cast override vote by signature EOA signature",
+    "id": "GovernorCountingOverridable using $ERC20VotesExtendedTimestampMock cast override vote override after delegate vote",
+    "cause": "hardhat-time-rpc",
+    "note": "Timing-sensitive: the \"before each\" hook races real wall-clock time (evm_increaseTime/evm_setNextBlockTimestamp are no-ops) so the proposal hasn't advanced to Active state yet, causing execution to revert. Downstream of the same root cause as the hook-level flake above.",
+    "flaky": true
+  },
+  {
+    "id": "GovernorCountingOverridable using $ERC20VotesExtendedTimestampMock cast override vote override before and after delegate vote",
+    "cause": "hardhat-time-rpc",
+    "note": "Timing-sensitive: the \"before each\" hook races real wall-clock time (evm_increaseTime/evm_setNextBlockTimestamp are no-ops) so the proposal hasn't advanced to Active state yet, causing execution to revert. Downstream of the same root cause as the hook-level flake above.",
+    "flaky": true
+  },
+  {
+    "id": "GovernorCountingOverridable using $ERC20VotesExtendedTimestampMock cast override vote override before delegate vote",
+    "cause": "hardhat-time-rpc",
+    "note": "Timing-sensitive: the \"before each\" hook races real wall-clock time (evm_increaseTime/evm_setNextBlockTimestamp are no-ops) so the proposal hasn't advanced to Active state yet, causing execution to revert. Downstream of the same root cause as the hook-level flake above.",
+    "flaky": true
+  },
+  {
+    "id": "GovernorCountingOverridable using $ERC20VotesExtendedTimestampMock cast override vote vote (with delegated balance) and override (with self balance) are independent",
     "cause": "hardhat-time-rpc",
     "note": "Timing-sensitive: the \"before each\" hook races real wall-clock time (evm_increaseTime/evm_setNextBlockTimestamp are no-ops) so the proposal hasn't advanced to Active state yet, causing execution to revert. Downstream of the same root cause as the hook-level flake above.",
     "flaky": true
@@ -2525,6 +2517,9 @@
     "flaky": true
   },
   {
+    "id": "GovernorPreventLateQuorum using $ERC20Votes protection against large lateQuorumVoteExtension"
+  },
+  {
     "id": "GovernorPreventLateQuorum using $ERC20VotesTimestampMock \"before each\" hook for \"deployment check\"",
     "cause": "concurrent-tx-race",
     "note": "Predicted, not yet observed failing: this fixture uses the same vulnerable pattern confirmed racy elsewhere (GovernorHelper.delegate()'s Promise.all of dependent writes, no confirmation wait -- the endorsement-time read snapshot goes stale before commit).",
@@ -2547,6 +2542,9 @@
     "cause": "hardhat-time-rpc",
     "note": "Timing-sensitive: propose->vote->queue->execute needs real wall-clock time for votingDelay/votingPeriod/timelock-delay, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md). Fast execution reaches the next step too soon and reverts, but passes if the run is slow enough for real time to catch up -- confirmed flipping under a CPU-throttled run.",
     "flaky": true
+  },
+  {
+    "id": "GovernorPreventLateQuorum using $ERC20VotesTimestampMock protection against large lateQuorumVoteExtension"
   },
   {
     "id": "GovernorProposalGuardian using $ERC20Votes cancel proposal during active state \"before each\" hook for \"from proposal guardian\""
@@ -3497,13 +3495,13 @@
     "id": "MerkleTree push pushing to a full tree reverts"
   },
   {
-    "id": "RateLimiter RefillingBucket with some capacity consume consume reduces available and increases used",
+    "id": "RateLimiter RefillingBucket with some capacity consume consume one key does not affect another key",
     "cause": "hardhat-time-rpc",
     "note": "Bucket/window state depends on real elapsed wall-clock time between txs (evm_increaseTime/evm_setNextBlockTimestamp are no-ops, COMPATIBILITY.md); tests assuming zero/exact elapsed time pick up unintended refill/decay.",
     "flaky": true
   },
   {
-    "id": "RateLimiter RefillingBucket with some capacity consume consume one key does not affect another key",
+    "id": "RateLimiter RefillingBucket with some capacity consume consume reduces available and increases used",
     "cause": "hardhat-time-rpc",
     "note": "Bucket/window state depends on real elapsed wall-clock time between txs (evm_increaseTime/evm_setNextBlockTimestamp are no-ops, COMPATIBILITY.md); tests assuming zero/exact elapsed time pick up unintended refill/decay.",
     "flaky": true
@@ -3912,6 +3910,14 @@
   {
     "id": "Votes vote with timestamp run votes workflow getPastTotalSupply returns the correct checkpointed total supply",
     "cause": "execution reverted"
+  },
+  {
+    "id": "Votes-family before-each-hook dropped-tx race",
+    "cause": "concurrent-tx-race",
+    "note": "Same dropped-before-commit race as the Governor-family before-each entry, observed on ERC20Votes/Votes Compound workflow fixtures where the before-each hook submits txs that can be dropped instead of getting a failed receipt. Matched by signature because which exact Votes variant flakes is not deterministic.",
+    "flaky": true,
+    "idPattern": "^(ERC20Votes|ERC721Votes|Votes|VotesExtended)\\b.*\"before each\" hook for \"",
+    "messagePattern": "^transaction 0x[0-9a-fA-F]+ was dropped before it committed$"
   },
   {
     "id": "VotesExtended checkpoint balances with blockNumber checkpoint balances",
