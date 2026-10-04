@@ -148,26 +148,85 @@ func TestNonceGate_AdmitReturnsEnqueueError(t *testing.T) {
 	require.Empty(t, q.nonces())
 }
 
-// A parked tx the queue refuses on release is dropped, not re-parked, so the
-// client can resubmit it straight away at the same nonce.
-func TestNonceGate_ObserveDropsReleasedTxTheQueueRefuses(t *testing.T) {
-	key := newKey(t)
-	state := newStubState()
-	state.set(senderAddr(key), 5)
-	gate, q := newTestGate(state)
-
+// parkBehindGap admits nonce 5 and parks nonce 6 for key, returning the parked tx.
+func parkBehindGap(t *testing.T, gate *nonceGate, key *ecdsa.PrivateKey) *types.Transaction {
+	t.Helper()
 	parked := newValidTx(t, key, validTxOpts{nonce: 6})
 	require.NoError(t, gate.Admit(context.Background(), newValidTx(t, key, validTxOpts{nonce: 5})))
 	require.NoError(t, gate.Admit(context.Background(), parked))
 	require.NotNil(t, gate.IsPending(parked.Hash()))
+	return parked
+}
+
+// A parked tx was already accepted, so a full queue on release must not lose it:
+// it stays parked, and a later block retries it even if its sender is not in it.
+func TestNonceGate_ObserveKeepsReleasedTxTheQueueRefuses(t *testing.T) {
+	key, other := newKey(t), newKey(t)
+	state := newStubState()
+	state.set(senderAddr(key), 5)
+	gate, q := newTestGate(state)
+	parked := parkBehindGap(t, gate, key)
 
 	q.refuse(domain.ErrQueueFull)
-	require.NotPanics(t, func() { gate.Observe(committedBlock(t, key, 5)) })
-	require.Nil(t, gate.IsPending(parked.Hash()), "a refused tx must not stay parked")
+	gate.Observe(committedBlock(t, key, 5))
+	require.Equal(t, parked, gate.IsPending(parked.Hash()), "a refused tx must stay parked")
+	require.Equal(t, []uint64{5}, q.nonces())
+
+	// Still full: another block keeps it parked.
+	gate.Observe(committedBlock(t, other, 0))
+	require.NotNil(t, gate.IsPending(parked.Hash()))
+
+	// Room again: a block from someone else releases it.
+	q.refuse(nil)
+	gate.Observe(committedBlock(t, other, 1))
+	require.Nil(t, gate.IsPending(parked.Hash()))
+	require.Equal(t, []uint64{5, 6}, q.nonces())
+
+	// And only once.
+	gate.Observe(committedBlock(t, other, 2))
+	require.Equal(t, []uint64{5, 6}, q.nonces())
+}
+
+// A closed queue means the gateway is shutting down, so the released tx is dropped.
+func TestNonceGate_ObserveDropsReleasedTxWhenQueueClosed(t *testing.T) {
+	key, other := newKey(t), newKey(t)
+	state := newStubState()
+	state.set(senderAddr(key), 5)
+	gate, q := newTestGate(state)
+	parked := parkBehindGap(t, gate, key)
+
+	q.refuse(domain.ErrQueueClosed)
+	gate.Observe(committedBlock(t, key, 5))
+	require.Nil(t, gate.IsPending(parked.Hash()))
 
 	q.refuse(nil)
-	require.NoError(t, gate.Admit(context.Background(), parked))
-	require.Equal(t, []uint64{5, 6}, q.nonces())
+	gate.Observe(committedBlock(t, other, 0))
+	require.Equal(t, []uint64{5}, q.nonces(), "a dropped tx must not come back")
+}
+
+// A replacement at the nonce of a refused, re-parked tx goes in alone: the stale
+// one is not sent alongside it on a later retry.
+func TestNonceGate_AdmitReplacesRefusedParkedTx(t *testing.T) {
+	key, other := newKey(t), newKey(t)
+	state := newStubState()
+	state.set(senderAddr(key), 5)
+	gate, q := newTestGate(state)
+	parked := parkBehindGap(t, gate, key)
+
+	q.refuse(domain.ErrQueueFull)
+	gate.Observe(committedBlock(t, key, 5))
+	require.NotNil(t, gate.IsPending(parked.Hash()))
+
+	q.refuse(nil)
+	replacement := newValidTx(t, key, validTxOpts{nonce: 6, value: big.NewInt(7)})
+	require.NoError(t, gate.Admit(context.Background(), replacement))
+	require.Nil(t, gate.IsPending(parked.Hash()))
+
+	gate.Observe(committedBlock(t, other, 0))
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	require.Len(t, q.txs, 2)
+	require.Equal(t, replacement.Hash(), q.txs[1].Hash())
 }
 
 func TestNonceGate_TooLowRejected(t *testing.T) {

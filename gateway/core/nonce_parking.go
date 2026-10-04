@@ -54,6 +54,7 @@ type nonceGate struct {
 
 	senders *senderCache
 	byHash  map[common.Hash]*types.Transaction // parked txs indexed by hash
+	retry   map[common.Address]struct{}        // senders whose ready tx the queue refused
 
 	maxPerSender int
 	maxSenders   int
@@ -184,6 +185,7 @@ func newNonceGate(state stateReader, signer types.Signer, queue enqueuer) *nonce
 		queue:        queue,
 		senders:      newSenderCache(),
 		byHash:       make(map[common.Hash]*types.Transaction),
+		retry:        make(map[common.Address]struct{}),
 		maxPerSender: defaultMaxParkedPerSender,
 		maxSenders:   defaultMaxSenders,
 		ttl:          defaultParkedTTL,
@@ -234,7 +236,13 @@ func (g *nonceGate) Admit(ctx context.Context, tx *types.Transaction) error {
 	case tx.Nonce() < next:
 		return fmt.Errorf("%w: next nonce %d, tx nonce %d", ethcore.ErrNonceTooLow, next, tx.Nonce())
 	case tx.Nonce() == next:
-		return g.queue.Enqueue(tx)
+		if err := g.queue.Enqueue(tx); err != nil {
+			return err
+		}
+		// A refused tx parked at this nonce is replaced, never sent alongside it.
+		g.unpark(ss, next)
+		delete(g.retry, from)
+		return nil
 	}
 
 	// Future nonce: park until the gap fills. The reaper drops it if it never does.
@@ -292,13 +300,45 @@ func (g *nonceGate) Observe(committed []domain.Transaction) {
 			}
 		}
 		if tx := g.unpark(ss, next); tx != nil {
-			// No caller to report to here. Dropping rather than re-parking lets the
-			// client resubmit at once: the nonce has not moved.
-			if err := g.queue.Enqueue(tx); err != nil && !errors.Is(err, domain.ErrTransactionAlreadyPending) {
-				logger.Errorf("nonce gate: dropped released tx %s: %v", tx.Hash().Hex(), err)
-			}
+			g.enqueueReleased(ss, tx)
 		}
 		g.senders.release(ss)
+	}
+
+	// Retry ready txs the queue refused on an earlier block, whether or not their
+	// sender committed in this one.
+	for from := range g.retry {
+		if _, done := highest[from]; done {
+			continue
+		}
+		ss, ok := g.senders.lookup(from)
+		if !ok {
+			delete(g.retry, from) // reaped
+			continue
+		}
+		next, _ := ss.next.value()
+		if tx := g.unpark(ss, next); tx != nil {
+			g.enqueueReleased(ss, tx)
+		} else {
+			delete(g.retry, from)
+		}
+	}
+}
+
+// enqueueReleased hands a now-ready parked tx to the queue. The client already
+// holds its hash, so a full queue parks it again for a later block to retry.
+// Caller holds g.mu.
+func (g *nonceGate) enqueueReleased(ss *senderState, tx *types.Transaction) {
+	err := g.queue.Enqueue(tx)
+	switch {
+	case err == nil, errors.Is(err, domain.ErrTransactionAlreadyPending):
+		delete(g.retry, ss.from)
+	case errors.Is(err, domain.ErrQueueFull):
+		g.park(ss, tx)
+		g.retry[ss.from] = struct{}{}
+	default:
+		delete(g.retry, ss.from)
+		logger.Errorf("nonce gate: dropped released tx %s: %v", tx.Hash().Hex(), err)
 	}
 }
 
