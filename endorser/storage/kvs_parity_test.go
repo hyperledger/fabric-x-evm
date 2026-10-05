@@ -59,7 +59,8 @@ func kvsBackends() []kvsBackend {
 			open: func(t *testing.T, _ string, historySize int) KVS {
 				return NewRevertibleLightKVS(NewLightKVS(historySize))
 			},
-			persistent: false,
+			persistent:     false,
+			boundedHistory: true,
 		},
 		{
 			name:   "PebbleKVS",

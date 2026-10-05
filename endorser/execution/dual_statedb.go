@@ -45,7 +45,7 @@ type DualStateDB struct {
 // The constructor takes concrete types (not interfaces) so that callers can
 // access non-interface methods on both implementations.
 func NewDualStateDB(ethStateDB *ethstate.StateDB, SnapshotDB *StateDB) *DualStateDB {
-	logger := flogging.MustGetLogger("DualStateDB")
+	logger := flogging.MustGetLogger("endorser.execution.dual_statedb")
 	logger.Debugf("NewDualStateDB: input ethStateDB=%p, SnapshotDB=%p", ethStateDB, SnapshotDB)
 	result := &DualStateDB{
 		ethStateDB: ethStateDB,

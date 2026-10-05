@@ -14,6 +14,7 @@ import (
 	ethstate "github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
+	fxcommon "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
@@ -91,5 +92,5 @@ func (w *ExecutorWrapper) Execute(tx *types.Transaction) (endorsement.ExecutionR
 		}
 	}
 
-	return endorsement.Success(w.state.Result(), logs, ret), nil
+	return endorsement.Success(w.state.Result(), fxcommon.LogsEventName(logs), logs, ret), nil
 }

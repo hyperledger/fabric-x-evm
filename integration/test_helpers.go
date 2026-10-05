@@ -28,8 +28,7 @@ import (
 	"github.com/ethereum/go-ethereum/rpc"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/msp"
-	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
-	"github.com/hyperledger/fabric-x-common/protoutil"
+	fxsigner "github.com/hyperledger/fabric-x-common/cmd/common/signer"
 	"github.com/hyperledger/fabric-x-evm/common"
 	eapi "github.com/hyperledger/fabric-x-evm/endorser/api"
 	eapp "github.com/hyperledger/fabric-x-evm/endorser/app"
@@ -162,8 +161,8 @@ type HandlerChainFactory func(
 //  4. Gateway: call TxQueue.Handle to mark any pending Ethereum transactions whose
 //     Fabric tx-ID appears in this block as complete, unblocking waiting callers.
 //
-//  5. Extra handlers (e.g. TxCompletionTracker in perf tests): any caller-supplied
-//     handlers that observe committed blocks for their own purposes.
+//  5. Extra handlers: any caller-supplied handlers that observe committed blocks for
+//     their own purposes.
 func defaultHandlerChain(t *testing.T, ctx context.Context, cfg config.Config, ends []eapi.Service, gwSigner sdk.Signer, submitters []core.Submitter, txQueue core.TxQueueInterface, dbs []storage.KVS) (*core.Gateway, []blocks.BlockHandler, network.BlockHeightReader) {
 	chain, err := core.NewChain(cfg.Gateway.Database.ConnString, cfg.Gateway.Database.TriePath, false)
 	if err != nil {
@@ -177,12 +176,12 @@ func defaultHandlerChain(t *testing.T, ctx context.Context, cfg config.Config, e
 	}
 	// Tests prime and revert ledger state out of band, so the harness parks nothing.
 	if txQueue == nil {
-		txQueue = core.NewTxQueue()
+		txQueue = core.NewDepGraphQueue(&cfg.Gateway.DepGraphQueue)
 	}
 	// ends is caller-ordered [local, remotes...], matching production's own
 	// invariant (see gateway/config's "Local endorser is a distinct field"
 	// decision) — position 0 is the local endorser.
-	gw, err := app.BuildGateway(ctx, ends[0], ends[1:], gwSigner, cfg.Network, chain, submitters, cfg.Gateway.SubmitterCount, cfg.Gateway.WorkerCount, txQueue, testimpl.NewPassthroughGate(txQueue), cfg.Gateway.EndorsementChanSize, txPerSec)
+	gw, err := app.BuildGateway(ctx, ends[0], ends[1:], gwSigner, cfg.Network, chain, submitters, cfg.Gateway.SubmitterCount, cfg.Gateway.WorkerCount, txQueue, testimpl.NewPassthroughGate(txQueue), cfg.Gateway.EndorsementChanSize, txPerSec, nil)
 	if err != nil {
 		t.Fatalf("build gateway: %v", err)
 	}
@@ -280,7 +279,7 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 	// The ordering is the responsibility of the chainFactory; see defaultHandlerChain for
 	// the conventional ordering (endorser KVS…, chain store, gateway, extra observers…).
 	if !bypass {
-		sync, err = synchronizer.New(cfg.Network.Protocol, heightReader, cfg.Network.Channel, cfg.Network.Namespace, cfg.Committer.ToPeerConf(), gwSigner, logger, handlers...)
+		sync, err = synchronizer.New(cfg.Network.Protocol, heightReader, cfg.Network.Channel, cfg.Network.Namespace, cfg.Committer.ToPeerConf(), gwSigner, logger, cfg.Synchronizer.AllTxQueueDepth, handlers...)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -304,6 +303,7 @@ func buildTestHarness(t *testing.T, logger sdk.Logger, cfg config.Config, evmCon
 		ethChainConfig: evmConfig.ChainConfig,
 		Primer:         sp,
 		DBs:            dbs,
+		Synchronizer:   sync,
 	}
 
 	if err := th.PrimeStateFromJSON(t.Context(), primeDBPath, !bypass); err != nil {
@@ -434,7 +434,7 @@ func NewLocalTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig e
 			Protocol:  protocol,
 			Channel:   "mychannel",
 			Namespace: "basic",
-			NsVersion: "1.0",
+			NsVersion: "0",
 			ChainID:   4011,
 		},
 		Committer:    common.ClientConfig{Endpoint: peer},
@@ -559,7 +559,7 @@ func newSplitFileConfigHarness(t *testing.T, logger sdk.Logger, evmConfig execut
 // chainFactory controls the chain store and handler chain wired into the
 // synchronizer. Pass nil to use defaultHandlerChain (SQLite-backed core.Chain).
 // Perf tests supply their own factory to use a lightweight in-memory height
-// tracker and attach a TxCompletionTracker as a tail handler.
+// tracker and a completion handler cheaper than the gateway's.
 func NewFabricXTestHarnessWithNotifications(t *testing.T, logger sdk.Logger, evmConfig execution.EVMConfig, primeDbPath string, configOverrides map[string]any, factory EndorserFactory, txQueue core.TxQueueInterface, chainFactory HandlerChainFactory, confFile string) (*TestHarness, error) {
 	if primeDbPath != "" && !filepath.IsAbs(primeDbPath) {
 		if abs, err := filepath.Abs(primeDbPath); err == nil {
@@ -593,6 +593,66 @@ func NewFabricXTestHarnessWithNotifications(t *testing.T, logger sdk.Logger, evm
 	return th, nil
 }
 
+// fabricXSignerWrapper wraps a fabric-x-common signer so that Serialize returns only
+// the ID (hash) of the signing cert instead of the full cert.
+//
+// The serialized identity is computed once, in newIDOfCertSigner, and cached:
+// SerializeWithIDOfCert re-decodes the PEM, re-parses the x509 certificate and re-hashes
+// it on every call, and the SDK calls Serialize once per endorsement. Doing that per
+// transaction would add work to the very hot path this wrapper exists to shrink. The
+// identity is constant for the signer's lifetime, so caching it is safe.
+type fabricXSignerWrapper struct {
+	*fxsigner.Signer
+	identity []byte
+}
+
+// Serialize returns the cached ID-of-cert identity. It returns a copy so callers cannot
+// mutate the shared buffer.
+func (w *fabricXSignerWrapper) Serialize() ([]byte, error) {
+	out := make([]byte, len(w.identity))
+	copy(out, w.identity)
+	return out, nil
+}
+
+// newIDOfCertSigner builds a fabric-x-common signer from cfg's MSP directory and wraps it
+// so that Serialize emits only the cert ID.
+func newIDOfCertSigner(t *testing.T, cfg econf.Endorser) sdk.Signer {
+	t.Helper()
+
+	keyFiles, err := filepath.Glob(filepath.Join(cfg.Identity.MSPDir, "keystore", "*_sk"))
+	if err != nil || len(keyFiles) == 0 {
+		keyFiles, err = filepath.Glob(filepath.Join(cfg.Identity.MSPDir, "keystore", "*.pem"))
+	}
+	if err != nil || len(keyFiles) == 0 {
+		t.Fatalf("no private key found in %s/keystore", cfg.Identity.MSPDir)
+	}
+
+	certFiles, err := filepath.Glob(filepath.Join(cfg.Identity.MSPDir, "signcerts", "*.pem"))
+	if err != nil || len(certFiles) == 0 {
+		t.Fatalf("no signcert found in %s/signcerts", cfg.Identity.MSPDir)
+	}
+
+	fxSigner, err := fxsigner.NewSigner(fxsigner.Config{
+		MSPID:        cfg.Identity.MspID,
+		IdentityPath: certFiles[0],
+		KeyPath:      keyFiles[0],
+		// Must equal bccsp.SHA256, and must match the hash the committer uses to
+		// index endorser certs. There is no config plumbing for this today.
+		HashFunc: "SHA256",
+	})
+	if err != nil {
+		t.Fatalf("NewSigner: %v", err)
+	}
+
+	// Compute the ID-of-cert identity once; see fabricXSignerWrapper.
+	serializedIdentity, err := fxSigner.SerializeWithIDOfCert()
+	if err != nil {
+		t.Fatalf("SerializeWithIDOfCert: %v", err)
+	}
+
+	return &fabricXSignerWrapper{Signer: fxSigner, identity: serializedIdentity}
+}
+
 // NewEndorser creates a sync-less endorser with its dependencies, for use under the
 // harness's single gateway-level synchronizer topology (see buildTestHarnessWithExtraHandler).
 // Exported for use by custom endorser factories.
@@ -604,9 +664,25 @@ func NewEndorser(t *testing.T, cfg econf.Endorser, channel, namespace string, ev
 		signer = &localSigner{}
 	} else {
 		var err error
-		signer, err = identity.SignerFromMSP(cfg.Identity.MSPDir, cfg.Identity.MspID)
-		if err != nil {
-			t.Fatalf("SignerFromMSP: %v", err)
+		// Normalize first: NewEndorserCore treats an empty protocol as Fabric-X
+		// (common.NormalizeProtocol), so comparing the raw string would leave the
+		// endorser building Fabric-X endorsements with a full-cert signer.
+		normProtocol, nerr := common.NormalizeProtocol(protocol)
+		if nerr != nil {
+			t.Fatalf("NormalizeProtocol(%q): %v", protocol, nerr)
+		}
+
+		if normProtocol == common.ProtocolFabricX {
+			// Fabric-X serialises the endorser identity into every endorsement. Sending
+			// only the ID (hash) of the signing cert instead of the whole cert shrinks
+			// each endorsement. Ported from 8ca7627 ("Only serialise hash of endorser")
+			// on the noendorser branch.
+			signer = newIDOfCertSigner(t, cfg)
+		} else {
+			signer, err = identity.SignerFromMSP(cfg.Identity.MSPDir, cfg.Identity.MspID)
+			if err != nil {
+				t.Fatalf("SignerFromMSP: %v", err)
+			}
 		}
 	}
 
@@ -626,6 +702,7 @@ type TestHarness struct {
 	endorsers      []eapi.Service
 	ethChainConfig *params.ChainConfig
 	Primer         *primer.StatePrimer
+	Synchronizer   synchronizer.Synchronizer
 }
 
 func (th *TestHarness) Stop() error {
@@ -662,14 +739,14 @@ func processCommon(t *testing.T, gw *core.Gateway, commit bool, tx *types.Transa
 	return env
 }
 
-func getEndorsedTxForSmartContractCall(t *testing.T, client *EthClient, addr ethcommon.Address, gw *core.Gateway, method string, args ...any) sdk.Endorsement {
+func getEndorsedTxForSmartContractCall(t *testing.T, client *EthClient, addr ethcommon.Address, gw *core.Gateway, method string, args ...any) (sdk.Endorsement, *types.Transaction) {
 	t.Helper()
 	tx, err := client.TxForCall(t.Context(), gw, &addr, method, args...)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	return processCommon(t, gw, false, tx)
+	return processCommon(t, gw, false, tx), tx
 }
 
 // integrationFilters ties a FilterAPI to the gateway that owns it in the
@@ -795,14 +872,8 @@ func querySmartContractExpect(t *testing.T, client *EthClient, addr ethcommon.Ad
 	}
 }
 
-func submit(t *testing.T, gw *core.Gateway, end sdk.Endorsement) {
+func submit(t *testing.T, gw *core.Gateway, end sdk.Endorsement, tx *types.Transaction) {
 	t.Helper()
-
-	// Extract the Ethereum transaction from the proposal
-	tx, err := extractEthTxFromProposal(end.Proposal)
-	if err != nil {
-		t.Error(err)
-	}
 
 	if err := gw.SubmitFabricTx(t.Context(), tx.Hash(), end); err != nil {
 		t.Error(err)
@@ -814,40 +885,6 @@ func submit(t *testing.T, gw *core.Gateway, end sdk.Endorsement) {
 	}
 
 	waitForCommitT(t, ec, tx)
-}
-
-// extractEthTxFromProposal extracts the Ethereum transaction from a peer.Proposal
-func extractEthTxFromProposal(proposal *peer.Proposal) (*types.Transaction, error) {
-	// Unmarshal the proposal payload to get the ChaincodeProposalPayload
-	payload, err := protoutil.UnmarshalChaincodeProposalPayload(proposal.Payload)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal proposal payload: %w", err)
-	}
-
-	// Unmarshal the ChaincodeInvocationSpec from the input
-	cis, err := protoutil.UnmarshalChaincodeInvocationSpec(payload.Input)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal chaincode invocation spec: %w", err)
-	}
-
-	// Get the args - args[0] is the proposal type, args[1] is the serialized eth tx
-	args := cis.ChaincodeSpec.Input.Args
-	if len(args) < 2 {
-		return nil, fmt.Errorf("expected at least 2 args, got %d", len(args))
-	}
-
-	// Check that this is an EVM transaction proposal
-	if len(args[0]) != 1 || args[0][0] != byte(common.ProposalTypeEVMTx) {
-		return nil, fmt.Errorf("not an EVM transaction proposal")
-	}
-
-	// Unmarshal the Ethereum transaction
-	var tx types.Transaction
-	if err := tx.UnmarshalBinary(args[1]); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal ethereum transaction: %w", err)
-	}
-
-	return &tx, nil
 }
 
 func waitForCommitT(t *testing.T, ec *ethclient.Client, tx *types.Transaction) {

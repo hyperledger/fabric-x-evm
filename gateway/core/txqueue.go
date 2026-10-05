@@ -160,12 +160,16 @@ func (q *TxQueue) Complete(hash common.Hash) {
 // It extracts all transaction hashes from the committed block and removes them from the in-progress map.
 // This method is safe to call concurrently and will not block block processing.
 func (q *TxQueue) Handle(ctx context.Context, block *domain.Block) error {
+	logger.Debugf("TxQueue.Handle() block=%d txs=%d", block.BlockNumber, len(block.Transactions))
 	// Mark all transactions in the block as complete and update statistics
 	for _, tx := range block.Transactions {
 		txHash := common.BytesToHash(tx.TxHash)
 		q.total++
 		if tx.Status == 0 {
 			q.invalid++
+		}
+		if !tx.FabricTxStatus.Valid() {
+			logger.Warnf("TxQueue.Handle() block=%d tx=%s fabric-invalid status=%s", block.BlockNumber, txHash.Hex(), tx.FabricTxStatus)
 		}
 		q.Complete(txHash)
 	}

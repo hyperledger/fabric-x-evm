@@ -153,6 +153,7 @@ func (api *FilterAPI) timeoutLoop() {
 // under the API lock, then loads the stored block for newHeads without holding
 // the lock (DB I/O) before fanning out.
 func (api *FilterAPI) Handle(ctx context.Context, b blocks.Block) error {
+	filterLogger.Debugf("FilterAPI.Handle() block=%d", b.Number)
 	api.mu.Lock()
 
 	if len(api.filters) == 0 && len(api.headSubs) == 0 {

@@ -110,12 +110,12 @@ func (c *Client) NonceAt(ctx context.Context, account ethcommon.Address, blockNu
 
 // invocationMsg maps the endorsement invocation onto its wire message.
 func invocationMsg(inv endorsement.Invocation) *endorsementpb.Invocation {
-	msg := &endorsementpb.Invocation{TxId: inv.TxID, Args: inv.Args}
-	if inv.CCID != nil {
-		msg.ChaincodeName = inv.CCID.Name
-		msg.ChaincodeVersion = inv.CCID.Version
+	return &endorsementpb.Invocation{
+		TxId:             inv.TxID,
+		Args:             inv.Args,
+		ChaincodeName:    inv.Namespace,
+		ChaincodeVersion: inv.ChaincodeVersion,
 	}
-	return msg
 }
 
 // proposalResponse maps the wire response onto the ProposalResponse the gateway

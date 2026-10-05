@@ -49,12 +49,11 @@ func resilienceNonceWrite(addr common.Address, nonce uint64) blocks.KVWrite {
 func resilienceEvents(t *testing.T, txID string, logs []sdkstate.Log) []byte {
 	t.Helper()
 
+	// A successful transaction's event bytes are the JSON logs themselves; the
+	// SDK no longer wraps them in a ChaincodeEvent.
 	payload, err := json.Marshal(logs)
 	require.NoError(t, err)
-
-	event, err := fc.MarshalLogs(payload, "evmcc", txID)
-	require.NoError(t, err)
-	return event
+	return payload
 }
 
 func TestHandle_ReprocessingSameBlockKeepsIndexesAndTrieStable(t *testing.T) {
@@ -90,7 +89,7 @@ func TestHandle_ReprocessingSameBlockKeepsIndexesAndTrieStable(t *testing.T) {
 			Number:    0,
 			Status:    blocks.StatusCommitted,
 			InputArgs: [][]byte{{byte(fc.ProposalTypeEVMTx)}, txBytes},
-			Events:    resilienceEvents(t, "fabric-tx-1", logs),
+			Event:     resilienceEvents(t, "fabric-tx-1", logs),
 			NsRWS: []blocks.NsReadWriteSet{{
 				Namespace: "evmcc",
 				RWS: blocks.ReadWriteSet{Writes: []blocks.KVWrite{

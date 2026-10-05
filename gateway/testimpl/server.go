@@ -39,7 +39,7 @@ import (
 // SECURITY WARNING: This server performs server-side transaction signing,
 // which is inherently insecure. Use ONLY for development and testing.
 // NEVER use in production environments.
-func NewTestServer(b api.Backend, testAccounts []common.Address, testAccountKeys map[common.Address]*ecdsa.PrivateKey, lightKVS estorage.Revertible, store storage.Revertible, pool TxPool, nonces NonceResetter, statePrimer *primer.StatePrimer, filterAPI *filters.FilterAPI) (*rpc.Server, error) {
+func NewTestServer(b api.Backend, testAccounts []common.Address, testAccountKeys map[common.Address]*ecdsa.PrivateKey, lightKVS estorage.Revertible, store storage.Revertible, pool TxPool, nonces NonceResetter, statePrimer *primer.StatePrimer, filterAPI *filters.FilterAPI, cutter BlockCutter) (*rpc.Server, error) {
 	srv := rpc.NewServer()
 
 	// Shared by the submit path and the snapshot/revert path; see txFence.
@@ -82,10 +82,10 @@ func NewTestServer(b api.Backend, testAccounts []common.Address, testAccountKeys
 	if statePrimer == nil {
 		return nil, fmt.Errorf("test RPC server requires a state primer")
 	}
-	if err := srv.RegisterName("hardhat", NewHardhatAPI(statePrimer, b)); err != nil {
+	if err := srv.RegisterName("hardhat", NewHardhatAPI(statePrimer, b, cutter)); err != nil {
 		return nil, err
 	}
-	if err := srv.RegisterName("evm", NewEvmAPI(lightKVS, store, fence, nonces)); err != nil {
+	if err := srv.RegisterName("evm", NewEvmAPI(lightKVS, store, fence, nonces, cutter, b)); err != nil {
 		return nil, err
 	}
 

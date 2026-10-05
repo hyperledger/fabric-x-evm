@@ -55,12 +55,15 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/network"
 	nfabx "github.com/hyperledger/fabric-x-sdk/network/fabricx"
 	"github.com/hyperledger/fabric-x-sdk/notification"
 )
+
+var hybridLogger = flogging.MustGetLogger("synchronizer.hybridx")
 
 // deliveryWaitPoll is how often the notification path re-reads dispatched while
 // waiting for delivery to finish the block before its own.  That wait happens
@@ -77,9 +80,10 @@ type deliverySyncer interface {
 // HybridSynchronizer implements the two-phase startup strategy described in
 // the package doc.  It satisfies the app.Synchronizer interface.
 type HybridSynchronizer struct {
-	namespace string
-	logger    sdk.Logger
-	handlers  []blocks.BlockHandler
+	namespace  string
+	handlers   []blocks.BlockHandler
+	queueDepth int
+	onSwitch   func() // called once when notification takes over; may be nil
 
 	delivery  deliverySyncer
 	notifPeer notification.AllTxPeer
@@ -94,28 +98,36 @@ type HybridSynchronizer struct {
 	dispatched atomic.Int64
 }
 
+// OnSwitch registers fn to be called once, on the goroutine that performs the
+// handoff, immediately after the switch from delivery to notification.
+// Must be called before Start.
+func (h *HybridSynchronizer) OnSwitch(fn func()) {
+	h.onSwitch = fn
+}
+
 // New constructs a HybridSynchronizer.
+// queueDepth controls the AllTxStreamer's internal channel depth; pass 0 for the default.
 // handlers is the initial handler chain fed by both phases.
 func New(
 	db network.BlockHeightReader,
 	channel, namespace string,
 	conf network.PeerConf,
-	signer sdk.Signer,
 	logger sdk.Logger,
+	queueDepth int,
 	handlers ...blocks.BlockHandler,
 ) (*HybridSynchronizer, error) {
 	h := &HybridSynchronizer{
-		namespace: namespace,
-		logger:    logger,
-		handlers:  append([]blocks.BlockHandler(nil), handlers...),
+		namespace:  namespace,
+		handlers:   append([]blocks.BlockHandler(nil), handlers...),
+		queueDepth: queueDepth,
 	}
 
-	delivery, err := nfabx.NewSynchronizer(db, channel, conf, signer, logger, &deliveryShim{h: h})
+	delivery, err := nfabx.NewSynchronizer(db, channel, conf, logger, &deliveryShim{h: h})
 	if err != nil {
 		return nil, fmt.Errorf("hybridx: create delivery synchronizer: %w", err)
 	}
 
-	notifPeer, err := nfabx.NewPeer(conf, channel, signer)
+	notifPeer, err := nfabx.NewPeer(conf, channel)
 	if err != nil {
 		return nil, fmt.Errorf("hybridx: create notification peer: %w", err)
 	}
@@ -160,13 +172,12 @@ func (h *HybridSynchronizer) Start(ctx context.Context) error {
 	gate := &notifGate{
 		hybrid:     h,
 		dispatcher: NewAllTxBatchDispatcher(&hybridAdapter{h: h}),
-		logger:     h.logger,
 		// Safe to call only once the gate has seen dispatched reach the block
 		// before its own: this ctx reaches the store's BeginTx, so cancelling
 		// mid-dispatch would abort that block.
 		stopDelivery: deliveryCancel,
 	}
-	streamer := notification.NewAllTxStreamer(h.notifPeer, []notification.AllTxHandler{gate}, h.logger)
+	streamer := notification.NewAllTxStreamer(h.notifPeer, []notification.AllTxHandler{gate}, hybridLogger, h.queueDepth)
 
 	notifErrCh := make(chan error, 1)
 	go func() {
@@ -177,7 +188,7 @@ func (h *HybridSynchronizer) Start(ctx context.Context) error {
 				return
 			}
 			if err := streamer.Stream(ctx, h.notifReq); err != nil && ctx.Err() == nil {
-				h.logger.Warnf("hybridx: notification stream error: %v — restarting in %s", err, retryDelay)
+				hybridLogger.Warnf("hybridx: notification stream error: %v — restarting in %s", err, retryDelay)
 				select {
 				case <-ctx.Done():
 					notifErrCh <- nil
@@ -194,7 +205,7 @@ func (h *HybridSynchronizer) Start(ctx context.Context) error {
 			h.delivery = nil // allow GC of the peer and all delivery resources
 		}()
 		if err := h.delivery.Start(deliveryCtx); err != nil && deliveryCtx.Err() == nil {
-			h.logger.Warnf("hybridx: delivery error: %v", err)
+			hybridLogger.Warnf("hybridx: delivery error: %v", err)
 		}
 	}()
 
@@ -250,14 +261,14 @@ func (s *deliveryShim) Handle(ctx context.Context, b blocks.Block) error {
 					"notification must not win before delivery is seeded", b.Number))
 		}
 		s.h.dispatched.Store(n - 1)
-		s.h.logger.Infof("hybridx: delivery seeded at block %d (claimed=%d)", b.Number, n-1)
+		hybridLogger.Infof("hybridx: delivery seeded at block %d (claimed=%d)", b.Number, n-1)
 	}
 
 	if !s.h.claimed.CompareAndSwap(n-1, n) {
 		// Notification claimed this block first.  Delivery is done for good: it can
 		// only ever offer blocks notification already owns.
 		s.off = true
-		s.h.logger.Infof("hybridx: notification claimed block %d first; delivery disabled", b.Number)
+		hybridLogger.Infof("hybridx: notification claimed block %d first; delivery disabled", b.Number)
 		return nil
 	}
 
@@ -293,7 +304,6 @@ func (s *deliveryShim) Handle(ctx context.Context, b blocks.Block) error {
 type notifGate struct {
 	hybrid       *HybridSynchronizer
 	dispatcher   *AllTxBatchDispatcher
-	logger       sdk.Logger
 	stopDelivery func()
 	switched     bool
 }
@@ -329,7 +339,10 @@ func (g *notifGate) HandleBatch(ctx context.Context, batch notification.AllTxBat
 	// here cannot abort a dispatch mid-flight.
 	g.stopDelivery()
 	g.switched = true
-	g.logger.Infof("hybridx: switching to notification at block %d", batch.BlockNumber)
+	hybridLogger.Infof("hybridx: switching to notification at block %d", batch.BlockNumber)
+	if fn := g.hybrid.onSwitch; fn != nil {
+		fn()
+	}
 	return g.dispatchBatch(ctx, batch)
 }
 
@@ -340,7 +353,7 @@ func (g *notifGate) waitForDelivery(ctx context.Context, upTo int64) error {
 	if g.deliveryReached(upTo) {
 		return nil
 	}
-	g.logger.Infof("hybridx: waiting for delivery to finish block %d before taking over", upTo)
+	hybridLogger.Infof("hybridx: waiting for delivery to finish block %d before taking over", upTo)
 
 	ticker := time.NewTicker(deliveryWaitPoll)
 	defer ticker.Stop()

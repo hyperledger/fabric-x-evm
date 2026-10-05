@@ -14,6 +14,7 @@ import (
 	"maps"
 	"sync/atomic"
 
+	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 )
@@ -21,6 +22,8 @@ import (
 var (
 	// ErrKeyNotFound is returned when a key is not found in the store.
 	ErrKeyNotFound = errors.New("key not found")
+
+	lkvLogger = flogging.MustGetLogger("endorser.storage.lightkvs")
 )
 
 // KVS is implemented by both LightKVS and VersionedDBWrapper.
@@ -189,10 +192,11 @@ func (r *Reader) Get(namespace, key string) (*blocks.WriteRecord, error) {
 			IsDelete:  vv.IsDelete,
 			TxID:      vv.TxID,
 		}
-
+		lkvLogger.Debugf("Reader.Get() ns=%s key=%s block=%d isDelete=%t valueLen=%d", namespace, key, record.BlockNum, record.IsDelete, len(record.Value))
 		return record, nil
 	}
 
+	lkvLogger.Debugf("Reader.Get() ns=%s key=%s not found", namespace, key)
 	return nil, nil
 }
 
@@ -316,8 +320,10 @@ func collectWrites(updates *[]KeyValueVersion, nsrwsList []blocks.NsReadWriteSet
 // Anything older than the tip is skipped unverified — LightKVS only retains
 // historySize recent snapshots, so there's nothing left to check it against.
 func (kvs *LightKVS) Handle(ctx context.Context, b blocks.Block) error {
+	lkvLogger.Debugf("LightKVS.Handle() block=%d txs=%d", b.Number, len(b.Transactions))
 	current := kvs.Current.Load()
 	if !current.Placeholder && b.Number < current.BlockNumber {
+		lkvLogger.Debugf("LightKVS.Handle() block=%d skipped (current=%d)", b.Number, current.BlockNumber)
 		return nil
 	}
 
@@ -325,15 +331,26 @@ func (kvs *LightKVS) Handle(ctx context.Context, b blocks.Block) error {
 	var allUpdates []KeyValueVersion
 
 	for _, tx := range b.Transactions {
+		if !tx.Valid() {
+			lkvLogger.Warnf("LightKVS.Handle() block=%d txID=%s fabric-invalid status=%s reason=%q", b.Number, tx.ID, tx.Status, tx.Reason)
+		}
 		collectWrites(&allUpdates, tx.NsRWS, b.Number, uint64(tx.Number), tx.ID, tx.Valid())
 	}
 
 	if !current.Placeholder && b.Number == current.BlockNumber {
-		return verifyReplay(current, allUpdates)
+		if err := verifyReplay(current, allUpdates); err != nil {
+			lkvLogger.Warnf("LightKVS.Handle() block=%d replay mismatch: %v", b.Number, err)
+			return err
+		}
+		return nil
 	}
 
 	// Applied even with no writes, so the checkpoint tracks ledger height.
-	return kvs.applyBlock(b.Number, allUpdates)
+	if err := kvs.applyBlock(b.Number, allUpdates); err != nil {
+		lkvLogger.Warnf("LightKVS.Handle() block=%d apply error: %v", b.Number, err)
+		return err
+	}
+	return nil
 }
 
 // verifyReplay checks a redelivery of the current tip against what's already

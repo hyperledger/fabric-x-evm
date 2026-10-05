@@ -15,6 +15,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
+	fxcommon "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
@@ -138,5 +139,5 @@ func (e *BalancePrimingExecutor) Execute(tx *types.Transaction) (endorsement.Exe
 	}
 	r.Reads = filteredReads
 
-	return endorsement.Success(r, logs, ret), nil
+	return endorsement.Success(r, fxcommon.LogsEventName(logs), logs, ret), nil
 }

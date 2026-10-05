@@ -397,12 +397,16 @@ func (q *TxQueueV2) Close() {
 // Handle processes block notifications from the synchronizer and marks transactions as complete.
 // This method is designed to be registered as a callback with the block synchronizer.
 func (q *TxQueueV2) Handle(ctx context.Context, block *domain.Block) error {
+	loggerV2.Debugf("TxQueueV2.Handle() block=%d txs=%d", block.BlockNumber, len(block.Transactions))
 	// Pre-compute all transaction hashes outside the lock
 	txHashes := make([]common.Hash, len(block.Transactions))
 	statuses := make([]uint8, len(block.Transactions))
 	for i, tx := range block.Transactions {
 		txHashes[i] = common.BytesToHash(tx.TxHash)
 		statuses[i] = tx.Status
+		if !tx.FabricTxStatus.Valid() {
+			loggerV2.Warnf("TxQueueV2.Handle() block=%d tx=%s fabric-invalid status=%s", block.BlockNumber, txHashes[i].Hex(), tx.FabricTxStatus)
+		}
 	}
 
 	q.mu.Lock()
@@ -429,6 +433,7 @@ func (q *TxQueueV2) Handle(ctx context.Context, block *domain.Block) error {
 		q.cond.Broadcast()
 	}
 
+	loggerV2.Debugf("TxQueueV2.Handle() block=%d promoted=%d", block.BlockNumber, totalPromoted)
 	return nil
 }
 

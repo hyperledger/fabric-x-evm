@@ -35,18 +35,31 @@ const primeCommitTimeout = 30 * time.Second
 // primePollInterval is how often that wait re-reads the value.
 const primePollInterval = 50 * time.Millisecond
 
+// BlockCutter cuts empty blocks on the in-process test network. Satisfied by
+// *fabrictest.Network. Nil means hardhat_mine / evm_mine are unavailable.
+type BlockCutter interface {
+	CutBlock(ctx context.Context) error
+}
+
+const (
+	mineSyncTimeout  = 10 * time.Second
+	minePollInterval = 10 * time.Millisecond
+)
+
 // HardhatAPI provides Hardhat-specific RPC methods for testing.
 // Most methods are stubs that let Hardhat tests run. The three state-changing ones
 // (setBalance, setCode, setStorageAt) are real: each commits a priming transaction
 // via StatePrimer, which endorses locally with every endorser's key and submits
 // through the normal commit flow. The endorsers themselves are never asked to
 // execute anything, so this works unchanged against remote/served endorsers.
+// hardhat_mine is real when a BlockCutter is wired (testnode).
 //
 // SECURITY WARNING: These methods are for testing only and should NEVER
 // be enabled in production environments.
 type HardhatAPI struct {
 	primer  *primer.StatePrimer
 	backend gwapi.Backend
+	cutter  BlockCutter
 
 	// StatePrimer wraps a single mutable StateDB, so one priming transaction must
 	// finish before the next resets it.
@@ -55,13 +68,11 @@ type HardhatAPI struct {
 
 // NewHardhatAPI creates a Hardhat API whose setBalance/setCode/setStorageAt commit
 // real priming transactions through sp, confirming each change against backend
-// before returning.
+// before returning. cutter may be nil; Mine then returns an error.
 //
-// Both arguments are required: the state-changing methods are part of the surface
-// Hardhat expects, not an opt-in extra, so there is no half-built variant of this
-// API to keep working.
-func NewHardhatAPI(sp *primer.StatePrimer, backend gwapi.Backend) *HardhatAPI {
-	return &HardhatAPI{primer: sp, backend: backend}
+// primer and backend are required for the state-changing methods Hardhat expects.
+func NewHardhatAPI(sp *primer.StatePrimer, backend gwapi.Backend, cutter BlockCutter) *HardhatAPI {
+	return &HardhatAPI{primer: sp, backend: backend, cutter: cutter}
 }
 
 // prime resets the primer, lets apply queue its writes, commits the resulting
@@ -139,9 +150,9 @@ func (api *HardhatAPI) prime(
 // change is committed and reflected in reads of the account's balance.
 func (api *HardhatAPI) SetBalance(ctx context.Context, address common.Address, balance hexutil.Big) error {
 	target := (*big.Int)(&balance)
-	hardhatLogger.Debugf("HardhatAPI.SetBalance() called with address=%s, balance=%s", address.Hex(), target.String())
+	hardhatLogger.Debugf("HardhatAPI.SetBalance() called with address=%s balance=%s", address.Hex(), target.String())
 
-	return api.prime(ctx, "setBalance",
+	if err := api.prime(ctx, "setBalance",
 		func(p *primer.StatePrimer) { p.SetBalance(address, target) },
 		func(ctx context.Context) (bool, error) {
 			got, err := api.backend.BalanceAt(ctx, address, nil)
@@ -149,7 +160,12 @@ func (api *HardhatAPI) SetBalance(ctx context.Context, address common.Address, b
 				return false, err
 			}
 			return got.Cmp(target) == 0, nil
-		})
+		}); err != nil {
+		hardhatLogger.Warnf("HardhatAPI.SetBalance() returning error: %v", err)
+		return err
+	}
+	hardhatLogger.Debugf("HardhatAPI.SetBalance() returning ok")
+	return nil
 }
 
 // SetCode sets an account's code (hardhat_setCode), blocking until the change is
@@ -158,7 +174,7 @@ func (api *HardhatAPI) SetBalance(ctx context.Context, address common.Address, b
 // CreateAccount is deliberately not called: it blind-writes a zero balance and
 // nonce, and a code write alone already makes the account exist.
 func (api *HardhatAPI) SetCode(ctx context.Context, address common.Address, code hexutil.Bytes) (bool, error) {
-	hardhatLogger.Debugf("HardhatAPI.SetCode() called with address=%s, code length=%d", address.Hex(), len(code))
+	hardhatLogger.Debugf("HardhatAPI.SetCode() called with address=%s codeLen=%d", address.Hex(), len(code))
 
 	if err := api.prime(ctx, "setCode",
 		func(p *primer.StatePrimer) { p.SetCode(address, code) },
@@ -169,8 +185,10 @@ func (api *HardhatAPI) SetCode(ctx context.Context, address common.Address, code
 			}
 			return bytes.Equal(got, code), nil
 		}); err != nil {
+		hardhatLogger.Warnf("HardhatAPI.SetCode() returning error: %v", err)
 		return false, err
 	}
+	hardhatLogger.Debugf("HardhatAPI.SetCode() returning ok")
 	return true, nil
 }
 
@@ -178,14 +196,16 @@ func (api *HardhatAPI) SetCode(ctx context.Context, address common.Address, code
 // the change is committed and reflected in reads of the slot. Hardhat sends slot and
 // value as quantity-style hex strings, so both are decoded like eth_getStorageAt.
 func (api *HardhatAPI) SetStorageAt(ctx context.Context, address common.Address, slot string, value string) (bool, error) {
-	hardhatLogger.Debugf("HardhatAPI.SetStorageAt() called with address=%s, slot=%s, value=%s", address.Hex(), slot, value)
+	hardhatLogger.Debugf("HardhatAPI.SetStorageAt() called with address=%s slot=%s value=%s", address.Hex(), slot, value)
 
 	key, err := gwapi.DecodeStorageWord("storage key", slot)
 	if err != nil {
+		hardhatLogger.Warnf("HardhatAPI.SetStorageAt() returning error: %v", err)
 		return false, err
 	}
 	val, err := gwapi.DecodeStorageWord("storage value", value)
 	if err != nil {
+		hardhatLogger.Warnf("HardhatAPI.SetStorageAt() returning error: %v", err)
 		return false, err
 	}
 
@@ -200,18 +220,27 @@ func (api *HardhatAPI) SetStorageAt(ctx context.Context, address common.Address,
 			}
 			return common.BytesToHash(got) == val, nil
 		}); err != nil {
+		hardhatLogger.Warnf("HardhatAPI.SetStorageAt() returning error: %v", err)
 		return false, err
 	}
+	hardhatLogger.Debugf("HardhatAPI.SetStorageAt() returning ok")
 	return true, nil
 }
 
-// Mine accepts hardhat_mine for RPC compatibility with Hardhat tests.
-// It does not advance chain state: fabric-evm creates blocks via Fabric
-// consensus, not mining. Optional blocks/interval params match Hardhat's
-// signature and are ignored.
+// Mine implements hardhat_mine([blocks], [interval]). It cuts empty blocks via
+// the testnetwork BlockCutter and waits until eth_blockNumber reflects them.
+// interval is accepted for signature compatibility but does not change timestamps
+// yet (see issue #277). Default blocks is 1; explicit 0 is a no-op.
 func (api *HardhatAPI) Mine(ctx context.Context, blocks *hexutil.Uint64, interval *hexutil.Uint64) error {
-	hardhatLogger.Debugf("HardhatAPI.Mine() called blocks=%v interval=%v (stub; no state change)", blocks, interval)
-	return nil
+	hardhatLogger.Debugf("HardhatAPI.Mine() called blocks=%v interval=%v", blocks, interval)
+	if interval != nil {
+		hardhatLogger.Debugf("HardhatAPI.Mine() ignoring interval=%d (timestamps not controllable yet)", *interval)
+	}
+	n := uint64(1)
+	if blocks != nil {
+		n = uint64(*blocks)
+	}
+	return mineBlocks(ctx, api.cutter, api.backend, n)
 }
 
 // ImpersonateAccount accepts hardhat_impersonateAccount for RPC compatibility.
@@ -230,7 +259,7 @@ func (api *HardhatAPI) StopImpersonatingAccount(ctx context.Context, address com
 
 // EvmAPI provides EVM-specific RPC methods for testing, particularly snapshot/revert.
 // Uses LightKVS history mechanism to capture and restore ledger state, and Store
-// for database snapshot/revert.
+// for database snapshot/revert. evm_mine is real when a BlockCutter is wired.
 //
 // SECURITY WARNING: These methods are for testing only and should NEVER
 // be enabled in production environments.
@@ -242,6 +271,9 @@ type EvmAPI struct {
 	fence *txFence
 	// Told when a revert moves the ledger nonces out from under the gateway.
 	nonces NonceResetter
+	cutter BlockCutter
+	// backend is used by Mine to wait until cut blocks are visible via eth_blockNumber.
+	backend gwapi.Backend
 	// Map snapshot IDs (hex strings) to block numbers
 	snapshots map[string]uint64
 }
@@ -250,12 +282,15 @@ type EvmAPI struct {
 type NonceResetter interface{ ResetNonces() }
 
 // NewEvmAPI creates a new EVM API instance with LightKVS and Store for state management.
-func NewEvmAPI(lightKVS estorage.Revertible, store storage.Revertible, fence *txFence, nonces NonceResetter) *EvmAPI {
+// cutter and backend may be nil; Mine then returns an error.
+func NewEvmAPI(lightKVS estorage.Revertible, store storage.Revertible, fence *txFence, nonces NonceResetter, cutter BlockCutter, backend gwapi.Backend) *EvmAPI {
 	return &EvmAPI{
 		lightKVS:  lightKVS,
 		store:     store,
 		fence:     fence,
 		nonces:    nonces,
+		cutter:    cutter,
+		backend:   backend,
 		snapshots: make(map[string]uint64),
 	}
 }
@@ -272,36 +307,21 @@ func (api *EvmAPI) Snapshot(ctx context.Context) (string, error) {
 	// Wait out anything still in flight, so the block number recorded below is
 	// one the ledger has actually settled on.
 	if err := api.fence.beginRewind(ctx); err != nil {
-		hardhatLogger.Debugf("EvmAPI.Snapshot() returning error: %v", err)
+		hardhatLogger.Warnf("EvmAPI.Snapshot() returning error: %v", err)
 		return "", err
 	}
 	defer api.fence.endRewind()
 
-	// Snapshot the Store database - this returns the current block number
-	hardhatLogger.Debugf("EvmAPI.Snapshot() creating Store snapshot")
 	blockNumber, err := api.store.Snapshot(ctx)
 	if err != nil {
-		hardhatLogger.Debugf("EvmAPI.Snapshot() Store snapshot error: %v", err)
+		hardhatLogger.Warnf("EvmAPI.Snapshot() returning error: %v", err)
 		return "", fmt.Errorf("failed to snapshot Store: %w", err)
 	}
-	hardhatLogger.Debugf("EvmAPI.Snapshot() Store snapshot created successfully at block %d", blockNumber)
 
-	// Use block number as snapshot ID (in hex format for compatibility)
 	snapshotID := fmt.Sprintf("0x%x", blockNumber)
-
-	// Store the mapping
 	api.snapshots[snapshotID] = blockNumber
 
-	hardhatLogger.Debugf("EvmAPI.Snapshot() stored snapshot: ID=%s -> block=%d", snapshotID, blockNumber)
-	hardhatLogger.Debugf("EvmAPI.Snapshot() all snapshots: %v", api.snapshots)
-
-	hardhatLogger.Debugf("EvmAPI.Snapshot(): Created snapshot ID=%s for block=%d", snapshotID, blockNumber)
-	hardhatLogger.Debugf("EvmAPI.Snapshot(): Total snapshots in map: %d", len(api.snapshots))
-	for id, bn := range api.snapshots {
-		hardhatLogger.Debugf("EvmAPI.Snapshot():   - ID=%s -> block=%d", id, bn)
-	}
-
-	hardhatLogger.Debugf("EvmAPI.Snapshot() returning: %s (block %d)", snapshotID, blockNumber)
+	hardhatLogger.Debugf("EvmAPI.Snapshot() returning: %s (block=%d)", snapshotID, blockNumber)
 	return snapshotID, nil
 }
 
@@ -320,79 +340,107 @@ func (api *EvmAPI) Revert(ctx context.Context, snapshotID string) (bool, error) 
 	// transaction the gateway calls committed is already in the endorser's
 	// state. Giving the endorser its own synchronizer would break that.
 	if err := api.fence.beginRewind(ctx); err != nil {
-		hardhatLogger.Debugf("EvmAPI.Revert() returning error: %v", err)
+		hardhatLogger.Warnf("EvmAPI.Revert() returning error: %v", err)
 		return false, err
 	}
 	defer api.fence.endRewind()
 	// Even a failed revert may have moved nonces; runs before endRewind, while submissions are still fenced.
 	defer api.nonces.ResetNonces()
 
-	hardhatLogger.Debugf("EvmAPI.Revert() all snapshots before revert: %v", api.snapshots)
-
-	// Get current block number for logging
-	currentBlock, err := api.lightKVS.BlockNumber(ctx)
-	if err == nil {
-		hardhatLogger.Debugf("EvmAPI.Revert() current block number before revert: %d", currentBlock)
-	}
-
-	// Look up the block number for this snapshot ID
 	blockNumber, ok := api.snapshots[snapshotID]
 	if !ok {
-		hardhatLogger.Debugf("EvmAPI.Revert() returning error: invalid snapshot ID: %s", snapshotID)
+		hardhatLogger.Warnf("EvmAPI.Revert() returning error: invalid snapshot ID: %s", snapshotID)
 		return false, fmt.Errorf("invalid snapshot ID: %s", snapshotID)
 	}
-	hardhatLogger.Debugf("EvmAPI.Revert() found snapshot ID %s -> block %d", snapshotID, blockNumber)
+	hardhatLogger.Debugf("EvmAPI.Revert() snapshotID=%s -> block=%d", snapshotID, blockNumber)
 
-	hardhatLogger.Debugf("EvmAPI.Revert(): Reverting to snapshot ID=%s (block=%d)", snapshotID, blockNumber)
-	hardhatLogger.Debugf("EvmAPI.Revert(): Available snapshots before revert:")
-	for id, bn := range api.snapshots {
-		hardhatLogger.Debugf("EvmAPI.Revert():   - ID=%s -> block=%d", id, bn)
-	}
-
-	hardhatLogger.Debugf("EvmAPI.Revert() calling LightKVS.RevertToBlock(%d)", blockNumber)
-
-	// Revert the LightKVS to the snapshot's block number
 	if err := api.lightKVS.RevertToBlock(blockNumber); err != nil {
-		hardhatLogger.Debugf("EvmAPI.Revert() LightKVS.RevertToBlock returned error: %v", err)
+		hardhatLogger.Warnf("EvmAPI.Revert() returning error: %v", err)
 		return false, fmt.Errorf("failed to revert LightKVS to block %d: %w", blockNumber, err)
 	}
 
-	hardhatLogger.Debugf("EvmAPI.Revert() successfully reverted LightKVS to block %d", blockNumber)
-
-	// Revert the Store database to the same block number
-	hardhatLogger.Debugf("EvmAPI.Revert() reverting Store to block %d", blockNumber)
 	if err := api.store.RevertToBlock(ctx, blockNumber); err != nil {
-		hardhatLogger.Debugf("EvmAPI.Revert() Store.RevertToBlock returned error: %v", err)
+		hardhatLogger.Warnf("EvmAPI.Revert() returning error: %v", err)
 		return false, fmt.Errorf("failed to revert Store to block %d: %w", blockNumber, err)
 	}
-	hardhatLogger.Debugf("EvmAPI.Revert() Store reverted successfully to block %d", blockNumber)
 
 	// Remove snapshots created after this one
-	removedSnapshots := []string{}
 	for id, bn := range api.snapshots {
 		if bn > blockNumber {
-			removedSnapshots = append(removedSnapshots, fmt.Sprintf("%s(block %d)", id, bn))
 			delete(api.snapshots, id)
 		}
 	}
-	if len(removedSnapshots) > 0 {
-		hardhatLogger.Debugf("EvmAPI.Revert() removed snapshots: %v", removedSnapshots)
-	}
 
-	hardhatLogger.Debugf("EvmAPI.Revert() all snapshots after revert: %v", api.snapshots)
-	hardhatLogger.Debugf("EvmAPI.Revert() returning: true (reverted to block %d)", blockNumber)
+	hardhatLogger.Debugf("EvmAPI.Revert() returning true (block=%d snapshots remaining=%d)", blockNumber, len(api.snapshots))
 	return true, nil
 }
 
-// Mine mines a new block (evm_mine).
-// This is a stub that returns success. In fabric-evm, blocks are created
-// by the Fabric consensus mechanism, not by mining.
+// Mine implements evm_mine: cut one empty block and wait until it is visible.
+// Returns the new block hash hex when available, otherwise the new height as hex.
 func (api *EvmAPI) Mine(ctx context.Context) (string, error) {
 	hardhatLogger.Debugf("EvmAPI.Mine() called")
-	// Stub: In fabric-evm, blocks are created by Fabric consensus
-	// Return success to allow tests to proceed
-	hardhatLogger.Debugf("EvmAPI.Mine() returning: 0x0")
-	return "0x0", nil
+	if err := mineBlocks(ctx, api.cutter, api.backend, 1); err != nil {
+		return "", err
+	}
+	if api.backend == nil {
+		return "0x0", nil
+	}
+	num, err := api.backend.BlockNumber(ctx)
+	if err != nil {
+		return "", err
+	}
+	block, err := api.backend.GetBlockByNumber(ctx, num, false)
+	if err != nil || block == nil || len(block.BlockHash) == 0 {
+		return hexutil.EncodeUint64(num), nil
+	}
+	return common.BytesToHash(block.BlockHash).Hex(), nil
+}
+
+// mineBlocks cuts n empty blocks and waits until backend.BlockNumber reaches
+// start+n. n==0 is a no-op. cutter must be non-nil when n>0.
+func mineBlocks(ctx context.Context, cutter BlockCutter, numbers interface {
+	BlockNumber(context.Context) (uint64, error)
+}, n uint64) error {
+	if n == 0 {
+		return nil
+	}
+	if cutter == nil {
+		return fmt.Errorf("hardhat_mine requires a block cutter; only available on testnode")
+	}
+	if numbers == nil {
+		return fmt.Errorf("hardhat_mine requires a backend to observe block height")
+	}
+	start, err := numbers.BlockNumber(ctx)
+	if err != nil {
+		return fmt.Errorf("block number before mine: %w", err)
+	}
+	for i := range n {
+		if err := cutter.CutBlock(ctx); err != nil {
+			return fmt.Errorf("cut block %d/%d: %w", i+1, n, err)
+		}
+	}
+	target := start + n
+	deadline := time.Now().Add(mineSyncTimeout)
+	if dl, ok := ctx.Deadline(); ok && dl.Before(deadline) {
+		deadline = dl
+	}
+	for {
+		height, err := numbers.BlockNumber(ctx)
+		if err != nil {
+			return fmt.Errorf("block number while waiting for mine: %w", err)
+		}
+		if height >= target {
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("timed out waiting for block height %d (have %d)", target, height)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(minePollInterval):
+		}
+	}
 }
 
 // SetAutomine accepts evm_setAutomine for RPC compatibility with Hardhat tests.
@@ -406,9 +454,6 @@ func (api *EvmAPI) SetAutomine(ctx context.Context, enabled bool) error {
 // This is a stub that returns the time increase amount.
 func (api *EvmAPI) IncreaseTime(ctx context.Context, seconds hexutil.Uint64) (hexutil.Uint64, error) {
 	hardhatLogger.Debugf("EvmAPI.IncreaseTime() called with seconds=%d", seconds)
-	// Stub: return the requested time increase
-	// In a full implementation, this would affect the timestamp of the next block
-	hardhatLogger.Debugf("EvmAPI.IncreaseTime() returning: %d", seconds)
 	return seconds, nil
 }
 
@@ -416,8 +461,5 @@ func (api *EvmAPI) IncreaseTime(ctx context.Context, seconds hexutil.Uint64) (he
 // This is a stub that returns success.
 func (api *EvmAPI) SetNextBlockTimestamp(ctx context.Context, timestamp hexutil.Uint64) (bool, error) {
 	hardhatLogger.Debugf("EvmAPI.SetNextBlockTimestamp() called with timestamp=%d", timestamp)
-	// Stub: return success
-	// In a full implementation, this would set the timestamp for the next block
-	hardhatLogger.Debugf("EvmAPI.SetNextBlockTimestamp() returning: true")
 	return true, nil
 }

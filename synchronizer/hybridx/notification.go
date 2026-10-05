@@ -20,7 +20,7 @@ import (
 	"github.com/hyperledger/fabric-x-evm/common"
 )
 
-var notifLogger = flogging.MustGetLogger("evm.notification")
+var notifLogger = flogging.MustGetLogger("synchronizer.hybridx.notification")
 
 // BlockHandler defines the interface for handlers that
 // process committed blocks delivered via the AllTxStreamer path
@@ -57,8 +57,8 @@ func (d *AllTxBatchDispatcher) HandleBatch(ctx context.Context, batch notificati
 
 	txs := make([]blocks.Transaction, 0, len(batch.Events))
 	for _, event := range batch.Events {
-		// InputArgs is empty when the transaction carried no metadata at all and when
-		// its ChaincodeInput failed to parse, so this one check covers both.
+		// InputArgs is empty when the transaction carried no metadata at all and
+		// when it carried no args, so this one check covers both.
 		if len(event.InputArgs) < 2 {
 			notifLogger.Debugf("Skipping tx %s: no ethereum tx in metadata", event.ID)
 			continue

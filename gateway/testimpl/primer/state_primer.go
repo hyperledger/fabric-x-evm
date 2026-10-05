@@ -27,6 +27,8 @@ import (
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
+	efab "github.com/hyperledger/fabric-x-sdk/endorsement/fabric"
+	efabx "github.com/hyperledger/fabric-x-sdk/endorsement/fabricx"
 )
 
 type KVSSnapshotter interface {
@@ -43,6 +45,7 @@ type StatePrimer struct {
 	reader            execution.ReadStore
 	namespace         string
 	signer            sdk.Signer
+	invBuilder        endorsement.InvocationBuilder
 	builders          []endorsement.Builder
 	channel           string
 	nsVersion         string
@@ -55,6 +58,9 @@ type StatePrimer struct {
 }
 
 // NewStatePrimer creates a new state primer builder.
+//
+// nsVersion is Network.NsVersion. On the Fabric-X path (monotonicVersions=true)
+// it must be a decimal integer; NewStatePrimer returns an error if it is not.
 func NewStatePrimer(
 	gw *core.Gateway,
 	submitter core.Submitter,
@@ -81,6 +87,18 @@ func NewStatePrimer(
 		return nil, err
 	}
 
+	var invBuilder endorsement.InvocationBuilder
+	if monotonicVersions {
+		// Validate that nsVersion is a parseable integer on the Fabric-X path.
+		netCfg := lc.Network{NsVersion: nsVersion}
+		if _, verr := netCfg.NsVersionUint64(); verr != nil {
+			return nil, verr
+		}
+		invBuilder = efabx.NewInvocationBuilder(signer)
+	} else {
+		invBuilder = efab.NewInvocationBuilder(signer)
+	}
+
 	return &StatePrimer{
 		gw:                gw,
 		submitter:         submitter,
@@ -88,6 +106,7 @@ func NewStatePrimer(
 		kvs:               db,
 		namespace:         namespace,
 		signer:            signer,
+		invBuilder:        invBuilder,
 		builders:          builders,
 		channel:           channel,
 		nsVersion:         nsVersion,
@@ -238,11 +257,16 @@ func (sp *StatePrimer) Commit(ctx context.Context, wait bool) error {
 
 	// Create the invocation for the priming transaction. Must carry sp.nsVersion (like the
 	// real endorsement path does) or the committer rejects it as INVALID_CHAINCODE.
-	inv, err := endorsement.NewInvocation(
-		sp.signer,
+	primerNetCfg := lc.Network{NsVersion: sp.nsVersion}
+	nsVersionX, err := primerNetCfg.NsVersionUint64()
+	if err != nil {
+		return err
+	}
+	inv, err := sp.invBuilder.NewInvocation(
 		sp.channel,
 		sp.namespace,
 		sp.nsVersion,
+		nsVersionX,
 		[][]byte{{byte(lc.ProposalTypeEVMTx)}, ethTxBytes},
 	)
 	if err != nil {
@@ -252,7 +276,7 @@ func (sp *StatePrimer) Commit(ctx context.Context, wait bool) error {
 	// Collect endorsements from all builders
 	var presps []*pb.ProposalResponse
 	for _, builder := range sp.builders {
-		presp, err := builder.Endorse(inv, endorsement.Success(sp.stateDB.Result(), nil, nil))
+		presp, err := builder.Endorse(inv, endorsement.Success(sp.stateDB.Result(), "", nil, nil))
 		if err != nil {
 			return err
 		}

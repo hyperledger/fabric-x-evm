@@ -528,11 +528,19 @@ func (p *PebbleKVS) Get(namespace, key string) (*blocks.WriteRecord, error) {
 // with the block DB's, which does log empty blocks. Keeping height equal to
 // ledger height is what lets this KVS serve as the synchronizer's height reader.
 func (p *PebbleKVS) Handle(ctx context.Context, b blocks.Block) error {
+	pebbleLogger.Debugf("PebbleKVS.Handle() block=%d txs=%d", b.Number, len(b.Transactions))
 	var updates []KeyValueVersion
 	for _, tx := range b.Transactions {
+		if !tx.Valid() {
+			pebbleLogger.Warnf("PebbleKVS.Handle() block=%d txID=%s fabric-invalid status=%s reason=%q", b.Number, tx.ID, tx.Status, tx.Reason)
+		}
 		collectWrites(&updates, tx.NsRWS, b.Number, uint64(tx.Number), tx.ID, tx.Valid())
 	}
-	return p.commitBlock(b.Number, updates)
+	if err := p.commitBlock(b.Number, updates); err != nil {
+		pebbleLogger.Warnf("PebbleKVS.Handle() block=%d commit error: %v", b.Number, err)
+		return err
+	}
+	return nil
 }
 
 // BlockNumber returns the last committed block number.
@@ -579,10 +587,12 @@ func (s *pebbleSnapshot) Get(namespace, key string) (*blocks.WriteRecord, error)
 	// MVCC-validated by the committer.
 	rec, _, err := currentRecord(s.db, fullKey)
 	if err != nil {
+		pebbleLogger.Warnf("pebbleSnapshot.Get() ns=%s key=%s error reading current record: %v", namespace, key, err)
 		return nil, err
 	}
 	if rec != nil && rec.BlockNum <= s.lastBlock {
 		rec.Namespace, rec.Key = namespace, key
+		pebbleLogger.Debugf("pebbleSnapshot.Get() ns=%s key=%s block=%d (current hit) isDelete=%t valueLen=%d", namespace, key, rec.BlockNum, rec.IsDelete, len(rec.Value))
 		return rec, nil
 	}
 
@@ -594,13 +604,20 @@ func (s *pebbleSnapshot) Get(namespace, key string) (*blocks.WriteRecord, error)
 	if it.Next() {
 		hrec, err := decodeRecord(it.Value())
 		if err != nil {
+			pebbleLogger.Warnf("pebbleSnapshot.Get() ns=%s key=%s error decoding history record: %v", namespace, key, err)
 			return nil, err
 		}
 		hrec.Namespace, hrec.Key = namespace, key
+		pebbleLogger.Debugf("pebbleSnapshot.Get() ns=%s key=%s block=%d (history hit) isDelete=%t valueLen=%d", namespace, key, hrec.BlockNum, hrec.IsDelete, len(hrec.Value))
 		return hrec, nil
 	}
+	if err := it.Error(); err != nil {
+		pebbleLogger.Warnf("pebbleSnapshot.Get() ns=%s key=%s iterator error: %v", namespace, key, err)
+		return nil, err
+	}
 	// Nothing at or below lastBlock: the key did not exist yet at that height.
-	return nil, it.Error()
+	pebbleLogger.Debugf("pebbleSnapshot.Get() ns=%s key=%s not found (lastBlock=%d)", namespace, key, s.lastBlock)
+	return nil, nil
 }
 
 // Close releases the snapshot. After Close the snapshot cannot be used.

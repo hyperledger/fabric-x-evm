@@ -77,12 +77,14 @@ func NewChain(dbConnStr, triePath string, withTrie bool) (*Chain, error) {
 // Re-delivering an already-stored block is safe: the trie apply and
 // InsertBlock/InsertTransaction/InsertLog are all idempotent under replay.
 func (c *Chain) Handle(ctx context.Context, b blocks.Block) error {
+	logger.Debugf("Chain.Handle() block=%d txs=%d", b.Number, len(b.Transactions))
 	ebl := ConvertToDomain(b)
 
 	ebl.ParentHash = c.prevHash.Bytes()
 	if c.ts != nil {
 		stateRoot, err := c.ts.Commit(ctx, b)
 		if err != nil {
+			logger.Warnf("Chain.Handle() block=%d trie commit error: %v", b.Number, err)
 			return err // irrecoverable
 		}
 		ebl.StateRoot = stateRoot.Bytes()
@@ -91,10 +93,12 @@ func (c *Chain) Handle(ctx context.Context, b blocks.Block) error {
 	}
 
 	if err := c.Store.InsertBlock(ctx, ebl); err != nil {
+		logger.Warnf("Chain.Handle() block=%d insert error: %v", b.Number, err)
 		return err
 	}
 
 	c.prevHash = common.BytesToHash(ebl.BlockHash)
+	logger.Debugf("Chain.Handle() block=%d committed prevHash=%s", b.Number, c.prevHash.Hex())
 	return nil
 }
 
@@ -146,19 +150,17 @@ func ConvertToDomain(b blocks.Block) domain.Block {
 
 	logIndex := int64(0) // logIndex is the index of the log in the block
 	for _, tx := range b.Transactions {
-		// TODO: filter on namespace?
-
 		// retrieve the Ethereum transaction from the chaincode invocation
 		if len(tx.InputArgs) < 2 || !bytes.Equal(tx.InputArgs[0], []byte{byte(fc.ProposalTypeEVMTx)}) {
 			// skip non-eth tx
 			continue
 		}
 		status := uint8(0)
-		if tx.Valid() && !fc.IsRevertEvent(tx.Events) && !fc.IsExecFailureEvent(tx.Events) {
+		if tx.Valid() && !fc.IsRevertEvent(tx.EventName) && !fc.IsExecFailureEvent(tx.EventName) {
 			status = 1
 		}
 
-		etx, err := convertTransaction(tx.InputArgs[1], b.Hash, b.Number, tx.Number, tx.ID, status, tx.Status, tx.Events, &logIndex)
+		etx, err := convertTransaction(tx.InputArgs[1], b.Hash, b.Number, tx.Number, tx.ID, status, tx.Status, tx.Event, &logIndex)
 		if err != nil {
 			panic(err) // we surface this for now instead of swallowing it
 		}

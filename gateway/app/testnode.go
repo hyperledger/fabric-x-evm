@@ -45,7 +45,7 @@ type TestNodeConfig struct {
 const (
 	testNodeChannel   = "mychannel"
 	testNodeNamespace = "basic"
-	testNodeNsVersion = "1.0"
+	testNodeNsVersion = "0"
 )
 
 // NewTestNode builds a fully self-contained App: an in-process fabrictest network,
@@ -120,6 +120,7 @@ func NewTestNode(ctx context.Context, tcfg TestNodeConfig) (*App, error) {
 		kvs:          endorserKVS,
 		builders:     []endorsement.Builder{endorserBuilder},
 		accountsPath: tcfg.TestAccountsPath,
+		cutter:       nw,
 	}
 	application, err := buildApp(ctx, cfg, signer, logger, endorser, nil, test, endorserKVS)
 	if err != nil {

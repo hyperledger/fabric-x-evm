@@ -25,10 +25,11 @@ import (
 
 func dialHardhat(t *testing.T) *rpc.Client {
 	t.Helper()
+	height := uint64(0)
+	cutter := &fakeCutter{height: &height}
+	backend := &mineBackend{height: &height}
 	srv := rpc.NewServer()
-	// Only the stub methods are exercised here, so neither the primer nor the backend
-	// is reached; the state-changing methods are covered by the integration suite.
-	if err := srv.RegisterName("hardhat", NewHardhatAPI(nil, nil)); err != nil {
+	if err := srv.RegisterName("hardhat", NewHardhatAPI(nil, backend, cutter)); err != nil {
 		t.Fatalf("RegisterName hardhat: %v", err)
 	}
 	client := rpc.DialInProc(srv)
@@ -39,7 +40,7 @@ func dialHardhat(t *testing.T) *rpc.Client {
 func dialEvm(t *testing.T) *rpc.Client {
 	t.Helper()
 	srv := rpc.NewServer()
-	if err := srv.RegisterName("evm", NewEvmAPI(&mockRevertibleKVS{}, &mockRevertibleStore{}, &txFence{}, &recordingNonces{})); err != nil {
+	if err := srv.RegisterName("evm", NewEvmAPI(&mockRevertibleKVS{}, &mockRevertibleStore{}, &txFence{}, &recordingNonces{}, nil, nil)); err != nil {
 		t.Fatalf("RegisterName evm: %v", err)
 	}
 	client := rpc.DialInProc(srv)
@@ -56,8 +57,8 @@ func TestHardhatAPI_Mine_RPCRegistration(t *testing.T) {
 		params []any
 	}{
 		{"no params", nil},
-		{"blocks only", []any{"0x100"}},
-		{"blocks and interval", []any{"0x3e8", "0x3c"}},
+		{"blocks only", []any{"0x2"}},
+		{"blocks and interval", []any{"0x3", "0x3c"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -138,7 +139,7 @@ func TestEvmAPI_RevertResetsNonces(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			nonces := &recordingNonces{}
-			api := NewEvmAPI(&mockRevertibleKVS{}, store, &txFence{pool: &fakePool{}}, nonces)
+			api := NewEvmAPI(&mockRevertibleKVS{}, store, &txFence{pool: &fakePool{}}, nonces, nil, nil)
 
 			id, err := api.Snapshot(context.Background())
 			require.NoError(t, err)
@@ -208,7 +209,7 @@ func TestEvmAPI_RevertWaitsForInFlightTransaction(t *testing.T) {
 	fence := &txFence{pool: pool}
 	kvs := &mockRevertibleKVS{onRevert: func(uint64) { record("revert") }}
 	testAPI := NewTestEthAPI(api.NewEthAPI(backend), backend, testAccountMgr.Addresses, testAccountMgr.PrivateKeys, fence)
-	evmAPI := NewEvmAPI(kvs, &mockRevertibleStore{}, fence, &recordingNonces{})
+	evmAPI := NewEvmAPI(kvs, &mockRevertibleStore{}, fence, &recordingNonces{}, nil, nil)
 
 	snapshotID, err := evmAPI.Snapshot(context.Background())
 	if err != nil {

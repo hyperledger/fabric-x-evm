@@ -13,7 +13,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"log"
 	"math/big"
 	"os"
 	"path"
@@ -22,10 +21,13 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-x-evm/gateway/testimpl/primer"
 	"github.com/hyperledger/fabric-x-evm/integration"
 	"github.com/hyperledger/fabric-x-evm/integration/contracts"
 )
+
+var logger = flogging.MustGetLogger("perf")
 
 // USDC proxy address
 var usdcAddress = common.HexToAddress("0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")
@@ -80,17 +82,21 @@ func main() {
 	switch *mode {
 	case "fetch":
 		if err := fetchContract(*rpcURL, *outputFile); err != nil {
-			log.Fatalf("fetch mode failed: %v", err)
+			logger.Errorf("fetch mode failed: %v", err)
+			os.Exit(1)
 		}
 	case "generate":
 		if *inputFile == "" {
-			log.Fatal("input file is required for generate mode (use -input flag)")
+			logger.Error("input file is required for generate mode (use -input flag)")
+			os.Exit(1)
 		}
 		if err := generateDatasetMode(*inputFile, *outputFile); err != nil {
-			log.Fatalf("generate mode failed: %v", err)
+			logger.Errorf("generate mode failed: %v", err)
+			os.Exit(1)
 		}
 	default:
-		log.Fatalf("unknown mode: %s (use 'fetch' or 'generate')", *mode)
+		logger.Errorf("unknown mode: %s (use 'fetch' or 'generate')", *mode)
+		os.Exit(1)
 	}
 }
 
@@ -103,7 +109,7 @@ func fetchContract(rpcURL, outputFile string) error {
 		outputFile = path.Join("integration", "perf", "testdata", "USDC_contract.json")
 	}
 
-	log.Printf("Connecting to Ethereum at %s...", rpcURL)
+	logger.Infof("Connecting to Ethereum at %s...", rpcURL)
 
 	// Connect to Ethereum mainnet
 	client, err := ethclient.Dial(rpcURL)
@@ -114,20 +120,20 @@ func fetchContract(rpcURL, outputFile string) error {
 	// ------------------------------------------------------------------
 	// 1. Fetch contract bytecode
 	// ------------------------------------------------------------------
-	log.Printf("Fetching USDC proxy bytecode at %s...", usdcAddress.Hex())
+	logger.Infof("Fetching USDC proxy bytecode at %s...", usdcAddress.Hex())
 	code, err := client.CodeAt(ctx, usdcAddress, nil)
 	if err != nil {
 		return fmt.Errorf("failed to fetch contract code: %w", err)
 	}
 
-	log.Printf("USDC proxy bytecode length: %d bytes", len(code))
+	logger.Infof("USDC proxy bytecode length: %d bytes", len(code))
 	hexCode := hex.EncodeToString(code)
 	usdcCode := hexCode
 
 	// ------------------------------------------------------------------
 	// 2. Read implementation address from storage (EIP-1967)
 	// ------------------------------------------------------------------
-	log.Printf("Reading implementation address from storage slot %s...", implementationSlot.Hex())
+	logger.Infof("Reading implementation address from storage slot %s...", implementationSlot.Hex())
 	rawStorage, err := client.StorageAt(ctx, usdcAddress, implementationSlot, nil)
 	if err != nil {
 		return fmt.Errorf("failed to read storage slot: %w", err)
@@ -140,14 +146,14 @@ func fetchContract(rpcURL, outputFile string) error {
 	// Implementation address is in the lower 20 bytes
 	implAddress := common.BytesToAddress(rawStorage[12:])
 
-	log.Printf("USDC implementation address: %s", implAddress.Hex())
+	logger.Infof("USDC implementation address: %s", implAddress.Hex())
 
 	code, err = client.CodeAt(ctx, implAddress, nil)
 	if err != nil {
 		return fmt.Errorf("failed to fetch implementation code: %w", err)
 	}
 
-	log.Printf("USDC implementation bytecode length: %d bytes", len(code))
+	logger.Infof("USDC implementation bytecode length: %d bytes", len(code))
 	hexCode = hex.EncodeToString(code)
 
 	alloc := map[string]primer.AllocEntry{
@@ -167,13 +173,13 @@ func fetchContract(rpcURL, outputFile string) error {
 		return fmt.Errorf("could not marshal data structure: %w", err)
 	}
 
-	log.Printf("Writing contract data to %s...", outputFile)
+	logger.Infof("Writing contract data to %s...", outputFile)
 	err = os.WriteFile(outputFile, b, 0644)
 	if err != nil {
 		return fmt.Errorf("could not write to file: %w", err)
 	}
 
-	log.Printf("Successfully saved USDC contract data to %s", outputFile)
+	logger.Infof("Successfully saved USDC contract data to %s", outputFile)
 	return nil
 }
 
@@ -190,7 +196,7 @@ func generateDatasetMode(inputFile, outputFile string) error {
 	// For now, we'll create a minimal test harness without full Fabric setup
 	// since we only need the EthClient functionality
 
-	log.Printf("Parsing dataset from %s...", inputFile)
+	logger.Infof("Parsing dataset from %s...", inputFile)
 
 	// Parse the dataset
 	transfers, err := ParseTSVGZ(inputFile)
@@ -202,7 +208,7 @@ func generateDatasetMode(inputFile, outputFile string) error {
 		return fmt.Errorf("dataset is empty")
 	}
 
-	log.Printf("Loaded %d transfers from dataset", len(transfers))
+	logger.Infof("Loaded %d transfers from dataset", len(transfers))
 
 	// Create nonce tracker to manage nonces per sender
 	nonceTracker := NewNonceTracker()
@@ -210,7 +216,7 @@ func generateDatasetMode(inputFile, outputFile string) error {
 	successCount := 0
 	failCount := 0
 
-	log.Printf("Generating transactions...")
+	logger.Infof("Generating transactions...")
 
 	for i := range transfers {
 		transfer := &transfers[i] // Get pointer to modify in place
@@ -221,7 +227,7 @@ func generateDatasetMode(inputFile, outputFile string) error {
 		// Create an EthClient for the sender using the mapped address
 		ethSender, err := integration.NewEthClientFromAddress(transfer.Sender, contracts.FiatTokenV22MetaData, nil)
 		if err != nil {
-			log.Printf("Transfer %d: Failed to create EthClient for sender %s: %v", i, transfer.Sender.Hex(), err)
+			logger.Warnf("Transfer %d: Failed to create EthClient for sender %s: %v", i, transfer.Sender.Hex(), err)
 			failCount++
 			continue
 		}
@@ -238,7 +244,7 @@ func generateDatasetMode(inputFile, outputFile string) error {
 		// The nonce tracker will automatically increment the nonce for each sender
 		tx, err := ethSender.TxForCall(ctx, nonceTracker, &usdcAddress, "transfer", mappedRecipient, transferValue)
 		if err != nil {
-			log.Printf("Transfer %d: Failed to create transaction: %v", i, err)
+			logger.Warnf("Transfer %d: Failed to create transaction: %v", i, err)
 			failCount++
 			continue
 		}
@@ -246,7 +252,7 @@ func generateDatasetMode(inputFile, outputFile string) error {
 		// Marshal the transaction to bytes (RLP encoding)
 		txBytes, err := tx.MarshalBinary()
 		if err != nil {
-			log.Printf("Transfer %d: Failed to marshal transaction: %v", i, err)
+			logger.Warnf("Transfer %d: Failed to marshal transaction: %v", i, err)
 			failCount++
 			continue
 		}
@@ -258,12 +264,12 @@ func generateDatasetMode(inputFile, outputFile string) error {
 
 		// Log progress every 100 transactions
 		if (i+1)%100 == 0 {
-			log.Printf("Progress: %d/%d transactions generated (%d successful, %d failed)",
+			logger.Infof("Progress: %d/%d transactions generated (%d successful, %d failed)",
 				i+1, len(transfers), successCount, failCount)
 		}
 	}
 
-	log.Printf("Transaction generation complete: %d successful, %d failed out of %d total transfers",
+	logger.Infof("Transaction generation complete: %d successful, %d failed out of %d total transfers",
 		successCount, failCount, len(transfers))
 
 	if successCount == 0 {
@@ -271,7 +277,7 @@ func generateDatasetMode(inputFile, outputFile string) error {
 	}
 
 	// Save to gzipped JSON file
-	log.Printf("Saving dataset to %s...", outputFile)
+	logger.Infof("Saving dataset to %s...", outputFile)
 
 	// Create output file
 	outFile, err := os.Create(outputFile)
@@ -305,6 +311,6 @@ func generateDatasetMode(inputFile, outputFile string) error {
 		return fmt.Errorf("failed to close output file: %w", err)
 	}
 
-	log.Printf("Successfully saved %d transfers to %s", len(transfers), outputFile)
+	logger.Infof("Successfully saved %d transfers to %s", len(transfers), outputFile)
 	return nil
 }

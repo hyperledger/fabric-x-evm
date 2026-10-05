@@ -15,10 +15,10 @@ import (
 	"github.com/ethereum/go-ethereum"
 	ethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-evm/api/endorsementpb"
 	"github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
@@ -49,10 +49,11 @@ func (s *Server) Execute(ctx context.Context, req *endorsementpb.ExecuteRequest)
 func invocation(req *endorsementpb.ExecuteRequest) endorsement.Invocation {
 	i := req.GetInvocation()
 	return endorsement.Invocation{
-		TxID:         i.GetTxId(),
-		Args:         i.GetArgs(),
-		CCID:         &peer.ChaincodeID{Name: i.GetChaincodeName(), Version: i.GetChaincodeVersion()},
-		ProposalHash: req.GetProposalHash(),
+		TxID:             i.GetTxId(),
+		Args:             i.GetArgs(),
+		Namespace:        i.GetChaincodeName(),
+		ChaincodeVersion: i.GetChaincodeVersion(),
+		ProposalHash:     req.GetProposalHash(),
 	}
 }
 

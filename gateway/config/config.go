@@ -52,6 +52,10 @@ type Synchronizer struct {
 	// Timeout bounds how long Run waits for the initial sync to complete
 	// before returning an error. Zero means DefaultSyncTimeout.
 	Timeout time.Duration `mapstructure:"timeout" yaml:"timeout"`
+	// AllTxQueueDepth controls how many committed-block batches the
+	// notification stream buffers between the receive loop and the handler
+	// goroutine (fabric-x only). Zero means notification.DefaultQueueDepth.
+	AllTxQueueDepth int `mapstructure:"all-tx-queue-depth" yaml:"all-tx-queue-depth"`
 }
 
 // DefaultSyncTimeout is used when Synchronizer.Timeout is unset.
@@ -122,6 +126,8 @@ type Gateway struct {
 	// package defaults. Pointer fields distinguish omitted (nil → default)
 	// from an explicit 0 (allow none).
 	Filters *Filters `mapstructure:"filters" yaml:"filters"`
+
+	DepGraphQueue DepGraphQueue `mapstructure:"dep-graph-queue" yaml:"dep-graph-queue"`
 }
 
 // Filters configures server-side filter and subscription resource caps.
@@ -154,6 +160,15 @@ func (f *Filters) ResolvedLimits(defMaxFilters, defPerConn, defGlobal int) (maxF
 	return
 }
 
+// DepGraphQueue configures parameters for the dependency graph transaction queue.
+type DepGraphQueue struct {
+	EndorseWorkers  int           `mapstructure:"endorse-workers"   yaml:"endorse-workers"`
+	ChanSize        int           `mapstructure:"chan-size"         yaml:"chan-size"`
+	WaitingTxsLimit int           `mapstructure:"waiting-txs-limit" yaml:"waiting-txs-limit"`
+	BatchThreshold  int           `mapstructure:"batch-threshold"   yaml:"batch-threshold"`
+	BatchTimeout    time.Duration `mapstructure:"batch-timeout"     yaml:"batch-timeout"`
+}
+
 // DefaultVhosts is used when Gateway.Vhosts is unset.
 var DefaultVhosts = []string{"localhost"}
 
@@ -176,9 +191,13 @@ func (cfg Config) Validate() error {
 	if cfg.Network.Namespace == "" {
 		errs = append(errs, errors.New("network.namespace is required"))
 	}
-	_, protocolErr := common.NormalizeProtocol(cfg.Network.Protocol)
+	protocol, protocolErr := common.NormalizeProtocol(cfg.Network.Protocol)
 	if protocolErr != nil {
 		errs = append(errs, protocolErr)
+	} else if protocol == common.ProtocolFabricX {
+		if _, err := cfg.Network.NsVersionUint64(); err != nil {
+			errs = append(errs, fmt.Errorf("network: %w", err))
+		}
 	}
 	if err := cfg.Committer.Validate(); err != nil {
 		errs = append(errs, fmt.Errorf("committer: %w", err))

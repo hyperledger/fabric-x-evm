@@ -12,12 +12,16 @@ import (
 	"time"
 
 	sdk "github.com/hyperledger/fabric-x-sdk"
+	"github.com/hyperledger/fabric-x-sdk/endorsement"
+	efab "github.com/hyperledger/fabric-x-sdk/endorsement/fabric"
+	efabx "github.com/hyperledger/fabric-x-sdk/endorsement/fabricx"
 	"github.com/hyperledger/fabric-x-sdk/network"
 	nfab "github.com/hyperledger/fabric-x-sdk/network/fabric"
 	nfabx "github.com/hyperledger/fabric-x-sdk/network/fabricx"
 
 	"github.com/hyperledger/fabric-x-evm/common"
 	eapi "github.com/hyperledger/fabric-x-evm/endorser/api"
+	"github.com/hyperledger/fabric-x-evm/gateway/config"
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
 )
 
@@ -41,7 +45,7 @@ func NewNetworkSubmitters(ctx context.Context, protocol string, orderers []netwo
 		case common.ProtocolFabric:
 			submitters[i], err = nfab.NewSubmitter(ctx, orderers, gwSigner, time.Duration(0), logger)
 		case common.ProtocolFabricX:
-			submitters[i], err = nfabx.NewSubmitter(ctx, orderers, time.Duration(0), logger)
+			submitters[i], err = nfabx.NewSubmitter(ctx, orderers, gwSigner, time.Duration(0), logger)
 		default:
 			return nil, fmt.Errorf("unsupported protocol: %q", protocol)
 		}
@@ -56,8 +60,12 @@ func NewNetworkSubmitters(ctx context.Context, protocol string, orderers []netwo
 // from a pre-built local endorser, remote endorsers, chain store, and submitters. Callers
 // are also responsible for creating and starting the synchronizer(s) that feed committed
 // blocks to chain/gateway/endorsers.
-func BuildGateway(ctx context.Context, local eapi.Service, remotes []eapi.Service, gwSigner sdk.Signer, netCfg common.Network, chain core.Store, submitters []core.Submitter, submitterCount int, workerCount int, txQueue core.TxQueueInterface, nonceGate core.NonceSequencer, endorsementChanSize int, txPerSec int) (*core.Gateway, error) {
-	ec, err := core.NewEndorsementClient(local, remotes, gwSigner, netCfg.Channel, netCfg.Namespace, netCfg.NsVersion)
+func BuildGateway(ctx context.Context, local eapi.Service, remotes []eapi.Service, gwSigner sdk.Signer, netCfg common.Network, chain core.Store, submitters []core.Submitter, submitterCount int, workerCount int, txQueue core.TxQueueInterface, nonceGate core.NonceSequencer, endorsementChanSize int, txPerSec int, queueCfg *config.DepGraphQueue) (*core.Gateway, error) {
+	invBuilder, err := newInvocationBuilder(netCfg.Protocol, netCfg.NsVersion, gwSigner)
+	if err != nil {
+		return nil, err
+	}
+	ec, err := core.NewEndorsementClient(local, remotes, invBuilder, netCfg.Channel, netCfg.Namespace, netCfg.NsVersion)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create endorsement client: %w", err)
 	}
@@ -66,7 +74,13 @@ func BuildGateway(ctx context.Context, local eapi.Service, remotes []eapi.Servic
 		endorsementChanSize = 1000
 	}
 	if txQueue == nil {
-		txQueue = core.NewTxQueue()
+		txQueue = core.NewDepGraphQueue(queueCfg)
+	}
+	// The dependency-manager queue endorses on the way in, to learn which keys a
+	// transaction touches. It is built before the endorsement client exists, so
+	// the client is bound here rather than passed to its constructor.
+	if dq, ok := txQueue.(*core.DepGraphQueue); ok {
+		dq.Bind(ec)
 	}
 	endorsementChan := make(chan core.EndorsedTx, endorsementChanSize)
 	// txQueue as Completer: a submission failure means the tx will never reach a block, so
@@ -80,4 +94,25 @@ func BuildGateway(ctx context.Context, local eapi.Service, remotes []eapi.Servic
 	}
 
 	return gw, nil
+}
+
+// newInvocationBuilder returns the protocol-appropriate InvocationBuilder.
+func newInvocationBuilder(protocol, nsVersion string, signer sdk.Signer) (endorsement.InvocationBuilder, error) {
+	protocol, err := common.NormalizeProtocol(protocol)
+	if err != nil {
+		return nil, err
+	}
+	switch protocol {
+	case common.ProtocolFabric:
+		return efab.NewInvocationBuilder(signer), nil
+	case common.ProtocolFabricX:
+		// Validate that nsVersion is a parseable integer on the Fabric-X path.
+		netCfg := common.Network{NsVersion: nsVersion}
+		if _, err := netCfg.NsVersionUint64(); err != nil {
+			return nil, err
+		}
+		return efabx.NewInvocationBuilder(signer), nil
+	default:
+		return nil, fmt.Errorf("unsupported protocol: %q", protocol)
+	}
 }

@@ -11,7 +11,6 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
-	"log"
 	"math/big"
 	"os"
 	"strconv"
@@ -106,20 +105,20 @@ func ParseTSVGZ(filename string) ([]TokenTransfer, error) {
 			break
 		}
 		if err != nil {
-			log.Printf("Warning: skipping line %d due to read error: %v", lineNum, err)
+			logger.Warnf("skipping line %d due to read error: %v", lineNum, err)
 			skippedLines++
 			continue
 		}
 
 		if len(record) != len(header) {
-			log.Printf("Warning: skipping line %d: expected %d columns, got %d", lineNum, len(header), len(record))
+			logger.Warnf("skipping line %d: expected %d columns, got %d", lineNum, len(header), len(record))
 			skippedLines++
 			continue
 		}
 
 		transfer, err := parseRecord(record, columnMap, lineNum)
 		if err != nil {
-			log.Printf("Warning: skipping line %d due to parse error: %v", lineNum, err)
+			logger.Warnf("skipping line %d due to parse error: %v", lineNum, err)
 			skippedLines++
 			continue
 		}
@@ -128,7 +127,7 @@ func ParseTSVGZ(filename string) ([]TokenTransfer, error) {
 	}
 
 	if skippedLines > 0 {
-		log.Printf("Skipped %d malformed lines out of %d total lines", skippedLines, lineNum-1)
+		logger.Warnf("Skipped %d malformed lines out of %d total lines", skippedLines, lineNum-1)
 	}
 
 	return transfers, nil

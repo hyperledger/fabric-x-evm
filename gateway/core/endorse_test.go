@@ -23,6 +23,7 @@ import (
 	"github.com/hyperledger/fabric-x-evm/endorser/api"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
+	"github.com/hyperledger/fabric-x-sdk/endorsement/fabricx"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -87,7 +88,7 @@ func signingClient(stub *stubEndorser) *EndorsementClient {
 
 // endorsementClient builds a client
 func endorsementClient(local api.Service, remotes []api.Service) *EndorsementClient {
-	c, err := NewEndorsementClient(local, remotes, stubSigner{}, "ch", "ns", "1.0")
+	c, err := NewEndorsementClient(local, remotes, fabricx.NewInvocationBuilder(stubSigner{}), "ch", "ns", "1.0")
 	if err != nil {
 		panic(err)
 	}
