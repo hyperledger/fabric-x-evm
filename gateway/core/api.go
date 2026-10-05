@@ -437,8 +437,11 @@ func (g *Gateway) Stop() error {
 // to receive notifications when blocks are committed. It converts the blocks.Block to domain.Block
 // and delegates to the TxQueue's Handle method.
 func (g *Gateway) Handle(ctx context.Context, b blocks.Block) error {
-	// Convert blocks.Block to domain.Block using the shared conversion function
-	domainBlock := ConvertToDomain(b)
+	domainBlock, err := ConvertToDomain(b)
+	if err != nil {
+		logger.Errorf("Gateway.Handle() block=%d convert error: %v", b.Number, err)
+		return err
+	}
 	// Release parked work first, then let the queue feed workers.
 	g.nonceGate.Observe(domainBlock.Transactions)
 	return g.TxQueue.Handle(ctx, &domainBlock)
