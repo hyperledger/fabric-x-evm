@@ -26,11 +26,23 @@ import (
 // keyedEndorser endorses each transaction with the keys it was told that
 // transaction touches, which is what decides whether two of them clash.
 type keyedEndorser struct {
-	t    *testing.T
-	mu   sync.Mutex
-	keys map[common.Hash][]string
-	err  error
-	n    int
+	t     *testing.T
+	mu    sync.Mutex
+	keys  map[common.Hash][]string
+	noRWS map[common.Hash]bool
+	err   error
+	n     int
+}
+
+// withoutReadWriteSet makes the endorsement of tx carry no read-write set, as
+// for a transaction whose execution reverted.
+func (e *keyedEndorser) withoutReadWriteSet(tx *types.Transaction) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.noRWS == nil {
+		e.noRWS = make(map[common.Hash]bool)
+	}
+	e.noRWS[tx.Hash()] = true
 }
 
 func newKeyedEndorser(t *testing.T) *keyedEndorser {
@@ -58,11 +70,14 @@ func (e *keyedEndorser) calls() int {
 func (e *keyedEndorser) ExecuteTransaction(_ context.Context, tx *types.Transaction) (sdk.Endorsement, error) {
 	e.mu.Lock()
 	e.n++
-	err, keys := e.err, e.keys[tx.Hash()]
+	err, keys, noRWS := e.err, e.keys[tx.Hash()], e.noRWS[tx.Hash()]
 	e.mu.Unlock()
 
 	if err != nil {
 		return sdk.Endorsement{}, err
+	}
+	if noRWS {
+		return sdk.Endorsement{}, nil
 	}
 	if len(keys) == 0 {
 		keys = []string{tx.Hash().Hex()} // unique, so it clashes with nothing
@@ -259,6 +274,27 @@ func TestDepGraphQueue_EndorsementFailureDropsTransaction(t *testing.T) {
 	require.Eventually(t, func() bool { return q.InFlight() == 0 }, 2*time.Second, 5*time.Millisecond,
 		"a transaction that could not be endorsed must not stay tracked")
 	require.Zero(t, readyCount(q))
+}
+
+// An endorsement without a read-write set (e.g. execution reverted) drops the
+// transaction instead of stopping the gateway, and later transactions still
+// flow (#386).
+func TestDepGraphQueue_EndorsementWithoutReadWriteSetDropsTransaction(t *testing.T) {
+	q, e := newDepQueue(t)
+	reverted, ok := txWithNonce(1), txWithNonce(2)
+	e.withoutReadWriteSet(reverted)
+
+	q.Enqueue(reverted)
+	q.Enqueue(ok)
+
+	requireReady(t, q, 1)
+	got, more := q.Dequeue()
+	require.True(t, more)
+	require.Equal(t, ok.Hash(), got.Hash(), "only the transaction with a read-write set is scheduled")
+	require.Eventually(t, func() bool { return q.InFlight() == 1 }, 2*time.Second, 5*time.Millisecond,
+		"the dropped transaction must not stay tracked")
+	q.Complete(ok.Hash())
+	require.Zero(t, q.InFlight())
 }
 
 func TestDepGraphQueue_DuplicateEnqueueIgnored(t *testing.T) {

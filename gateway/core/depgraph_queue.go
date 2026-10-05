@@ -289,14 +289,15 @@ func (q *DepGraphQueue) submitToManager(tx *types.Transaction) {
 		return
 	}
 
-	// An endorsement we cannot read a read-write set from means the endorser and
-	// this queue disagree about the wire format, which no amount of dropping
-	// recovers from. Loud for the prototype; see #386 for removing it before
-	// production.
+	// An endorsement without a usable read-write set cannot be scheduled. This
+	// happens in normal operation, e.g. when execution reverts and the endorser
+	// returns no read-write set, so the transaction is logged and dropped like
+	// a failed endorsement and the gateway keeps running (#386).
 	content, err := txContent(end)
 	if err != nil {
-		depGraphLogger.Errorf("read-write set for tx %s: %v", hash.Hex(), err)
-		panic(fmt.Sprintf("dependency manager queue: read-write set for tx %s: %v", hash.Hex(), err))
+		depGraphLogger.Errorf("read-write set for tx %s: %v; dropping it", hash.Hex(), err)
+		q.drop(hash)
+		return
 	}
 
 	select {
@@ -370,18 +371,26 @@ func (q *DepGraphQueue) drainReleased() {
 }
 
 func (q *DepGraphQueue) markReady(nodes dependencygraph.TxNodeBatch) {
+	var orphans dependencygraph.TxNodeBatch
 	q.mu.Lock()
-	defer q.mu.Unlock()
+	defer func() {
+		q.mu.Unlock()
+		// A node we cannot map back to a transaction would never be handed
+		// back, stranding everything that depends on it; return it to the
+		// manager straight away instead (#386). Done after unlocking, since
+		// release may block.
+		q.release(orphans)
+	}()
 
 	for _, node := range nodes {
 		id := node.VerifierTx.GetRef().GetTxId()
 		hash, ok := hashFromTxRefID(id)
 		if !ok {
 			// Only this queue sets TxId, so anything else means the manager and
-			// the queue disagree about the reference. Loud for the prototype;
-			// see #386.
-			depGraphLogger.Errorf("unrecognised tx ref %q received from dependency manager", id)
-			panic(fmt.Sprintf("dependency manager queue: unrecognised tx ref %q", id))
+			// the queue disagree about the reference: log it, keep running.
+			depGraphLogger.Errorf("unrecognised tx ref %q received from dependency manager; releasing it", id)
+			orphans = append(orphans, node)
+			continue
 		}
 		t, tracked := q.tracked[hash]
 		if !tracked {
