@@ -66,6 +66,15 @@ type TxQueueInterface interface {
 	Stats() (total int, invalid int, totalEnq int, conflictEnq int)
 }
 
+// endorsementReuser is a queue that already endorsed a transaction on the way
+// in and can hand that endorsement back while it is still current, sparing
+// processTx a second execution. Reexecuted tells it about the endorsement
+// processTx made instead, whose writes are the ones that will commit.
+type endorsementReuser interface {
+	ReusableEndorsement(txHash common.Hash) (sdk.Endorsement, bool)
+	Reexecuted(txHash common.Hash, end sdk.Endorsement)
+}
+
 var logger = flogging.MustGetLogger("gateway.core")
 
 // Gateway is the component that bridges Fabric-x and the EVM. Its API is the
@@ -173,9 +182,18 @@ func (g *Gateway) worker(ctx context.Context) {
 
 // processTx handles the actual transaction processing
 func (g *Gateway) processTx(ctx context.Context, tx *types.Transaction) error {
+	r, reuser := g.TxQueue.(endorsementReuser)
+	if reuser {
+		if end, ok := r.ReusableEndorsement(tx.Hash()); ok {
+			return g.SubmitFabricTx(ctx, tx.Hash(), end)
+		}
+	}
 	end, err := g.ExecuteEthTx(ctx, tx)
 	if err != nil {
 		return err
+	}
+	if reuser {
+		r.Reexecuted(tx.Hash(), end)
 	}
 	if err := g.SubmitFabricTx(ctx, tx.Hash(), end); err != nil {
 		return err
