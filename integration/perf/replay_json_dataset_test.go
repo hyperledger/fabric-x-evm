@@ -15,6 +15,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -36,6 +37,7 @@ import (
 	gwconfig "github.com/hyperledger/fabric-x-evm/gateway/config"
 	gwcore "github.com/hyperledger/fabric-x-evm/gateway/core"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
+	gwmetrics "github.com/hyperledger/fabric-x-evm/gateway/metrics"
 	gwtestimpl "github.com/hyperledger/fabric-x-evm/gateway/testimpl"
 	"github.com/hyperledger/fabric-x-evm/integration"
 	sdk "github.com/hyperledger/fabric-x-sdk"
@@ -233,7 +235,6 @@ func perfHandlerChain(completionTracker *TxCompletionTracker) integration.Handle
 
 var gatewayConfig = flag.String("gateway-config", "fabx.yaml", "gateway config file for the Fabric-X network")
 var metricsAddr = flag.String("metrics-addr", "0.0.0.0:2112", "address for Prometheus metrics endpoint")
-var enableMetrics = flag.Bool("enable-metrics", false, "enable Prometheus metrics export")
 var namespace = flag.String("namespace", "real", "namespace to commit transactions to")
 var dataset = flag.String("dataset", "testdata/USDC_dataset.json.gz", "dataset to use")
 var oldqueue = flag.Bool("oldqueue", false, "enable old queue")
@@ -457,21 +458,20 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	// Silence GRPC logging
 	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr))
 
-	// Initialize Prometheus metrics if enabled
-	var metrics *LoadgenMetrics
-	if *enableMetrics {
-		metrics = NewLoadgenMetrics()
-		if err := metrics.StartServer(*metricsAddr); err != nil {
-			t.Logf("Failed to start metrics server: %v", err)
-		} else {
-			t.Logf("Prometheus metrics available at http://localhost%s/metrics", *metricsAddr)
-			defer metrics.StopServer()
-		}
-
-		// Wire up queue size metrics callbacks
-		gwcore.SetBatchSubmitterQueueSizeMetric = metrics.SetBatchSubmitterInputQueueSize
-		gwcore.SetTxQueueReadyListSizeMetric = metrics.SetTxQueueReadyListSize
-		gwcore.SetTxQueueWaitingListSizeMetric = metrics.SetTxQueueWaitingListSize
+	// Start the Prometheus metrics HTTP server. All metrics are collected
+	// in-process via gateway/metrics.Default(); the server exposes them at
+	// /metrics on the configured address so Prometheus can scrape the process.
+	{
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", gwmetrics.Default().Handler())
+		srv := &http.Server{Addr: *metricsAddr, Handler: mux}
+		go func() {
+			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				t.Logf("Metrics server error: %v", err)
+			}
+		}()
+		t.Logf("Prometheus metrics available at http://%s/metrics", *metricsAddr)
+		defer srv.Close()
 	}
 
 	// USDC contract address
@@ -615,26 +615,6 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	// Atomic counters for thread-safe counting
 	var successCount, failCount, skippedCount int64
 
-	// Latency tracking: map transaction hash to submission time (T1)
-	latencyMu := sync.Mutex{}
-	submissionTimes := make(map[common.Hash]time.Time)
-
-	// Enable T2 timestamp tracking in txqueue (when dequeued for processing)
-	gwcore.ProcessingStartTimestamps = make(map[common.Hash]time.Time)
-	defer func() {
-		gwcore.ProcessingStartTimestamps = nil // Clean up after test
-	}()
-
-	// Enable T3 timestamp tracking in batch_submitter (when submitted to orderer)
-	gwcore.SubmissionTimestamps = make(map[common.Hash]time.Time)
-	defer func() {
-		// Submitter workers are still live here: gw.Stop() runs from t.Cleanup, which
-		// fires after this defer. Take the mutex so the nil-out is not a data race.
-		gwcore.SubmissionTimestampsMu.Lock()
-		gwcore.SubmissionTimestamps = nil // Clean up after test
-		gwcore.SubmissionTimestampsMu.Unlock()
-	}()
-
 	runtime.GC()
 
 	// Open the tracker now that we are about to dispatch real transactions.
@@ -665,7 +645,6 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	// Start worker goroutines - they continuously submit without waiting for completion
 	for range numWorkers {
 		wg.Go(func() {
-
 			for item := range workChan {
 				i := item.index
 				transfer := item.transfer
@@ -678,31 +657,17 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 					panic(err)
 				}
 
-				// Record submission time
-				txHash := tx.Hash()
-				submissionTime := time.Now()
-				latencyMu.Lock()
-				submissionTimes[txHash] = submissionTime
-				latencyMu.Unlock()
-
-				// Send the transaction without waiting for completion
-				// Use the wrapped gateway directly to bypass nonce validation
+				// Send the transaction without waiting for completion.
+				// Use the wrapped gateway directly to bypass nonce validation.
 				err = wrappedGateway.SendTransaction(context.Background(), tx)
 				if err != nil {
 					t.Logf("Transfer %d: SendTransaction error: %v", i, err)
 					atomic.AddInt64(&failCount, 1)
 					outstandingTxCount.Add(-1)
-					// Remove from tracking on failure
-					latencyMu.Lock()
-					delete(submissionTimes, txHash)
-					latencyMu.Unlock()
 					continue
 				}
-				// Transaction submitted successfully - it's now outstanding
-				// The completion will be tracked by the refill goroutine
-				if metrics != nil {
-					metrics.RecordTransactionSent()
-				}
+				// Transaction submitted successfully - it's now outstanding.
+				// TxReceived is counted by gateway/metrics inside SendTransaction.
 			}
 		})
 	}
@@ -744,12 +709,6 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 					currentSuccess+currentFail+currentSkipped, progressTarget,
 					currentSuccess, currentFail, currentSkipped, currentOutstanding,
 					throughput, overallThroughput)
-
-				// Update metrics
-				if metrics != nil {
-					metrics.SetOutstandingTransactions(currentOutstanding)
-					metrics.SetThroughput(overallThroughput)
-				}
 
 				// Update for next interval
 				lastLogTime.Store(now)
@@ -793,54 +752,13 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 		for notif := range completionCh {
 			outstandingTxCount.Add(-1)
 
-			// T4: notification received time
-			t4 := time.Now()
-
-			// Get T1 (test submission time)
-			latencyMu.Lock()
-			t1, existsT1 := submissionTimes[notif.EthTxHash]
-			if existsT1 {
-				delete(submissionTimes, notif.EthTxHash)
-			}
-			latencyMu.Unlock()
-
-			// Get T2 (dequeue/processing start time)
-			gwcore.ProcessingStartTimestampsMu.Lock()
-			t2, existsT2 := gwcore.ProcessingStartTimestamps[notif.EthTxHash]
-			if existsT2 {
-				delete(gwcore.ProcessingStartTimestamps, notif.EthTxHash)
-			}
-			gwcore.ProcessingStartTimestampsMu.Unlock()
-
-			// Get T3 (batch submitter time)
-			gwcore.SubmissionTimestampsMu.Lock()
-			t3, existsT3 := gwcore.SubmissionTimestamps[notif.EthTxHash]
-			if existsT3 {
-				delete(gwcore.SubmissionTimestamps, notif.EthTxHash)
-			}
-			gwcore.SubmissionTimestampsMu.Unlock()
-
-			// Calculate and record latencies if we have all timestamps
-			if metrics != nil && existsT1 && existsT2 && existsT3 {
-				totalLatency := t4.Sub(t1)      // T4 - T1: total end-to-end latency
-				queueLatency := t2.Sub(t1)      // T2 - T1: queueing time
-				processingLatency := t3.Sub(t2) // T3 - T2: processing time by the app
-				backendLatency := t4.Sub(t3)    // T4 - T3: processing time by the backend
-				metrics.RecordLatencies(totalLatency, queueLatency, processingLatency, backendLatency)
-			}
-
-			// Update success/fail counts
+			// Update success/fail counts.
+			// Latency and outcome counters are tracked by gateway/metrics in-process.
 			if notif.Status.Valid() {
 				atomic.AddInt64(&successCount, 1)
-				if metrics != nil {
-					metrics.RecordTransactionCommitted()
-				}
 			} else {
 				atomic.AddInt64(&failCount, 1)
 				t.Logf("Transaction %s failed with status: %v", notif.EthTxHash.Hex(), notif.Status)
-				if metrics != nil {
-					metrics.RecordTransactionAborted()
-				}
 			}
 
 			// Check if we should dispatch more work

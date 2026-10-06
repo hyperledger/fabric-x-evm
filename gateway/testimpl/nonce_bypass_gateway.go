@@ -11,6 +11,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
+	"github.com/hyperledger/fabric-x-evm/gateway/metrics"
 )
 
 // NonceBypassGateway wraps a Gateway and bypasses nonce validation in SendTransaction.
@@ -31,7 +32,13 @@ func NewNonceBypassGateway(gw *core.Gateway) *NonceBypassGateway {
 // SendTransaction bypasses nonce validation but still uses the transaction queue
 // to preserve MVCC retry logic and worker pool control.
 func (g *NonceBypassGateway) SendTransaction(ctx context.Context, tx *types.Transaction) error {
-	// Skip ValidateTx (which includes nonce validation) and directly enqueue
+	// Record ingress metrics exactly as api.go's SendTransaction does, so that
+	// the Prometheus instruments (TxReceived, TrackTxStart) are populated even
+	// when nonce validation is skipped.
+	metrics.Default().TrackTxStart(tx.Hash())
+	metrics.Default().TxReceived.Inc()
+
+	// Skip ValidateTx (which includes nonce validation) and directly enqueue.
 	g.Gateway.TxQueue.Enqueue(tx)
 	return nil
 }
