@@ -178,9 +178,9 @@ const (
 	StepBatchSubmit         = "batch_submit"          // STEP 14: orderer submit call
 
 	// Three coarse per-tx latency buckets derived from the stored timestamps:
-	StepTxPreSubmit  = "tx_pre_submit"  // STEP 1→14: gateway processing until orderer hand-off
-	StepTxOrdering   = "tx_ordering"   // STEP 14→15: time the tx spent inside the orderer
-	StepTxPostOrder  = "tx_post_order" // STEP 15→17: post-commit handler dispatch time
+	StepTxPreSubmit = "tx_pre_submit" // STEP 1→14: gateway processing until orderer hand-off
+	StepTxOrdering  = "tx_ordering"   // STEP 14→15: time the tx spent inside the orderer
+	StepTxPostOrder = "tx_post_order" // STEP 15→17: post-commit handler dispatch time
 
 	StepE2E     = "e2e"     // STEP 1→15: full end-to-end
 	StepHandler = "handler" // STEP 15→16: per-handler dispatch

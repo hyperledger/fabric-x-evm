@@ -64,20 +64,21 @@ func (d *AllTxBatchDispatcher) HandleBatch(ctx context.Context, batch notificati
 	ethHashes := make([]ethcommon.Hash, 0, len(batch.Events))
 
 	// STEP 15: record per-tx outcomes as each EVM event arrives from the orderer.
-	// Unmarshal the Ethereum tx hash from InputArgs[1] to:
+	// Unmarshal the Ethereum tx hash from the EVM tx bytes to:
 	//   - stamp the notification time (starts the ordering→notification window),
 	//   - count outcomes by Fabric commit status.
 	// ObserveTxComplete is deferred to STEP 17 so tx_post_order covers the full
 	// handler-dispatch leg, not just the time up to the first handler.
 	for _, event := range batch.Events {
-		if _, ok := common.EVMTx(event.Transaction); !ok {
+		ethTxBytes, ok := common.EVMTx(event.Transaction)
+		if !ok {
 			notifLogger.Debugf("Skipping tx %s: not an EVM transaction", event.ID)
 			continue
 		}
 
-		// Recover the Ethereum tx hash from the raw RLP bytes in InputArgs[1].
+		// Recover the Ethereum tx hash from the raw RLP bytes returned by common.EVMTx.
 		ethTx := new(ethtypes.Transaction)
-		if err := ethTx.UnmarshalBinary(event.InputArgs[1]); err == nil {
+		if err := ethTx.UnmarshalBinary(ethTxBytes); err == nil {
 			hash := ethTx.Hash()
 			// Stamp STEP 15 and record tx_ordering latency (STEP 14→15).
 			metrics.Default().RecordTxNotified(hash)

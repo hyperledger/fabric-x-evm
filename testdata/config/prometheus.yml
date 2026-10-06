@@ -157,12 +157,12 @@ scrape_configs:
       - targets: ["committer-coordinator:2119"]
 
   # ---------------------------------------------------------------------------
-  # Loadgen test metrics (when running with -enable-metrics flag)
-  # The test runs on the host, accessible via host.docker.internal
+  # EVM gateway pipeline metrics
+  # The perf test process runs on the host, accessible via host.docker.internal.
+  # Note: Requires iptables rule to allow Docker containers to access host:
+  #   sudo iptables -I INPUT -i docker0 -p tcp --dport 2112 -j ACCEPT
   # ---------------------------------------------------------------------------
-  - job_name: "loadgen"
+  - job_name: "evm-gateway"
     static_configs:
       - targets: ["host.docker.internal:2112"]
-    # Note: Requires iptables rule to allow Docker containers to access host
-    # Run: sudo iptables -I INPUT -i docker0 -p tcp --dport 2112 -j ACCEPT
 
