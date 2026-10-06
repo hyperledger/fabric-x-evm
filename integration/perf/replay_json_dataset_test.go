@@ -235,7 +235,6 @@ func perfHandlerChain(completionTracker *TxCompletionTracker) integration.Handle
 
 var gatewayConfig = flag.String("gateway-config", "fabx.yaml", "gateway config file for the Fabric-X network")
 var metricsAddr = flag.String("metrics-addr", "0.0.0.0:2112", "address for Prometheus metrics endpoint")
-var enableMetrics = flag.Bool("enable-metrics", false, "enable Prometheus metrics export")
 var namespace = flag.String("namespace", "real", "namespace to commit transactions to")
 var dataset = flag.String("dataset", "testdata/USDC_dataset.json.gz", "dataset to use")
 var oldqueue = flag.Bool("oldqueue", false, "enable old queue")
@@ -459,10 +458,10 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 	// Silence GRPC logging
 	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr))
 
-	// Start the Prometheus metrics HTTP server if requested.
-	// All metrics are now collected in-process via gateway/metrics.Default(); the
-	// server simply exposes them at /metrics on the configured address.
-	if *enableMetrics {
+	// Start the Prometheus metrics HTTP server. All metrics are collected
+	// in-process via gateway/metrics.Default(); the server exposes them at
+	// /metrics on the configured address so Prometheus can scrape the process.
+	{
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", gwmetrics.Default().Handler())
 		srv := &http.Server{Addr: *metricsAddr, Handler: mux}
