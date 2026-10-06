@@ -447,9 +447,9 @@ func TestDepGraphQueue_UnreadableEndorsementDropsTransaction(t *testing.T) {
 	require.NoError(t, q.Enqueue(tx))
 
 	if fxcommon.DebugBuild {
-		require.Panics(t, func() { q.submitToManager(tx) }, "a debug build panics on an unreadable endorsement")
+		require.Panics(t, func() { q.submitToManager(admittedTx{tx: tx}) }, "a debug build panics on an unreadable endorsement")
 	} else {
-		require.NotPanics(t, func() { q.submitToManager(tx) })
+		require.NotPanics(t, func() { q.submitToManager(admittedTx{tx: tx}) })
 	}
 	require.Nil(t, q.IsPending(tx.Hash()), "an unreadable endorsement must not stay tracked")
 	require.Zero(t, len(q.endorsed), "nothing may reach the manager")

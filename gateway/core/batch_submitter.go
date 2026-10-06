@@ -10,27 +10,16 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"golang.org/x/time/rate"
+
+	"github.com/hyperledger/fabric-x-evm/gateway/metrics"
 )
 
 var batchLogger = flogging.MustGetLogger("gateway.core.batch_submitter")
-
-// SubmissionTimestamps is an optional map for tracking submission timestamps.
-// If non-nil, timestamps are recorded when transactions are submitted to the orderer.
-// Key: Ethereum transaction hash, Value: T3 timestamp (when submitted to orderer)
-var SubmissionTimestamps map[common.Hash]time.Time
-
-// SubmissionTimestampsMu protects access to SubmissionTimestamps
-var SubmissionTimestampsMu sync.Mutex
-
-// SetBatchSubmitterQueueSizeMetric is an optional callback for reporting the batch submitter input queue size.
-// If non-nil, it will be called to report the current queue size.
-var SetBatchSubmitterQueueSizeMetric func(size int)
 
 // EndorsedTx pairs an endorsement with the Ethereum transaction hash it originated from.
 // The hash is needed because a submission failure means the transaction will never reach
@@ -152,19 +141,17 @@ func (bs *BatchSubmitter) worker(ctx context.Context, workerID int, wg *sync.Wai
 	defer batchLogger.Debugf("Worker %d stopped", workerID)
 
 	for {
-		// Report queue size metric if callback is set
-		if SetBatchSubmitterQueueSizeMetric != nil {
-			SetBatchSubmitterQueueSizeMetric(len(bs.inputChan))
-		}
-
 		select {
 		case <-bs.stopChan:
 			return
 
+		// STEP 14: tx dequeued from the input channel for submission to the orderer.
+		// Report input-channel depth and the time it spent waiting in the channel.
 		case end, ok := <-bs.inputChan:
 			if !ok {
 				return
 			}
+			metrics.Default().SetQueue(metrics.QueueBatchSubmitterInput, len(bs.inputChan))
 			if err := bs.submitOne(ctx, workerID, end); err != nil {
 				batchLogger.Errorf("Worker %d: submit failed: %v", workerID, err)
 				if bs.completer != nil {
@@ -183,17 +170,14 @@ func (bs *BatchSubmitter) submitOne(ctx context.Context, workerID int, tx Endors
 		}
 	}
 
-	// T3 is recorded after the rate limiter so that the time a submission spends
-	// throttled is attributed to the gateway and not to the backend.
-	SubmissionTimestampsMu.Lock()
-	if m := SubmissionTimestamps; m != nil {
-		m[tx.Hash] = time.Now()
-	}
-	SubmissionTimestampsMu.Unlock()
+	// STEP 14: stamp the orderer hand-off time (records tx_pre_submit latency)
+	// before the RPC so the orderer's own time is not folded into it.
+	metrics.Default().RecordTxSubmitted(tx.Hash)
 
 	var txid string
-	t0 := time.Now()
+	t0 := metrics.Now()
 	err := bs.submitters[workerID].Submit(ctx, tx.End)
-	batchLogger.Debugf("[SUBMIT] worker=%d txid=%s submit_took=%v", workerID, txid, time.Since(t0))
+	metrics.Default().ObserveStep(metrics.StepBatchSubmit, metrics.Since(t0))
+	batchLogger.Debugf("[SUBMIT] worker=%d txid=%s submit_took=%v", workerID, txid, metrics.Since(t0))
 	return err
 }

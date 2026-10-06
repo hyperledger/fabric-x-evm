@@ -25,6 +25,7 @@ import (
 	fc "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
+	"github.com/hyperledger/fabric-x-evm/gateway/metrics"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 )
 
@@ -96,14 +97,31 @@ type txEndorser interface {
 	ExecuteTransaction(ctx context.Context, tx *types.Transaction) (sdk.Endorsement, error)
 }
 
+// admittedTx pairs a transaction with the timestamp from when it entered the
+// pipeline (STEP 5), so the timestamp can be propagated lock-free through the
+// endorsed channel all the way to batchLoop.
+type admittedTx struct {
+	tx         *types.Transaction
+	enqueuedAt time.Time
+}
+
+// endorsedTx carries a transaction's proto payload together with the timestamp
+// from when it was first admitted (STEP 5), so batchLoop can measure the full
+// endorse+batch leg (STEP 5→8) without touching q.tracked.
+type endorsedTx struct {
+	proto      *servicepb.TxWithRef
+	enqueuedAt time.Time
+}
+
 // trackedTx is one transaction between Enqueue and Complete.
 //
 // node is nil until the manager releases it. Feeding a node back is what
 // unblocks its dependents, so it is kept for the whole lifetime rather than
 // dropped at Dequeue, and cleared once fed back so it cannot be sent twice.
 type trackedTx struct {
-	tx   *types.Transaction
-	node *dependencygraph.TransactionNode
+	tx      *types.Transaction
+	node    *dependencygraph.TransactionNode
+	readyAt time.Time // STEP 9: when the dep manager released it as clash-free
 
 	// end is the endorsement submitToManager made, kept while endorsed so that
 	// processTx need not execute the transaction again; see ReusableEndorsement.
@@ -132,8 +150,8 @@ type DepGraphQueue struct {
 	incoming  chan *dependencygraph.TransactionBatch
 	outgoing  chan dependencygraph.TxNodeBatch
 	validated chan dependencygraph.TxNodeBatch
-	admitted  chan *types.Transaction
-	endorsed  chan *servicepb.TxWithRef
+	admitted  chan admittedTx
+	endorsed  chan endorsedTx
 
 	// batchID is owned by the batcher goroutine alone. The manager needs
 	// batches to arrive in strictly increasing order, which one sender gives
@@ -206,8 +224,8 @@ func NewDepGraphQueue(cfg *config.DepGraphQueue) *DepGraphQueue {
 		incoming:       make(chan *dependencygraph.TransactionBatch, chanSize),
 		outgoing:       make(chan dependencygraph.TxNodeBatch, chanSize),
 		validated:      make(chan dependencygraph.TxNodeBatch, chanSize),
-		admitted:       make(chan *types.Transaction, chanSize),
-		endorsed:       make(chan *servicepb.TxWithRef, chanSize),
+		admitted:       make(chan admittedTx, chanSize),
+		endorsed:       make(chan endorsedTx, chanSize),
 		tracked:        make(map[common.Hash]*trackedTx),
 		lastWrite:      make(map[string]uint64),
 		endorseWorkers: endorseWorkers,
@@ -275,8 +293,12 @@ func (q *DepGraphQueue) Enqueue(tx *types.Transaction) error {
 		return domain.ErrTransactionAlreadyPending
 	}
 
+	// STEP 5: tx lands in the admitted channel – stamp the ingress time on the
+	// admittedTx so it flows lock-free to batchLoop without ever re-reading q.tracked.
+	enqueuedAt := time.Now()
+	metrics.Default().SetQueue(metrics.QueueDepgraphAdmitted, len(q.admitted))
 	select {
-	case q.admitted <- tx:
+	case q.admitted <- admittedTx{tx: tx, enqueuedAt: enqueuedAt}:
 	default:
 		// Blocking is not an option: the nonce gate holds its own lock while
 		// calling us. The caller reports it, and the client can retry.
@@ -295,11 +317,13 @@ func (q *DepGraphQueue) endorseLoop() {
 		select {
 		case <-q.ctx.Done():
 			return
-		case tx, ok := <-q.admitted:
+		case atx, ok := <-q.admitted:
+			// STEP 6: tx dequeued from admitted – report remaining depth.
 			if !ok {
 				return
 			}
-			q.submitToManager(tx)
+			metrics.Default().SetQueue(metrics.QueueDepgraphAdmitted, len(q.admitted))
+			q.submitToManager(atx)
 		}
 	}
 }
@@ -307,14 +331,18 @@ func (q *DepGraphQueue) endorseLoop() {
 // submitToManager endorses for a read-write set and hands the result to the
 // batcher. A failure here drops the transaction: Enqueue has already returned,
 // so, like a failed processTx, it is logged and the client can resubmit.
-func (q *DepGraphQueue) submitToManager(tx *types.Transaction) {
-	hash := tx.Hash()
+func (q *DepGraphQueue) submitToManager(atx admittedTx) {
+	hash := atx.tx.Hash()
 	depGraphLogger.Debugf("DepGraphQueue.submitToManager() endorsing tx %s", hash.Hex())
 
 	seq := q.commitSeq.Load()
 
-	end, err := q.endorser.ExecuteTransaction(q.ctx, tx)
+	// STEP 6→7 endorsement: measure how long the endorser call takes.
+	t6 := metrics.Now()
+	end, err := q.endorser.ExecuteTransaction(q.ctx, atx.tx)
+	metrics.Default().ObserveStep(metrics.StepEndorse, metrics.Since(t6))
 	if err != nil {
+		metrics.Default().EndorseErrors.Inc()
 		depGraphLogger.Errorf("endorse tx %s: %v", hash.Hex(), err)
 		q.drop(hash)
 		return
@@ -331,10 +359,16 @@ func (q *DepGraphQueue) submitToManager(tx *types.Transaction) {
 	}
 	q.keepEndorsement(hash, seq, end, content)
 
+	// STEP 7: tx endorsed – carry enqueuedAt through to batchLoop via the
+	// endorsed channel; no lock needed, the timestamp came from our own struct.
+	metrics.Default().SetQueue(metrics.QueueDepgraphEndorsed, len(q.endorsed))
 	select {
-	case q.endorsed <- &servicepb.TxWithRef{
-		Ref:     &committerpb.TxRef{TxId: txRefID(hash)},
-		Content: content,
+	case q.endorsed <- endorsedTx{
+		proto: &servicepb.TxWithRef{
+			Ref:     &committerpb.TxRef{TxId: txRefID(hash)},
+			Content: content,
+		},
+		enqueuedAt: atx.enqueuedAt,
 	}:
 		depGraphLogger.Debugf("DepGraphQueue.submitToManager() tx %s queued for batching", hash.Hex())
 	case <-q.ctx.Done():
@@ -350,7 +384,7 @@ func (q *DepGraphQueue) batchLoop() {
 	ticker := time.NewTicker(q.batchTimeout)
 	defer ticker.Stop()
 
-	pending := make([]*servicepb.TxWithRef, 0, q.batchThreshold)
+	pending := make([]endorsedTx, 0, q.batchThreshold)
 	flush := func() {
 		if len(pending) == 0 {
 			return
@@ -358,23 +392,34 @@ func (q *DepGraphQueue) batchLoop() {
 		// Ids start at 1: the constructor spins on CompareAndSwap(id-1, id)
 		// against a zero-valued atomic, so a batch numbered 0 never lands.
 		q.batchID++
-		batch := &dependencygraph.TransactionBatch{ID: q.batchID, Txs: pending}
+		protos := make([]*servicepb.TxWithRef, len(pending))
+		now8 := time.Now()
+		for i, etx := range pending {
+			protos[i] = etx.proto
+			// STEP 8: record the endorse+batch leg duration (STEP 5→8) using the
+			// timestamp carried directly on the struct — no lock needed.
+			if !etx.enqueuedAt.IsZero() {
+				metrics.Default().ObserveStep(metrics.StepDepgraphPreSubmit, now8.Sub(etx.enqueuedAt))
+			}
+		}
+		batch := &dependencygraph.TransactionBatch{ID: q.batchID, Txs: protos}
 		depGraphLogger.Debugf("DepGraphQueue.batchLoop() sending batch id=%d with %d txs to dependency manager", batch.ID, len(batch.Txs))
+		metrics.Default().SetQueue(metrics.QueueDepgraphIncoming, len(q.incoming))
 		select {
 		case q.incoming <- batch:
 			depGraphLogger.Debugf("DepGraphQueue.batchLoop() batch id=%d sent to dependency manager", batch.ID)
 		case <-q.ctx.Done():
 			depGraphLogger.Warnf("failed to send batch id=%d to dependency manager: context done: %v", batch.ID, q.ctx.Err())
 		}
-		pending = make([]*servicepb.TxWithRef, 0, q.batchThreshold)
+		pending = pending[:0]
 	}
 
 	for {
 		select {
 		case <-q.ctx.Done():
 			return
-		case tx := <-q.endorsed:
-			pending = append(pending, tx)
+		case etx := <-q.endorsed:
+			pending = append(pending, etx)
 			if len(pending) >= q.batchThreshold {
 				flush()
 			}
@@ -392,9 +437,12 @@ func (q *DepGraphQueue) drainReleased() {
 		case <-q.ctx.Done():
 			return
 		case nodes, ok := <-q.outgoing:
+			// STEP 9: tx released by the dep manager as clash-free – report the
+			// remaining depth of the outgoing channel.
 			if !ok {
 				return
 			}
+			metrics.Default().SetQueue(metrics.QueueDepgraphOutgoing, len(q.outgoing))
 			depGraphLogger.Debugf("DepGraphQueue.drainReleased() received %d clash-free nodes from dependency manager", len(nodes))
 			q.markReady(nodes)
 		}
@@ -406,6 +454,7 @@ func (q *DepGraphQueue) markReady(nodes dependencygraph.TxNodeBatch) {
 	var unexpected []string
 
 	q.mu.Lock()
+	readyAt := time.Now()
 	for _, node := range nodes {
 		id := node.VerifierTx.GetRef().GetTxId()
 		hash, ok := hashFromTxRefID(id)
@@ -424,6 +473,7 @@ func (q *DepGraphQueue) markReady(nodes dependencygraph.TxNodeBatch) {
 			continue
 		}
 		t.node = node
+		t.readyAt = readyAt // STEP 9: stamp when the dep manager released this tx
 		q.ready = append(q.ready, t.tx)
 		depGraphLogger.Debugf("DepGraphQueue.markReady() tx %s marked ready", hash.Hex())
 	}
@@ -455,6 +505,14 @@ func (q *DepGraphQueue) Dequeue() (*types.Transaction, bool) {
 	tx := q.ready[0]
 	q.ready[0] = nil
 	q.ready = q.ready[1:]
+
+	// STEP 10 (DepGraphQueue): measure how long the tx waited in the ready list
+	// after the dep manager released it (STEP 9→10), and report ready-list depth.
+	if t, ok := q.tracked[tx.Hash()]; ok && !t.readyAt.IsZero() {
+		metrics.Default().ObserveStep(metrics.StepDepgraphPostRelease, time.Since(t.readyAt))
+	}
+	metrics.Default().SetQueue(metrics.QueueTxReady, len(q.ready))
+
 	depGraphLogger.Debugf("DepGraphQueue.Dequeue() returning tx %s", tx.Hash().Hex())
 	return tx, true
 }

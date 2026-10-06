@@ -22,6 +22,7 @@ import (
 	"github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/endorser/api"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
+	"github.com/hyperledger/fabric-x-evm/gateway/metrics"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	"google.golang.org/grpc/codes"
@@ -85,9 +86,13 @@ func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Tra
 
 	for i, end := range e.endorsers {
 		processEndorsement := func(index int, endorser api.Service) {
+			// STEP 12: individual endorser RPC – measure the round-trip duration.
+			t12 := metrics.Now()
 			pResp, err := endorser.Execute(ctx, inv, tx, reqTime)
+			metrics.Default().ObserveStep(metrics.StepEndorseRPC, metrics.Since(t12))
 			if err != nil {
 				// A Go error is a transport/delivery failure (e.g. gRPC), not a tx outcome.
+				metrics.Default().EndorseErrors.Inc()
 				errs[index] = fmt.Errorf("call endorser: %w", err)
 				cancel() // signal other goroutines to stop early
 				return
