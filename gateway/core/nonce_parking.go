@@ -17,6 +17,7 @@ import (
 	ethcore "github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
+	"github.com/hyperledger/fabric-x-evm/gateway/metrics"
 )
 
 // Memory guardrails per sender.
@@ -34,6 +35,10 @@ var errTooManyParked = errors.New("too many queued (future-nonce) transactions f
 
 // enqueuer receives a ready transaction.
 type enqueuer interface {
+	// STEP 4: at some point the tx will be enqueued into the tx queue;
+	// the queue is obviously a queuing point so we want to measure how
+	// many are waiting there. This is true for all 3 implementations of
+	// the queue
 	Enqueue(tx *types.Transaction)
 }
 
@@ -194,6 +199,8 @@ func newNonceGate(state stateReader, signer types.Signer, queue enqueuer) *nonce
 
 // Admit enqueues tx at its expected nonce, parks a higher one, rejects a lower one.
 func (g *nonceGate) Admit(ctx context.Context, tx *types.Transaction) error {
+	// STEP 2: transactions land in the nonce sequencer.
+	// (Latency from STEP 1 is measured in SendTransaction; this is the body of Admit.)
 	from, err := types.Sender(g.signer, tx)
 	if err != nil {
 		return fmt.Errorf("recover sender: %w", err)
@@ -234,6 +241,9 @@ func (g *nonceGate) Admit(ctx context.Context, tx *types.Transaction) error {
 	case tx.Nonce() < next:
 		return fmt.Errorf("%w: next nonce %d, tx nonce %d", ethcore.ErrNonceTooLow, next, tx.Nonce())
 	case tx.Nonce() == next:
+		// STEP 4: tx is enqueued into the tx-queue; report the current parked count
+		// (the global nonce-gate queue) as a queue-depth metric before handing off.
+		metrics.Default().SetQueue(metrics.QueueNonceParked, len(g.byHash))
 		g.queue.Enqueue(tx)
 		return nil
 	}
@@ -244,11 +254,15 @@ func (g *nonceGate) Admit(ctx context.Context, tx *types.Transaction) error {
 		return errTooManyParked
 	}
 	if replacing {
-		// Overwriting an existing parked tx at this nonce. Ethereum replacement has
+		// Overwriting an existing parked tx at this nonce. Ethernet replacement has
 		// its own fee-bump rules, tracked in #62; until then we log and overwrite.
 		logger.Infof("nonce gate: replacing parked tx for %s at nonce %d", from, tx.Nonce())
 	}
+	// STEP 3: transactions may be queued for nonce sequencing – count the park and
+	// report the total number of globally parked transactions as a queue gauge.
+	metrics.Default().TxParked.Inc()
 	g.park(ss, tx)
+	metrics.Default().SetQueue(metrics.QueueNonceParked, len(g.byHash))
 	return nil
 }
 

@@ -12,6 +12,7 @@ import (
 	"math"
 	"math/big"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
@@ -20,6 +21,7 @@ import (
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	cmn "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
+	"github.com/hyperledger/fabric-x-evm/gateway/metrics"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 )
@@ -156,6 +158,8 @@ func (g *Gateway) worker(ctx context.Context) {
 	defer g.wg.Done()
 
 	for {
+		// STEP 10: the transaction is dequeued for work; measure the ready-list depth
+		// and how long it sat waiting since the dep-manager released it (STEP 9→10).
 		tx, ok := g.TxQueue.Dequeue()
 		if !ok {
 			// Queue is closed and empty
@@ -173,13 +177,22 @@ func (g *Gateway) worker(ctx context.Context) {
 
 // processTx handles the actual transaction processing
 func (g *Gateway) processTx(ctx context.Context, tx *types.Transaction) error {
+	// STEP 11: tx is executed – measure the EVM execution round-trip.
+	t11 := metrics.Now()
 	end, err := g.ExecuteEthTx(ctx, tx)
 	if err != nil {
 		return err
 	}
+	metrics.Default().ObserveStep(metrics.StepExecute, metrics.Since(t11))
+
+	// STEP 13: the tx is submitted for ordering; measure the hand-off latency and
+	// report how many endorsed transactions are queued in the endorsementChan.
+	t13 := metrics.Now()
 	if err := g.SubmitFabricTx(ctx, tx.Hash(), end); err != nil {
 		return err
 	}
+	metrics.Default().ObserveStep(metrics.StepSubmitFabric, metrics.Since(t13))
+	metrics.Default().SetQueue(metrics.QueueBatchSubmitterInput, len(g.endorsementChan))
 
 	return nil
 }
@@ -187,6 +200,10 @@ func (g *Gateway) processTx(ctx context.Context, tx *types.Transaction) error {
 // SendTransaction runs geth-style pre-flight validation, then enqueues the tx
 // for async endorse/submit. Mirrors eth_sendRawTransaction's failure model.
 func (g *Gateway) SendTransaction(ctx context.Context, tx *types.Transaction) error {
+	// STEP 1: transactions land in the gateway – record the ingress timestamp for
+	// end-to-end latency tracking and count total received transactions.
+	metrics.Default().TrackTxStart(tx.Hash())
+	metrics.Default().TxReceived.Inc()
 	logger.Debugf("Gateway.SendTransaction() called with tx=%s", tx.Hash().Hex())
 	if err := ValidateTx(tx, g.ChainConfig, g.Signer); err != nil {
 		logger.Warnf("Gateway.SendTransaction() validation error for tx=%s: %v", tx.Hash().Hex(), err)
@@ -198,7 +215,10 @@ func (g *Gateway) SendTransaction(ctx context.Context, tx *types.Transaction) er
 		return domain.ErrTransactionAlreadyPending
 	}
 	logger.Debugf("Gateway.SendTransaction() admitted tx=%s", tx.Hash().Hex())
-	return g.nonceGate.Admit(ctx, tx)
+	t1 := time.Now()
+	err := g.nonceGate.Admit(ctx, tx)
+	metrics.Default().ObserveStep(metrics.StepNonceAdmit, time.Since(t1))
+	return err
 }
 
 // CallContract is a query. It doesn't require a signature of the end user and doesn't change the ledger or nonce.

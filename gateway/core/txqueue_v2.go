@@ -10,31 +10,15 @@ import (
 	"container/list"
 	"context"
 	"sync"
-	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
+	"github.com/hyperledger/fabric-x-evm/gateway/metrics"
 )
 
 var loggerV2 = flogging.MustGetLogger("gateway.core.txqueue_v2")
-
-// ProcessingStartTimestamps is an optional map for tracking when transactions start processing.
-// If non-nil, timestamps are recorded when transactions are dequeued from the queue.
-// Key: Ethereum transaction hash, Value: T2 timestamp (when dequeued for processing)
-var ProcessingStartTimestamps map[common.Hash]time.Time
-
-// ProcessingStartTimestampsMu protects access to ProcessingStartTimestamps
-var ProcessingStartTimestampsMu sync.Mutex
-
-// SetTxQueueReadyListSizeMetric is an optional callback for reporting the ready list size.
-// If non-nil, it will be called to report the current ready list size.
-var SetTxQueueReadyListSizeMetric func(size int)
-
-// SetTxQueueWaitingListSizeMetric is an optional callback for reporting the waiting list size.
-// If non-nil, it will be called to report the current waiting list size.
-var SetTxQueueWaitingListSizeMetric func(size int)
 
 // txEntry represents a transaction in the queue with its dependency information.
 // Each entry maintains two lists of pointers to other transactions:
@@ -230,14 +214,6 @@ func (q *TxQueueV2) Dequeue() (*types.Transaction, bool) {
 	defer q.mu.Unlock()
 
 	for {
-		// Report queue size metrics if callbacks are set (inside mutex to get accurate counts)
-		if SetTxQueueReadyListSizeMetric != nil {
-			SetTxQueueReadyListSizeMetric(q.readyList.Len())
-		}
-		if SetTxQueueWaitingListSizeMetric != nil {
-			SetTxQueueWaitingListSizeMetric(q.waitingList.Len())
-		}
-
 		// Wait while ready list is empty and queue is not closed
 		for q.readyList.Len() == 0 && !q.done {
 			q.cond.Wait()
@@ -266,12 +242,9 @@ func (q *TxQueueV2) Dequeue() (*types.Transaction, bool) {
 			// Move to pending map - use cached hash from entry
 			q.pendingMap[entry.txHash] = tx
 
-			// Record T2 timestamp if tracking is enabled
-			if ProcessingStartTimestamps != nil {
-				ProcessingStartTimestampsMu.Lock()
-				ProcessingStartTimestamps[entry.txHash] = time.Now() // T2: dequeued for processing
-				ProcessingStartTimestampsMu.Unlock()
-			}
+			// STEP 10 (TxQueueV2): report ready/waiting depths at dequeue time.
+			metrics.Default().SetQueue(metrics.QueueTxReady, q.readyList.Len())
+			metrics.Default().SetQueue(metrics.QueueTxWaiting, q.waitingList.Len())
 
 			loggerV2.Debugf("Dequeue: tx %s, waiting=%d ready=%d pending=%d",
 				entry.txHash.Hex()[:10], q.waitingList.Len(), q.readyList.Len(), len(q.pendingMap))

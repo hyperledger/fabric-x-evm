@@ -15,7 +15,10 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	sdk "github.com/hyperledger/fabric-x-sdk"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyperledger/fabric-x-evm/gateway/metrics"
 )
 
 // stubSubmitter always returns err from Submit, so tests can force a submission failure
@@ -100,18 +103,11 @@ func TestBatchSubmitter_NilCompleterIsSafe(t *testing.T) {
 	time.Sleep(50 * time.Millisecond) // let the worker process it; no assertion needed beyond "didn't panic"
 }
 
-// TestBatchSubmitter_RecordsSubmissionTimestamp guards the bug this hook was added for:
-// SubmissionTimestamps was read by the perf harness but never written, so every
-// -enable-metrics run silently recorded zero latency samples.
-func TestBatchSubmitter_RecordsSubmissionTimestamp(t *testing.T) {
-	SubmissionTimestampsMu.Lock()
-	SubmissionTimestamps = make(map[common.Hash]time.Time)
-	SubmissionTimestampsMu.Unlock()
-	t.Cleanup(func() {
-		SubmissionTimestampsMu.Lock()
-		SubmissionTimestamps = nil
-		SubmissionTimestampsMu.Unlock()
-	})
+// TestBatchSubmitter_RecordsSubmitLatency verifies that a successful submission is
+// observed in the StepBatchSubmit histogram of the metrics package.
+func TestBatchSubmitter_RecordsSubmitLatency(t *testing.T) {
+	m := metrics.New()
+	metrics.ReplaceDefault(m)
 
 	completer := &stubCompleter{}
 	bs := NewBatchSubmitter([]Submitter{stubSubmitter{err: nil}}, make(chan EndorsedTx, 1), 1, 0, completer)
@@ -120,13 +116,12 @@ func TestBatchSubmitter_RecordsSubmissionTimestamp(t *testing.T) {
 	bs.Start(ctx)
 	defer bs.Stop()
 
-	hash := common.HexToHash("0x2")
-	bs.inputChan <- EndorsedTx{Hash: hash, End: sdk.Endorsement{}}
+	bs.inputChan <- EndorsedTx{Hash: common.HexToHash("0x2"), End: sdk.Endorsement{}}
 
 	require.Eventually(t, func() bool {
-		SubmissionTimestampsMu.Lock()
-		defer SubmissionTimestampsMu.Unlock()
-		_, ok := SubmissionTimestamps[hash]
-		return ok
-	}, 5*time.Second, 10*time.Millisecond, "T3 timestamp was not recorded for the submitted tx")
+		var pb dto.Metric
+		obs := m.StepLatency.WithLabelValues(metrics.StepBatchSubmit)
+		_ = obs.(interface{ Write(*dto.Metric) error }).Write(&pb)
+		return pb.GetHistogram().GetSampleCount() >= 1
+	}, 5*time.Second, 10*time.Millisecond, "StepBatchSubmit histogram should have at least one observation")
 }
