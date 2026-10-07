@@ -583,23 +583,6 @@ func (q *DepGraphQueue) ReusableEndorsement(hash common.Hash) (sdk.Endorsement, 
 	return end, true
 }
 
-// Reexecuted records the endorsement processTx made when it could not reuse
-// one. Its write set is what will commit, and it can differ from the first
-// execution's, since what that execution read had changed.
-func (q *DepGraphQueue) Reexecuted(hash common.Hash, end sdk.Endorsement) {
-	content, err := txContent(end)
-	if err != nil {
-		depGraphLogger.Errorf("read-write set for re-executed tx %s: %v", hash.Hex(), err)
-		return
-	}
-	_, writes := readWriteKeys(content)
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	if t, ok := q.tracked[hash]; ok {
-		t.writes = writes
-	}
-}
-
 // takeNodes untracks each hash and collects their nodes that still need
 // feeding back. Clearing a node is what makes a second Complete a no-op.
 // Caller must hold q.mu.

@@ -68,11 +68,9 @@ type TxQueueInterface interface {
 
 // endorsementReuser is a queue that already endorsed a transaction on the way
 // in and can hand that endorsement back while it is still current, sparing
-// processTx a second execution. Reexecuted tells it about the endorsement
-// processTx made instead, whose writes are the ones that will commit.
+// processTx a second execution.
 type endorsementReuser interface {
 	ReusableEndorsement(txHash common.Hash) (sdk.Endorsement, bool)
-	Reexecuted(txHash common.Hash, end sdk.Endorsement)
 }
 
 var logger = flogging.MustGetLogger("gateway.core")
@@ -182,8 +180,7 @@ func (g *Gateway) worker(ctx context.Context) {
 
 // processTx handles the actual transaction processing
 func (g *Gateway) processTx(ctx context.Context, tx *types.Transaction) error {
-	r, reuser := g.TxQueue.(endorsementReuser)
-	if reuser {
+	if r, ok := g.TxQueue.(endorsementReuser); ok {
 		if end, ok := r.ReusableEndorsement(tx.Hash()); ok {
 			return g.SubmitFabricTx(ctx, tx.Hash(), end)
 		}
@@ -191,9 +188,6 @@ func (g *Gateway) processTx(ctx context.Context, tx *types.Transaction) error {
 	end, err := g.ExecuteEthTx(ctx, tx)
 	if err != nil {
 		return err
-	}
-	if reuser {
-		r.Reexecuted(tx.Hash(), end)
 	}
 	if err := g.SubmitFabricTx(ctx, tx.Hash(), end); err != nil {
 		return err
