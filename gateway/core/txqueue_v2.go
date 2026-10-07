@@ -151,7 +151,7 @@ func (q *TxQueueV2) Enqueue(tx *types.Transaction) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	// Check if already tracked
+	// hashMap keeps a tx from Enqueue until Complete, so this also covers in-progress ones.
 	if _, exists := q.hashMap[txHash]; exists {
 		return domain.ErrTransactionAlreadyPending
 	}

@@ -20,6 +20,7 @@ import (
 	"github.com/hyperledger/fabric-x-committer/service/coordinator/dependencygraph"
 	"github.com/hyperledger/fabric-x-committer/utils/monitoring"
 	"github.com/hyperledger/fabric-x-common/api/committerpb"
+	fc "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	sdk "github.com/hyperledger/fabric-x-sdk"
@@ -254,7 +255,9 @@ func (q *DepGraphQueue) Enqueue(tx *types.Transaction) error {
 	default:
 		// Blocking is not an option: the nonce gate holds its own lock while
 		// calling us. The caller reports it, and the client can retry.
-		depGraphLogger.Warnf("DepGraphQueue.Enqueue() tx %s rejected: admitted channel full", hash.Hex())
+		msg := fmt.Sprintf("DepGraphQueue.Enqueue() tx %s rejected: admitted channel full", hash.Hex())
+		depGraphLogger.Error(msg)
+		fc.DebugPanic(msg)
 		return domain.ErrQueueFull
 	}
 	q.tracked[hash] = &trackedTx{tx: tx}

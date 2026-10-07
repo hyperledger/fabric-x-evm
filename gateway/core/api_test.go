@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	ethcommon "github.com/ethereum/go-ethereum/common"
+	fc "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	"github.com/stretchr/testify/assert"
@@ -143,7 +144,11 @@ func TestSendTransaction_QueueFullRejected(t *testing.T) {
 	require.NoError(t, g.SendTransaction(context.Background(), newValidTx(t, key, validTxOpts{nonce: 0})))
 
 	other := newValidTx(t, newKey(t), validTxOpts{nonce: 0})
-	require.ErrorIs(t, g.SendTransaction(context.Background(), other), domain.ErrQueueFull)
+	if fc.DebugBuild {
+		require.Panics(t, func() { _ = g.SendTransaction(context.Background(), other) }, "a debug build panics on a full queue")
+	} else {
+		require.ErrorIs(t, g.SendTransaction(context.Background(), other), domain.ErrQueueFull)
+	}
 	assert.Nil(t, g.TxQueue.IsPending(other.Hash()))
 }
 

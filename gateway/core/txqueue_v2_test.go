@@ -151,6 +151,21 @@ func TestTxQueueV2_Enqueue_DuplicateTransaction(t *testing.T) {
 	assert.Len(t, q.hashMap, 1)
 }
 
+// A duplicate of a tx a worker has already taken is still rejected.
+func TestTxQueueV2_Enqueue_DuplicateOfInProgressTx(t *testing.T) {
+	q := NewTxQueueV2()
+	tx := testTxV2(1)
+	require.NoError(t, q.Enqueue(tx))
+	got, ok := q.Dequeue()
+	require.True(t, ok)
+	require.Equal(t, tx.Hash(), got.Hash())
+
+	require.ErrorIs(t, q.Enqueue(tx), domain.ErrTransactionAlreadyPending)
+
+	assert.Equal(t, 0, q.readyList.Len(), "the duplicate is not queued again")
+	assert.Equal(t, 1, q.InFlight())
+}
+
 func TestTxQueueV2_Enqueue_ConflictingTransactions(t *testing.T) {
 	q := NewTxQueueV2()
 

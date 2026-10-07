@@ -19,6 +19,7 @@ import (
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/stretchr/testify/require"
 
+	fc "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 )
@@ -416,7 +417,11 @@ func TestDepGraphQueue_AdmittedChannelFullIsRejected(t *testing.T) {
 	}
 
 	overflow := txWithNonce(uint64(defaultChanSize))
-	require.ErrorIs(t, q.Enqueue(overflow), domain.ErrQueueFull)
+	if fc.DebugBuild {
+		require.Panics(t, func() { _ = q.Enqueue(overflow) }, "a debug build panics on a full queue")
+	} else {
+		require.ErrorIs(t, q.Enqueue(overflow), domain.ErrQueueFull)
+	}
 	require.Nil(t, q.IsPending(overflow.Hash()), "a rejected tx must not stay tracked")
 	require.Equal(t, defaultChanSize, q.InFlight())
 }
