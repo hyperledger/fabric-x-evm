@@ -562,6 +562,9 @@ func (q *DepGraphQueue) recordCommitted(txs []domain.Transaction) {
 // depending on it can commit first, so only commits seen so far can stale it.
 //
 // When it reports false, the caller executes again, as before this existed.
+// The graph and recordCommitted still hold the first execution's read-write
+// set, so this relies on a re-execution touching the same keys: a key only the
+// re-execution touches is neither protected from new transactions nor recorded.
 func (q *DepGraphQueue) ReusableEndorsement(hash common.Hash) (sdk.Endorsement, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
