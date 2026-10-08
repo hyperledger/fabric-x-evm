@@ -30,6 +30,7 @@ import (
 	eapi "github.com/hyperledger/fabric-x-evm/endorser/api"
 	econf "github.com/hyperledger/fabric-x-evm/endorser/config"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
+	"github.com/hyperledger/fabric-x-evm/endorser/query"
 	estorage "github.com/hyperledger/fabric-x-evm/endorser/storage"
 	"github.com/hyperledger/fabric-x-evm/endorser/testimpl"
 	"github.com/hyperledger/fabric-x-evm/gateway/app"
@@ -242,6 +243,7 @@ var workers = flag.Int("workers", 20, "number of gateway workers processing tran
 var submitters = flag.Int("submitters", 4, "number of goroutines submitting transactions to the gateway")
 var orderers = flag.Int("orderers", 8, "number of goroutines submitting transactions to the orderer (BatchSubmitter workers)")
 var outstanding = flag.Int("outstanding", 1000, "maximum number of outstanding transactions")
+var endorserDB = flag.String("db", econf.DBMemory, "endorser state store: memory (in-process LightKVS) or query-service (the committer's query service)")
 
 // txCompletion carries the fields needed by the refill loop after a transaction commits.
 type txCompletion struct {
@@ -340,13 +342,25 @@ func balancePrimingEndorserFactory(balancePriming *testimpl.BalancePrimingConfig
 		// LightKVS rather than wrapping it in a RevertibleLightKVS with a 16384-slot
 		// history. Assert both, so a future refactor cannot silently reroute the perf
 		// harness through the testnode path or widen the window.
+		//
+		// With -db query-service the endorser keeps no state of its own; check that it
+		// really got the query-service store.
 		switch kvs := db.(type) {
 		case *estorage.LightKVS:
+			if *endorserDB != econf.DBMemory {
+				t.Fatalf("perf endorser got the LightKVS store, but -db is %q", *endorserDB)
+			}
 			if got := len(kvs.History); got != 1 {
 				t.Fatalf("perf endorser LightKVS history window is %d, want 1", got)
 			}
 		case *estorage.RevertibleLightKVS:
 			t.Fatalf("perf endorser got the testImpl RevertibleLightKVS; NewEndorserCore must be called with testImpl=false")
+		case *query.KVS:
+			if *endorserDB != econf.DBQueryService {
+				t.Fatalf("perf endorser got the query-service store, but -db is %q", *endorserDB)
+			}
+		default:
+			t.Fatalf("perf endorser got unexpected store %T", db)
 		}
 
 		// Extract the base EVMEngine
@@ -514,25 +528,35 @@ func runReplayTest(t *testing.T, processingWorkerCount int, submittingWorkerCoun
 		queue = gwcore.NewTxQueueV2()
 	}
 	fmt.Printf("using queue type %T\n", queue)
-	fmt.Printf("using namespace %s", *namespace)
+	fmt.Printf("using namespace %s\n", *namespace)
+	overrides := map[string]any{
+		"Gateway.WorkerCount":          processingWorkerCount,
+		"Gateway.SubmitterCount":       ordererSubmitterCount,
+		"Network.Namespace":            *namespace,
+		"Synchronizer.AllTxQueueDepth": allTxQueueDepth,
+		// One retained state snapshot, not two. This is already what
+		// integration.buildEndorsers picks when the config file leaves history_size
+		// unset (fabx.yaml does), so today it only pins the value: without it the
+		// perf harness would inherit endorser/app's production default of 2 if that
+		// fallback ever went away. The assertion in balancePrimingEndorserFactory
+		// checks the value that actually reaches the KVS.
+		"Endorser.Database.HistorySize": 1,
+		"Endorser.Database.Database":    *endorserDB,
+	}
+	switch *endorserDB {
+	case econf.DBMemory:
+	case econf.DBQueryService:
+		overrides["Endorser.Database.QueryService"] = queryServiceConfig()
+	default:
+		t.Fatalf("-db must be %q or %q, got %q", econf.DBMemory, econf.DBQueryService, *endorserDB)
+	}
+	fmt.Printf("using endorser db %s\n", *endorserDB)
 	th, err := integration.NewFabricXTestHarnessWithNotifications(
 		t,
 		integration.TestLogger{T: t},
 		evmConfig,
 		"testdata/USDC_contract.json",
-		map[string]any{
-			"Gateway.WorkerCount":          processingWorkerCount,
-			"Gateway.SubmitterCount":       ordererSubmitterCount,
-			"Network.Namespace":            *namespace,
-			"Synchronizer.AllTxQueueDepth": allTxQueueDepth,
-			// One retained state snapshot, not two. This is already what
-			// integration.buildEndorsers picks when the config file leaves history_size
-			// unset (fabx.yaml does), so today it only pins the value: without it the
-			// perf harness would inherit endorser/app's production default of 2 if that
-			// fallback ever went away. The assertion in balancePrimingEndorserFactory
-			// checks the value that actually reaches the KVS.
-			"Endorser.Database.HistorySize": 1,
-		},
+		overrides,
 		factory,
 		queue,
 		perfHandlerChain(tracker),
@@ -1050,4 +1074,20 @@ func TestReplayJSONDatasetPerformance(t *testing.T) {
 	}
 
 	t.Logf("Performance results written to %s", csvPath)
+}
+
+// queryServiceConfig reaches the committer's query service (port 7001 in both the
+// test and the full deployment) with the client identity fabx*.yaml use for the
+// committer. Paths are relative to integration/, where the harness loads its config.
+func queryServiceConfig() *fc.ClientConfig {
+	const user = "../testdata/crypto/peerOrganizations/org1.example.com/users/User1@org1.example.com/tls/"
+	return &fc.ClientConfig{
+		Endpoint: &fc.Endpoint{Host: "127.0.0.1", Port: 7001},
+		TLS: fc.TLSConfig{
+			Mode:        "mtls",
+			CertPath:    user + "client.crt",
+			KeyPath:     user + "client.key",
+			CACertPaths: []string{"../testdata/crypto/peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem"},
+		},
+	}
 }
