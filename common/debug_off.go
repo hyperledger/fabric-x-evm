@@ -1,4 +1,4 @@
-//go:build !debug
+//go:build release
 
 /*
 Copyright IBM Corp. All Rights Reserved.
@@ -8,5 +8,5 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 package common
 
-// DebugBuild reports whether this binary was built with -tags debug.
+// DebugBuild reports whether DebugPanic panics: true unless built with -tags release.
 const DebugBuild = false

@@ -20,6 +20,7 @@ import (
 	ethcore "github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	fc "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/stretchr/testify/require"
@@ -162,12 +163,32 @@ func TestNonceGate_ObserveDropsReleasedTxTheQueueRefuses(t *testing.T) {
 	require.NotNil(t, gate.IsPending(parked.Hash()))
 
 	q.refuse(domain.ErrQueueFull)
-	require.NotPanics(t, func() { gate.Observe(committedBlock(t, key, 5)) })
+	if fc.DebugBuild {
+		require.Panics(t, func() { gate.Observe(committedBlock(t, key, 5)) }, "an unexpected refusal debug-panics")
+	} else {
+		require.NotPanics(t, func() { gate.Observe(committedBlock(t, key, 5)) })
+	}
 	require.Nil(t, gate.IsPending(parked.Hash()), "a refused tx must not stay parked")
 
 	q.refuse(nil)
 	require.NoError(t, gate.Admit(context.Background(), parked))
 	require.Equal(t, []uint64{5, 6}, q.nonces())
+}
+
+// A closed queue means shutdown, so the released tx is dropped without a debug panic.
+func TestNonceGate_ObserveDropsQuietlyWhenQueueClosed(t *testing.T) {
+	key := newKey(t)
+	state := newStubState()
+	state.set(senderAddr(key), 5)
+	gate, q := newTestGate(state)
+
+	parked := newValidTx(t, key, validTxOpts{nonce: 6})
+	require.NoError(t, gate.Admit(context.Background(), newValidTx(t, key, validTxOpts{nonce: 5})))
+	require.NoError(t, gate.Admit(context.Background(), parked))
+
+	q.refuse(domain.ErrQueueClosed)
+	require.NotPanics(t, func() { gate.Observe(committedBlock(t, key, 5)) })
+	require.Nil(t, gate.IsPending(parked.Hash()))
 }
 
 func TestNonceGate_TooLowRejected(t *testing.T) {

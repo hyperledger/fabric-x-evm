@@ -16,6 +16,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	ethcore "github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
+	fc "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 )
 
@@ -294,8 +295,16 @@ func (g *nonceGate) Observe(committed []domain.Transaction) {
 		if tx := g.unpark(ss, next); tx != nil {
 			// No caller to report to here. Dropping rather than re-parking lets the
 			// client resubmit at once: the nonce has not moved.
-			if err := g.queue.Enqueue(tx); err != nil && !errors.Is(err, domain.ErrTransactionAlreadyPending) {
-				logger.Errorf("nonce gate: dropped released tx %s: %v", tx.Hash().Hex(), err)
+			if err := g.queue.Enqueue(tx); err != nil {
+				switch {
+				case errors.Is(err, domain.ErrTransactionAlreadyPending):
+				case errors.Is(err, domain.ErrQueueClosed):
+					logger.Warnf("nonce gate: dropped released tx %s: %v", tx.Hash().Hex(), err)
+				default:
+					msg := fmt.Sprintf("nonce gate: dropped released tx %s: %v", tx.Hash().Hex(), err)
+					logger.Error(msg)
+					fc.DebugPanic(msg)
+				}
 			}
 		}
 		g.senders.release(ss)
