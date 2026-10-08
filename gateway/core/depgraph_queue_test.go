@@ -16,10 +16,12 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	sdk "github.com/hyperledger/fabric-x-sdk"
+	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/stretchr/testify/require"
 
-	fc "github.com/hyperledger/fabric-x-evm/common"
+	fxcommon "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 )
@@ -417,7 +419,7 @@ func TestDepGraphQueue_AdmittedChannelFullIsRejected(t *testing.T) {
 	}
 
 	overflow := txWithNonce(uint64(defaultChanSize))
-	if fc.DebugBuild {
+	if fxcommon.DebugBuild {
 		require.Panics(t, func() { _ = q.Enqueue(overflow) }, "a debug build panics on a full queue")
 	} else {
 		require.ErrorIs(t, q.Enqueue(overflow), domain.ErrQueueFull)
@@ -502,4 +504,133 @@ func TestDepGraphQueue_PositiveConfigIsHonoured(t *testing.T) {
 	require.Equal(t, 4, q.batchThreshold)
 	require.Equal(t, 5*time.Millisecond, q.batchTimeout)
 	require.Equal(t, 16, cap(q.admitted))
+}
+
+// fabricCommittedBlock builds a block whose transactions all committed on Fabric.
+func fabricCommittedBlock(txs ...*types.Transaction) *domain.Block {
+	b := blockWith(1, txs...)
+	for i := range b.Transactions {
+		b.Transactions[i].FabricTxStatus = blocks.StatusCommitted
+	}
+	return b
+}
+
+// A transaction nothing overwrote keeps the endorsement it was scheduled with,
+// so processTx need not execute it again. It is handed over once.
+func TestDepGraphQueue_ReusesCurrentEndorsement(t *testing.T) {
+	q, e := newDepQueue(t)
+	tx := txWithNonce(1)
+
+	q.Enqueue(tx)
+	requireReady(t, q, 1)
+	_, ok := q.Dequeue()
+	require.True(t, ok)
+
+	_, ok = q.ReusableEndorsement(tx.Hash())
+	require.True(t, ok)
+	_, ok = q.ReusableEndorsement(tx.Hash())
+	require.False(t, ok, "an endorsement is handed over once")
+	require.Equal(t, 1, e.calls())
+}
+
+// A transaction that executed before a clashing one committed read the old
+// value, so its endorsement is stale and it must execute again.
+func TestDepGraphQueue_StaleEndorsementIsNotReused(t *testing.T) {
+	q, e := newDepQueue(t)
+	first, second := txWithNonce(1), txWithNonce(2)
+	e.touches(first, "balance")
+	e.touches(second, "balance")
+
+	q.Enqueue(first)
+	requireReady(t, q, 1)
+	_, ok := q.Dequeue()
+	require.True(t, ok)
+
+	q.Enqueue(second)
+	require.Eventually(t, func() bool {
+		q.mu.RLock()
+		defer q.mu.RUnlock()
+		tracked, ok := q.tracked[second.Hash()]
+		return ok && tracked.endorsed
+	}, 2*time.Second, 5*time.Millisecond, "second's endorsement must be kept before first commits")
+
+	require.NoError(t, q.Handle(context.Background(), fabricCommittedBlock(first)))
+	requireReady(t, q, 1)
+	_, ok = q.Dequeue()
+	require.True(t, ok)
+
+	_, ok = q.ReusableEndorsement(second.Hash())
+	require.False(t, ok, "second read balance before first's write committed")
+}
+
+// An endorsement older than the reuse window is not handed back, even when
+// nothing it read was written.
+func TestDepGraphQueue_OldEndorsementIsNotReused(t *testing.T) {
+	q, _ := newDepQueue(t)
+	tx := txWithNonce(1)
+
+	q.Enqueue(tx)
+	requireReady(t, q, 1)
+	_, ok := q.Dequeue()
+	require.True(t, ok)
+
+	for i := range uint64(reuseWindow) {
+		require.NoError(t, q.Handle(context.Background(), fabricCommittedBlock(txWithNonce(100+i))))
+	}
+	_, ok = q.ReusableEndorsement(tx.Hash())
+	require.False(t, ok)
+}
+
+// A write by a transaction Fabric rejected never happened, so it does not
+// stale the endorsement of one that read the key.
+func TestDepGraphQueue_InvalidWriteDoesNotStale(t *testing.T) {
+	q, e := newDepQueue(t)
+	first, second := txWithNonce(1), txWithNonce(2)
+	e.touches(first, "balance")
+	e.touches(second, "balance")
+
+	q.Enqueue(first)
+	requireReady(t, q, 1)
+	_, ok := q.Dequeue()
+	require.True(t, ok)
+
+	q.Enqueue(second)
+	require.Eventually(t, func() bool {
+		q.mu.RLock()
+		defer q.mu.RUnlock()
+		tracked, ok := q.tracked[second.Hash()]
+		return ok && tracked.endorsed
+	}, 2*time.Second, 5*time.Millisecond)
+
+	require.NoError(t, q.Handle(context.Background(), blockWith(1, first))) // FabricTxStatus left invalid
+	requireReady(t, q, 1)
+	_, ok = q.Dequeue()
+	require.True(t, ok)
+
+	_, ok = q.ReusableEndorsement(second.Hash())
+	require.True(t, ok)
+}
+
+// processTx submits the queue's endorsement when it is current, and executes
+// again only when the queue has none to give.
+func TestProcessTx_ReusesQueueEndorsement(t *testing.T) {
+	q, e := newDepQueue(t)
+	reused, fresh := txWithNonce(1), txWithNonce(2)
+	pResp := &peer.ProposalResponse{Response: &peer.Response{Status: fxcommon.StatusOK}}
+	stub := &stubEndorser{execResp: pResp}
+	g := &Gateway{TxQueue: q, endorsers: signingClient(stub), endorsementChan: make(chan EndorsedTx, 2)}
+
+	q.Enqueue(reused)
+	requireReady(t, q, 1)
+	_, ok := q.Dequeue()
+	require.True(t, ok)
+
+	require.NoError(t, g.processTx(context.Background(), reused))
+	require.Equal(t, reused.Hash(), (<-g.endorsementChan).Hash)
+	require.Equal(t, 1, e.calls(), "the queue's endorsement is reused")
+	require.True(t, stub.lastTS.IsZero(), "processTx must not execute again")
+
+	require.NoError(t, g.processTx(context.Background(), fresh))
+	require.Equal(t, fresh.Hash(), (<-g.endorsementChan).Hash)
+	require.False(t, stub.lastTS.IsZero(), "an untracked tx is executed")
 }

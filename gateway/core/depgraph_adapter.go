@@ -88,3 +88,26 @@ func txContent(end sdk.Endorsement) (*applicationpb.Tx, error) {
 	}
 	return &applicationpb.Tx{Namespaces: namespaces}, nil
 }
+
+// readWriteKeys lists the state keys tx reads and the ones it writes. A
+// read-write counts as both: its read carries the version the committer checks.
+func readWriteKeys(tx *applicationpb.Tx) (reads, writes []string) {
+	for _, ns := range tx.GetNamespaces() {
+		for _, r := range ns.GetReadsOnly() {
+			reads = append(reads, stateKey(ns.GetNsId(), r.GetKey()))
+		}
+		for _, rw := range ns.GetReadWrites() {
+			k := stateKey(ns.GetNsId(), rw.GetKey())
+			reads = append(reads, k)
+			writes = append(writes, k)
+		}
+		for _, w := range ns.GetBlindWrites() {
+			writes = append(writes, stateKey(ns.GetNsId(), w.GetKey()))
+		}
+	}
+	return reads, writes
+}
+
+// stateKey joins a namespace and a key. Namespace ids cannot contain NUL, so
+// the separator keeps "a"+"bc" and "ab"+"c" apart.
+func stateKey(ns string, key []byte) string { return ns + "\x00" + string(key) }
