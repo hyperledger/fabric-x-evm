@@ -8,14 +8,12 @@ package testimpl
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
-	fxcommon "github.com/hyperledger/fabric-x-evm/common"
+	"github.com/hyperledger/fabric-x-evm/api/endorsementpb"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
@@ -114,18 +112,9 @@ func (e *BalancePrimingExecutor) Execute(tx *types.Transaction) (endorsement.Exe
 	}
 
 	// Execute the transaction using the base Executor
-	ret, err := e.Executor.Send(tx)
+	_, usedGas, err := e.Executor.Send(tx)
 	if err != nil {
 		return endorsement.ExecutionResult{}, err
-	}
-
-	// Marshal logs if any
-	var logs []byte
-	if l := e.state.Logs(); len(l) > 0 {
-		logs, err = json.Marshal(l)
-		if err != nil {
-			return endorsement.ExecutionResult{}, errors.New("error marshaling logs")
-		}
 	}
 
 	r := e.state.Result()
@@ -139,5 +128,9 @@ func (e *BalancePrimingExecutor) Execute(tx *types.Transaction) (endorsement.Exe
 	}
 	r.Reads = filteredReads
 
-	return endorsement.Success(r, fxcommon.LogsEventName(logs), logs, ret), nil
+	return execution.NewResult(r, e.state.Logs(), &endorsementpb.ExecutionMetadata{
+		Status:    endorsementpb.ExecutionStatus_EXECUTION_STATUS_SUCCESS,
+		GasUsed:   usedGas,
+		Timestamp: e.Executor.BlockCtx.Time,
+	}, "")
 }

@@ -36,7 +36,11 @@ type Transaction struct {
 	// nonce is consumed for, reverts included, so FabricTxStatus.Valid() is the one
 	// test for a Fabric-valid commit.
 	FabricTxStatus blocks.Status
-	Logs           []Log // populated for receipt queries
+	// GasUsed is the gas the transaction used; CumulativeGasUsed adds that of
+	// every earlier transaction in the block.
+	GasUsed           uint64
+	CumulativeGasUsed uint64
+	Logs              []Log // populated for receipt queries
 }
 
 // ToEthTx converts a domain Transaction to an ethereum types.Transaction.

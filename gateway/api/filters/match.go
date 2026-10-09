@@ -18,17 +18,18 @@ import (
 )
 
 // logsFromBlock extracts Ethereum logs from a Fabric SDK block, attaching
-// block/tx context. Non-EVM and revert txs are skipped.
+// block/tx context. Non-EVM and unsuccessful txs are skipped.
 func logsFromBlock(b blocks.Block) []*types.Log {
 	blockHash := common.BytesToHash(b.Hash)
 	out := make([]*types.Log, 0)
 	logIndex := uint(0)
 
 	for _, tx := range b.Transactions {
-		if len(tx.InputArgs) < 2 || len(tx.InputArgs[0]) != 1 || tx.InputArgs[0][0] != byte(fc.ProposalTypeEVMTx) {
+		ethTxBytes, ok := fc.EVMTx(tx)
+		if !ok || !tx.Valid() || len(tx.Event) == 0 {
 			continue
 		}
-		if !tx.Valid() || fc.IsRevertEvent(tx.EventName) || len(tx.Event) == 0 {
+		if succeeded, _ := fc.ExecutionOutcome(tx); !succeeded {
 			continue
 		}
 		raw, err := fc.UnmarshalLogs(tx.Event)
@@ -37,7 +38,7 @@ func logsFromBlock(b blocks.Block) []*types.Log {
 		}
 
 		ethTx := new(types.Transaction)
-		if err := ethTx.UnmarshalBinary(tx.InputArgs[1]); err != nil {
+		if err := ethTx.UnmarshalBinary(ethTxBytes); err != nil {
 			continue
 		}
 		txHash := ethTx.Hash()

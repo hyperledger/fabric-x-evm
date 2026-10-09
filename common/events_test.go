@@ -9,10 +9,12 @@ package common
 import (
 	"bytes"
 	"encoding/json"
-	"strings"
 	"testing"
 
+	"github.com/hyperledger/fabric-x-evm/api/endorsementpb"
+	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/state"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestUnmarshalEvents(t *testing.T) {
@@ -152,60 +154,106 @@ func TestUnmarshalLogs_EmptyJSONArrayReturnsEmptySlice(t *testing.T) {
 	}
 }
 
-// ---- event names ----
-//
-// The SDK carries the event name beside the payload on both backends, so revert
-// and exec-failure detection is a prefix check rather than a proto unwrap.
+// ---- EVM transaction marker ----
 
-func TestRevertEventName_IncludesTxID(t *testing.T) {
-	name := RevertEventName("tx-1")
-	if !strings.HasPrefix(name, "revert:") || !strings.HasSuffix(name, "tx-1") {
-		t.Errorf("RevertEventName = %q", name)
+func TestEVMTx(t *testing.T) {
+	raw := []byte{0xaa, 0xbb}
+	tests := []struct {
+		name string
+		tx   blocks.Transaction
+		ok   bool
+	}{
+		{"evm tx", blocks.Transaction{EventName: ProposalTypeEVMTx, InputArgs: [][]byte{raw}}, true},
+		{"other event name", blocks.Transaction{EventName: "event", InputArgs: [][]byte{raw}}, false},
+		{"no event name", blocks.Transaction{InputArgs: [][]byte{raw}}, false},
+		{"no args", blocks.Transaction{EventName: ProposalTypeEVMTx}, false},
+		{"old two-arg layout", blocks.Transaction{EventName: ProposalTypeEVMTx, InputArgs: [][]byte{{0xfb}, raw}}, false},
 	}
-	if !IsRevertEvent(name) {
-		t.Error("IsRevertEvent must accept the name it builds")
-	}
-	if IsExecFailureEvent(name) {
-		t.Error("a revert must not read as an exec failure")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := EVMTx(tt.tx)
+			if ok != tt.ok {
+				t.Fatalf("ok = %v, want %v", ok, tt.ok)
+			}
+			if ok && !bytes.Equal(got, raw) {
+				t.Errorf("tx bytes = %x, want %x", got, raw)
+			}
+		})
 	}
 }
 
-func TestExecFailureEventName_IncludesTxID(t *testing.T) {
-	name := ExecFailureEventName("tx-2")
-	if !strings.HasPrefix(name, "execfail:") || !strings.HasSuffix(name, "tx-2") {
-		t.Errorf("ExecFailureEventName = %q", name)
+// ---- execution metadata ----
+
+func TestExecutionMetadata_RoundTrip(t *testing.T) {
+	in := &endorsementpb.ExecutionMetadata{
+		Status:    endorsementpb.ExecutionStatus_EXECUTION_STATUS_REVERTED,
+		Reason:    []byte{0x08, 0xc3, 0x79, 0xa0},
+		GasUsed:   21_000,
+		Timestamp: 1_700_000_000,
 	}
-	if !IsExecFailureEvent(name) {
-		t.Error("IsExecFailureEvent must accept the name it builds")
+	b, err := MarshalExecutionMetadata(in)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
 	}
-	if IsRevertEvent(name) {
-		t.Error("an exec failure must not read as a revert")
+	out, err := UnmarshalExecutionMetadata(b)
+	if err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !proto.Equal(in, out) {
+		t.Errorf("round trip = %v, want %v", out, in)
+	}
+
+	// Every endorser must produce the same bytes for the same outcome.
+	again, err := MarshalExecutionMetadata(in)
+	if err != nil || !bytes.Equal(b, again) {
+		t.Errorf("marshal is not stable: %x vs %x (err %v)", b, again, err)
 	}
 }
 
-// A successful transaction carries the SDK's default name, which must not be
-// mistaken for either failure marker.
-func TestDefaultEventName_IsNeitherFailure(t *testing.T) {
-	for _, name := range []string{"", "event", "log", "Transfer"} {
-		if IsRevertEvent(name) {
-			t.Errorf("%q must not read as a revert", name)
+// An empty Payload decodes to the unspecified status, never to success.
+func TestUnmarshalExecutionMetadata_EmptyIsUnspecified(t *testing.T) {
+	md, err := UnmarshalExecutionMetadata(nil)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if md.GetStatus() != endorsementpb.ExecutionStatus_EXECUTION_STATUS_UNSPECIFIED {
+		t.Errorf("status = %v, want unspecified", md.GetStatus())
+	}
+}
+
+func TestExecutionOutcome(t *testing.T) {
+	payload := func(status endorsementpb.ExecutionStatus, gas uint64) []byte {
+		b, err := MarshalExecutionMetadata(&endorsementpb.ExecutionMetadata{Status: status, GasUsed: gas})
+		if err != nil {
+			t.Fatal(err)
 		}
-		if IsExecFailureEvent(name) {
-			t.Errorf("%q must not read as an exec failure", name)
-		}
+		return b
+	}
+	tests := []struct {
+		name      string
+		tx        blocks.Transaction
+		succeeded bool
+		gas       uint64
+	}{
+		{"success", blocks.Transaction{Status: blocks.StatusCommitted, Payload: payload(endorsementpb.ExecutionStatus_EXECUTION_STATUS_SUCCESS, 21000)}, true, 21000},
+		{"revert", blocks.Transaction{Status: blocks.StatusCommitted, Payload: payload(endorsementpb.ExecutionStatus_EXECUTION_STATUS_REVERTED, 30000)}, false, 30000},
+		{"exec failure", blocks.Transaction{Status: blocks.StatusCommitted, Payload: payload(endorsementpb.ExecutionStatus_EXECUTION_STATUS_EXEC_FAILED, 50000)}, false, 50000},
+		{"not committed", blocks.Transaction{Status: blocks.StatusMVCCConflict, Payload: payload(endorsementpb.ExecutionStatus_EXECUTION_STATUS_SUCCESS, 21000)}, false, 0},
+		{"no payload", blocks.Transaction{Status: blocks.StatusCommitted}, false, 0},
+		{"bad payload", blocks.Transaction{Status: blocks.StatusCommitted, Payload: []byte{0xff, 0xff}}, false, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			succeeded, gas := ExecutionOutcome(tt.tx)
+			if succeeded != tt.succeeded || gas != tt.gas {
+				t.Errorf("got (%v, %d), want (%v, %d)", succeeded, gas, tt.succeeded, tt.gas)
+			}
+		})
 	}
 }
 
-// The SDK rejects an event without a name, so logs must always carry one.
-func TestLogsEventName(t *testing.T) {
-	if got := LogsEventName(nil); got != "" {
-		t.Errorf("no logs: got %q, want empty", got)
-	}
-	name := LogsEventName([]byte(`[{"address":"0x01"}]`))
-	if name == "" {
-		t.Fatal("logs must carry a name")
-	}
-	if IsRevertEvent(name) || IsExecFailureEvent(name) {
-		t.Errorf("%q must not read as a failure", name)
+func TestUnmarshalExecutionMetadata_InvalidInput(t *testing.T) {
+	if _, err := UnmarshalExecutionMetadata([]byte{0xff, 0xff, 0xff}); err == nil {
+		t.Error("expected error for invalid input")
 	}
 }

@@ -54,10 +54,12 @@ INSERT INTO
         contract_address,
         status,
         fabric_tx_id,
-        fabric_tx_status
+        fabric_tx_status,
+        gas_used,
+        cumulative_gas_used
     )
 VALUES
-    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (tx_hash) DO NOTHING;
+    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (tx_hash) DO NOTHING;
 
 -- name: GetTransactionByBlockNumberAndIndex :one
 SELECT

@@ -7,7 +7,6 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package hybridx
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -57,14 +56,7 @@ func (d *AllTxBatchDispatcher) HandleBatch(ctx context.Context, batch notificati
 
 	txs := make([]blocks.Transaction, 0, len(batch.Events))
 	for _, event := range batch.Events {
-		// InputArgs is empty when the transaction carried no metadata at all and
-		// when it carried no args, so this one check covers both.
-		if len(event.InputArgs) < 2 {
-			notifLogger.Debugf("Skipping tx %s: no ethereum tx in metadata", event.ID)
-			continue
-		}
-
-		if !bytes.Equal(event.InputArgs[0], []byte{byte(common.ProposalTypeEVMTx)}) {
+		if _, ok := common.EVMTx(event.Transaction); !ok {
 			notifLogger.Debugf("Skipping tx %s: not an EVM transaction", event.ID)
 			continue
 		}

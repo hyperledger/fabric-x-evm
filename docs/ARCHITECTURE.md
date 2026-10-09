@@ -116,10 +116,7 @@ The Endorser (located at `endorser/`) simulates EVM transaction execution and pr
 - Execute EVM transactions against versioned state snapshots
 - Track state reads/writes as Fabric read-write sets
 - Synchronize ledger state for accurate simulation
-- Handle three proposal types:
-  - `ProposalTypeEVMTx`: State-changing transactions
-  - `ProposalTypeCall`: Read-only contract calls (eth_call)
-  - `ProposalTypeState`: Direct state queries (balance, code, storage, nonce)
+- Mark each executed transaction with the `ProposalTypeEVMTx` event name and record its outcome (status, revert reason, gas used, timestamp) as an `ExecutionMetadata` protobuf in the transaction Payload
 - Return signed proposal responses for endorsement
 
 ## Data Flow
@@ -164,7 +161,6 @@ As the diagram shows, the transaction execution flow includes the following key 
 2. **Gateway Validation**: The Gateway API validates the Ethereum transaction signature, extracts the sender address, and verifies the transaction format.
 
 3. **Proposal Creation**: The Gateway Core creates a Fabric SignedProposal containing:
-   - Proposal type indicator (`ProposalTypeEVMTx`)
    - Serialized Ethereum transaction bytes
    - Fabric channel, namespace, and version metadata
    - Random Fabric nonce for uniqueness

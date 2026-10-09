@@ -67,7 +67,7 @@ func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Tra
 	}
 
 	// Create invocation
-	inv, err := e.createInvocation([][]byte{{byte(common.ProposalTypeEVMTx)}, ethTxBytes})
+	inv, err := e.createInvocation([][]byte{ethTxBytes})
 	if err != nil {
 		return sdk.Endorsement{}, err
 	}
