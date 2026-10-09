@@ -439,7 +439,11 @@ func (g *Gateway) Stop() error {
 func (g *Gateway) Handle(ctx context.Context, b blocks.Block) error {
 	domainBlock, err := ConvertToDomain(b)
 	if err != nil {
-		logger.Errorf("Gateway.Handle() block=%d convert error: %v", b.Number, err)
+		// Unrecoverable: a committed tx we cannot parse. Log, debug-panic, then
+		// return so release builds stay up while we decide a production policy.
+		msg := fmt.Sprintf("Gateway.Handle() block=%d convert error: %v", b.Number, err)
+		logger.Error(msg)
+		cmn.DebugPanic(msg)
 		return err
 	}
 	// Release parked work first, then let the queue feed workers.

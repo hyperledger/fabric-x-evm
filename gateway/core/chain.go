@@ -80,7 +80,11 @@ func (c *Chain) Handle(ctx context.Context, b blocks.Block) error {
 	logger.Debugf("Chain.Handle() block=%d txs=%d", b.Number, len(b.Transactions))
 	ebl, err := ConvertToDomain(b)
 	if err != nil {
-		logger.Errorf("Chain.Handle() block=%d convert error: %v", b.Number, err)
+		// Unrecoverable: a committed tx we cannot parse. Log, debug-panic, then
+		// return so release builds stay up while we decide a production policy.
+		msg := fmt.Sprintf("Chain.Handle() block=%d convert error: %v", b.Number, err)
+		logger.Error(msg)
+		fc.DebugPanic(msg)
 		return err
 	}
 

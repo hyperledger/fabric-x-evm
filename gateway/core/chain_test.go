@@ -7,8 +7,10 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package core
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"math/big"
+	"path/filepath"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -179,6 +181,30 @@ func TestConvertToDomain_InvalidEthPayloadReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "tx-corrupt")
 	assert.Contains(t, err.Error(), "block 7")
 	assert.Empty(t, got.Transactions)
+}
+
+// Call sites follow the #407 pattern: log, DebugPanic, then return the error.
+func TestChain_Handle_InvalidEthPayloadUsesDebugPanic(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "gateway.db")
+	chain, err := NewChain(dbPath, "", false)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = chain.Close() })
+
+	b := blocks.Block{
+		Number: 7,
+		Hash:   []byte{0x07},
+		Transactions: []blocks.Transaction{{
+			ID:        "tx-corrupt",
+			Status:    blocks.StatusCommitted,
+			InputArgs: [][]byte{{byte(co.ProposalTypeEVMTx)}, []byte("not-an-eth-tx")},
+		}},
+	}
+
+	if co.DebugBuild {
+		require.Panics(t, func() { _ = chain.Handle(context.Background(), b) })
+		return
+	}
+	require.Error(t, chain.Handle(context.Background(), b))
 }
 
 func TestConvertToDomain_EmptyBlock(t *testing.T) {
