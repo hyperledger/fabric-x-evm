@@ -25,6 +25,7 @@ const (
 	CodeInvalidParams     = -32602
 	CodeInternal          = -32603
 	CodeTxRejected        = -32003
+	CodeLimitExceeded     = -32005
 	CodeExecutionReverted = -32000
 )
 
@@ -91,4 +92,10 @@ func ExecutionReverted(reason string, data string) error {
 // ExecutionError returns -32000 for a non-revert EVM execution failure (e.g. out of gas), without data.
 func ExecutionError(msg string) error {
 	return &Error{Code: CodeExecutionReverted, Message: msg}
+}
+
+// LimitExceeded returns -32005 when a server-side resource cap is hit
+// (too many filters or subscriptions).
+func LimitExceeded(format string, args ...any) error {
+	return &Error{Code: CodeLimitExceeded, Message: fmt.Sprintf(format, args...)}
 }

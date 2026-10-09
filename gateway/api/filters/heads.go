@@ -9,9 +9,14 @@ package filters
 import (
 	"context"
 
+	"github.com/hyperledger/fabric-x-evm/gateway/api/rpcerr"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 )
+
+func errSubscriptionLimit(format string, args ...any) error {
+	return rpcerr.LimitExceeded(format, args...)
+}
 
 // HeadsBuffer is how many committed blocks a slow newHeads client may lag
 // before further notifications for that subscriber are dropped.
@@ -24,8 +29,9 @@ type BlockQuerier interface {
 }
 
 type headSub struct {
-	id uint64
-	ch chan *domain.Block
+	id   uint64
+	ch   chan *domain.Block
+	conn any // WS connection key; nil when not attributable
 }
 
 // HeadSubscription is a live newHeads consumer.
@@ -47,9 +53,16 @@ func (s *HeadSubscription) Unsubscribe() {
 	s.api = nil
 }
 
-// SubscribeHeads registers a buffered newHeads consumer. After Close the
-// returned channel is already closed.
-func (api *FilterAPI) SubscribeHeads(buffer int) *HeadSubscription {
+// SubscribeHeads registers a buffered newHeads consumer with no connection key
+// (tests / internal). Still respects the global subscription cap.
+func (api *FilterAPI) SubscribeHeads(buffer int) (*HeadSubscription, error) {
+	return api.SubscribeHeadsForConn(nil, buffer)
+}
+
+// SubscribeHeadsForConn registers a buffered newHeads consumer attributed to
+// conn (stable per WS socket; callers should pass PeerInfo-based keys, not a
+// per-call Notifier pointer). After Close the returned channel is already closed.
+func (api *FilterAPI) SubscribeHeadsForConn(conn any, buffer int) (*HeadSubscription, error) {
 	if buffer < 1 {
 		buffer = HeadsBuffer
 	}
@@ -59,12 +72,24 @@ func (api *FilterAPI) SubscribeHeads(buffer int) *HeadSubscription {
 	defer api.mu.Unlock()
 	if api.closed {
 		close(ch)
-		return &HeadSubscription{ch: ch}
+		return &HeadSubscription{ch: ch}, nil
 	}
+	if len(api.headSubs) >= api.limits.MaxSubscriptionsGlobal {
+		close(ch)
+		return nil, errSubscriptionLimit("global subscription limit of %d reached", api.limits.MaxSubscriptionsGlobal)
+	}
+	if conn != nil && api.connSubs[conn] >= api.limits.MaxSubscriptionsPerConn {
+		close(ch)
+		return nil, errSubscriptionLimit("per-connection subscription limit of %d reached", api.limits.MaxSubscriptionsPerConn)
+	}
+
 	api.nextHeadID++
 	id := api.nextHeadID
-	api.headSubs[id] = &headSub{id: id, ch: ch}
-	return &HeadSubscription{api: api, id: id, ch: ch}
+	api.headSubs[id] = &headSub{id: id, ch: ch, conn: conn}
+	if conn != nil {
+		api.connSubs[conn]++
+	}
+	return &HeadSubscription{api: api, id: id, ch: ch}, nil
 }
 
 // HeadSubscriberCount is the number of active newHeads subscribers (tests).
@@ -79,6 +104,12 @@ func (api *FilterAPI) unsubscribeHeads(id uint64) {
 	sub, ok := api.headSubs[id]
 	if ok {
 		delete(api.headSubs, id)
+		if sub.conn != nil {
+			api.connSubs[sub.conn]--
+			if api.connSubs[sub.conn] <= 0 {
+				delete(api.connSubs, sub.conn)
+			}
+		}
 	}
 	api.mu.Unlock()
 	if ok {
@@ -91,6 +122,7 @@ func (api *FilterAPI) closeHeadSubsLocked() {
 		close(sub.ch)
 		delete(api.headSubs, id)
 	}
+	clear(api.connSubs)
 }
 
 func (api *FilterAPI) fanOutHeads(b *domain.Block) {
