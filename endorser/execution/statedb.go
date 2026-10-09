@@ -38,7 +38,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math/big"
-	"slices"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -201,6 +200,8 @@ type accessListAddSlotEntry struct {
 // StateDB implements ExtendedStateDB by combining ledger state management
 // with EVM-specific state tracking using a single unified journal.
 type StateDB struct {
+	// writeIdx maps a key to the journal index of its latest write (nil: rebuild on demand).
+	writeIdx          map[string]int
 	namespace         string
 	store             ReadStore
 	logs              []Log
@@ -276,18 +277,28 @@ func storeKey(addr common.Address, slot common.Hash) string {
 
 // -------------------- Internal state query helpers --------------------
 
-// getStateFromJournal scans the journal backwards to find the latest write for a key.
+// getStateFromJournal finds the latest write for a key in the journal, through an index from key to
+// journal position that putState maintains and that is rebuilt after a revert truncates the journal
+// (a backward scan per lookup made writing n keys into one StateDB quadratic).
 // Returns the value and true if found, or nil and false if not found.
 func (s *StateDB) getStateFromJournal(key string) ([]byte, bool) {
-	for _, v := range slices.Backward(s.journal) {
-		if w, ok := v.(writeEntry); ok && w.write.Key == key {
-			if w.write.IsDelete {
-				return nil, true
+	if s.writeIdx == nil {
+		s.writeIdx = make(map[string]int)
+		for i, v := range s.journal {
+			if w, ok := v.(writeEntry); ok {
+				s.writeIdx[w.write.Key] = i
 			}
-			return w.write.Value, true
 		}
 	}
-	return nil, false
+	i, ok := s.writeIdx[key]
+	if !ok {
+		return nil, false
+	}
+	w := s.journal[i].(writeEntry)
+	if w.write.IsDelete {
+		return nil, true
+	}
+	return w.write.Value, true
 }
 
 // getStateFromStore reads from the underlying ReadStore and journals the read.
@@ -344,6 +355,9 @@ func (s *StateDB) putState(key string, value []byte) {
 		write.IsDelete = true
 	} else {
 		write.Value = value
+	}
+	if s.writeIdx != nil {
+		s.writeIdx[key] = len(s.journal)
 	}
 	s.journal = append(s.journal, writeEntry{write: write})
 }
@@ -670,6 +684,7 @@ func (s *StateDB) RevertToSnapshot(revid int) {
 
 	// Truncate journal, logs, and revisions
 	s.journal = s.journal[:snapshot.journalIndex]
+	s.writeIdx = nil // rebuilt lazily from the truncated journal
 	s.logs = s.logs[:snapshot.logIndex]
 	s.validRevisions = s.validRevisions[:idx]
 }
