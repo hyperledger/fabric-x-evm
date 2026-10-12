@@ -28,10 +28,19 @@ from plotly.subplots import make_subplots
 from pathlib import Path
 
 
+# The Go test writes snake_case CSV headers; the plots use these names.
+COLUMNS = {
+    "processing_workers": "ProcessingWorkers",
+    "submitting_workers": "SubmittingWorkers",
+    "throughput_tx_per_s": "Throughput",
+    "failure_rate": "FailureRate",
+}
+
+
 def load_data(csv_path):
     """Load performance data from CSV file."""
     try:
-        df = pd.read_csv(csv_path)
+        df = pd.read_csv(csv_path).rename(columns=COLUMNS)
         print(f"Loaded {len(df)} data points from {csv_path}")
         return df
     except FileNotFoundError:

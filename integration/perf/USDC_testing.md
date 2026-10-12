@@ -128,7 +128,10 @@ The test will:
 2. Use balance priming to automatically fund accounts on first access
 3. Replay the configured transfer window
 4. Optionally wrap around and replay the same window multiple times
-5. Output throughput and failure metrics
+5. Output goodput, throughput and failure metrics
+
+Goodput counts only transactions that committed as valid. Throughput counts every
+transaction that completed, valid or not. The gap between them is wasted work.
 
 ## Replay Configuration
 
