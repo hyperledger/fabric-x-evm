@@ -317,14 +317,14 @@ func (q *DepGraphQueue) submitToManager(tx *types.Transaction) {
 		return
 	}
 
-	// An endorsement we cannot read a read-write set from means the endorser and
-	// this queue disagree about the wire format, which no amount of dropping
-	// recovers from. Loud for the prototype; see #386 for removing it before
-	// production.
+	// The endorser and this queue disagree about the wire format; retrying cannot fix it.
 	content, err := txContent(end)
 	if err != nil {
-		depGraphLogger.Errorf("read-write set for tx %s: %v", hash.Hex(), err)
-		panic(fmt.Sprintf("dependency manager queue: read-write set for tx %s: %v", hash.Hex(), err))
+		msg := fmt.Sprintf("DepGraphQueue.submitToManager() read-write set for tx %s: %v", hash.Hex(), err)
+		depGraphLogger.Error(msg)
+		q.drop(hash)
+		fc.DebugPanic(msg)
+		return
 	}
 	q.keepEndorsement(hash, seq, end, content)
 
@@ -399,22 +399,25 @@ func (q *DepGraphQueue) drainReleased() {
 }
 
 func (q *DepGraphQueue) markReady(nodes dependencygraph.TxNodeBatch) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
+	var orphans dependencygraph.TxNodeBatch
+	var unexpected []string
 
+	q.mu.Lock()
 	for _, node := range nodes {
 		id := node.VerifierTx.GetRef().GetTxId()
 		hash, ok := hashFromTxRefID(id)
 		if !ok {
-			// Only this queue sets TxId, so anything else means the manager and
-			// the queue disagree about the reference. Loud for the prototype;
-			// see #386.
-			depGraphLogger.Errorf("unrecognised tx ref %q received from dependency manager", id)
-			panic(fmt.Sprintf("dependency manager queue: unrecognised tx ref %q", id))
+			// Only this queue sets TxId, so the manager and the queue disagree about the reference.
+			msg := fmt.Sprintf("DepGraphQueue.markReady() unrecognised tx ref %q received from dependency manager", id)
+			depGraphLogger.Error(msg)
+			unexpected = append(unexpected, msg)
+			orphans = append(orphans, node)
+			continue
 		}
 		t, tracked := q.tracked[hash]
 		if !tracked {
 			depGraphLogger.Warnf("DepGraphQueue.markReady() tx %s node received from dependency manager but not tracked", hash.Hex())
+			orphans = append(orphans, node)
 			continue
 		}
 		t.node = node
@@ -422,6 +425,13 @@ func (q *DepGraphQueue) markReady(nodes dependencygraph.TxNodeBatch) {
 		depGraphLogger.Debugf("DepGraphQueue.markReady() tx %s marked ready", hash.Hex())
 	}
 	q.cond.Broadcast()
+	q.mu.Unlock()
+
+	// Nothing will run these, so hand them back now or their dependents wait forever.
+	q.release(orphans)
+	for _, msg := range unexpected {
+		fc.DebugPanic(msg)
+	}
 }
 
 // Dequeue blocks until the manager releases a transaction, or the queue closes.

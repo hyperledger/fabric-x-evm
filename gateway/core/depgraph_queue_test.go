@@ -17,6 +17,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
+	"github.com/hyperledger/fabric-x-committer/service/coordinator/dependencygraph"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/stretchr/testify/require"
@@ -426,6 +427,94 @@ func TestDepGraphQueue_AdmittedChannelFullIsRejected(t *testing.T) {
 	}
 	require.Nil(t, q.IsPending(overflow.Hash()), "a rejected tx must not stay tracked")
 	require.Equal(t, defaultChanSize, q.InFlight())
+}
+
+// noRWSetEndorser returns an endorsement with no read-write set in it.
+type noRWSetEndorser struct{}
+
+func (noRWSetEndorser) ExecuteTransaction(context.Context, *types.Transaction) (sdk.Endorsement, error) {
+	return sdk.Endorsement{}, nil
+}
+
+// An endorsement we cannot read drops the transaction instead of crashing the gateway.
+func TestDepGraphQueue_UnreadableEndorsementDropsTransaction(t *testing.T) {
+	q := NewDepGraphQueue(nil)
+	t.Cleanup(q.Close)
+	// Not bound, so no endorse worker races the direct call below.
+	q.endorser = noRWSetEndorser{}
+
+	tx := txWithNonce(1)
+	require.NoError(t, q.Enqueue(tx))
+
+	if fxcommon.DebugBuild {
+		require.Panics(t, func() { q.submitToManager(tx) }, "a debug build panics on an unreadable endorsement")
+	} else {
+		require.NotPanics(t, func() { q.submitToManager(tx) })
+	}
+	require.Nil(t, q.IsPending(tx.Hash()), "an unreadable endorsement must not stay tracked")
+	require.Zero(t, len(q.endorsed), "nothing may reach the manager")
+}
+
+// releasedNode runs a transaction through the manager and returns its node,
+// still held, so the test can hand it to markReady again.
+func releasedNode(t *testing.T, q *DepGraphQueue, tx *types.Transaction) dependencygraph.TxNodeBatch {
+	t.Helper()
+	require.NoError(t, q.Enqueue(tx))
+	requireReady(t, q, 1)
+	_, ok := q.Dequeue()
+	require.True(t, ok)
+
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+	return dependencygraph.TxNodeBatch{q.tracked[tx.Hash()].node}
+}
+
+// A released node the queue no longer tracks still goes back to the manager,
+// or whatever waits on it is held forever.
+func TestDepGraphQueue_UntrackedReleasedNodeIsHandedBack(t *testing.T) {
+	q, e := newDepQueue(t)
+	first, second := txWithNonce(1), txWithNonce(2)
+	e.touches(first, "balance")
+	e.touches(second, "balance")
+
+	nodes := releasedNode(t, q, first)
+	q.mu.Lock()
+	delete(q.tracked, first.Hash())
+	q.mu.Unlock()
+
+	require.NoError(t, q.Enqueue(second))
+	require.Never(t, func() bool { return readyCount(q) > 0 }, 200*time.Millisecond, 10*time.Millisecond)
+
+	q.markReady(nodes)
+	requireReady(t, q, 1)
+	got, ok := q.Dequeue()
+	require.True(t, ok)
+	require.Equal(t, second.Hash(), got.Hash())
+}
+
+// A released node with a ref this queue never issued is handed back too, and
+// a debug build panics on it.
+func TestDepGraphQueue_UnrecognisedRefIsHandedBack(t *testing.T) {
+	q, e := newDepQueue(t)
+	first, second := txWithNonce(1), txWithNonce(2)
+	e.touches(first, "balance")
+	e.touches(second, "balance")
+
+	nodes := releasedNode(t, q, first)
+	nodes[0].VerifierTx.Ref.TxId = "not-a-tx-hash"
+
+	require.NoError(t, q.Enqueue(second))
+	require.Never(t, func() bool { return readyCount(q) > 0 }, 200*time.Millisecond, 10*time.Millisecond)
+
+	if fxcommon.DebugBuild {
+		require.Panics(t, func() { q.markReady(nodes) }, "a debug build panics on an unrecognised ref")
+	} else {
+		require.NotPanics(t, func() { q.markReady(nodes) })
+	}
+	requireReady(t, q, 1)
+	got, ok := q.Dequeue()
+	require.True(t, ok)
+	require.Equal(t, second.Hash(), got.Hash())
 }
 
 // The id the manager echoes back has to convert to the hash we tracked, or a
