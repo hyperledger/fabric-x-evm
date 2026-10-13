@@ -40,7 +40,7 @@ func serveEndorser(t *testing.T, svc eapi.Service, ecfg econf.Endorser) string {
 	serve.PreAllocateListener(t, &serverCfg.GRPC)
 
 	ctx := t.Context()
-	srv := eserver.New(svc)
+	srv := eserver.New(svc, nil)
 	go func() {
 		if err := srv.Serve(ctx, serverCfg); err != nil && ctx.Err() == nil {
 			t.Logf("%s: gRPC server exited: %v", ecfg.Name, err)
