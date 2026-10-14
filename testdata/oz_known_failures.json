@@ -512,6 +512,12 @@
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
   },
   {
+    "id": "AccessManager admin operations not subject to a delay role admin operations #grantRole when the user is already a role member with grant delay when increasing the execution delay emits event and immediately changes the execution delay",
+    "cause": "fixed-timestamp",
+    "note": "Timing-sensitive: block.timestamp is real wall-clock per tx (no-op RPCs, COMPATIBILITY.md); this assertion has a near-zero margin, so ~1s jitter flips it pass/fail. Confirmed flipping across runs.",
+    "flaky": true
+  },
+  {
     "id": "AccessManager admin operations not subject to a delay role admin operations #grantRole when the user is already a role member without grant delay when decreasing the execution delay when execution delay effect delay has taken effect changes the execution delay",
     "cause": "hardhat-time-rpc",
     "note": "AccessManager gates hasRole()/canCall() on Time.timestamp() reaching a scheduled 'since' timestamp, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md), so that point is never reached in real test time. Manifests as AccessManagerUnauthorizedAccount instead of NotScheduled/NotReady, or stuck getter values."
@@ -2046,6 +2052,12 @@
   {
     "id": "Governor using $ERC20VotesTimestampMock cancel public after vote started",
     "note": "Cascades from a confirmed racy \"before each\" hook in this same describe block (GovernorHelper.delegate()'s Promise.all race, or a no-op-time-RPC wait race): when the hook races, mocha skips the rest of the block and this test never runs this invocation -- indistinguishable from \"now passing\" to the baseline tool (see Diff's doc comment). When the hook doesn't race, this test runs on its own merits independent of the hook.",
+    "flaky": true
+  },
+  {
+    "id": "Governor using $ERC20VotesTimestampMock frontrun protection using description suffix with protection via proposer suffix proposer can propose",
+    "cause": "fixed-timestamp",
+    "note": "Timing-sensitive: block.timestamp is real wall-clock per tx (no-op RPCs, COMPATIBILITY.md); this assertion has a near-zero margin, so ~1s jitter flips it pass/fail. Confirmed flipping across runs.",
     "flaky": true
   },
   {
