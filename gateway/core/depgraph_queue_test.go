@@ -58,7 +58,7 @@ func (e *keyedEndorser) calls() int {
 	return e.n
 }
 
-func (e *keyedEndorser) ExecuteTransaction(_ context.Context, tx *types.Transaction) (sdk.Endorsement, error) {
+func (e *keyedEndorser) ExecuteEthTx(_ context.Context, tx *types.Transaction) (sdk.Endorsement, error) {
 	e.mu.Lock()
 	e.n++
 	err, keys := e.err, e.keys[tx.Hash()]
@@ -618,7 +618,7 @@ func TestProcessTx_ReusesQueueEndorsement(t *testing.T) {
 	reused, fresh := txWithNonce(1), txWithNonce(2)
 	pResp := &peer.ProposalResponse{Response: &peer.Response{Status: fxcommon.StatusOK}}
 	stub := &stubEndorser{execResp: pResp}
-	g := &Gateway{TxQueue: q, endorsers: signingClient(stub), endorsementChan: make(chan EndorsedTx, 2)}
+	g := &Gateway{TxQueue: q, store: &stubStore{}, endorsers: signingClient(stub), endorsementChan: make(chan EndorsedTx, 2)}
 
 	q.Enqueue(reused)
 	requireReady(t, q, 1)
@@ -628,9 +628,9 @@ func TestProcessTx_ReusesQueueEndorsement(t *testing.T) {
 	require.NoError(t, g.processTx(context.Background(), reused))
 	require.Equal(t, reused.Hash(), (<-g.endorsementChan).Hash)
 	require.Equal(t, 1, e.calls(), "the queue's endorsement is reused")
-	require.True(t, stub.lastTS.IsZero(), "processTx must not execute again")
+	require.True(t, stub.lastEnv.Time.IsZero(), "processTx must not execute again")
 
 	require.NoError(t, g.processTx(context.Background(), fresh))
 	require.Equal(t, fresh.Hash(), (<-g.endorsementChan).Hash)
-	require.False(t, stub.lastTS.IsZero(), "an untracked tx is executed")
+	require.False(t, stub.lastEnv.Time.IsZero(), "an untracked tx is executed")
 }

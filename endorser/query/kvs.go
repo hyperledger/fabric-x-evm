@@ -55,7 +55,7 @@ func (k *KVS) NewSnapshot(blockNumber *uint64) (execution.ReadStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &snapshot{kvs: k, viewID: viewID, cache: map[string]*blocks.WriteRecord{}}, nil
+	return &snapshot{kvs: k, viewID: viewID, height: k.height.Load(), cache: map[string]*blocks.WriteRecord{}}, nil
 }
 
 // Get reads the latest committed record, or nil if there is none.
@@ -99,6 +99,9 @@ func (k *KVS) Close() error { return k.client.Close() }
 type snapshot struct {
 	kvs    *KVS
 	viewID string
+	// height is the last block seen when the view was opened. The query service
+	// does not report a view's height, so this is the closest available.
+	height uint64
 	mu     sync.Mutex
 	cache  map[string]*blocks.WriteRecord // nil value: known absent
 }
@@ -123,6 +126,9 @@ func (s *snapshot) Get(namespace, key string) (*blocks.WriteRecord, error) {
 	s.mu.Unlock()
 	return rec, nil
 }
+
+// BlockNumber returns the height recorded when the view was opened.
+func (s *snapshot) BlockNumber() uint64 { return s.height }
 
 // Close ends the view.
 func (s *snapshot) Close() error {

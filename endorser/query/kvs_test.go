@@ -133,6 +133,23 @@ func TestKVSSnapshotCachesReads(t *testing.T) {
 	}
 }
 
+// A view reports the height the store had seen when it was opened.
+func TestKVSSnapshotBlockNumber(t *testing.T) {
+	kvs := query.NewKVS(&fakeClient{}, "evm")
+	kvs.SetBlockNumber(5)
+
+	snap, err := kvs.NewSnapshot(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snap.Close()
+	kvs.SetBlockNumber(6)
+
+	if got := snap.BlockNumber(); got != 5 {
+		t.Fatalf("BlockNumber = %d, want 5", got)
+	}
+}
+
 func TestKVSBlockNumber(t *testing.T) {
 	kvs := query.NewKVS(&fakeClient{}, "evm")
 	ctx := context.Background()

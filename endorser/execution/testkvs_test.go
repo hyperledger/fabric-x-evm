@@ -35,6 +35,10 @@ func (w *testVersionedDBSnapshotter) NewSnapshot(blockNumber *uint64) (ReadStore
 	return &testVersionedDBReader{db: w.db, blockNumber: bn}, nil
 }
 
+func (w *testVersionedDBSnapshotter) BlockNumber(ctx context.Context) (uint64, error) {
+	return w.db.BlockNumber(ctx)
+}
+
 type testVersionedDBReader struct {
 	db          *state.VersionedDB
 	blockNumber uint64
@@ -43,5 +47,7 @@ type testVersionedDBReader struct {
 func (r *testVersionedDBReader) Get(namespace, key string) (*blocks.WriteRecord, error) {
 	return r.db.Get(namespace, key, r.blockNumber)
 }
+
+func (r *testVersionedDBReader) BlockNumber() uint64 { return r.blockNumber }
 
 func (r *testVersionedDBReader) Close() error { return nil }

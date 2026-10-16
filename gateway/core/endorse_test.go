@@ -42,15 +42,18 @@ type stubEndorser struct {
 	code     []byte
 	execResp *peer.ProposalResponse
 	execErr  error
-	// lastTS is the timestamp from the most recent Execute call.
-	lastTS time.Time
+	// lastEnv is the block context from the most recent Execute call.
+	lastEnv api.BlockEnv
+	// lastCallBlock is the block number from the most recent Call.
+	lastCallBlock *big.Int
 }
 
-func (s *stubEndorser) Execute(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction, ts time.Time) (*peer.ProposalResponse, error) {
-	s.lastTS = ts
+func (s *stubEndorser) Execute(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction, env api.BlockEnv) (*peer.ProposalResponse, error) {
+	s.lastEnv = env
 	return s.execResp, s.execErr
 }
-func (s *stubEndorser) Call(ctx context.Context, msg *ethereum.CallMsg, _ *big.Int) ([]byte, uint64, error) {
+func (s *stubEndorser) Call(ctx context.Context, msg *ethereum.CallMsg, blockNumber *big.Int) ([]byte, uint64, error) {
+	s.lastCallBlock = blockNumber
 	if s.callFunc != nil {
 		return s.callFunc(msg.Gas)
 	}
@@ -403,7 +406,7 @@ func TestExecuteTransaction_Success(t *testing.T) {
 	c := signingClient(&stubEndorser{execResp: pResp})
 	tx := types.NewTx(&types.LegacyTx{Gas: 21000, GasPrice: big.NewInt(0)})
 
-	end, err := c.ExecuteTransaction(context.Background(), tx)
+	end, err := c.ExecuteTransaction(context.Background(), tx, api.BlockEnv{Number: 1, Time: time.Now()})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -415,28 +418,20 @@ func TestExecuteTransaction_Success(t *testing.T) {
 	}
 }
 
-// Every endorser must see the same gateway-stamped timestamp.
-func TestExecuteTransaction_SameTimestampForAllEndorsers(t *testing.T) {
+// Every endorser must see the same gateway-stamped block number and timestamp.
+func TestExecuteTransaction_SameBlockEnvForAllEndorsers(t *testing.T) {
 	pResp := &peer.ProposalResponse{Response: &peer.Response{Status: common.StatusOK}}
 	a := &stubEndorser{execResp: pResp}
 	b := &stubEndorser{execResp: pResp}
 	c := endorsementClient(a, []api.Service{b})
 	tx := types.NewTx(&types.LegacyTx{Gas: 21000, GasPrice: big.NewInt(0)})
 
-	before := time.Now()
-	if _, err := c.ExecuteTransaction(context.Background(), tx); err != nil {
+	env := api.BlockEnv{Number: 5, Time: time.Unix(1_700_000_000, 0)}
+	if _, err := c.ExecuteTransaction(context.Background(), tx, env); err != nil {
 		t.Fatalf("ExecuteTransaction: %v", err)
 	}
-	after := time.Now()
-
-	if a.lastTS.IsZero() || b.lastTS.IsZero() {
-		t.Fatal("expected both endorsers to receive a timestamp")
-	}
-	if !a.lastTS.Equal(b.lastTS) {
-		t.Fatalf("endorsers got different timestamps: %v vs %v", a.lastTS, b.lastTS)
-	}
-	if a.lastTS.Before(before.Add(-time.Second)) || a.lastTS.After(after.Add(time.Second)) {
-		t.Fatalf("timestamp %v outside [before, after] window", a.lastTS)
+	if a.lastEnv != env || b.lastEnv != env {
+		t.Fatalf("endorsers got %+v and %+v, want %+v", a.lastEnv, b.lastEnv, env)
 	}
 }
 
@@ -446,7 +441,7 @@ func TestExecuteTransaction_RejectedStatusErrors(t *testing.T) {
 	c := signingClient(&stubEndorser{execResp: pResp})
 	tx := types.NewTx(&types.LegacyTx{Gas: 21000, GasPrice: big.NewInt(0)})
 
-	if _, err := c.ExecuteTransaction(context.Background(), tx); err == nil {
+	if _, err := c.ExecuteTransaction(context.Background(), tx, api.BlockEnv{Number: 1, Time: time.Now()}); err == nil {
 		t.Fatal("expected error for rejected status")
 	}
 }
@@ -460,7 +455,7 @@ type blockingEndorser struct {
 	onCancel func(ctx context.Context) error
 }
 
-func (b *blockingEndorser) Execute(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction, _ time.Time) (*peer.ProposalResponse, error) {
+func (b *blockingEndorser) Execute(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction, _ api.BlockEnv) (*peer.ProposalResponse, error) {
 	select {
 	case <-b.release:
 		return b.execResp, b.execErr
@@ -498,7 +493,7 @@ func TestExecuteTransaction_RejectionSurvivesCancellationOfOtherEndorsers(t *tes
 			c := endorsementClient(blocked, []api.Service{&stubEndorser{execResp: rejected}})
 
 			tx := types.NewTx(&types.LegacyTx{Gas: 21000, GasPrice: big.NewInt(0)})
-			_, err := c.ExecuteTransaction(context.Background(), tx)
+			_, err := c.ExecuteTransaction(context.Background(), tx, api.BlockEnv{Number: 1, Time: time.Now()})
 			if err == nil {
 				t.Fatal("expected an error for a rejected transaction")
 			}

@@ -15,6 +15,7 @@ import (
 	ethstate "github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/hyperledger/fabric-x-evm/endorser/api"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
@@ -91,9 +92,9 @@ func (w *EVMEngineWrapper) SetBalancePriming(config *BalancePrimingConfig) {
 
 // Execute runs a state-changing transaction and returns the EVM result.
 // The behavior depends on the configured mode.
-// blockTime is the Unix second for EVM block.timestamp; when the wrapper
-// has an injected BlockContext its Time takes precedence after creation.
-func (w *EVMEngineWrapper) Execute(ctx context.Context, tx *types.Transaction, blockTime uint64) (endorsement.ExecutionResult, error) {
+// blockNumber and blockTime are EVM block.number and block.timestamp; when the
+// wrapper has an injected BlockContext it takes precedence after creation.
+func (w *EVMEngineWrapper) Execute(ctx context.Context, tx *types.Transaction, blockNumber, blockTime uint64) (endorsement.ExecutionResult, error) {
 	// Create the appropriate executor based on mode
 	type executor interface {
 		Execute(*types.Transaction) (endorsement.ExecutionResult, error)
@@ -117,13 +118,20 @@ func (w *EVMEngineWrapper) Execute(ctx context.Context, tx *types.Transaction, b
 	}
 	defer ex.Close()
 
-	// Apply gateway-supplied time unless a full BlockContext override is set.
-	if w.blockContext == nil && blockTime != 0 {
+	// Apply gateway-supplied number and time unless a full BlockContext override is set.
+	if w.blockContext == nil {
+		var blockCtx *vm.BlockContext
 		switch e := ex.(type) {
 		case *ExecutorWrapper:
-			e.BlockCtx.Time = blockTime
+			blockCtx = &e.BlockCtx
 		case *BalancePrimingExecutor:
-			e.BlockCtx.Time = blockTime
+			blockCtx = &e.BlockCtx
+		}
+		if blockCtx != nil {
+			blockCtx.BlockNumber = new(big.Int).SetUint64(blockNumber)
+			if blockTime != 0 {
+				blockCtx.Time = blockTime
+			}
 		}
 	}
 
@@ -157,6 +165,21 @@ func (w *EVMEngineWrapper) Call(msg ethereum.CallMsg, blockNumber *big.Int) ([]b
 		return nil, 0, err
 	}
 	defer ex.Close()
+
+	// The pending block runs as the next block, unless a full BlockContext override is set.
+	if w.blockContext == nil && api.IsPending(blockNumber) {
+		height, err := w.kvs.BlockNumber(context.Background())
+		if err != nil {
+			return nil, 0, err
+		}
+		next := new(big.Int).SetUint64(height + 1)
+		switch e := ex.(type) {
+		case *ExecutorWrapper:
+			e.BlockCtx.BlockNumber = next
+		case *BalancePrimingExecutor:
+			e.BlockCtx.BlockNumber = next
+		}
+	}
 
 	return ex.Call(msg)
 }

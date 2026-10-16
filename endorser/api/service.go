@@ -20,9 +20,29 @@ import (
 	"github.com/ethereum/go-ethereum"
 	ethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
+
+// BlockEnv is the EVM block context the gateway picks once per transaction.
+type BlockEnv struct {
+	// Number is EVM block.number: the gateway's ledger height + 1.
+	Number uint64
+	// Time is EVM block.timestamp: wall time, which the gateway truncates to
+	// the Unix second so local and remote endorsers see the same value.
+	Time time.Time
+}
+
+// PendingBlock is the block selector for Ethereum's "pending" tag: the latest
+// state, executed as the next block (block.number = height + 1). eth_estimateGas
+// uses it so the estimate matches the block the transaction will run in.
+func PendingBlock() *big.Int { return big.NewInt(rpc.PendingBlockNumber.Int64()) }
+
+// IsPending reports whether blockNumber is PendingBlock().
+func IsPending(blockNumber *big.Int) bool {
+	return blockNumber != nil && blockNumber.IsInt64() && blockNumber.Int64() == rpc.PendingBlockNumber.Int64()
+}
 
 // Service is one typed method per endorser function, mirroring the EVM engine.
 // Execute is the only method that produces an endorsement; the read-only
@@ -35,19 +55,22 @@ type Service interface {
 	// Execute endorses an Ethereum transaction. The signed response carries the
 	// outcome in its Status (OK, revert, rejected, exec failure, server error).
 	//
-	// timestamp is the gateway-supplied wall time used as EVM block.timestamp.
-	// Every endorser must receive the same value so RWsets match.
-	// The endorser validates it against a configured clock skew window.
+	// env is the gateway-supplied EVM block context. Every endorser must receive
+	// the same value so RWsets match; each validates it against its own clock
+	// and ledger height.
 	//
 	// It returns a *peer.ProposalResponse because the gateway packages it into
 	// an sdk.Endorsement, and both SDK packagers require one. Dropping it
 	// depends on the fabricx.TxPackager change tracked for the client PR.
-	Execute(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction, timestamp time.Time) (*peer.ProposalResponse, error)
+	Execute(ctx context.Context, inv endorsement.Invocation, ethTx *types.Transaction, env BlockEnv) (*peer.ProposalResponse, error)
 
 	// Call runs a read-only eth_call. On an EVM revert or a failed execution it
 	// returns a *common.CallError; the revert payload is returned alongside it.
 	// maxUsedGas is the EVM gas the simulation needed before EIP-3529 refunds
 	// are credited; callers that only need return data (eth_call) may ignore it.
+	//
+	// blockNumber selects the state and EVM block.number: nil is latest, and
+	// PendingBlock() is the latest state run as the next block.
 	Call(ctx context.Context, msg *ethereum.CallMsg, blockNumber *big.Int) (ret []byte, maxUsedGas uint64, err error)
 
 	BalanceAt(ctx context.Context, account ethcommon.Address, blockNumber *big.Int) (*big.Int, error)

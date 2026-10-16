@@ -16,22 +16,25 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-evm/common"
+	"github.com/hyperledger/fabric-x-evm/endorser/api"
 	"github.com/hyperledger/fabric-x-evm/endorser/config"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
 
-// captureEngine records the blockTime passed to Execute for assertion.
+// captureEngine records the block number and time passed to Execute for assertion.
 type captureEngine struct {
 	stubEngine
-	mu        sync.Mutex
-	blockTime uint64
-	calls     int
+	mu          sync.Mutex
+	blockNumber uint64
+	blockTime   uint64
+	calls       int
 }
 
-func (c *captureEngine) Execute(_ context.Context, _ *types.Transaction, blockTime uint64) (endorsement.ExecutionResult, error) {
+func (c *captureEngine) Execute(_ context.Context, _ *types.Transaction, blockNumber, blockTime uint64) (endorsement.ExecutionResult, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.blockNumber = blockNumber
 	c.blockTime = blockTime
 	c.calls++
 	return endorsement.ExecutionResult{Status: common.StatusOK}, nil
@@ -127,7 +130,7 @@ func TestExecute_RejectsTimestampOutsideWindow(t *testing.T) {
 	}
 	tx := types.NewTx(&types.LegacyTx{Gas: 21000, GasPrice: big.NewInt(0)})
 
-	resp, err := f.Execute(context.Background(), endorsement.Invocation{}, tx, fixedNow.Add(30*time.Second))
+	resp, err := f.Execute(context.Background(), endorsement.Invocation{}, tx, api.BlockEnv{Number: 1, Time: fixedNow.Add(30 * time.Second)})
 	if err != nil {
 		t.Fatalf("Go error: %v", err)
 	}
@@ -153,7 +156,7 @@ func TestExecute_PassesValidatedUnixTimeToEngine(t *testing.T) {
 	}
 	tx := types.NewTx(&types.LegacyTx{Gas: 21000, GasPrice: big.NewInt(0)})
 
-	resp, err := f.Execute(context.Background(), endorsement.Invocation{}, tx, reqTS)
+	resp, err := f.Execute(context.Background(), endorsement.Invocation{}, tx, api.BlockEnv{Number: 1, Time: reqTS})
 	if err != nil {
 		t.Fatalf("Go error: %v", err)
 	}
@@ -184,7 +187,7 @@ func TestExecute_IdenticalTimestampAcrossEndorsers(t *testing.T) {
 			maxPast:   60 * time.Second,
 			now:       func() time.Time { return fixedNow.Add(localSkew) },
 		}
-		if _, err := f.Execute(context.Background(), endorsement.Invocation{}, tx, reqTS); err != nil {
+		if _, err := f.Execute(context.Background(), endorsement.Invocation{}, tx, api.BlockEnv{Number: 1, Time: reqTS}); err != nil {
 			t.Fatalf("endorser %d: %v", i, err)
 		}
 		got[i] = eng.blockTime
@@ -217,7 +220,7 @@ func TestExecute_ConcurrentRequestsNoSharedTimestampState(t *testing.T) {
 			defer wg.Done()
 			// Different request times, all valid; no requirement that they are monotonic.
 			ts := fixedNow.Add(time.Duration(i%5) * time.Second)
-			_, err := f.Execute(context.Background(), endorsement.Invocation{}, tx, ts)
+			_, err := f.Execute(context.Background(), endorsement.Invocation{}, tx, api.BlockEnv{Number: 1, Time: ts})
 			if err != nil {
 				errs <- err
 			}

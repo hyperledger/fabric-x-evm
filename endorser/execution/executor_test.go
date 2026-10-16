@@ -35,7 +35,7 @@ func TestNewExecutor_WrapsStateDBWhenDebugEnabled(t *testing.T) {
 	}
 	eng := NewEVMEngine(Namespace, kvs, cfg, false)
 
-	ex, err := eng.newExecutor(nil, uint64(1_700_000_000))
+	ex, err := eng.newExecutor(nil, nil, uint64(1_700_000_000))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestExecute_MaxTxGas(t *testing.T) {
 			MaxTxGas:    maxTxGas,
 		}
 		eng := NewEVMEngine(Namespace, kvs, cfg, false)
-		ex, err := eng.newExecutor(nil, uint64(1_700_000_000))
+		ex, err := eng.newExecutor(nil, nil, uint64(1_700_000_000))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -195,7 +195,7 @@ func TestNewExecutor_NegativeBlockNumberResolvesToLatest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ex, err := eng.newExecutor(big.NewInt(-5), uint64(1_700_000_000))
+	ex, err := eng.newExecutor(big.NewInt(-5), nil, uint64(1_700_000_000))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +247,7 @@ func TestCall_ReportsPreRefundGasNotPostRefund(t *testing.T) {
 	cfg := EVMConfig{ChainConfig: common.BuildChainConfig(4011)}
 	eng := NewEVMEngine(Namespace, kvs, cfg, false)
 
-	ex, err := eng.newExecutor(nil, uint64(1_700_000_000))
+	ex, err := eng.newExecutor(nil, nil, uint64(1_700_000_000))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,7 +294,7 @@ func TestEVMEngineExecute_NonRevertFailureIsCommittedNotRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := eng.Execute(t.Context(), signed, uint64(1_700_000_000))
+	res, err := eng.Execute(t.Context(), signed, 1, uint64(1_700_000_000))
 	if err != nil {
 		t.Fatalf("expected a committed outcome, got error: %v", err)
 	}

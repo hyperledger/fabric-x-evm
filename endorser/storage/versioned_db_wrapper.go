@@ -81,6 +81,9 @@ func (s *VersionedDBSnapshot) Get(namespace, key string) (*blocks.WriteRecord, e
 	return rec, nil
 }
 
+// BlockNumber returns the block number the snapshot reads at.
+func (s *VersionedDBSnapshot) BlockNumber() uint64 { return s.blockNumber }
+
 // Close is a no-op for VersionedDBSnapshot since VersionedDB doesn't
 // require explicit snapshot cleanup. It's provided for interface compatibility.
 func (s *VersionedDBSnapshot) Close() error {

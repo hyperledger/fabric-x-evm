@@ -21,6 +21,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-evm/common"
+	"github.com/hyperledger/fabric-x-evm/endorser/api"
 	"github.com/hyperledger/fabric-x-evm/endorser/config"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
@@ -71,6 +72,7 @@ func TestResponseStatusServerError(t *testing.T) {
 // stubEngine is an EVMEngineInterface whose methods return fixed values, so we
 // can drive the endorser's classification and state-reader delegation.
 type stubEngine struct {
+	height      uint64
 	execErr     error
 	callPayload []byte
 	callGas     uint64
@@ -81,8 +83,11 @@ type stubEngine struct {
 	nonce       uint64
 }
 
-func (s *stubEngine) Execute(context.Context, *types.Transaction, uint64) (endorsement.ExecutionResult, error) {
+func (s *stubEngine) Execute(context.Context, *types.Transaction, uint64, uint64) (endorsement.ExecutionResult, error) {
 	return endorsement.ExecutionResult{}, s.execErr
+}
+func (s *stubEngine) BlockNumber(context.Context) (uint64, error) {
+	return s.height, nil
 }
 func (s *stubEngine) Call(ethereum.CallMsg, *big.Int) ([]byte, uint64, error) {
 	return s.callPayload, s.callGas, s.callErr
@@ -123,7 +128,7 @@ func processEVMTxWithEngineErr(t *testing.T, execErr error) *peer.ProposalRespon
 	}
 	tx := types.NewTx(&types.LegacyTx{Gas: 21000, GasPrice: big.NewInt(0)})
 
-	resp, err := f.Execute(context.Background(), endorsement.Invocation{}, tx, time.Now())
+	resp, err := f.Execute(context.Background(), endorsement.Invocation{}, tx, api.BlockEnv{Number: 1, Time: time.Now()})
 	if err != nil {
 		t.Fatalf("ProcessEVMTransaction must encode the failure in the response, got Go error: %v", err)
 	}
@@ -138,7 +143,7 @@ func TestExecute_WithDefaultBoundsAcceptsNow(t *testing.T) {
 		maxFuture: config.DefaultTimestampFutureSkew,
 		maxPast:   config.DefaultTimestampPastSkew,
 	}
-	got, err := f.Execute(context.Background(), endorsement.Invocation{}, types.NewTx(&types.LegacyTx{}), time.Now())
+	got, err := f.Execute(context.Background(), endorsement.Invocation{}, types.NewTx(&types.LegacyTx{}), api.BlockEnv{Number: 1, Time: time.Now()})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -240,7 +245,7 @@ func TestExecute_Success(t *testing.T) {
 		maxPast:   config.DefaultTimestampPastSkew,
 	}
 
-	got, err := f.Execute(context.Background(), endorsement.Invocation{}, types.NewTx(&types.LegacyTx{}), time.Now())
+	got, err := f.Execute(context.Background(), endorsement.Invocation{}, types.NewTx(&types.LegacyTx{}), api.BlockEnv{Number: 1, Time: time.Now()})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -258,7 +263,7 @@ func TestExecute_EndorseFailureIs500(t *testing.T) {
 		maxPast:   config.DefaultTimestampPastSkew,
 	}
 
-	resp, err := f.Execute(context.Background(), endorsement.Invocation{}, types.NewTx(&types.LegacyTx{}), time.Now())
+	resp, err := f.Execute(context.Background(), endorsement.Invocation{}, types.NewTx(&types.LegacyTx{}), api.BlockEnv{Number: 1, Time: time.Now()})
 	if err != nil {
 		t.Fatalf("endorse failure must ride in the response, got Go error: %v", err)
 	}

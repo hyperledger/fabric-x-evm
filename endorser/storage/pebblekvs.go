@@ -571,6 +571,9 @@ type pebbleSnapshot struct {
 	closed atomic.Bool
 }
 
+// BlockNumber returns the height this view is pinned to.
+func (s *pebbleSnapshot) BlockNumber() uint64 { return s.lastBlock }
+
 // Get returns the record for (namespace, key) as of the snapshot's block, or
 // nil if none exists at or before it. Tombstone records are returned as-is
 // (IsDelete=true); the execution layer treats them as absent.

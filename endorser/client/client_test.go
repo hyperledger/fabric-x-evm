@@ -25,6 +25,7 @@ import (
 
 	"github.com/hyperledger/fabric-x-evm/api/endorsementpb"
 	"github.com/hyperledger/fabric-x-evm/common"
+	"github.com/hyperledger/fabric-x-evm/endorser/api"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 )
 
@@ -100,7 +101,7 @@ func TestExecute_MapsResponseAndForwardsRequest(t *testing.T) {
 		Namespace: "ns", ChaincodeVersion: "1.0", ProposalHash: []byte("ph"),
 	}
 
-	resp, err := c.Execute(context.Background(), inv, tx, time.Now())
+	resp, err := c.Execute(context.Background(), inv, tx, api.BlockEnv{Number: 7, Time: time.Now()})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -122,13 +123,16 @@ func TestExecute_MapsResponseAndForwardsRequest(t *testing.T) {
 	if mock.gotExec.GetTimestamp() == 0 {
 		t.Error("forwarded timestamp = 0, want non-zero Unix second")
 	}
+	if got := mock.gotExec.GetBlockNumber(); got != 7 {
+		t.Errorf("forwarded block number = %d, want 7", got)
+	}
 }
 
 func TestExecute_TransportErrorIsReturned(t *testing.T) {
 	c := newClient(t, &mockServer{execErr: status.Error(codes.Unavailable, "down")})
 
 	tx := types.NewTx(&types.LegacyTx{Nonce: 0, Gas: 21000, GasPrice: big.NewInt(1)})
-	if _, err := c.Execute(context.Background(), endorsement.Invocation{}, tx, time.Now()); status.Code(err) != codes.Unavailable {
+	if _, err := c.Execute(context.Background(), endorsement.Invocation{}, tx, api.BlockEnv{Number: 1, Time: time.Now()}); status.Code(err) != codes.Unavailable {
 		t.Fatalf("code = %v, want Unavailable", status.Code(err))
 	}
 }
@@ -199,8 +203,16 @@ func TestCall_ForwardsAllFields(t *testing.T) {
 	if got.GetGas() != 5000 || new(big.Int).SetBytes(got.GetGasPrice()).Int64() != 7 || new(big.Int).SetBytes(got.GetValue()).Int64() != 9 {
 		t.Errorf("gas/price/value wrong: %+v", got)
 	}
-	if !bytes.Equal(got.GetData(), []byte{0xbe, 0xef}) || got.GetBlockNumber() != 42 {
+	if !bytes.Equal(got.GetData(), []byte{0xbe, 0xef}) || got.GetBlockNumber() != 42 || got.GetPending() {
 		t.Errorf("data/block wrong: %+v", got)
+	}
+
+	// The pending block travels as the flag, without a block number.
+	if _, _, err := c.Call(context.Background(), msg, api.PendingBlock()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := mock.gotCall; !got.GetPending() || got.BlockNumber != nil {
+		t.Errorf("pending wrong: %+v", got)
 	}
 }
 

@@ -38,7 +38,11 @@ type ExecuteRequest struct {
 	Invocation *Invocation `protobuf:"bytes,3,opt,name=invocation,proto3" json:"invocation,omitempty"`
 	// Unix seconds for EVM block.timestamp. Set once by the gateway at request
 	// construction so all endorsers share the same value.
-	Timestamp     int64 `protobuf:"varint,4,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	Timestamp int64 `protobuf:"varint,4,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	// EVM block.number for execution. Set once by the gateway (its height + 1)
+	// so all endorsers share the same value. Required: an endorser rejects 0,
+	// so gateways and endorsers have to be upgraded together.
+	BlockNumber   uint64 `protobuf:"varint,5,opt,name=block_number,json=blockNumber,proto3" json:"block_number,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -97,6 +101,13 @@ func (x *ExecuteRequest) GetInvocation() *Invocation {
 func (x *ExecuteRequest) GetTimestamp() int64 {
 	if x != nil {
 		return x.Timestamp
+	}
+	return 0
+}
+
+func (x *ExecuteRequest) GetBlockNumber() uint64 {
+	if x != nil {
+		return x.BlockNumber
 	}
 	return 0
 }
@@ -279,7 +290,10 @@ type CallRequest struct {
 	Value    []byte `protobuf:"bytes,5,opt,name=value,proto3" json:"value,omitempty"`
 	Data     []byte `protobuf:"bytes,6,opt,name=data,proto3" json:"data,omitempty"`
 	// Absent means latest.
-	BlockNumber   *uint64 `protobuf:"varint,7,opt,name=block_number,json=blockNumber,proto3,oneof" json:"block_number,omitempty"`
+	BlockNumber *uint64 `protobuf:"varint,7,opt,name=block_number,json=blockNumber,proto3,oneof" json:"block_number,omitempty"`
+	// Ethereum's "pending" block: the latest state, executed as the next block
+	// (block.number = height + 1). block_number is ignored when set.
+	Pending       bool `protobuf:"varint,8,opt,name=pending,proto3" json:"pending,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -361,6 +375,13 @@ func (x *CallRequest) GetBlockNumber() uint64 {
 		return *x.BlockNumber
 	}
 	return 0
+}
+
+func (x *CallRequest) GetPending() bool {
+	if x != nil {
+		return x.Pending
+	}
+	return false
 }
 
 type CallResponse struct {
@@ -834,7 +855,7 @@ var File_api_endorsementpb_endorsement_proto protoreflect.FileDescriptor
 
 const file_api_endorsementpb_endorsement_proto_rawDesc = "" +
 	"\n" +
-	"#api/endorsementpb/endorsement.proto\x12\rendorsementpb\"\xaf\x01\n" +
+	"#api/endorsementpb/endorsement.proto\x12\rendorsementpb\"\xd2\x01\n" +
 	"\x0eExecuteRequest\x12\x1f\n" +
 	"\vethereum_tx\x18\x01 \x01(\fR\n" +
 	"ethereumTx\x12#\n" +
@@ -842,7 +863,8 @@ const file_api_endorsementpb_endorsement_proto_rawDesc = "" +
 	"\n" +
 	"invocation\x18\x03 \x01(\v2\x19.endorsementpb.InvocationR\n" +
 	"invocation\x12\x1c\n" +
-	"\ttimestamp\x18\x04 \x01(\x03R\ttimestamp\"\x89\x01\n" +
+	"\ttimestamp\x18\x04 \x01(\x03R\ttimestamp\x12!\n" +
+	"\fblock_number\x18\x05 \x01(\x04R\vblockNumber\"\x89\x01\n" +
 	"\n" +
 	"Invocation\x12\x13\n" +
 	"\x05tx_id\x18\x01 \x01(\tR\x04txId\x12\x12\n" +
@@ -857,7 +879,7 @@ const file_api_endorsementpb_endorsement_proto_rawDesc = "" +
 	"\apayload\x18\x05 \x01(\fR\apayload\x12\x1f\n" +
 	"\vendorser_id\x18\x06 \x01(\fR\n" +
 	"endorserId\x12\x1c\n" +
-	"\tsignature\x18\a \x01(\fR\tsignature\"\xc3\x01\n" +
+	"\tsignature\x18\a \x01(\fR\tsignature\"\xdd\x01\n" +
 	"\vCallRequest\x12\x12\n" +
 	"\x04from\x18\x01 \x01(\fR\x04from\x12\x0e\n" +
 	"\x02to\x18\x02 \x01(\fR\x02to\x12\x10\n" +
@@ -865,7 +887,8 @@ const file_api_endorsementpb_endorsement_proto_rawDesc = "" +
 	"\tgas_price\x18\x04 \x01(\fR\bgasPrice\x12\x14\n" +
 	"\x05value\x18\x05 \x01(\fR\x05value\x12\x12\n" +
 	"\x04data\x18\x06 \x01(\fR\x04data\x12&\n" +
-	"\fblock_number\x18\a \x01(\x04H\x00R\vblockNumber\x88\x01\x01B\x0f\n" +
+	"\fblock_number\x18\a \x01(\x04H\x00R\vblockNumber\x88\x01\x01\x12\x18\n" +
+	"\apending\x18\b \x01(\bR\apendingB\x0f\n" +
 	"\r_block_number\"\x83\x01\n" +
 	"\fCallResponse\x12\x1f\n" +
 	"\vreturn_data\x18\x01 \x01(\fR\n" +

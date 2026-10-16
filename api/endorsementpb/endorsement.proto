@@ -40,6 +40,11 @@ message ExecuteRequest {
     // Unix seconds for EVM block.timestamp. Set once by the gateway at request
     // construction so all endorsers share the same value.
     int64 timestamp = 4;
+
+    // EVM block.number for execution. Set once by the gateway (its height + 1)
+    // so all endorsers share the same value. Required: an endorser rejects 0,
+    // so gateways and endorsers have to be upgraded together.
+    uint64 block_number = 5;
 }
 
 // Invocation carries the parts of the sender's invocation that the endorsement
@@ -79,6 +84,9 @@ message CallRequest {
     bytes data = 6;
     // Absent means latest.
     optional uint64 block_number = 7;
+    // Ethereum's "pending" block: the latest state, executed as the next block
+    // (block.number = height + 1). block_number is ignored when set.
+    bool pending = 8;
 }
 
 message CallResponse {

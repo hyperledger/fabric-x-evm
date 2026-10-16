@@ -170,6 +170,14 @@ func (kvs *LightKVS) Get(namespace, key string) (*blocks.WriteRecord, error) {
 	return r.Get(namespace, key)
 }
 
+// BlockNumber returns the block number of the reader's snapshot, or 0 once closed.
+func (r *Reader) BlockNumber() uint64 {
+	if r.Snapshot == nil {
+		return 0
+	}
+	return r.Snapshot.BlockNumber
+}
+
 // Get retrieves the value and version for a key from the reader's snapshot.
 // This implements the execution.ReadStore interface with the signature:
 // Get(namespace, key string) (*blocks.WriteRecord, error)

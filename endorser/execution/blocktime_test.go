@@ -85,7 +85,7 @@ func TestCall_UsesWallClockBlockTime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Call: %v", err)
 	}
-	ex, err := eng.newExecutor(nil, before)
+	ex, err := eng.newExecutor(nil, nil, before)
 	if err != nil {
 		t.Fatal(err)
 	}
