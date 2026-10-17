@@ -297,6 +297,18 @@ func TestConvertTransaction_InvalidSignature(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid sender")
 }
 
+func TestConvertTransaction_InvalidLogsReturnsError(t *testing.T) {
+	key, err := crypto.GenerateKey()
+	require.NoError(t, err)
+	ethb := marshaledEthTx(t, key, common.HexToAddress("0x1234567890123456789012345678901234567890"), big.NewInt(100))
+
+	logIndex := int64(0)
+	_, err = convertTransaction(ethb, []byte("block-hash"), 42, 1, "fabric-tx-logs", 1, blocks.StatusCommitted, []byte("not-json-logs"), &logIndex)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parse logs")
+}
+
 // TestConvertTransaction_FabricStatuses checks that the commit status is carried
 // through to the domain row independently of the EVM receipt status, which the two
 // valid cases below distinguish: a revert commits on Fabric while reporting an EVM

@@ -213,8 +213,7 @@ func convertTransaction(ethTxBytes []byte, blockHash []byte, blockNumber uint64,
 	if ethStatus == 1 && len(events) > 0 {
 		rawLogs, err := fc.UnmarshalLogs(events)
 		if err != nil {
-			// ?
-			//return fmt.Errorf("parse logs: %w", err)
+			return domain.Transaction{}, fmt.Errorf("parse logs: %w", err)
 		}
 
 		// Convert common.Log to domain.Log with full context
