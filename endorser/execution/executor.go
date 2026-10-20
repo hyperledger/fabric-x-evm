@@ -402,7 +402,7 @@ func callMsgToMessage(msg ethereum.CallMsg, baseFee *big.Int, skipNonceCheck, sk
 		blobGasFeeCap = new(big.Int)
 	}
 
-	return &core.Message{
+	m := &core.Message{
 		From:                  msg.From,
 		To:                    msg.To,
 		Value:                 uint256.MustFromBig(value),
@@ -416,9 +416,14 @@ func callMsgToMessage(msg ethereum.CallMsg, baseFee *big.Int, skipNonceCheck, sk
 		BlobGasFeeCap:         uint256.MustFromBig(blobGasFeeCap),
 		BlobHashes:            msg.BlobHashes,
 		SetCodeAuthorizations: msg.AuthorizationList,
-		SkipNonceChecks:       skipNonceCheck,
-		SkipTransactionChecks: skipTxCheck,
 	}
+	if skipNonceCheck {
+		m.SkipNonceCheck()
+	}
+	if skipTxCheck {
+		m.SkipEOACheck().SkipGasLimitCapCheck()
+	}
+	return m
 }
 
 // Call executes a read-only call (eth_call semantics).

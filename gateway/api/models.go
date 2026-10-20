@@ -75,25 +75,23 @@ func receipt(r *domain.Transaction) *rpcReceipt {
 	}
 
 	return &rpcReceipt{
-		Receipt: types.Receipt{
-			Status:            uint64(r.Status),
-			CumulativeGasUsed: r.CumulativeGasUsed,
-			// Bloom:             types.Bloom(r.LogsBloom),
-			Logs:              logs,
-			TxHash:            common.BytesToHash(r.TxHash),
-			ContractAddress:   contractAddr,
-			GasUsed:           r.GasUsed,
-			Type:              uint8(r.TxType()),
-			PostState:         nil,
-			EffectiveGasPrice: big.NewInt(0),
-			BlobGasUsed:       0,
-			BlobGasPrice:      big.NewInt(0),
-			BlockHash:         common.Hash(r.BlockHash),
-			BlockNumber:       new(big.Int).SetUint64(uint64(r.BlockNumber)),
-			TransactionIndex:  uint(r.TxIndex),
-		},
-		From: common.BytesToAddress(r.FromAddress),
-		To:   to,
+		Status:            uint64(r.Status),
+		CumulativeGasUsed: r.CumulativeGasUsed,
+		// Bloom:             types.Bloom(r.LogsBloom),
+		Logs:              logs,
+		TxHash:            common.BytesToHash(r.TxHash),
+		ContractAddress:   contractAddr,
+		GasUsed:           r.GasUsed,
+		Type:              uint8(r.TxType()),
+		PostState:         nil,
+		EffectiveGasPrice: big.NewInt(0),
+		BlobGasUsed:       0,
+		BlobGasPrice:      big.NewInt(0),
+		BlockHash:         common.Hash(r.BlockHash),
+		BlockNumber:       new(big.Int).SetUint64(uint64(r.BlockNumber)),
+		TransactionIndex:  uint(r.TxIndex),
+		From:              common.BytesToAddress(r.FromAddress),
+		To:                to,
 	}
 }
 

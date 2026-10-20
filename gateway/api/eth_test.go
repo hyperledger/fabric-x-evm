@@ -231,12 +231,10 @@ func TestRPCReceiptMarshalJSON(t *testing.T) {
 		{
 			name: "with to address",
 			receipt: &rpcReceipt{
-				Receipt: types.Receipt{
-					Status:      1,
-					BlockNumber: big.NewInt(42),
-				},
-				From: fromAddr,
-				To:   &toAddr,
+				Status:      1,
+				BlockNumber: big.NewInt(42),
+				From:        fromAddr,
+				To:          &toAddr,
 			},
 			checkTo: func(t *testing.T, m map[string]any) {
 				if m["to"] != toAddr.Hex() {
@@ -255,12 +253,10 @@ func TestRPCReceiptMarshalJSON(t *testing.T) {
 		{
 			name: "nil to address",
 			receipt: &rpcReceipt{
-				Receipt: types.Receipt{
-					Status:      1,
-					BlockNumber: big.NewInt(100),
-				},
-				From: fromAddr,
-				To:   nil,
+				Status:      1,
+				BlockNumber: big.NewInt(100),
+				From:        fromAddr,
+				To:          nil,
 			},
 			checkTo: func(t *testing.T, m map[string]any) {
 				if m["to"] != nil {

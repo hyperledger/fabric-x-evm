@@ -28,6 +28,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/ethereum/go-ethereum/params"
 	"github.com/hyperledger/fabric-protos-go-apiv2/ledger/rwset"
 	"github.com/hyperledger/fabric-protos-go-apiv2/ledger/rwset/kvrwset"
 	"github.com/hyperledger/fabric-x-common/protoutil"
@@ -302,9 +303,11 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 		ethStateDB := th.endorsers[0].(*testimpl.EndorserWrapper).GetEthStateDB()
 		if ethStateDB != nil {
 			// Commit the ethereum state
-			root, err := ethStateDB.Commit(block.Number().Uint64(),
-				config.IsEIP158(block.Number()),
-				config.IsCancun(block.Number(), block.Time()))
+			root, err := ethStateDB.Commit(params.Rules{
+				IsEIP158:    config.IsEIP158(block.Number()),
+				IsCancun:    config.IsCancun(block.Number(), block.Time()),
+				IsAmsterdam: config.IsAmsterdam(block.Number(), block.Time()),
+			}, block.Number().Uint64())
 			if err != nil {
 				t.Fatalf("Failed to commit ethereum state: %v", err)
 			}
@@ -516,7 +519,7 @@ func (eth *ethereumTestHarness) primeGenesisAlloc(ctx context.Context, pre types
 	ethStateDB := primer.GetEthStateDB()
 
 	// Commit the ethStateDB to finalize the primed state
-	root, err := ethStateDB.Commit(0, false, false)
+	root, err := ethStateDB.Commit(params.Rules{}, 0)
 	if err != nil {
 		return fmt.Errorf("failed to commit primed ethStateDB: %w", err)
 	}

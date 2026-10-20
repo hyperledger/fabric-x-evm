@@ -20,6 +20,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/ethdb/pebble"
+	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/holiman/uint256"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
@@ -90,7 +91,7 @@ func (s *Store) Commit(ctx context.Context, block blocks.Block) (common.Hash, er
 		}
 	}
 
-	newRoot, err := sdb.Commit(block.Number, true, true)
+	newRoot, err := sdb.Commit(params.Rules{IsEIP158: true, IsCancun: true}, block.Number)
 	if err != nil {
 		return common.Hash{}, fmt.Errorf("state commit block %d: %w", block.Number, err)
 	}

@@ -419,10 +419,10 @@ func (d *DualStateDB) AccessEvents() *ethstate.AccessEvents {
 
 // Finalise finalizes both state implementations.
 // Returns the StateAccessList from the SnapshotDB (the canonical source).
-func (d *DualStateDB) Finalise(deleteEmptyObjects bool) *bal.ConstructionBlockAccessList {
-	d.logger.Debugf("Finalise: deleteEmptyObjects=%t", deleteEmptyObjects)
-	d.ethStateDB.Finalise(deleteEmptyObjects)
-	result := d.snapshotDB.Finalise(deleteEmptyObjects)
+func (d *DualStateDB) Finalise(rules params.Rules) *bal.ConstructionBlockAccessList {
+	d.logger.Debugf("Finalise: deleteEmptyObjects=%t", rules.IsEIP158)
+	d.ethStateDB.Finalise(rules)
+	result := d.snapshotDB.Finalise(rules)
 	d.logger.Debugf("Finalise: completed")
 	return result
 }

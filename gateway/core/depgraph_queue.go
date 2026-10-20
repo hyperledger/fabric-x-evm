@@ -228,6 +228,9 @@ func NewDepGraphQueue(cfg *config.DepGraphQueue) *DepGraphQueue {
 		IncomingValidatedTxsNode:  q.validated,
 		NumOfLocalDepConstructors: 1,
 		WaitingTxsLimit:           waitingTxsLimit,
+		// Required since committer v1.0.5: a zero interval panics in
+		// time.NewTicker. 100ms is the committer's own default.
+		QueueMonitorSamplingTime:  100 * time.Millisecond,
 		PrometheusMetricsProvider: q.metrics,
 	})
 

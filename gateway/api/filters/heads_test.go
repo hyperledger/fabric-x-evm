@@ -32,7 +32,7 @@ func TestSubscribeHeads_ReceiveAndUnsubscribe(t *testing.T) {
 		StateRoot:   bytes32(0x77),
 		Timestamp:   123,
 	}
-	api := NewFilterAPI(&stubBlocks{stubLogs: stubLogs{head: 9}, block: stored})
+	api := NewFilterAPI(&stubBlocks{head: 9, block: stored})
 	t.Cleanup(api.Close)
 
 	sub, err := api.SubscribeHeads(4)
@@ -80,7 +80,7 @@ func TestSubscribeHeads_AfterClose(t *testing.T) {
 }
 
 func TestSubscribeHeads_Backpressure(t *testing.T) {
-	api := NewFilterAPI(&stubBlocks{stubLogs: stubLogs{head: 1}, block: &domain.Block{BlockNumber: 1, BlockHash: bytes32(1)}})
+	api := NewFilterAPI(&stubBlocks{head: 1, block: &domain.Block{BlockNumber: 1, BlockHash: bytes32(1)}})
 	t.Cleanup(api.Close)
 
 	if _, err := api.SubscribeHeads(1); err != nil {

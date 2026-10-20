@@ -365,7 +365,7 @@ func TestDualStateDB_Finalise_DelegatesToBothSides(t *testing.T) {
 
 	// Finalise delegates to both sides and returns snapshotDB's StateAccessList
 	// (may be nil on an empty snap side; we assert the call completes).
-	_ = d.Finalise(true)
+	_ = d.Finalise(params.Rules{IsEIP158: true})
 }
 
 func TestDualStateDB_Result_ExposesSnapRWS(t *testing.T) {

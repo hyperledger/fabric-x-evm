@@ -282,9 +282,9 @@ func (l *EthStateDBLogger) AccessEvents() *ethstate.AccessEvents {
 	return result
 }
 
-func (l *EthStateDBLogger) Finalise(deleteEmptyObjects bool) *bal.ConstructionBlockAccessList {
-	l.logger.Debugf("Finalise: deleteEmptyObjects=%t", deleteEmptyObjects)
-	result := l.inner.Finalise(deleteEmptyObjects)
+func (l *EthStateDBLogger) Finalise(rules params.Rules) *bal.ConstructionBlockAccessList {
+	l.logger.Debugf("Finalise: deleteEmptyObjects=%t", rules.IsEIP158)
+	result := l.inner.Finalise(rules)
 	l.logger.Debugf("Finalise: completed")
 	return result
 }
@@ -298,9 +298,9 @@ func (l *EthStateDBLogger) Logs() []*types.Log {
 }
 
 // Commit commits the state changes
-func (l *EthStateDBLogger) Commit(block uint64, deleteEmptyObjects bool, cancun bool) (common.Hash, error) {
-	l.logger.Debugf("Commit: block=%d, deleteEmptyObjects=%t, cancun=%t", block, deleteEmptyObjects, cancun)
-	root, err := l.inner.Commit(block, deleteEmptyObjects, cancun)
+func (l *EthStateDBLogger) Commit(rules params.Rules, block uint64) (common.Hash, error) {
+	l.logger.Debugf("Commit: block=%d, deleteEmptyObjects=%t, cancun=%t", block, rules.IsEIP158, rules.IsCancun)
+	root, err := l.inner.Commit(rules, block)
 	l.logger.Debugf("Commit: output root=%s, err=%v", root.Hex(), err)
 	return root, err
 }

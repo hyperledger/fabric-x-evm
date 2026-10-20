@@ -248,9 +248,9 @@ func (l *StateDBLogger) AccessEvents() *ethstate.AccessEvents {
 	return l.inner.AccessEvents()
 }
 
-func (l *StateDBLogger) Finalise(deleteEmptyObjects bool) *bal.ConstructionBlockAccessList {
-	l.logger.Debugf("Finalise: deleteEmptyObjects=%t", deleteEmptyObjects)
-	return l.inner.Finalise(deleteEmptyObjects)
+func (l *StateDBLogger) Finalise(rules params.Rules) *bal.ConstructionBlockAccessList {
+	l.logger.Debugf("Finalise: deleteEmptyObjects=%t", rules.IsEIP158)
+	return l.inner.Finalise(rules)
 }
 
 func (l *StateDBLogger) Result() blocks.ReadWriteSet {

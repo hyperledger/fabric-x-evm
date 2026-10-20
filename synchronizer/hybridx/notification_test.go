@@ -36,13 +36,11 @@ func (s *stubHandler) Handle(_ context.Context, b blocks.Block) error {
 // InputArgs the raw ethereum-tx bytes (opaque to the dispatcher).
 func evmEvent(txID string, txNum int64, status blocks.Status, eventName string, ethTxBytes []byte) notification.CommittedTxEvent {
 	return notification.CommittedTxEvent{
-		Transaction: blocks.Transaction{
-			ID:        txID,
-			Number:    txNum,
-			Status:    status,
-			EventName: eventName,
-			InputArgs: [][]byte{ethTxBytes},
-		},
+		ID:        txID,
+		Number:    txNum,
+		Status:    status,
+		EventName: eventName,
+		InputArgs: [][]byte{ethTxBytes},
 	}
 }
 
@@ -95,7 +93,7 @@ func TestHandleBatch_SkipsEventWithoutEthTx(t *testing.T) {
 			err := d.HandleBatch(context.Background(), notification.AllTxBatch{
 				BlockNumber: 1,
 				Events: []notification.CommittedTxEvent{{
-					Transaction: blocks.Transaction{ID: "tx-no-eth", EventName: common.ProposalTypeEVMTx, InputArgs: tc.args},
+					ID: "tx-no-eth", EventName: common.ProposalTypeEVMTx, InputArgs: tc.args,
 				}},
 			})
 			require.NoError(t, err)

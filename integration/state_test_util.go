@@ -431,18 +431,23 @@ func (t *StateTest) RunNoVerify(subtest StateSubtest, vmconfig vm.Config, snapsh
 	st.StateDB.AddBalance(block.Coinbase(), new(uint256.Int), tracing.BalanceChangeUnspecified)
 
 	// Commit the state - need to access the underlying ethStateDB
+	rules := params.Rules{
+		IsEIP158:    config.IsEIP158(block.Number()),
+		IsCancun:    config.IsCancun(block.Number(), block.Time()),
+		IsAmsterdam: config.IsAmsterdam(block.Number(), block.Time()),
+	}
 	if dualDB, ok := st.StateDB.(*execution.DualStateDB); ok {
-		root, err = dualDB.EthStateDB().Commit(block.NumberU64(), config.IsEIP158(block.Number()), config.IsCancun(block.Number(), block.Time()))
+		root, err = dualDB.EthStateDB().Commit(rules, block.NumberU64())
 		if err != nil {
 			return st, common.Hash{}, 0, fmt.Errorf("commit failed: %w", err)
 		}
 	} else if ethDB, ok := st.StateDB.(*state.StateDB); ok {
-		root, err = ethDB.Commit(block.NumberU64(), config.IsEIP158(block.Number()), config.IsCancun(block.Number(), block.Time()))
+		root, err = ethDB.Commit(rules, block.NumberU64())
 		if err != nil {
 			return st, common.Hash{}, 0, fmt.Errorf("commit failed: %w", err)
 		}
 	} else if loggerDB, ok := st.StateDB.(*execution.EthStateDBLogger); ok {
-		root, err = loggerDB.Commit(block.NumberU64(), config.IsEIP158(block.Number()), config.IsCancun(block.Number(), block.Time()))
+		root, err = loggerDB.Commit(rules, block.NumberU64())
 		if err != nil {
 			return st, common.Hash{}, 0, fmt.Errorf("commit failed: %w", err)
 		}
@@ -598,7 +603,7 @@ func makePreState(db ethdb.Database, accounts types.GenesisAlloc, snapshotter bo
 	}
 
 	// Commit and re-open to start with a clean state
-	root, _ := statedb.Commit(0, false, false)
+	root, _ := statedb.Commit(params.Rules{}, 0)
 
 	// If snapshot is requested, initialize the snapshotter and use it in state
 	var snaps *snapshot.Tree
@@ -659,7 +664,7 @@ func makePreStateWithDualState(db ethdb.Database, accounts types.GenesisAlloc, s
 	}
 
 	// Commit and re-open to start with a clean state
-	root, _ := statedb.EthStateDB().Commit(0, false, false)
+	root, _ := statedb.EthStateDB().Commit(params.Rules{}, 0)
 
 	// Commit the fabric state to the database
 	rws := fabricStateDB.Result()
