@@ -106,8 +106,14 @@ func TestBatchSubmitter_NilCompleterIsSafe(t *testing.T) {
 // TestBatchSubmitter_RecordsSubmitLatency verifies that a successful submission is
 // observed in the StepBatchSubmit histogram of the metrics package.
 func TestBatchSubmitter_RecordsSubmitLatency(t *testing.T) {
-	m := metrics.New()
-	metrics.ReplaceDefault(m)
+	m := metrics.Default()
+	sampleCount := func() uint64 {
+		var pb dto.Metric
+		obs := m.StepLatency.WithLabelValues(metrics.StepBatchSubmit)
+		_ = obs.(interface{ Write(*dto.Metric) error }).Write(&pb)
+		return pb.GetHistogram().GetSampleCount()
+	}
+	before := sampleCount()
 
 	completer := &stubCompleter{}
 	bs := NewBatchSubmitter([]Submitter{stubSubmitter{err: nil}}, make(chan EndorsedTx, 1), 1, 0, completer)
@@ -119,9 +125,6 @@ func TestBatchSubmitter_RecordsSubmitLatency(t *testing.T) {
 	bs.inputChan <- EndorsedTx{Hash: common.HexToHash("0x2"), End: sdk.Endorsement{}}
 
 	require.Eventually(t, func() bool {
-		var pb dto.Metric
-		obs := m.StepLatency.WithLabelValues(metrics.StepBatchSubmit)
-		_ = obs.(interface{ Write(*dto.Metric) error }).Write(&pb)
-		return pb.GetHistogram().GetSampleCount() >= 1
-	}, 5*time.Second, 10*time.Millisecond, "StepBatchSubmit histogram should have at least one observation")
+		return sampleCount() > before
+	}, 5*time.Second, 10*time.Millisecond, "StepBatchSubmit histogram should have at least one new observation")
 }

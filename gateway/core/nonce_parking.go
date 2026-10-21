@@ -158,6 +158,7 @@ func (c *senderCache) prune(now time.Time, ttl time.Duration, max int, byHash ma
 			if now.Sub(p.parkedAt) > ttl {
 				delete(ss.parked, nonce)
 				delete(byHash, p.tx.Hash())
+				metrics.Default().ForgetTx(p.tx.Hash())
 			}
 		}
 	}
@@ -254,7 +255,7 @@ func (g *nonceGate) Admit(ctx context.Context, tx *types.Transaction) error {
 		return errTooManyParked
 	}
 	if replacing {
-		// Overwriting an existing parked tx at this nonce. Ethernet replacement has
+		// Overwriting an existing parked tx at this nonce. Ethereum replacement has
 		// its own fee-bump rules, tracked in #62; until then we log and overwrite.
 		logger.Infof("nonce gate: replacing parked tx for %s at nonce %d", from, tx.Nonce())
 	}
@@ -303,13 +304,19 @@ func (g *nonceGate) Observe(committed []domain.Transaction) {
 		// release it: Admit enqueues its own transaction and never promotes another.
 		for nonce := range ss.parked {
 			if nonce < next {
-				g.unpark(ss, nonce)
+				// Its nonce is spent by another tx; it can never commit.
+				if tx := g.unpark(ss, nonce); tx != nil {
+					metrics.Default().ForgetTx(tx.Hash())
+				}
 			}
 		}
 		if tx := g.unpark(ss, next); tx != nil {
 			// No caller to report to here. Dropping rather than re-parking lets the
 			// client resubmit at once: the nonce has not moved.
 			if err := g.queue.Enqueue(tx); err != nil {
+				if !errors.Is(err, domain.ErrTransactionAlreadyPending) {
+					metrics.Default().ForgetTx(tx.Hash())
+				}
 				switch {
 				case errors.Is(err, domain.ErrTransactionAlreadyPending):
 				case errors.Is(err, domain.ErrQueueClosed):
@@ -336,6 +343,7 @@ func (g *nonceGate) IsPending(hash common.Hash) *types.Transaction {
 func (g *nonceGate) park(ss *senderState, tx *types.Transaction) {
 	if old, ok := ss.parked[tx.Nonce()]; ok {
 		delete(g.byHash, old.tx.Hash())
+		metrics.Default().ForgetTx(old.tx.Hash())
 	}
 	ss.parked[tx.Nonce()] = parkedTx{tx: tx, parkedAt: g.now()}
 	g.byHash[tx.Hash()] = tx

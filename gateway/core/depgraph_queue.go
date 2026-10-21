@@ -338,9 +338,9 @@ func (q *DepGraphQueue) submitToManager(atx admittedTx) {
 	seq := q.commitSeq.Load()
 
 	// STEP 6→7 endorsement: measure how long the endorser call takes.
-	t6 := metrics.Now()
+	t6 := time.Now()
 	end, err := q.endorser.ExecuteTransaction(q.ctx, atx.tx)
-	metrics.Default().ObserveStep(metrics.StepEndorse, metrics.Since(t6))
+	metrics.Default().ObserveStep(metrics.StepEndorse, time.Since(t6))
 	if err != nil {
 		metrics.Default().EndorseErrors.Inc()
 		depGraphLogger.Errorf("endorse tx %s: %v", hash.Hex(), err)
@@ -696,6 +696,7 @@ func (q *DepGraphQueue) release(nodes dependencygraph.TxNodeBatch) {
 
 // drop removes a transaction that will never reach the manager.
 func (q *DepGraphQueue) drop(hash common.Hash) {
+	metrics.Default().ForgetTx(hash)
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if _, ok := q.tracked[hash]; !ok {

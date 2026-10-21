@@ -8,6 +8,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"math/big"
@@ -176,6 +177,7 @@ func (g *Gateway) worker(ctx context.Context) {
 		// Process the transaction (old SendTransaction logic)
 		if err := g.processTx(ctx, tx); err != nil {
 			logger.Errorf("tx %s failed: %v", tx.Hash().Hex(), err)
+			metrics.Default().ForgetTx(tx.Hash())
 			g.TxQueue.Complete(tx.Hash())
 			continue
 		}
@@ -190,20 +192,21 @@ func (g *Gateway) processTx(ctx context.Context, tx *types.Transaction) error {
 		}
 	}
 	// STEP 11: tx is executed – measure the EVM execution round-trip.
-	t11 := metrics.Now()
+	t11 := time.Now()
 	end, err := g.ExecuteEthTx(ctx, tx)
 	if err != nil {
+		metrics.Default().EndorseErrors.Inc()
 		return err
 	}
-	metrics.Default().ObserveStep(metrics.StepExecute, metrics.Since(t11))
+	metrics.Default().ObserveStep(metrics.StepExecute, time.Since(t11))
 
 	// STEP 13: the tx is submitted for ordering; measure the hand-off latency and
 	// report how many endorsed transactions are queued in the endorsementChan.
-	t13 := metrics.Now()
+	t13 := time.Now()
 	if err := g.SubmitFabricTx(ctx, tx.Hash(), end); err != nil {
 		return err
 	}
-	metrics.Default().ObserveStep(metrics.StepSubmitFabric, metrics.Since(t13))
+	metrics.Default().ObserveStep(metrics.StepSubmitFabric, time.Since(t13))
 	metrics.Default().SetQueue(metrics.QueueBatchSubmitterInput, len(g.endorsementChan))
 
 	return nil
@@ -212,9 +215,10 @@ func (g *Gateway) processTx(ctx context.Context, tx *types.Transaction) error {
 // SendTransaction runs geth-style pre-flight validation, then enqueues the tx
 // for async endorse/submit. Mirrors eth_sendRawTransaction's failure model.
 func (g *Gateway) SendTransaction(ctx context.Context, tx *types.Transaction) error {
-	// STEP 1: transactions land in the gateway – record the ingress timestamp for
-	// end-to-end latency tracking and count total received transactions.
-	metrics.Default().TrackTxStart(tx.Hash())
+	// STEP 1: transactions land in the gateway – count total received transactions.
+	// The ingress timestamp is recorded only once the tx passes the checks below, so
+	// a rejected tx leaves nothing behind (and a resubmission cannot reset the
+	// timestamp of the original).
 	metrics.Default().TxReceived.Inc()
 	logger.Debugf("Gateway.SendTransaction() called with tx=%s", tx.Hash().Hex())
 	if err := ValidateTx(tx, g.ChainConfig, g.Signer); err != nil {
@@ -227,9 +231,15 @@ func (g *Gateway) SendTransaction(ctx context.Context, tx *types.Transaction) er
 		return domain.ErrTransactionAlreadyPending
 	}
 	logger.Debugf("Gateway.SendTransaction() admitted tx=%s", tx.Hash().Hex())
+	metrics.Default().TrackTxStart(tx.Hash())
 	t1 := time.Now()
 	err := g.nonceGate.Admit(ctx, tx)
 	metrics.Default().ObserveStep(metrics.StepNonceAdmit, time.Since(t1))
+	// A rejected tx never reaches a block. Not for ErrTransactionAlreadyPending:
+	// that timestamp belongs to the copy already in flight.
+	if err != nil && !errors.Is(err, domain.ErrTransactionAlreadyPending) {
+		metrics.Default().ForgetTx(tx.Hash())
+	}
 	return err
 }
 

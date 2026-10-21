@@ -87,12 +87,13 @@ func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Tra
 	for i, end := range e.endorsers {
 		processEndorsement := func(index int, endorser api.Service) {
 			// STEP 12: individual endorser RPC – measure the round-trip duration.
-			t12 := metrics.Now()
+			t12 := time.Now()
 			pResp, err := endorser.Execute(ctx, inv, tx, reqTime)
-			metrics.Default().ObserveStep(metrics.StepEndorseRPC, metrics.Since(t12))
+			metrics.Default().ObserveStep(metrics.StepEndorseRPC, time.Since(t12))
 			if err != nil {
 				// A Go error is a transport/delivery failure (e.g. gRPC), not a tx outcome.
-				metrics.Default().EndorseErrors.Inc()
+				// Not counted in EndorseErrors here: the error is returned to the caller,
+				// which counts it once (see DepGraphQueue.submitToManager).
 				errs[index] = fmt.Errorf("call endorser: %w", err)
 				cancel() // signal other goroutines to stop early
 				return

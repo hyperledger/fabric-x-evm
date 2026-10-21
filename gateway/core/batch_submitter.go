@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
@@ -154,6 +155,7 @@ func (bs *BatchSubmitter) worker(ctx context.Context, workerID int, wg *sync.Wai
 			metrics.Default().SetQueue(metrics.QueueBatchSubmitterInput, len(bs.inputChan))
 			if err := bs.submitOne(ctx, workerID, end); err != nil {
 				batchLogger.Errorf("Worker %d: submit failed: %v", workerID, err)
+				metrics.Default().ForgetTx(end.Hash)
 				if bs.completer != nil {
 					bs.completer.Complete(end.Hash)
 				}
@@ -175,9 +177,9 @@ func (bs *BatchSubmitter) submitOne(ctx context.Context, workerID int, tx Endors
 	metrics.Default().RecordTxSubmitted(tx.Hash)
 
 	var txid string
-	t0 := metrics.Now()
+	t0 := time.Now()
 	err := bs.submitters[workerID].Submit(ctx, tx.End)
-	metrics.Default().ObserveStep(metrics.StepBatchSubmit, metrics.Since(t0))
-	batchLogger.Debugf("[SUBMIT] worker=%d txid=%s submit_took=%v", workerID, txid, metrics.Since(t0))
+	metrics.Default().ObserveStep(metrics.StepBatchSubmit, time.Since(t0))
+	batchLogger.Debugf("[SUBMIT] worker=%d txid=%s submit_took=%v", workerID, txid, time.Since(t0))
 	return err
 }

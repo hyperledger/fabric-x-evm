@@ -127,7 +127,7 @@ func (d *AllTxBatchDispatcher) HandleBatch(ctx context.Context, batch notificati
 	// distinguished (e.g. "gateway.Gateway" vs "gateway/storage.Chain").
 	for _, h := range d.handlers {
 		handlerName := reflect.TypeOf(h).String()
-		t16 := metrics.Now()
+		t16 := time.Now()
 		if err := h.Handle(ctx, b); err != nil {
 			// graceful shutdown
 			if ctx.Err() != nil {
@@ -136,7 +136,7 @@ func (d *AllTxBatchDispatcher) HandleBatch(ctx context.Context, batch notificati
 
 			panic(fmt.Errorf("handler failed: %w", err))
 		}
-		metrics.Default().StepLatency.WithLabelValues(metrics.StepHandler + ":" + handlerName).Observe(metrics.Since(t16).Seconds())
+		metrics.Default().StepLatency.WithLabelValues(metrics.StepHandler + ":" + handlerName).Observe(time.Since(t16).Seconds())
 	}
 	// STEP 17: block fully dispatched to all handlers – close the per-tx latency
 	// windows, recording e2e and tx_post_order for each Ethereum tx in this block.

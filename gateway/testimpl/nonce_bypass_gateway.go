@@ -39,5 +39,9 @@ func (g *NonceBypassGateway) SendTransaction(ctx context.Context, tx *types.Tran
 	metrics.Default().TxReceived.Inc()
 
 	// Skip ValidateTx (which includes nonce validation) and directly enqueue.
-	return g.Gateway.TxQueue.Enqueue(tx)
+	err := g.Gateway.TxQueue.Enqueue(tx)
+	if err != nil {
+		metrics.Default().ForgetTx(tx.Hash())
+	}
+	return err
 }

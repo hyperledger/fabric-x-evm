@@ -21,7 +21,9 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 //	STEP  8  incoming channel – batch submitted to the dependency manager
 //	STEP  9  outgoing channel – tx released by the dependency manager as clash-free
 //	STEP 10  worker Dequeue   – tx dequeued from the ready list
-//	STEP 11  ExecuteEthTx     – EVM execution / first endorsement
+//	STEP 11  ExecuteEthTx     – EVM re-execution / endorsement; skipped when processTx reuses the
+//	                            DepGraphQueue's step 6→7 endorsement, and the only endorsement
+//	                            for queues that do not pre-endorse
 //	STEP 12  endorser.Execute – individual endorser RPC call
 //	STEP 13  SubmitFabricTx   – endorsement handed to the batch submitter
 //	STEP 14  BatchSubmitter   – tx dequeued from the input channel for ordering
@@ -60,7 +62,8 @@ type Metrics struct {
 	TxReceived prometheus.Counter
 	// TxParked counts transactions parked by the nonce gate (future-nonce).
 	TxParked prometheus.Counter
-	// TxCommitted counts transactions that committed successfully (EVM status = 1).
+	// TxCommitted counts transactions that Fabric committed as valid, whatever their
+	// EVM outcome: a revert or execution failure (EVM status = 0) is still committed.
 	TxCommitted prometheus.Counter
 	// TxMVCCConflict counts transactions invalidated by an MVCC conflict.
 	TxMVCCConflict prometheus.Counter
@@ -114,7 +117,7 @@ func New() *Metrics {
 		}),
 		TxCommitted: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "evm_gateway_tx_committed_total",
-			Help: "Total transactions committed successfully (EVM status=1).",
+			Help: "Total transactions committed as valid by Fabric, regardless of EVM status (including reverts and execution failures).",
 		}),
 		TxMVCCConflict: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "evm_gateway_tx_mvcc_conflict_total",
@@ -237,6 +240,12 @@ func (m *Metrics) RecordTxNotified(hash common.Hash) {
 	}
 }
 
+// ForgetTx discards the timestamps for a tx that will never reach a block, so
+// ObserveTxComplete will never run for it. Safe for an untracked hash.
+func (m *Metrics) ForgetTx(hash common.Hash) {
+	m.txTimes.Delete(hash)
+}
+
 // ObserveTxComplete reads and deletes the stored timestamps for hash, then
 // records the end-to-end and post-order latencies. Call at STEP 17.
 func (m *Metrics) ObserveTxComplete(hash common.Hash) {
@@ -286,19 +295,3 @@ func Default() *Metrics {
 	defaultOnce.Do(func() { defaultMetrics = New() })
 	return defaultMetrics
 }
-
-// ReplaceDefault swaps the process-wide default. Intended for use in tests only.
-func ReplaceDefault(m *Metrics) {
-	defaultOnce.Do(func() {}) // ensure the once is "used" so it never fires again
-	defaultMetrics = m
-}
-
-// ── Timestamp helpers for multi-step tracking ────────────────────────────────
-
-// Now is an alias for time.Now, exposed so tests can override it via monkey-patching
-// if needed. Production code should call metrics.Now() instead of time.Now() at
-// instrument points so the coupling is explicit.
-func Now() time.Time { return time.Now() }
-
-// Since returns the elapsed time since t using the same clock as Now().
-func Since(t time.Time) time.Duration { return time.Since(t) }
