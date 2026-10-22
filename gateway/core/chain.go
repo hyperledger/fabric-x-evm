@@ -30,7 +30,14 @@ type Chain struct {
 	db       *sql.DB
 	ts       *trie.Store
 	prevHash common.Hash // Ethereum hash of last committed block; seeded from DB on startup
+
+	retention     uint64 // number of most recent block numbers to keep; 0 keeps every block
+	pruneInterval uint64 // how far the tip must advance between prunes
+	lastPruned    uint64 // tip at the last successful prune
 }
+
+// defaultPruneInterval is how far, in block numbers, the tip must advance between prunes.
+const defaultPruneInterval = 1000
 
 // NewChain opens the SQLite database and trie store, seeds state from the latest committed
 // block, and returns a ready Chain. dbConnStr uses the modernc SQLite DSN format;
@@ -40,6 +47,12 @@ func NewChain(dbConnStr, triePath string, withTrie bool) (*Chain, error) {
 	db, err := sqlite.Open(dbConnStr)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
+	}
+	// The release image has no temp directory, so SQLite must keep temp files in
+	// memory. Otherwise large DELETEs fail with SQLITE_IOERR_GETTEMPPATH.
+	if _, err := db.Exec("PRAGMA temp_store=MEMORY"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("set temp_store pragma: %w", err)
 	}
 
 	blockStore := storage.NewStore(db)
@@ -65,7 +78,7 @@ func NewChain(dbConnStr, triePath string, withTrie bool) (*Chain, error) {
 		}
 	}
 
-	return &Chain{Store: blockStore, db: db, ts: ts, prevHash: prevHash}, nil
+	return &Chain{Store: blockStore, db: db, ts: ts, prevHash: prevHash, pruneInterval: defaultPruneInterval}, nil
 }
 
 // Handle implements blocks.BlockHandler. Order matters: the trie
@@ -106,7 +119,30 @@ func (c *Chain) Handle(ctx context.Context, b blocks.Block) error {
 
 	c.prevHash = common.BytesToHash(ebl.BlockHash)
 	logger.Debugf("Chain.Handle() block=%d committed prevHash=%s", b.Number, c.prevHash.Hex())
+
+	// Use a threshold, not BlockNumber%interval == 0: Handle can skip block
+	// numbers (hybridx drops blocks without EVM txs), so a multiple can be missed.
+	if c.retention > 0 && ebl.BlockNumber > c.retention && ebl.BlockNumber >= c.lastPruned+c.pruneInterval {
+		upTo := ebl.BlockNumber - c.retention
+		// A failed prune must not stop block ingestion. The next block retries.
+		if err := c.Store.DeleteBlocksUpTo(ctx, upTo); err != nil {
+			logger.Warnf("Chain.Handle() block=%d prune up to %d failed: %v", b.Number, upTo, err)
+		} else {
+			c.lastPruned = ebl.BlockNumber
+		}
+	}
 	return nil
+}
+
+// SetBlockRetention makes the chain keep only the most recent keep block numbers.
+// Older blocks, with their transactions and logs, are deleted from the SQLite store
+// and are no longer visible through the JSON-RPC API. The state trie is not pruned.
+// Pruning runs every defaultPruneInterval blocks, so the store holds up to
+// keep+defaultPruneInterval block numbers. The first prune on an existing store
+// deletes the whole backlog at once and delays that block's ingestion.
+// keep == 0 keeps every block. Call it before the chain handles blocks.
+func (c *Chain) SetBlockRetention(keep uint64) {
+	c.retention = keep
 }
 
 // EnsureGenesisBlock inserts an empty block 0 if the store has no blocks yet, so

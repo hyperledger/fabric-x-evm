@@ -883,3 +883,43 @@ func TestGetLogsByTxHash(t *testing.T) {
 		t.Errorf("expected 0 logs for non-existent tx, got %d", len(logs))
 	}
 }
+
+func TestDeleteBlocksUpTo(t *testing.T) {
+	store := setupTestDB(t)
+	// Blocks 1..5, each with one transaction that has one log.
+	for i := uint64(1); i <= 5; i++ {
+		insertTestBlock(t, store, i, makeHash(byte(i)))
+		insertTestLog(t, store, i, makeHash(byte(0xa0+i)), makeAddress(0x11), 0, nil)
+	}
+
+	if err := store.DeleteBlocksUpTo(t.Context(), 3); err != nil {
+		t.Fatalf("DeleteBlocksUpTo: %v", err)
+	}
+
+	for _, table := range []string{"blocks", "transactions", "logs"} {
+		if got := countTableRows(t, store, table); got != 2 {
+			t.Errorf("%s: got %d rows, want 2", table, got)
+		}
+	}
+	if blk, err := store.GetBlockByNumber(t.Context(), 3, false); err != nil || blk != nil {
+		t.Errorf("block 3: got %v, %v, want nil, nil", blk, err)
+	}
+	if blk, err := store.LatestBlock(t.Context(), false); err != nil || blk == nil || blk.BlockNumber != 5 {
+		t.Errorf("latest block: got %v, %v, want block 5", blk, err)
+	}
+}
+
+func TestDeleteBlocksUpTo_SpansBatches(t *testing.T) {
+	store := setupTestDB(t)
+	for _, n := range []uint64{1, 999, 1000, 1001, 2500, 4000, 4500} {
+		insertTestBlock(t, store, n, makeHash(byte(n%251)))
+	}
+
+	if err := store.DeleteBlocksUpTo(t.Context(), 4000); err != nil {
+		t.Fatalf("DeleteBlocksUpTo: %v", err)
+	}
+
+	if got := countTableRows(t, store, "blocks"); got != 1 {
+		t.Errorf("got %d blocks, want only block 4500", got)
+	}
+}

@@ -197,6 +197,7 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 	if err != nil {
 		return nil, fmt.Errorf("failed to create chain: %w", err)
 	}
+	chain.SetBlockRetention(cfg.Gateway.Database.BlockRetention)
 
 	// The test RPC's evm_revert must be able to discard the gate's cached nonces; production leaves it nil.
 	var nonceGate core.NonceSequencer

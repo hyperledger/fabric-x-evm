@@ -91,6 +91,11 @@ type Logging struct {
 type DB struct {
 	ConnString string `mapstructure:"connection-string" yaml:"connection-string"` // SQLite connection string for blocks, transactions, and logs
 	TriePath   string `mapstructure:"trie-path"         yaml:"trie-path"`         // PebbleDB directory for state root trie; empty = in-memory
+
+	// BlockRetention is how many of the most recent block numbers to keep in the
+	// SQLite store. Older blocks, with their transactions and logs, are deleted
+	// every 1000 blocks. 0 keeps every block.
+	BlockRetention uint64 `mapstructure:"block-retention" yaml:"block-retention"`
 }
 
 // Gateway contains configuration for the gateway component.

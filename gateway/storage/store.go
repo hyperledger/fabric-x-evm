@@ -11,6 +11,7 @@ import (
 	"database/sql"
 	_ "embed"
 	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 
@@ -458,6 +459,51 @@ func (s *Store) GetLogs(ctx context.Context, filter domain.LogFilter) ([]domain.
 	}
 
 	return logs, nil
+}
+
+// deleteBatchSize is how many block numbers one delete transaction covers. The store
+// has a single connection, so one big DELETE would block all queries until it ends.
+const deleteBatchSize = 1000
+
+// DeleteBlocksUpTo deletes every block numbered upTo or lower, with its transactions
+// and logs. It commits in batches of deleteBatchSize block numbers. All rows of a
+// block share its block_number, so a block is never split across two batches.
+func (s *Store) DeleteBlocksUpTo(ctx context.Context, upTo uint64) error {
+	var oldest sql.NullInt64
+	if err := s.DB.QueryRowContext(ctx, `SELECT MIN(block_number) FROM blocks`).Scan(&oldest); err != nil {
+		return fmt.Errorf("find oldest block: %w", err)
+	}
+	if !oldest.Valid {
+		return nil
+	}
+	for from := uint64(oldest.Int64); from <= upTo; from += deleteBatchSize {
+		to := min(from+deleteBatchSize-1, upTo)
+		if err := s.deleteBlockRange(ctx, from, to); err != nil {
+			return fmt.Errorf("delete blocks %d-%d: %w", from, to, err)
+		}
+	}
+	return nil
+}
+
+// deleteBlockRange deletes blocks from..to inclusive in one transaction. Logs go
+// first and blocks last, because of the foreign keys between the tables.
+func (s *Store) deleteBlockRange(ctx context.Context, from, to uint64) error {
+	sqlTx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer sqlTx.Rollback() //nolint:errcheck
+
+	for _, stmt := range []string{
+		`DELETE FROM logs WHERE block_number BETWEEN ? AND ?`,
+		`DELETE FROM transactions WHERE block_number BETWEEN ? AND ?`,
+		`DELETE FROM blocks WHERE block_number BETWEEN ? AND ?`,
+	} {
+		if _, err := sqlTx.ExecContext(ctx, stmt, int64(from), int64(to)); err != nil {
+			return err
+		}
+	}
+	return sqlTx.Commit()
 }
 
 // GetLogsByTxHash retrieves all logs for a specific transaction.
