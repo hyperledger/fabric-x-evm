@@ -19,7 +19,7 @@ require (
 	github.com/hyperledger/fabric-lib-go v1.1.5
 	github.com/hyperledger/fabric-protos-go-apiv2 v0.3.7
 	github.com/hyperledger/fabric-x-committer v1.0.5
-	github.com/hyperledger/fabric-x-common v0.2.9-0.20260723091942-e43f1af10c7e
+	github.com/hyperledger/fabric-x-common v0.2.9-0.20260922091838-0ca3d334f660
 	github.com/hyperledger/fabric-x-sdk v0.1.1-0.20261020152008-b067d487830e
 	github.com/prometheus/client_golang v1.25.0
 	github.com/spf13/cobra v1.10.2
@@ -177,4 +177,10 @@ require (
 	modernc.org/libc v1.77.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
+)
+
+// Temporary: unreleased forest manager branch; fabric-x-common pinned to the version the SDK builds against.
+replace (
+	github.com/hyperledger/fabric-x-committer => github.com/cendhu/fabric-x-committer v0.0.0-20261008094612-52600af3236f
+	github.com/hyperledger/fabric-x-common => github.com/hyperledger/fabric-x-common v0.2.9-0.20260723091942-e43f1af10c7e
 )
