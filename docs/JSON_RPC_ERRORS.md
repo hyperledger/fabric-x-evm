@@ -23,7 +23,7 @@ The single source of truth in code is [`gateway/api/rpcerr`](../gateway/api/rpce
 | Cause | Code |
 |------|-----:|
 | `tx.UnmarshalBinary` fails | `-32602` |
-| `core.ErrNonceTooLow` / `ErrNonceTooHigh` | `-32003` |
+| `core.ErrNonceTooLow` | `-32003` |
 | `core.ErrIntrinsicGas` | `-32003` |
 | `core.ErrInsufficientFunds` | `-32003` |
 | `core.ErrTxTypeNotSupported` | `-32003` |
@@ -31,8 +31,11 @@ The single source of truth in code is [`gateway/api/rpcerr`](../gateway/api/rpce
 | `txpool.ErrInvalidSender` | `-32003` |
 | `domain.ErrUnprotectedTx` (non-EIP-155) | `-32003` |
 | `domain.ErrTransactionAlreadyPending` (duplicate submission) | `-32003` |
-| `domain.ErrNonceLookup` (state lookup failure) | `-32603` |
-| Any other error | `-32603` |
+| Too many future-nonce transactions parked for the sender | `-32003` |
+| `domain.ErrQueueFull` (transaction queue full) | `-32003` |
+| `domain.ErrQueueClosed` (gateway shutting down) | `-32003` |
+| `domain.ErrNonceLookup` (state lookup failure) | `-32003` today, `-32603` once the nonce gate wraps the sentinel |
+| Any other error | `-32003` |
 
 ### `eth_call`
 
