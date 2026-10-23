@@ -168,6 +168,16 @@ Application: &ApplicationDefaults
     LifecycleEndorsement:
       Type: Signature
       Rule: OR('Org1MSP.member','Org2MSP.member')
+    # Required since committer v1.0.6: the verifier resolves one policy per system
+    # namespace from the config block (_meta, _snapshot, _checkpoint), and the
+    # sidecar rejects the genesis config TX outright if any is missing. Same rule as
+    # LifecycleEndorsement so a single-org test network can satisfy them.
+    SnapshotEndorsement:
+      Type: Signature
+      Rule: OR('Org1MSP.member','Org2MSP.member')
+    CheckpointEndorsement:
+      Type: Signature
+      Rule: OR('Org1MSP.member','Org2MSP.member')
   Capabilities:
     <<: *ApplicationCapabilities
 

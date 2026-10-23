@@ -246,9 +246,9 @@ func NewDepGraphQueue(cfg *config.DepGraphQueue) *DepGraphQueue {
 		IncomingValidatedTxsNode:  q.validated,
 		NumOfLocalDepConstructors: 1,
 		WaitingTxsLimit:           waitingTxsLimit,
-		// Required since committer v1.0.5: a zero interval panics in
-		// time.NewTicker. 100ms is the committer's own default.
-		QueueMonitorSamplingTime:  100 * time.Millisecond,
+		// No sampling interval since committer v1.0.6: the manager reports its
+		// queue sizes on scrape rather than from a ticker of its own, so the
+		// QueueMonitorSamplingTime this used to need is gone.
 		PrometheusMetricsProvider: q.metrics,
 	})
 
