@@ -121,6 +121,8 @@ func TestHandleBatch_DispatchesOnlyEVMTxsFromMixedBatch(t *testing.T) {
 	d := NewAllTxBatchDispatcher(h)
 	err := d.HandleBatch(context.Background(), notification.AllTxBatch{
 		BlockNumber: 42,
+		Hash:        []byte("hash-42"),
+		ParentHash:  []byte("hash-41"),
 		Events: []notification.CommittedTxEvent{
 			evmEvent("evm-1", 0, blocks.StatusCommitted, common.ProposalTypeEVMTx, []byte{0xaa}),
 			evmEvent("non-evm", 1, blocks.StatusCommitted, "event", []byte{0xbb}),
@@ -131,8 +133,8 @@ func TestHandleBatch_DispatchesOnlyEVMTxsFromMixedBatch(t *testing.T) {
 	require.Len(t, h.seen, 1, "one dispatched Block")
 	b := h.seen[0]
 	assert.Equal(t, uint64(42), b.Number)
-	assert.Equal(t, blockNumberHash(42), b.Hash)
-	assert.Equal(t, blockNumberHash(41), b.ParentHash)
+	assert.Equal(t, []byte("hash-42"), b.Hash)
+	assert.Equal(t, []byte("hash-41"), b.ParentHash)
 	require.Len(t, b.Transactions, 2, "only the two EVM txs make it through")
 
 	assert.Equal(t, "evm-1", b.Transactions[0].ID)
@@ -148,22 +150,24 @@ func TestHandleBatch_DispatchesOnlyEVMTxsFromMixedBatch(t *testing.T) {
 	assert.Equal(t, blocks.StatusMVCCConflict, b.Transactions[1].Status)
 }
 
-func TestHandleBatch_BlockZeroParentHashDoesNotUnderflow(t *testing.T) {
+func TestHandleBatch_GenesisHashesPassThrough(t *testing.T) {
 	// Block 0 realistically never reaches here (genesis has no EVM txs, so the
-	// len(txs)==0 guard returns early) but the parentNum computation must not
-	// wrap a uint64 to MaxUint64 if it ever does.
+	// len(txs)==0 guard returns early), but nothing may synthesise a parent hash
+	// for it: the committer reports none, and an invented one would not match the
+	// delivery path's view of the same block.
 	h := &stubHandler{}
 	d := NewAllTxBatchDispatcher(h)
 	err := d.HandleBatch(context.Background(), notification.AllTxBatch{
 		BlockNumber: 0,
+		Hash:        []byte("hash-0"),
 		Events: []notification.CommittedTxEvent{
 			committedEVMEvent("evm-1"),
 		},
 	})
 	require.NoError(t, err)
 	require.Len(t, h.seen, 1)
-	assert.Equal(t, blockNumberHash(0), h.seen[0].Hash)
-	assert.Equal(t, blockNumberHash(0), h.seen[0].ParentHash, "parent of block 0 must not underflow")
+	assert.Equal(t, []byte("hash-0"), h.seen[0].Hash)
+	assert.Empty(t, h.seen[0].ParentHash, "genesis has no parent hash to report")
 }
 
 func TestHandleBatch_MultipleHandlersAllReceive(t *testing.T) {

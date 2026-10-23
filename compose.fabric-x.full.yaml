@@ -509,8 +509,34 @@ services:
     networks:
       - fabric-x
 
+  # One-shot schema creation. The committer's system tables (ns__meta, ns__config,
+  # tx_status, ...) are created only by `committer init-db`; no service creates them
+  # on startup. Without this the validator loops on
+  #   relation "ns__meta" does not exist (SQLSTATE 42P01)
+  # and the coordinator's policy load times out after 5 minutes and restarts forever.
+  #
+  # The single-container test-node image runs init-db itself (its `run` script does so
+  # whenever `db` is requested), which is why compose.fabric-x.yml needs no equivalent.
+  # The release image used here is a bare binary, so it has to be run explicitly.
+  # It reuses the validator's config for the database connection details.
+  committer-db-init:
+    image: ghcr.io/hyperledger/fabric-x-committer:1.0.7
+    pull_policy: missing
+    restart: "no"
+    user: "${UID:-1000}:${GID:-1000}"
+    command: init-db --config=/config/validator.yaml
+    volumes:
+      - ./testdata/config/committer-validator.yaml:/config/validator.yaml:ro,Z
+    environment:
+      SC_VC_DATABASE_ENDPOINTS: committer-db:5432
+    depends_on:
+      committer-db:
+        condition: service_healthy
+    networks:
+      - fabric-x
+
   committer-verifier:
-    image: ghcr.io/hyperledger/fabric-x-committer:1.0.3
+    image: ghcr.io/hyperledger/fabric-x-committer:1.0.7
     pull_policy: missing
     restart: unless-stopped
     user: "${UID:-1000}:${GID:-1000}"
@@ -523,7 +549,7 @@ services:
       - fabric-x
 
   committer-validator:
-    image: ghcr.io/hyperledger/fabric-x-committer:1.0.3
+    image: ghcr.io/hyperledger/fabric-x-committer:1.0.7
     pull_policy: missing
     restart: unless-stopped
     user: "${UID:-1000}:${GID:-1000}"
@@ -537,11 +563,13 @@ services:
     depends_on:
       committer-db:
         condition: service_healthy
+      committer-db-init:
+        condition: service_completed_successfully
     networks:
       - fabric-x
 
   committer-coordinator:
-    image: ghcr.io/hyperledger/fabric-x-committer:1.0.3
+    image: ghcr.io/hyperledger/fabric-x-committer:1.0.7
     pull_policy: missing
     restart: unless-stopped
     user: "${UID:-1000}:${GID:-1000}"
@@ -560,7 +588,7 @@ services:
       - fabric-x
 
   committer-sidecar:
-    image: ghcr.io/hyperledger/fabric-x-committer:1.0.3
+    image: ghcr.io/hyperledger/fabric-x-committer:1.0.7
     pull_policy: missing
     restart: unless-stopped
     user: "${UID:-1000}:${GID:-1000}"
@@ -590,7 +618,7 @@ services:
       - fabric-x
 
   committer-query-service:
-    image: ghcr.io/hyperledger/fabric-x-committer:1.0.3
+    image: ghcr.io/hyperledger/fabric-x-committer:1.0.7
     pull_policy: missing
     restart: unless-stopped
     user: "${UID:-1000}:${GID:-1000}"
@@ -606,6 +634,8 @@ services:
     depends_on:
       committer-db:
         condition: service_healthy
+      committer-db-init:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:2117/metrics"]
       interval: 2s
