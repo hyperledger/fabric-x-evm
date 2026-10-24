@@ -19,14 +19,23 @@ import (
 
 // logsFromBlock extracts Ethereum logs from a Fabric SDK block, attaching
 // block/tx context. Non-EVM and unsuccessful txs are skipped.
+// TxIndex is the dense EVM index ConvertToDomain would assign (0..n-1 over
+// every EVM tx in the block), not Fabric tx.Number.
 func logsFromBlock(b blocks.Block) []*types.Log {
 	blockHash := common.BytesToHash(b.Hash)
 	out := make([]*types.Log, 0)
 	logIndex := uint(0)
+	evmIndex := uint(0)
 
 	for _, tx := range b.Transactions {
 		ethTxBytes, ok := fc.EVMTx(tx)
-		if !ok || !tx.Valid() || len(tx.Event) == 0 {
+		if !ok {
+			continue
+		}
+		txIndex := evmIndex
+		evmIndex++
+
+		if !tx.Valid() || len(tx.Event) == 0 {
 			continue
 		}
 		if succeeded, _ := fc.ExecutionOutcome(tx); !succeeded {
@@ -42,7 +51,6 @@ func logsFromBlock(b blocks.Block) []*types.Log {
 			continue
 		}
 		txHash := ethTx.Hash()
-		txIndex := uint(tx.Number)
 
 		for _, l := range raw {
 			topics := make([]common.Hash, len(l.Topics))

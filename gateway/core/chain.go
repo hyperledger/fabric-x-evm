@@ -160,6 +160,10 @@ func ConvertToDomain(b blocks.Block) (domain.Block, error) {
 
 	logIndex := int64(0) // logIndex is the index of the log in the block
 	cumulativeGas := uint64(0)
+	// Ethereum transactionIndex must be dense over the EVM txs we expose
+	// (0..n-1). Fabric tx.Number can gap after config / other-namespace /
+	// non-evm envelopes are filtered; eth_getTransactionByBlock*AndIndex
+	// walks 0..txCount-1.
 	for _, tx := range b.Transactions {
 		// retrieve the Ethereum transaction from the chaincode invocation
 		ethTxBytes, ok := fc.EVMTx(tx)
@@ -174,7 +178,8 @@ func ConvertToDomain(b blocks.Block) (domain.Block, error) {
 		}
 		cumulativeGas += gasUsed
 
-		etx, err := convertTransaction(ethTxBytes, b.Hash, b.Number, tx.Number, tx.ID, status, tx.Status, tx.Event, &logIndex)
+		txIndex := int64(len(ebl.Transactions))
+		etx, err := convertTransaction(ethTxBytes, b.Hash, b.Number, txIndex, tx.ID, status, tx.Status, tx.Event, &logIndex)
 		if err != nil {
 			return domain.Block{}, fmt.Errorf("convert tx %s in block %d: %w", tx.ID, b.Number, err)
 		}
