@@ -485,7 +485,7 @@ func TestDepGraphQueue_UntrackedReleasedNodeIsHandedBack(t *testing.T) {
 	require.NoError(t, q.Enqueue(second))
 	require.Never(t, func() bool { return readyCount(q) > 0 }, 200*time.Millisecond, 10*time.Millisecond)
 
-	q.markReady(nodes)
+	q.markReady(asForests(nodes))
 	requireReady(t, q, 1)
 	got, ok := q.Dequeue()
 	require.True(t, ok)
@@ -507,14 +507,134 @@ func TestDepGraphQueue_UnrecognisedRefIsHandedBack(t *testing.T) {
 	require.Never(t, func() bool { return readyCount(q) > 0 }, 200*time.Millisecond, 10*time.Millisecond)
 
 	if fxcommon.DebugBuild {
-		require.Panics(t, func() { q.markReady(nodes) }, "a debug build panics on an unrecognised ref")
+		require.Panics(t, func() { q.markReady(asForests(nodes)) }, "a debug build panics on an unrecognised ref")
 	} else {
-		require.NotPanics(t, func() { q.markReady(nodes) })
+		require.NotPanics(t, func() { q.markReady(asForests(nodes)) })
 	}
 	requireReady(t, q, 1)
 	got, ok := q.Dequeue()
 	require.True(t, ok)
 	require.Equal(t, second.Hash(), got.Hash())
+}
+
+// asForests wraps each node as a forest of one.
+func asForests(nodes dependencygraph.TxNodeBatch) []dependencygraph.TxNodeBatch {
+	forests := make([]dependencygraph.TxNodeBatch, len(nodes))
+	for i, node := range nodes {
+		forests[i] = dependencygraph.TxNodeBatch{node}
+	}
+	return forests
+}
+
+// heldForest runs txs through the manager, takes their nodes back as not yet
+// started, and returns them as one forest in the order given.
+func heldForest(t *testing.T, q *DepGraphQueue, txs ...*types.Transaction) dependencygraph.TxNodeBatch {
+	t.Helper()
+	for _, tx := range txs {
+		require.NoError(t, q.Enqueue(tx))
+	}
+	requireReady(t, q, len(txs))
+	for range txs {
+		_, ok := q.Dequeue()
+		require.True(t, ok)
+	}
+
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	forest := make(dependencygraph.TxNodeBatch, len(txs))
+	for i, tx := range txs {
+		tr := q.tracked[tx.Hash()]
+		forest[i] = tr.node
+		tr.node = nil
+	}
+	return forest
+}
+
+func dequeueHash(t *testing.T, q *DepGraphQueue) common.Hash {
+	t.Helper()
+	got, ok := q.Dequeue()
+	require.True(t, ok)
+	return got.Hash()
+}
+
+// The members of a forest conflict, so each starts only once the one before it
+// is handed back, whether it failed or committed.
+func TestDepGraphQueue_ForestRunsMembersInOrder(t *testing.T) {
+	q, _ := newDepQueue(t)
+	a, b, c := txWithNonce(1), txWithNonce(2), txWithNonce(3)
+	forest := heldForest(t, q, a, b, c)
+
+	q.markReady([]dependencygraph.TxNodeBatch{forest})
+	requireReady(t, q, 1)
+	require.Equal(t, a.Hash(), dequeueHash(t, q))
+	require.Never(t, func() bool { return readyCount(q) > 0 }, 200*time.Millisecond, 10*time.Millisecond)
+
+	q.Complete(a.Hash()) // submission failed
+	requireReady(t, q, 1)
+	require.Equal(t, b.Hash(), dequeueHash(t, q))
+
+	require.NoError(t, q.Handle(context.Background(), blockWith(1, b)))
+	requireReady(t, q, 1)
+	require.Equal(t, c.Hash(), dequeueHash(t, q))
+
+	require.NoError(t, q.Handle(context.Background(), blockWith(1, c)))
+	require.Zero(t, q.InFlight())
+}
+
+// Separate forests do not conflict, so their first members start together.
+func TestDepGraphQueue_SeparateForestsStartTogether(t *testing.T) {
+	q, _ := newDepQueue(t)
+	a, b, c := txWithNonce(1), txWithNonce(2), txWithNonce(3)
+	nodes := heldForest(t, q, a, b, c)
+
+	q.markReady([]dependencygraph.TxNodeBatch{{nodes[0]}, {nodes[1], nodes[2]}})
+	requireReady(t, q, 2)
+	started := map[common.Hash]bool{dequeueHash(t, q): true, dequeueHash(t, q): true}
+	require.Equal(t, map[common.Hash]bool{a.Hash(): true, b.Hash(): true}, started)
+}
+
+// A member that is no longer tracked when its turn comes is handed back rather
+// than run, so whatever waits on it is freed, and the forest moves on.
+func TestDepGraphQueue_ForestHandsBackMemberNoLongerTracked(t *testing.T) {
+	q, e := newDepQueue(t)
+	a, b, c, d := txWithNonce(1), txWithNonce(2), txWithNonce(3), txWithNonce(4)
+	e.touches(b, "balance")
+	e.touches(d, "balance")
+	forest := heldForest(t, q, a, b, c)
+
+	// d clashes with b, whose node the manager still counts as in flight.
+	require.NoError(t, q.Enqueue(d))
+	require.Never(t, func() bool { return readyCount(q) > 0 }, 200*time.Millisecond, 10*time.Millisecond)
+
+	q.markReady([]dependencygraph.TxNodeBatch{forest})
+	requireReady(t, q, 1)
+	require.Equal(t, a.Hash(), dequeueHash(t, q))
+
+	// b lands in a block before its turn, so the queue forgets it.
+	require.NoError(t, q.Handle(context.Background(), blockWith(1, b)))
+	require.Nil(t, q.IsPending(b.Hash()))
+
+	q.Complete(a.Hash())
+	requireReady(t, q, 2)
+	started := map[common.Hash]bool{dequeueHash(t, q): true, dequeueHash(t, q): true}
+	require.Equal(t, map[common.Hash]bool{c.Hash(): true, d.Hash(): true}, started)
+}
+
+// A block that carries a running member and the next one hands the next one back
+// instead of running a transaction that already committed.
+func TestDepGraphQueue_ForestSkipsMemberCommittedInSameBlock(t *testing.T) {
+	q, _ := newDepQueue(t)
+	a, b, c := txWithNonce(1), txWithNonce(2), txWithNonce(3)
+	forest := heldForest(t, q, a, b, c)
+
+	q.markReady([]dependencygraph.TxNodeBatch{forest})
+	requireReady(t, q, 1)
+	require.Equal(t, a.Hash(), dequeueHash(t, q))
+
+	require.NoError(t, q.Handle(context.Background(), blockWith(1, a, b)))
+	requireReady(t, q, 1)
+	require.Never(t, func() bool { return readyCount(q) > 1 }, 200*time.Millisecond, 10*time.Millisecond)
+	require.Equal(t, c.Hash(), dequeueHash(t, q))
 }
 
 // The id the manager echoes back has to convert to the hash we tracked, or a
