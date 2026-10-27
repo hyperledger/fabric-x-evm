@@ -35,14 +35,22 @@ type Chain struct {
 // NewChain opens the SQLite database and trie store, seeds state from the latest committed
 // block, and returns a ready Chain. dbConnStr uses the modernc SQLite DSN format;
 // triePath is the directory for the PebbleDB trie (empty string = in-memory).
+// retention is how many of the most recent block numbers the SQLite store keeps
+// (0 keeps every block, see storage.NewStore). The state trie is not pruned.
 // The caller must register the SQLite driver (e.g. _ "modernc.org/sqlite") before calling.
-func NewChain(dbConnStr, triePath string, withTrie bool) (*Chain, error) {
+func NewChain(dbConnStr, triePath string, withTrie bool, retention uint64) (*Chain, error) {
 	db, err := sqlite.Open(dbConnStr)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
+	// The release image has no temp directory, so SQLite must keep temp files in
+	// memory. Otherwise DELETEs, even of a single block, fail with SQLITE_IOERR_GETTEMPPATH.
+	if _, err := db.Exec("PRAGMA temp_store=MEMORY"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("set temp_store pragma: %w", err)
+	}
 
-	blockStore := storage.NewStore(db)
+	blockStore := storage.NewStore(db, retention)
 	if err := blockStore.Init(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("init block store: %w", err)

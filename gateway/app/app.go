@@ -193,7 +193,7 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 		return nil, err
 	}
 
-	chain, err := core.NewChain(cfg.Gateway.Database.ConnString, cfg.Gateway.Database.TriePath, false)
+	chain, err := core.NewChain(cfg.Gateway.Database.ConnString, cfg.Gateway.Database.TriePath, false, cfg.Gateway.Database.BlockRetention)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create chain: %w", err)
 	}

@@ -11,6 +11,7 @@ import (
 	"database/sql"
 	_ "embed"
 	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 
@@ -25,12 +26,17 @@ type Store struct {
 	queries           *Queries
 	DB                *sql.DB
 	CachedBlockNumber atomic.Uint64 // cached block number for fast reads
+	retention         uint64        // number of most recent block numbers to keep; 0 keeps every block
 }
 
-func NewStore(db *sql.DB) *Store {
+// NewStore returns a store on db. With retention > 0, InsertBlock keeps only the
+// most recent retention block numbers and deletes older blocks with their
+// transactions and logs. retention == 0 keeps every block.
+func NewStore(db *sql.DB, retention uint64) *Store {
 	return &Store{
-		queries: New(db),
-		DB:      db,
+		queries:   New(db),
+		DB:        db,
+		retention: retention,
 	}
 }
 
@@ -140,6 +146,12 @@ func (s *Store) InsertBlock(ctx context.Context, block domain.Block) error {
 			if err := qtx.InsertLog(ctx, l); err != nil {
 				return err
 			}
+		}
+	}
+
+	if s.retention > 0 && block.BlockNumber >= s.retention {
+		if err := deleteBlocksUpTo(ctx, sqlTx, block.BlockNumber-s.retention); err != nil {
+			return fmt.Errorf("delete old blocks: %w", err)
 		}
 	}
 
@@ -458,6 +470,21 @@ func (s *Store) GetLogs(ctx context.Context, filter domain.LogFilter) ([]domain.
 	}
 
 	return logs, nil
+}
+
+// deleteBlocksUpTo deletes every block numbered upTo or lower, with its transactions
+// and logs. Logs go first and blocks last, because of the foreign keys between the tables.
+func deleteBlocksUpTo(ctx context.Context, sqlTx *sql.Tx, upTo uint64) error {
+	for _, stmt := range []string{
+		`DELETE FROM logs WHERE block_number <= ?`,
+		`DELETE FROM transactions WHERE block_number <= ?`,
+		`DELETE FROM blocks WHERE block_number <= ?`,
+	} {
+		if _, err := sqlTx.ExecContext(ctx, stmt, int64(upTo)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // GetLogsByTxHash retrieves all logs for a specific transaction.

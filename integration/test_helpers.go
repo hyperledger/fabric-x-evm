@@ -164,7 +164,7 @@ type HandlerChainFactory func(
 //  5. Extra handlers: any caller-supplied handlers that observe committed blocks for
 //     their own purposes.
 func defaultHandlerChain(t *testing.T, ctx context.Context, cfg config.Config, ends []eapi.Service, gwSigner sdk.Signer, submitters []core.Submitter, txQueue core.TxQueueInterface, dbs []storage.KVS) (*core.Gateway, []blocks.BlockHandler, network.BlockHeightReader) {
-	chain, err := core.NewChain(cfg.Gateway.Database.ConnString, cfg.Gateway.Database.TriePath, false)
+	chain, err := core.NewChain(cfg.Gateway.Database.ConnString, cfg.Gateway.Database.TriePath, false, cfg.Gateway.Database.BlockRetention)
 	if err != nil {
 		t.Fatalf("open chain: %v", err)
 	}

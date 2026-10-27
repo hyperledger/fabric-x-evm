@@ -60,7 +60,7 @@ func TestHandle_ReprocessingSameBlockKeepsIndexesAndTrieStable(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "gateway.db")
 	triePath := filepath.Join(t.TempDir(), "trie")
 
-	chain, err := NewChain(dbPath, triePath, true)
+	chain, err := NewChain(dbPath, triePath, true, 0)
 	require.NoError(t, err)
 	defer chain.Close()
 
@@ -134,7 +134,7 @@ func TestHandle_ReprocessingSameBlockKeepsIndexesAndTrieStable(t *testing.T) {
 // the published tip moves exactly once per durable block.
 func TestHandle_PrevHashAdvancesOnlyAfterSuccessfulInsert(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "gateway.db")
-	chain, err := NewChain(dbPath, "", false)
+	chain, err := NewChain(dbPath, "", false, 0)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = chain.Close() })
 
@@ -187,7 +187,7 @@ func testPrevHashNotAdvancedOnInsertFailure(t *testing.T, withTrie bool) {
 		triePath = filepath.Join(t.TempDir(), "trie")
 	}
 
-	chain, err := NewChain(dbPath, triePath, withTrie)
+	chain, err := NewChain(dbPath, triePath, withTrie, 0)
 	require.NoError(t, err)
 	// Close may return an error after we deliberately close the DB below.
 	t.Cleanup(func() { _ = chain.Close() })
