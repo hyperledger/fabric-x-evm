@@ -220,6 +220,10 @@ func TestFabricX(t *testing.T) {
 	t.Run("hybrid_revert_after_switch", func(t *testing.T) {
 		testHybridRevertAfterSwitch(t)
 	})
+
+	t.Run("hybrid_restart_after_notification_loss", func(t *testing.T) {
+		testHybridRestartAfterNotificationLoss(t)
+	})
 }
 
 // testTwoOfTwoEndorsementGRPC runs org2's endorser as a separate, real
