@@ -93,8 +93,9 @@ type DB struct {
 	TriePath   string `mapstructure:"trie-path"         yaml:"trie-path"`         // PebbleDB directory for state root trie; empty = in-memory
 
 	// BlockRetention is how many of the most recent block numbers to keep in the
-	// SQLite store. Older blocks, with their transactions and logs, are deleted
-	// every 1000 blocks. 0 keeps every block.
+	// SQLite store. Older blocks, with their transactions and logs, are deleted as
+	// each new block is stored. On an existing store, the first new block deletes
+	// the whole backlog at once. 0 keeps every block.
 	BlockRetention uint64 `mapstructure:"block-retention" yaml:"block-retention"`
 }
 

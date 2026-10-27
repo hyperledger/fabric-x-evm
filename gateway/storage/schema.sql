@@ -38,7 +38,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_tx_block_pos ON transactions (block_number
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_tx_block_hpos ON transactions (block_hash, tx_index);
 
-CREATE INDEX IF NOT EXISTS idx_txs_hash ON transactions (tx_hash);
+-- tx_hash is the primary key, so a separate index on it only duplicates it.
+DROP INDEX IF EXISTS idx_txs_hash;
 
 -- Logs
 -- denormalized for performance (relational queries are rare)

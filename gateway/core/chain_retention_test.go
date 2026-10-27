@@ -16,15 +16,12 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// retentionChain returns a trie-less chain that keeps keep block numbers and
-// prunes every interval blocks.
-func retentionChain(t *testing.T, keep, interval uint64) *Chain {
+// retentionChain returns a trie-less chain that keeps keep block numbers.
+func retentionChain(t *testing.T, keep uint64) *Chain {
 	t.Helper()
-	chain, err := NewChain(filepath.Join(t.TempDir(), "gateway.db"), "", false)
+	chain, err := NewChain(filepath.Join(t.TempDir(), "gateway.db"), "", false, keep)
 	require.NoError(t, err)
 	t.Cleanup(func() { chain.Close() })
-	chain.SetBlockRetention(keep)
-	chain.pruneInterval = interval
 	return chain
 }
 
@@ -63,20 +60,20 @@ func storedBlocks(t *testing.T, chain *Chain) []uint64 {
 
 func TestBlockRetention(t *testing.T) {
 	t.Run("prunes to the window", func(t *testing.T) {
-		chain := retentionChain(t, 3, 2)
+		chain := retentionChain(t, 3)
 		handleBlocks(t, chain, blockRange(1, 10)...)
 		require.Equal(t, []uint64{8, 9, 10}, storedBlocks(t, chain))
 	})
 
 	t.Run("zero keeps every block", func(t *testing.T) {
-		chain := retentionChain(t, 0, 2)
+		chain := retentionChain(t, 0)
 		handleBlocks(t, chain, blockRange(1, 6)...)
 		require.Equal(t, blockRange(1, 6), storedBlocks(t, chain))
 	})
 
-	t.Run("prunes when interval multiples are skipped", func(t *testing.T) {
-		// Handle can skip block numbers. Here 5 and 10 are missing.
-		chain := retentionChain(t, 2, 5)
+	t.Run("prunes when block numbers are skipped", func(t *testing.T) {
+		// Handle can skip block numbers (hybridx drops blocks without EVM txs).
+		chain := retentionChain(t, 2)
 		handleBlocks(t, chain, 1, 2, 3, 4, 6, 7, 8, 9, 11, 12)
 		require.Equal(t, []uint64{11, 12}, storedBlocks(t, chain))
 	})

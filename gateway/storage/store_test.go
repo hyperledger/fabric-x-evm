@@ -32,7 +32,7 @@ func setupTestDB(t *testing.T) *Store {
 		t.Fatalf("failed to enable foreign keys: %v", err)
 	}
 
-	store := NewStore(db)
+	store := NewStore(db, 0)
 	if err := store.Init(); err != nil {
 		t.Fatalf("failed to init store: %v", err)
 	}
@@ -879,18 +879,36 @@ func TestGetLogsByTxHash(t *testing.T) {
 	}
 }
 
-func TestDeleteBlocksUpTo(t *testing.T) {
+func TestInsertBlockRetention(t *testing.T) {
 	store := setupTestDB(t)
-	// Blocks 1..5, each with one transaction that has one log.
+	store.retention = 2
+	// Blocks 1..5, each with one transaction that has one log, all stored by InsertBlock.
 	for i := uint64(1); i <= 5; i++ {
-		insertTestBlock(t, store, i, makeHash(byte(i)))
-		insertTestLog(t, store, i, makeHash(byte(0xa0+i)), makeAddress(0x11), 0, nil)
+		txHash := makeHash(byte(0xa0 + i))
+		err := store.InsertBlock(t.Context(), domain.Block{
+			BlockNumber: i,
+			BlockHash:   makeHash(byte(i)),
+			StateRoot:   make([]byte, 32),
+			Transactions: []domain.Transaction{{
+				TxHash:      txHash,
+				BlockNumber: i,
+				RawTx:       []byte{0x01},
+				FromAddress: makeAddress(0x11),
+				Status:      1,
+				FabricTxID:  fmt.Sprintf("fabric-tx-%d", i),
+				Logs: []domain.Log{{
+					BlockNumber: i,
+					TxHash:      txHash,
+					Address:     makeAddress(0x11),
+				}},
+			}},
+		})
+		if err != nil {
+			t.Fatalf("insert block %d: %v", i, err)
+		}
 	}
 
-	if err := store.DeleteBlocksUpTo(t.Context(), 3); err != nil {
-		t.Fatalf("DeleteBlocksUpTo: %v", err)
-	}
-
+	// Inserting block 5 deleted blocks 1..3 with their transactions and logs.
 	for _, table := range []string{"blocks", "transactions", "logs"} {
 		if got := countTableRows(t, store, table); got != 2 {
 			t.Errorf("%s: got %d rows, want 2", table, got)
@@ -901,20 +919,5 @@ func TestDeleteBlocksUpTo(t *testing.T) {
 	}
 	if blk, err := store.LatestBlock(t.Context(), false); err != nil || blk == nil || blk.BlockNumber != 5 {
 		t.Errorf("latest block: got %v, %v, want block 5", blk, err)
-	}
-}
-
-func TestDeleteBlocksUpTo_SpansBatches(t *testing.T) {
-	store := setupTestDB(t)
-	for _, n := range []uint64{1, 999, 1000, 1001, 2500, 4000, 4500} {
-		insertTestBlock(t, store, n, makeHash(byte(n%251)))
-	}
-
-	if err := store.DeleteBlocksUpTo(t.Context(), 4000); err != nil {
-		t.Fatalf("DeleteBlocksUpTo: %v", err)
-	}
-
-	if got := countTableRows(t, store, "blocks"); got != 1 {
-		t.Errorf("got %d blocks, want only block 4500", got)
 	}
 }
