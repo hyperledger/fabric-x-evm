@@ -167,6 +167,11 @@ type DepGraphQueue struct {
 	WaitingTxsLimit int           `mapstructure:"waiting-txs-limit" yaml:"waiting-txs-limit"`
 	BatchThreshold  int           `mapstructure:"batch-threshold"   yaml:"batch-threshold"`
 	BatchTimeout    time.Duration `mapstructure:"batch-timeout"     yaml:"batch-timeout"`
+	// TrackedTimeout bounds how long a dequeued transaction may stay in tracked
+	// without Handle or Complete. After this, a reaper calls Complete so
+	// dependents are not stranded by silent orderer loss. Zero means the
+	// built-in default; a negative value disables the reaper.
+	TrackedTimeout time.Duration `mapstructure:"tracked-timeout" yaml:"tracked-timeout"`
 }
 
 // DefaultVhosts is used when Gateway.Vhosts is unset.
