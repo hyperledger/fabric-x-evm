@@ -173,11 +173,11 @@ type DepGraphQueue struct {
 	// metrics is the manager's own registry.
 	metrics *monitoring.Provider
 
-	endorseWorkers  int
-	batchThreshold  int
-	batchTimeout    time.Duration
-	trackedTimeout  time.Duration // zero disables the reaper
-	reaperInterval  time.Duration
+	endorseWorkers int
+	batchThreshold int
+	batchTimeout   time.Duration
+	trackedTimeout time.Duration // zero disables the reaper
+	reaperInterval time.Duration
 
 	mu      sync.RWMutex
 	cond    *sync.Cond
@@ -234,18 +234,18 @@ func NewDepGraphQueue(cfg *config.DepGraphQueue) *DepGraphQueue {
 	}
 
 	q := &DepGraphQueue{
-		incoming:        make(chan *dependencygraph.TransactionBatch, chanSize),
-		outgoing:        make(chan dependencygraph.TxNodeBatch, chanSize),
-		validated:       make(chan dependencygraph.TxNodeBatch, chanSize),
-		admitted:        make(chan admittedTx, chanSize),
-		endorsed:        make(chan endorsedTx, chanSize),
-		tracked:         make(map[common.Hash]*trackedTx),
-		lastWrite:       make(map[string]uint64),
-		endorseWorkers:  endorseWorkers,
-		batchThreshold:  batchThreshold,
-		batchTimeout:    batchTimeout,
-		trackedTimeout:  trackedTimeout,
-		reaperInterval:  reaperIntervalFor(trackedTimeout),
+		incoming:       make(chan *dependencygraph.TransactionBatch, chanSize),
+		outgoing:       make(chan dependencygraph.TxNodeBatch, chanSize),
+		validated:      make(chan dependencygraph.TxNodeBatch, chanSize),
+		admitted:       make(chan admittedTx, chanSize),
+		endorsed:       make(chan endorsedTx, chanSize),
+		tracked:        make(map[common.Hash]*trackedTx),
+		lastWrite:      make(map[string]uint64),
+		endorseWorkers: endorseWorkers,
+		batchThreshold: batchThreshold,
+		batchTimeout:   batchTimeout,
+		trackedTimeout: trackedTimeout,
+		reaperInterval: reaperIntervalFor(trackedTimeout),
 	}
 	q.cond = sync.NewCond(&q.mu)
 	q.ctx, q.cancel = context.WithCancel(context.Background())
