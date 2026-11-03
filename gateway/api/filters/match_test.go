@@ -143,6 +143,67 @@ func TestLogsFromBlock_HappyAndSkips(t *testing.T) {
 	}
 }
 
+// TxIndex on live filter logs must match ConvertToDomain's dense EVM index,
+// not Fabric tx.Number (which can gap after non-EVM envelopes are dropped).
+func TestLogsFromBlock_DenseTransactionIndex(t *testing.T) {
+	addr := common.HexToAddress("0x00000000000000000000000000000000000000aa")
+	rawA := mustEthTxBytes(t)
+	rawB := mustEthTxBytes(t)
+	events := mustLogEvents(t, []state.Log{{Address: addr.Bytes()}})
+
+	b := blocks.Block{
+		Number: 9,
+		Hash:   bytes32(0x99),
+		Transactions: []blocks.Transaction{
+			{Number: 0, Status: blocks.StatusCommitted, EventName: "config"},
+			{
+				Number:    2,
+				Status:    blocks.StatusCommitted,
+				EventName: fc.ProposalTypeEVMTx,
+				InputArgs: [][]byte{rawA},
+				Payload:   mustPayload(t, succeeded),
+				Event:     events,
+			},
+			{
+				Number:    3,
+				Status:    blocks.StatusCommitted,
+				EventName: fc.ProposalTypeEVMTx,
+				InputArgs: [][]byte{rawB},
+				Payload:   mustPayload(t, endorsementpb.ExecutionStatus_EXECUTION_STATUS_REVERTED),
+				Event:     events, // ignored: unsuccessful, still occupies an index
+			},
+			{
+				Number:    4,
+				Status:    blocks.StatusMVCCConflict,
+				EventName: fc.ProposalTypeEVMTx,
+				InputArgs: [][]byte{mustEthTxBytes(t)},
+				Payload:   mustPayload(t, succeeded),
+				Event:     events, // ignored: !Valid, still occupies an index
+			},
+			{
+				Number:    5,
+				Status:    blocks.StatusCommitted,
+				EventName: fc.ProposalTypeEVMTx,
+				InputArgs: [][]byte{mustEthTxBytes(t)},
+				Payload:   mustPayload(t, succeeded),
+				Event:     events,
+			},
+		},
+	}
+
+	got := logsFromBlock(b)
+	if len(got) != 2 {
+		t.Fatalf("len=%d want 2", len(got))
+	}
+	// Dense indices: success=0, revert=1, mvcc=2, success=3.
+	if got[0].TxIndex != 0 {
+		t.Fatalf("first log TxIndex=%d want 0", got[0].TxIndex)
+	}
+	if got[1].TxIndex != 3 {
+		t.Fatalf("second log TxIndex=%d want 3", got[1].TxIndex)
+	}
+}
+
 // Only a successful execution emits logs, whatever the event carries.
 func TestLogsFromBlock_UnsuccessfulSkipped(t *testing.T) {
 	rawTx := mustEthTxBytes(t)
