@@ -201,16 +201,6 @@ func defaultHandlerChain(t *testing.T, ctx context.Context, cfg config.Config, e
 	return gw, handlers, chain
 }
 
-// withExtraHandlers returns a HandlerChainFactory that builds the default chain
-// and appends extra observers to it.  Used by tests that need to watch the blocks
-// the stores see without replacing the chain store itself.
-func withExtraHandlers(extra ...blocks.BlockHandler) HandlerChainFactory {
-	return func(t *testing.T, ctx context.Context, cfg config.Config, ends []eapi.Service, gwSigner sdk.Signer, submitters []core.Submitter, txQueue core.TxQueueInterface, dbs []storage.KVS) (*core.Gateway, []blocks.BlockHandler, network.BlockHeightReader) {
-		gw, handlers, heightReader := defaultHandlerChain(t, ctx, cfg, ends, gwSigner, submitters, txQueue, dbs)
-		return gw, append(handlers, extra...), heightReader
-	}
-}
-
 // buildTestHarness is the shared implementation for all test harness constructors.
 // It builds endorsers, a gateway, and primes state.
 //
@@ -493,11 +483,7 @@ func NewLocalTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig e
 // newFileConfigHarness loads configFile (e.g. "fablo.yaml" for Fablo, "fabx.yaml" for
 // fabric-x — both connect to a real, already-running network), builds a harness against it,
 // and waits for the gateway synchronizer to catch up before returning.
-//
-// extraHandlers are appended to the standard handler chain, so they observe every
-// committed block after the stores have been updated — the conventional position
-// for an observer (see defaultHandlerChain).
-func newFileConfigHarness(t *testing.T, logger sdk.Logger, evmConfig execution.EVMConfig, primeDbPath, configFile string, configOverrides map[string]any, extraHandlers ...blocks.BlockHandler) (*TestHarness, error) {
+func newFileConfigHarness(t *testing.T, logger sdk.Logger, evmConfig execution.EVMConfig, primeDbPath, configFile string, configOverrides map[string]any) (*TestHarness, error) {
 	cfg, err := config.Load(configFile)
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
@@ -508,12 +494,7 @@ func newFileConfigHarness(t *testing.T, logger sdk.Logger, evmConfig execution.E
 		return nil, err
 	}
 
-	var chainFactory HandlerChainFactory
-	if len(extraHandlers) > 0 {
-		chainFactory = withExtraHandlers(extraHandlers...)
-	}
-
-	th, sync, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false, endorsers, nil, chainFactory)
+	th, sync, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, false, endorsers, nil, nil)
 	if err != nil {
 		return nil, err
 	}

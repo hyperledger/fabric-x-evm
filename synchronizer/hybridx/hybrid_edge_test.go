@@ -75,8 +75,7 @@ func TestNew_BuildsFromPeerConf(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "evm", h.namespace)
-	assert.NotNil(t, h.newDelivery)
-	assert.Nil(t, h.delivery.Load(), "delivery is built per cycle, not by New")
+	assert.NotNil(t, h.delivery)
 	assert.NotNil(t, h.notifPeer)
 	assert.Equal(t, []string{"evm"}, h.notifReq.FilterNamespaces)
 	assert.True(t, h.notifReq.IncludeReadWriteSets)
@@ -94,7 +93,7 @@ func TestNew_RejectsBadPeerConf(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			h, err := New(stubHeight{}, "ch", "evm", conf, nil, 0)
-			require.ErrorContains(t, err, "hybridx: create notification peer")
+			require.ErrorContains(t, err, "hybridx: create delivery synchronizer")
 			assert.Nil(t, h)
 		})
 	}
@@ -102,23 +101,40 @@ func TestNew_RejectsBadPeerConf(t *testing.T) {
 
 // ── OnSwitch ─────────────────────────────────────────────────────────────────
 
-// OnSwitch runs after delivery has been stopped, not before.
-func TestOnSwitch_RunsAfterDeliveryIsStopped(t *testing.T) {
+// OnSwitch runs once, when notification takes over, after delivery is stopped.
+func TestOnSwitch_CalledOnceAfterDeliveryStops(t *testing.T) {
 	delivery := newFakeDelivery()
 	h := newHybrid(t, delivery, newFakeNotifPeer(), &recordingHandler{})
-	delivery.seedClaimAt(h, 5)
+	h.seedClaimAt(5)
 	gate, stopped := newGate(h)
 
-	called, stoppedEveryCall := false, true
+	var calls int
+	var stoppedAtCall bool
 	h.OnSwitch(func() {
-		called = true
-		stoppedEveryCall = stoppedEveryCall && *stopped
+		calls++
+		stoppedAtCall = *stopped
 	})
 
 	require.NoError(t, gate.HandleBatch(context.Background(), evmBatch(t, 5)))
+	require.NoError(t, gate.HandleBatch(context.Background(), evmBatch(t, 6)))
+	require.NoError(t, gate.HandleBatch(context.Background(), evmBatch(t, 7)))
 
-	assert.True(t, called)
-	assert.True(t, stoppedEveryCall, "delivery is already stopped when the callback runs")
+	assert.Equal(t, 1, calls, "once, at the handoff, not on every batch")
+	assert.True(t, stoppedAtCall, "delivery is already stopped when the callback runs")
+}
+
+func TestOnSwitch_NotCalledWhileDeliveryIsBehind(t *testing.T) {
+	h := newHybrid(t, newFakeDelivery(), newFakeNotifPeer(), &recordingHandler{})
+	h.seedClaimAt(5)
+	gate, _ := newGate(h)
+
+	var calls int
+	h.OnSwitch(func() { calls++ })
+
+	// Block 9 cannot be claimed while delivery is only at block 4: the batch is dropped.
+	require.NoError(t, gate.HandleBatch(context.Background(), evmBatch(t, 9)))
+
+	assert.Zero(t, calls)
 }
 
 // ── dispatch ─────────────────────────────────────────────────────────────────
@@ -138,11 +154,13 @@ func TestDispatch_StopsAtFirstFailingHandler(t *testing.T) {
 
 // ── Start: notification stream errors ────────────────────────────────────────
 
-// A notification stream that fails before the switch is reopened after one second, not before.
-func TestStart_ReopensPreSwitchStreamAfterOneSecond(t *testing.T) {
+// A failed notification stream restarts after one second, not before.
+func TestStart_RestartsNotificationStreamAfterOneSecond(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+		delivery := newFakeDelivery()
 		peer := &flakyPeer{}
-		h := newHybrid(t, newFakeDelivery(), peer)
+		h := &HybridSynchronizer{delivery: delivery, notifPeer: peer, notifReq: &notification.StreamAllRequest{}}
+		delivery.handler = &deliveryShim{h: h}
 
 		ctx, cancel := context.WithCancel(t.Context())
 		errCh := make(chan error, 1)
@@ -166,11 +184,13 @@ func TestStart_ReopensPreSwitchStreamAfterOneSecond(t *testing.T) {
 	})
 }
 
-// Cancelling during the reopen delay ends Start without another attempt.
-func TestStart_CancelDuringStreamReopenDelay(t *testing.T) {
+// Cancelling during the restart delay ends Start without another attempt.
+func TestStart_CancelDuringStreamRestartDelay(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+		delivery := newFakeDelivery()
 		peer := &flakyPeer{}
-		h := newHybrid(t, newFakeDelivery(), peer)
+		h := &HybridSynchronizer{delivery: delivery, notifPeer: peer, notifReq: &notification.StreamAllRequest{}}
+		delivery.handler = &deliveryShim{h: h}
 
 		ctx, cancel := context.WithCancel(t.Context())
 		errCh := make(chan error, 1)
@@ -196,7 +216,7 @@ func TestDeliveryShim_PanicsIfNotificationClaimedBeforeSeed(t *testing.T) {
 	h := newHybrid(t, delivery, newFakeNotifPeer(), &recordingHandler{})
 	h.claimed.Store(3) // anything but the MinInt64 sentinel
 
-	v := panicValue(func() { _ = delivery.shim.Handle(context.Background(), blocks.Block{Number: 7}) })
+	v := panicValue(func() { _ = delivery.handler.Handle(context.Background(), blocks.Block{Number: 7}) })
 
 	require.NotNil(t, v)
 	assert.Contains(t, fmt.Sprint(v), "claimed was not MinInt64")
@@ -206,9 +226,9 @@ func TestDeliveryShim_PanicsIfNotificationClaimedBeforeSeed(t *testing.T) {
 func TestDeliveryShim_PanicsWhenHandlerChainFails(t *testing.T) {
 	delivery := newFakeDelivery()
 	h := newHybrid(t, delivery, newFakeNotifPeer(), failingHandler{errors.New("disk full")})
-	delivery.seedClaimAt(h, 5)
+	h.seedClaimAt(5)
 
-	v := panicValue(func() { _ = delivery.shim.Handle(context.Background(), blocks.Block{Number: 5}) })
+	v := panicValue(func() { _ = delivery.handler.Handle(context.Background(), blocks.Block{Number: 5}) })
 
 	require.NotNil(t, v)
 	assert.Contains(t, fmt.Sprint(v), "delivery handler chain failed on block 5")
@@ -220,13 +240,13 @@ func TestDeliveryShim_ReturnsHandlerErrorDuringShutdown(t *testing.T) {
 	delivery := newFakeDelivery()
 	boom := errors.New("context canceled mid-write")
 	h := newHybrid(t, delivery, newFakeNotifPeer(), failingHandler{boom})
-	delivery.seedClaimAt(h, 5)
+	h.seedClaimAt(5)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
 	var err error
-	v := panicValue(func() { err = delivery.shim.Handle(ctx, blocks.Block{Number: 5}) })
+	v := panicValue(func() { err = delivery.handler.Handle(ctx, blocks.Block{Number: 5}) })
 
 	assert.Nil(t, v, "no panic on shutdown")
 	require.ErrorIs(t, err, boom)
@@ -238,9 +258,8 @@ func TestDeliveryShim_ReturnsHandlerErrorDuringShutdown(t *testing.T) {
 // Shutting down while waiting for delivery ends the wait without switching.
 func TestGate_ShutdownWhileWaitingForDelivery(t *testing.T) {
 	handler := &recordingHandler{}
-	delivery := newFakeDelivery()
-	h := newHybrid(t, delivery, newFakeNotifPeer(), handler)
-	delivery.seedClaimAt(h, 5)
+	h := newHybrid(t, newFakeDelivery(), newFakeNotifPeer(), handler)
+	h.seedClaimAt(5)
 	h.dispatched.Store(3) // delivery has not yet finished block 4
 	gate, stopped := newGate(h)
 
@@ -252,18 +271,17 @@ func TestGate_ShutdownWhileWaitingForDelivery(t *testing.T) {
 
 	require.ErrorIs(t, <-errCh, context.Canceled)
 	assert.False(t, *stopped, "delivery is not stopped")
-	assert.False(t, h.switched.Load())
+	assert.False(t, gate.switched)
 	assert.Empty(t, handler.received())
 }
 
 // After the switch, a handler error during shutdown is returned, not a panic.
 func TestGate_DispatchErrorDuringShutdownIsReturned(t *testing.T) {
 	boom := errors.New("context canceled mid-write")
-	delivery := newFakeDelivery()
-	h := newHybrid(t, delivery, newFakeNotifPeer(), failingHandler{boom})
-	delivery.seedClaimAt(h, 5)
+	h := newHybrid(t, newFakeDelivery(), newFakeNotifPeer(), failingHandler{boom})
+	h.seedClaimAt(5)
 	gate, _ := newGate(h)
-	h.switched.Store(true)
+	gate.switched = true
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
