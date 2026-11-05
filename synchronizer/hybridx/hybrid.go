@@ -40,8 +40,22 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 // real b) and are silently dropped — which is correct, since notification is lossy
 // and must not win any block until delivery has proven it can receive from the peer.
 //
-// Failures are fatal by design: a block that cannot be applied leaves a hole in
-// the store that neither path will ever fill.
+// Notification reconnects: a stream that ends before the switch is safe to retry
+// in place — delivery still covers the chain, so nothing has been lost.  After the
+// switch, however, delivery is permanently stopped and notification owns the chain,
+// so blocks missed during an outage can never be recovered from the stream and
+// reconnecting would leave a permanent hole in the store.  The internal start
+// therefore gives up with ErrNotificationLost (wrapping the cause) and Start
+// restarts the whole cycle: a fresh delivery synchronizer catches up from the
+// store's height, then notification takes over again.  A clean close by the peer is
+// treated exactly like a stream error, since it leaves the same gap.
+//
+// Each cycle is self-contained: it builds its own deliveryShim and delivery
+// synchronizer, reseeds the two counters, and joins both services before returning,
+// so a block still in flight can never be dispatched into the cycle that follows.
+//
+// Processing failures are fatal by design: a block that cannot be applied leaves a
+// hole in the store that neither path will ever fill.
 //
 // HybridSynchronizer satisfies the synchronizer.Synchronizer interface
 // (Start + Ready) and plugs directly into synchronizer.New as the fabric-x
@@ -50,8 +64,10 @@ package hybridx
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -64,6 +80,35 @@ import (
 )
 
 var hybridLogger = flogging.MustGetLogger("synchronizer.hybridx")
+
+// ErrNotificationLost reports that the notification stream ended after the switch
+// from delivery to notification.  At that point delivery is permanently stopped and
+// any reconnect would leave a gap in the store, so the cycle gives up and Start
+// restarts it from scratch, letting a fresh delivery synchronizer catch up from the
+// last safe height before notification takes over again.
+//
+// It is internal to the restart loop: Start handles it and never returns it.  The
+// error it carries wraps both this sentinel and the cause, so both are reachable
+// via errors.Is.
+var ErrNotificationLost = errors.New("hybridx: notification stream lost after switch")
+
+// errStreamClosed is the cause recorded when the peer ends the stream without an
+// error of its own — a clean server-side close, which the SDK reports as a nil
+// error.  Post-switch it leaves the same gap as a failure, so it is treated the
+// same way; pre-switch it is simply retried.
+var errStreamClosed = errors.New("notification stream closed by peer")
+
+const (
+	// retryDelay is how long the notification path waits before reopening a stream
+	// that ended before the switch, while delivery still covers the chain.
+	retryDelay = time.Second
+
+	// restartDelay is how long Start waits before re-entering a cycle after
+	// ErrNotificationLost.  A cycle rebuilds the delivery synchronizer (a fresh gRPC
+	// client) and replays from the store's height, so a flapping peer must not be
+	// allowed to spin through cycles as fast as it can disconnect.
+	restartDelay = time.Second
+)
 
 // deliveryWaitPoll is how often the notification path re-reads dispatched while
 // waiting for delivery to finish the block before its own.  That wait happens
@@ -83,24 +128,44 @@ type HybridSynchronizer struct {
 	namespace  string
 	handlers   []blocks.BlockHandler
 	queueDepth int
-	onSwitch   func() // called once when notification takes over; may be nil
 
-	delivery  deliverySyncer
-	notifPeer notification.AllTxPeer
-	notifReq  *notification.StreamAllRequest
+	// onSwitch is called when notification takes over; may be nil.  onSwitchOnce
+	// keeps it to a single call for the life of the process even though a restart
+	// switches again, so callers can treat it as a one-shot.
+	onSwitch     func()
+	onSwitchOnce sync.Once
+
+	// newDelivery builds a fresh deliverySyncer around that cycle's shim, and is
+	// what makes a restart possible: the SDK's network.Synchronizer cannot be
+	// restarted after its context is cancelled (a second Start call returns
+	// errAlreadyStarted), so each cycle needs an instance of its own.
+	newDelivery func(*deliveryShim) (deliverySyncer, error)
+	notifPeer   notification.AllTxPeer
+	notifReq    *notification.StreamAllRequest
+
+	// delivery holds the current cycle's synchronizer: written at the top of each
+	// cycle, read by Ready from whichever goroutine probes readiness.  Nil until the
+	// first cycle has built one, which Ready reports as not-ready.
+	delivery atomic.Pointer[deliverySyncer]
+
+	// switched is set once notification has taken over the chain, and is the
+	// post-switch sentinel for both Ready and the stream retry loop.  It is reset at
+	// the top of each cycle, since a restart puts delivery back in charge.
+	switched atomic.Bool
 
 	// claimed is the highest block claimed by either path; both take a block by
 	// compare-and-swapping it from B-1 to B.  dispatched is the highest block
 	// delivery has finished dispatching, written by delivery only, after its whole
-	// handler chain has returned.  Both are seeded before Start launches either
+	// handler chain has returned.  Both are seeded before a cycle launches either
 	// service, so no notification batch can win a CAS against the zero value.
 	claimed    atomic.Int64
 	dispatched atomic.Int64
 }
 
-// OnSwitch registers fn to be called once, on the goroutine that performs the
-// handoff, immediately after the switch from delivery to notification.
-// Must be called before Start.
+// OnSwitch registers fn to be called on the goroutine that performs the handoff,
+// immediately after the switch from delivery to notification.  It is called at most
+// once per process even if the synchronizer restarts and switches again, so fn may
+// close a channel.  Must be called before Start.
 func (h *HybridSynchronizer) OnSwitch(fn func()) {
 	h.onSwitch = fn
 }
@@ -122,9 +187,15 @@ func New(
 		queueDepth: queueDepth,
 	}
 
-	delivery, err := nfabx.NewSynchronizer(db, channel, conf, logger, &deliveryShim{h: h})
-	if err != nil {
-		return nil, fmt.Errorf("hybridx: create delivery synchronizer: %w", err)
+	// Each cycle gets its own synchronizer and its own shim: the SDK's
+	// network.Synchronizer cannot be restarted once stopped, and a shared shim would
+	// let a cycle's last in-flight block reseed the cycle that replaced it.
+	h.newDelivery = func(shim *deliveryShim) (deliverySyncer, error) {
+		s, err := nfabx.NewSynchronizer(db, channel, conf, logger, shim)
+		if err != nil {
+			return nil, fmt.Errorf("hybridx: create delivery synchronizer: %w", err)
+		}
+		return s, nil
 	}
 
 	notifPeer, err := nfabx.NewPeer(conf, channel)
@@ -132,7 +203,6 @@ func New(
 		return nil, fmt.Errorf("hybridx: create notification peer: %w", err)
 	}
 
-	h.delivery = delivery
 	h.notifPeer = notifPeer
 	h.notifReq = &notification.StreamAllRequest{
 		FilterNamespaces:     []string{namespace},
@@ -153,15 +223,57 @@ func (h *HybridSynchronizer) dispatch(ctx context.Context, b blocks.Block) error
 	return nil
 }
 
-// Start runs the two-phase startup and then blocks until ctx is cancelled.
+// Start runs the two-phase startup in a loop, restarting automatically whenever
+// the notification stream ends after the switch from delivery to notification.
+// At that point delivery is permanently stopped and reconnecting would leave a gap
+// in the store, so the cycle gives up and the next one lets a fresh delivery
+// synchronizer catch up from the last safe height before notification takes over
+// again.
 //
-// Both services start concurrently.  A notifGate sits between the streamer and
-// the handler chain and performs the handoff described in the package doc.
+// Start returns only on clean ctx cancellation or an error it cannot recover from.
+// Processing panics inside a cycle are not recovered here — they remain fatal.
 func (h *HybridSynchronizer) Start(ctx context.Context) error {
-	// claimed and dispatched start at math.MinInt64 (set on HybridSynchronizer
-	// construction).  deliveryShim installs the real seed on its first Handle
-	// call, so notification cannot win any CAS until delivery has proven it can
-	// receive from the peer.
+	for {
+		err := h.start(ctx)
+		if !errors.Is(err, ErrNotificationLost) {
+			return err
+		}
+		hybridLogger.Warnf("%v — restarting via delivery in %s", err, restartDelay)
+		// Back off before rebuilding: a cycle costs a new gRPC client and a replay
+		// from the store's height, so a flapping peer must not spin through them.
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(restartDelay):
+		}
+	}
+}
+
+// start runs one cycle of the two-phase startup and blocks until ctx is cancelled
+// or the notification stream is lost after the switch (ErrNotificationLost).  Both
+// services are joined before it returns, so nothing from this cycle can still be
+// dispatching when the next one begins.  Start calls this in a loop.
+func (h *HybridSynchronizer) start(ctx context.Context) error {
+	// switched means "notification owns the chain and is live", so it belongs to the
+	// cycle: it is false while delivery is in charge, and false again once the cycle
+	// ends (see the deferred clear below), since by then notification is gone and the
+	// delivery synchronizer is stopped.
+	h.switched.Store(false)
+	defer h.switched.Store(false)
+
+	// A shim per cycle, and a delivery synchronizer around it: the SDK's
+	// network.Synchronizer cannot be restarted once stopped, and a shim carried over
+	// from the previous cycle could still be holding its off/seeded state.
+	delivery, err := h.newDelivery(&deliveryShim{h: h})
+	if err != nil {
+		return err
+	}
+	h.delivery.Store(&delivery)
+
+	// claimed and dispatched go back to math.MinInt64 so this cycle's shim installs
+	// the real seed on its first Handle call — delivery cannot win a CAS until it has
+	// proven it can receive from the peer, and the seed it installs comes from the
+	// store's height rather than from the cycle before.
 	h.claimed.Store(math.MinInt64)
 	h.dispatched.Store(math.MinInt64)
 
@@ -181,49 +293,90 @@ func (h *HybridSynchronizer) Start(ctx context.Context) error {
 
 	notifErrCh := make(chan error, 1)
 	go func() {
-		const retryDelay = time.Second
 		for {
 			if ctx.Err() != nil {
 				notifErrCh <- nil
 				return
 			}
-			if err := streamer.Stream(ctx, h.notifReq); err != nil && ctx.Err() == nil {
-				hybridLogger.Warnf("hybridx: notification stream error: %v — restarting in %s", err, retryDelay)
-				select {
-				case <-ctx.Done():
-					notifErrCh <- nil
-					return
-				case <-time.After(retryDelay):
-				}
+
+			// Stream returns a handler error, a stream error, or nil when the peer
+			// closed the stream cleanly.  Handler errors panic inside
+			// AllTxBatchDispatcher before they can reach here, so in practice this is
+			// either a stream error or a clean close — and post-switch both leave the
+			// same gap, so the nil case gets a cause of its own rather than being
+			// mistaken for "keep going".
+			streamErr := streamer.Stream(ctx, h.notifReq)
+			if ctx.Err() != nil {
+				notifErrCh <- nil
+				return
+			}
+			if streamErr == nil {
+				streamErr = errStreamClosed
+			}
+
+			// Post-switch the chain is notification's alone: blocks missed while the
+			// stream is down can never be recovered from it, so give up and let Start
+			// rebuild the cycle with delivery back in place.
+			if h.switched.Load() {
+				notifErrCh <- fmt.Errorf("%w: %w", ErrNotificationLost, streamErr)
+				return
+			}
+
+			// Pre-switch delivery still covers the chain, so a gap here costs nothing
+			// and the stream can simply be reopened.
+			hybridLogger.Warnf("notification stream ended pre-switch: %v — reopening in %s", streamErr, retryDelay)
+			select {
+			case <-ctx.Done():
+				notifErrCh <- nil
+				return
+			case <-time.After(retryDelay):
 			}
 		}
 	}()
 
 	// ── Delivery service ────────────────────────────────────────────────────
+	deliveryDone := make(chan struct{})
 	go func() {
-		defer func() {
-			h.delivery = nil // allow GC of the peer and all delivery resources
-		}()
-		if err := h.delivery.Start(deliveryCtx); err != nil && deliveryCtx.Err() == nil {
-			hybridLogger.Warnf("hybridx: delivery error: %v", err)
+		defer close(deliveryDone)
+		if err := delivery.Start(deliveryCtx); err != nil && deliveryCtx.Err() == nil {
+			hybridLogger.Warnf("delivery error: %v", err)
 		}
 	}()
 
-	<-ctx.Done()
-	return <-notifErrCh
+	// Wait for either graceful shutdown or the loss of notification post-switch.
+	var cycleErr error
+	select {
+	case <-ctx.Done():
+		cycleErr = <-notifErrCh
+	case cycleErr = <-notifErrCh:
+	}
+
+	// Join delivery before returning.  Its context is cancelled either by the switch
+	// or by the deferred cancel above, but a block can still be in flight inside the
+	// handler chain; letting the next cycle start underneath it would dispatch that
+	// block against a freshly reseeded claim counter.
+	deliveryCancel()
+	<-deliveryDone
+	return cycleErr
 }
 
-// Ready proxies to the delivery synchronizer until the switch; afterwards
-// returns nil since the notification stream is always considered ready.
+// Ready proxies to the delivery synchronizer until the switch; afterwards it
+// returns nil, since the notification stream is always considered ready and the
+// delivery synchronizer it would otherwise consult has been stopped for good.
 //
-// Note: h.delivery is set to nil from the delivery goroutine in Start; since
-// there is no mutex on this field the read here may race in theory, but the
-// only consequence is an extra call to delivery.Ready() which is benign.
+// The gate sets switched as part of the handoff, so the answer flips the moment
+// notification takes over rather than waiting for delivery to notice.  A probe that
+// arrives before the first cycle has built a delivery synchronizer — Start runs on
+// its own goroutine, so callers can get here first — is simply not ready yet.
 func (h *HybridSynchronizer) Ready() error {
-	if h.delivery == nil {
+	if h.switched.Load() {
 		return nil
 	}
-	return h.delivery.Ready()
+	d := h.delivery.Load()
+	if d == nil {
+		return errors.New("hybridx: delivery synchronizer not started")
+	}
+	return (*d).Ready()
 }
 
 // deliveryShim is a blocks.BlockHandler registered with the delivery synchronizer.
@@ -232,8 +385,10 @@ func (h *HybridSynchronizer) Ready() error {
 // that the live handler chain (including any handlers added or removed via
 // AddHandler/RemoveHandler) is always used.
 //
-// off and seeded need no synchronisation: the delivery synchronizer calls
-// Handle sequentially from a single goroutine.
+// One shim serves one cycle, alongside the delivery synchronizer it was built for.
+// off and seeded need no synchronisation: that synchronizer calls Handle
+// sequentially from a single goroutine, and start joins it before the next cycle
+// builds its own shim.
 type deliveryShim struct {
 	h      *HybridSynchronizer
 	off    bool
@@ -261,14 +416,14 @@ func (s *deliveryShim) Handle(ctx context.Context, b blocks.Block) error {
 					"notification must not win before delivery is seeded", b.Number))
 		}
 		s.h.dispatched.Store(n - 1)
-		hybridLogger.Infof("hybridx: delivery seeded at block %d (claimed=%d)", b.Number, n-1)
+		hybridLogger.Infof("delivery seeded at block %d (claimed=%d)", b.Number, n-1)
 	}
 
 	if !s.h.claimed.CompareAndSwap(n-1, n) {
 		// Notification claimed this block first.  Delivery is done for good: it can
 		// only ever offer blocks notification already owns.
 		s.off = true
-		hybridLogger.Infof("hybridx: notification claimed block %d first; delivery disabled", b.Number)
+		hybridLogger.Infof("notification claimed block %d first; delivery disabled", b.Number)
 		return nil
 	}
 
@@ -294,18 +449,20 @@ func (s *deliveryShim) Handle(ctx context.Context, b blocks.Block) error {
 }
 
 // notifGate is a notification.AllTxHandler that gates the handler chain,
-// performing the notification half of the protocol in the package doc.
+// performing the notification half of the protocol in the package doc.  One gate
+// serves one cycle: on a restart the next cycle builds its own.
 //
-// switched needs no synchronisation.  AllTxStreamer runs HandleBatch sequentially on
+// The handoff is recorded on the hybrid rather than the gate, as hybrid.switched:
+// Ready and the stream retry loop both consult it from other goroutines, and it has
+// to survive the gate it was set on.  AllTxStreamer runs HandleBatch sequentially on
 // one handler goroutine per Stream call — not on the stream's receive loop, so the
 // waits and dispatches below cost the network path nothing — and Stream does not
-// return until that goroutine has exited.  The retry loop in Start therefore orders
-// each Stream call's first HandleBatch after the previous call's last one.
+// return until that goroutine has exited, so each Stream call's first HandleBatch
+// is ordered after the previous call's last one.
 type notifGate struct {
 	hybrid       *HybridSynchronizer
 	dispatcher   *AllTxBatchDispatcher
 	stopDelivery func()
-	switched     bool
 }
 
 // hybridAdapter adapts HybridSynchronizer.dispatch to BlockHandler.
@@ -316,7 +473,7 @@ func (a *hybridAdapter) Handle(ctx context.Context, b blocks.Block) error {
 }
 
 func (g *notifGate) HandleBatch(ctx context.Context, batch notification.AllTxBatch) error {
-	if g.switched {
+	if g.hybrid.switched.Load() {
 		return g.dispatchBatch(ctx, batch)
 	}
 
@@ -338,10 +495,12 @@ func (g *notifGate) HandleBatch(ctx context.Context, batch notification.AllTxBat
 	// Delivery is now idle between blocks and cannot claim n, so cancelling it
 	// here cannot abort a dispatch mid-flight.
 	g.stopDelivery()
-	g.switched = true
-	hybridLogger.Infof("hybridx: switching to notification at block %d", batch.BlockNumber)
+	g.hybrid.switched.Store(true)
+	hybridLogger.Infof("switching to notification at block %d", batch.BlockNumber)
+	// Once per process, not once per cycle: a restart switches again, and callers
+	// treat this as a one-shot (the integration harness closes a channel in it).
 	if fn := g.hybrid.onSwitch; fn != nil {
-		fn()
+		g.hybrid.onSwitchOnce.Do(fn)
 	}
 	return g.dispatchBatch(ctx, batch)
 }
@@ -353,7 +512,7 @@ func (g *notifGate) waitForDelivery(ctx context.Context, upTo int64) error {
 	if g.deliveryReached(upTo) {
 		return nil
 	}
-	hybridLogger.Infof("hybridx: waiting for delivery to finish block %d before taking over", upTo)
+	hybridLogger.Infof("waiting for delivery to finish block %d before taking over", upTo)
 
 	ticker := time.NewTicker(deliveryWaitPoll)
 	defer ticker.Stop()
