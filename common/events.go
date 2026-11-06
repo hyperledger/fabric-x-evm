@@ -7,11 +7,8 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package common
 
 import (
-	"encoding/json"
-
 	"github.com/hyperledger/fabric-x-evm/api/endorsementpb"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
-	"github.com/hyperledger/fabric-x-sdk/state"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -53,17 +50,21 @@ func ExecutionOutcome(tx blocks.Transaction) (succeeded bool, gasUsed uint64) {
 	return md.GetStatus() == endorsementpb.ExecutionStatus_EXECUTION_STATUS_SUCCESS, md.GetGasUsed()
 }
 
+// MarshalLogs encodes a transaction's logs for its Event. Encoding is
+// deterministic so every endorser produces the same bytes.
+func MarshalLogs(logs []*endorsementpb.Log) ([]byte, error) {
+	return proto.MarshalOptions{Deterministic: true}.Marshal(&endorsementpb.Logs{Logs: logs})
+}
+
 // UnmarshalLogs converts a transaction's event payload back to a list of logs.
 // Only a successful transaction carries logs.
-func UnmarshalLogs(event []byte) ([]state.Log, error) {
-	if len(event) == 0 {
-		return []state.Log{}, nil
-	}
-
-	var logs []state.Log
-	if err := json.Unmarshal(event, &logs); err != nil {
+func UnmarshalLogs(event []byte) ([]*endorsementpb.Log, error) {
+	logs := &endorsementpb.Logs{}
+	if err := proto.Unmarshal(event, logs); err != nil {
 		return nil, err
 	}
-
-	return logs, nil
+	if logs.Logs == nil {
+		return []*endorsementpb.Log{}, nil
+	}
+	return logs.Logs, nil
 }

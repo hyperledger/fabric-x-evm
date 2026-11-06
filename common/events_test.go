@@ -8,20 +8,17 @@ package common
 
 import (
 	"bytes"
-	"encoding/json"
 	"testing"
 
 	"github.com/hyperledger/fabric-x-evm/api/endorsementpb"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
-	"github.com/hyperledger/fabric-x-sdk/state"
 	"google.golang.org/protobuf/proto"
 )
 
 func TestUnmarshalEvents(t *testing.T) {
 	tests := []struct {
-		name    string
-		logs    []state.Log
-		wantErr bool
+		name string
+		logs []*endorsementpb.Log
 	}{
 		{
 			name: "empty input",
@@ -29,7 +26,7 @@ func TestUnmarshalEvents(t *testing.T) {
 		},
 		{
 			name: "single log",
-			logs: []state.Log{
+			logs: []*endorsementpb.Log{
 				{
 					Address: []byte{0x01, 0x02, 0x03},
 					Topics:  [][]byte{{0x0a, 0x0b}, {0x0c, 0x0d}},
@@ -39,7 +36,7 @@ func TestUnmarshalEvents(t *testing.T) {
 		},
 		{
 			name: "multiple logs",
-			logs: []state.Log{
+			logs: []*endorsementpb.Log{
 				{
 					Address: []byte{0x01},
 					Topics:  [][]byte{{0x0a}},
@@ -54,7 +51,7 @@ func TestUnmarshalEvents(t *testing.T) {
 		},
 		{
 			name: "log with empty fields",
-			logs: []state.Log{
+			logs: []*endorsementpb.Log{
 				{
 					Address: []byte{},
 					Topics:  [][]byte{},
@@ -62,25 +59,27 @@ func TestUnmarshalEvents(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "empty topic keeps its position",
+			logs: []*endorsementpb.Log{
+				{
+					Address: []byte{0x01},
+					Topics:  [][]byte{{0x0a}, {}, {0x0c}},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// The endorser emits the JSON logs as the event bytes; the SDK
-			// carries them through to the block unchanged.
-			event, _ := json.Marshal(tt.logs)
-
-			got, err := UnmarshalLogs(event)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("UnmarshalEvents() error = %v, wantErr %v", err, tt.wantErr)
+			event, err := MarshalLogs(tt.logs)
+			if err != nil {
+				t.Fatal(err)
 			}
 
-			// For nil/empty input, expect empty slice
-			if tt.logs == nil {
-				if len(got) != 0 {
-					t.Errorf("expected empty slice, got %v", got)
-				}
-				return
+			got, err := UnmarshalLogs(event)
+			if err != nil {
+				t.Fatalf("UnmarshalLogs() error = %v", err)
 			}
 
 			if len(got) != len(tt.logs) {
@@ -92,7 +91,7 @@ func TestUnmarshalEvents(t *testing.T) {
 					t.Errorf("log[%d].Address = %v, want %v", i, got[i].Address, tt.logs[i].Address)
 				}
 				if len(got[i].Topics) != len(tt.logs[i].Topics) {
-					t.Errorf("log[%d].Topics length = %d, want %d", i, len(got[i].Topics), len(tt.logs[i].Topics))
+					t.Fatalf("log[%d].Topics length = %d, want %d", i, len(got[i].Topics), len(tt.logs[i].Topics))
 				}
 				for j := range tt.logs[i].Topics {
 					if !bytes.Equal(got[i].Topics[j], tt.logs[i].Topics[j]) {
@@ -108,17 +107,26 @@ func TestUnmarshalEvents(t *testing.T) {
 }
 
 func TestUnmarshalEvents_InvalidInput(t *testing.T) {
+	valid, err := MarshalLogs([]*endorsementpb.Log{{Address: []byte{0x01}, Data: []byte{0x02, 0x03}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	tests := []struct {
 		name  string
 		input []byte
 	}{
 		{
-			name:  "not json",
+			name:  "not protobuf",
 			input: []byte{0xff, 0xff, 0xff},
 		},
 		{
-			name:  "truncated json",
-			input: []byte(`[{"Address":`),
+			name:  "truncated",
+			input: valid[:len(valid)-1],
+		},
+		{
+			name:  "json logs from before the protobuf encoding",
+			input: []byte(`[{"Address":"AQ==","Topics":null,"Data":"AgM="}]`),
 		},
 	}
 
@@ -132,7 +140,7 @@ func TestUnmarshalEvents_InvalidInput(t *testing.T) {
 	}
 }
 
-// ---- UnmarshalLogs: empty and empty-payload branches ----
+// ---- UnmarshalLogs: empty event ----
 
 func TestUnmarshalLogs_EmptyInputReturnsEmptySlice(t *testing.T) {
 	got, err := UnmarshalLogs(nil)
@@ -144,13 +152,13 @@ func TestUnmarshalLogs_EmptyInputReturnsEmptySlice(t *testing.T) {
 	}
 }
 
-func TestUnmarshalLogs_EmptyJSONArrayReturnsEmptySlice(t *testing.T) {
-	got, err := UnmarshalLogs([]byte("[]"))
+func TestMarshalLogs_NoLogsIsEmptyEvent(t *testing.T) {
+	event, err := MarshalLogs(nil)
 	if err != nil {
-		t.Fatalf("err: %v", err)
+		t.Fatal(err)
 	}
-	if got == nil || len(got) != 0 {
-		t.Errorf("want empty slice, got %v", got)
+	if len(event) != 0 {
+		t.Errorf("event = %x, want empty", event)
 	}
 }
 

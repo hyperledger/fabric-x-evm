@@ -19,7 +19,6 @@ import (
 	"github.com/hyperledger/fabric-x-evm/api/endorsementpb"
 	co "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
-	sdkstate "github.com/hyperledger/fabric-x-sdk/state"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -125,7 +124,7 @@ func TestConvertToDomain_InvalidTxDropsLogs(t *testing.T) {
 	to := common.HexToAddress("0x1111111111111111111111111111111111111111")
 	ethb := marshaledEthTx(t, key, to, big.NewInt(100))
 
-	events := resilienceEvents(t, "tx-bad", []sdkstate.Log{{
+	events := resilienceEvents(t, "tx-bad", []*endorsementpb.Log{{
 		Address: to.Bytes(),
 		Topics:  [][]byte{resilienceHash(0xAA)},
 		Data:    []byte{0x01},
