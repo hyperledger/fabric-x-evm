@@ -69,9 +69,15 @@ func New(protocol string, db network.BlockHeightReader, channel, namespace strin
 // Empty blocks from the committer Delivery service are pushed through the handlers.
 // Used by the self contained testnode so hardhat_mine CutBlock empty blocks are seen.
 //
-// Temporary for testnode: switch back to hybridx once it incorporates fabric-x-common
-// 0.2.9 and later (empty block notifications). Until then AllTxBatch drops empty blocks
-// after catch up, so eth_blockNumber never advances on CutBlock.
+// Still needed for the testnode, though no longer because of hybridx: the notification
+// path now forwards empty blocks (see hybridx.AllTxBatchDispatcher.HandleBatch). The
+// remaining gap is in the in-process network behind the testnode — fabrictest's
+// StreamBlocks drops a block whose events all filter out instead of sending a
+// header-only BlockEvent, so a CutBlock block never reaches the stream at all and
+// eth_blockNumber would not advance. The real committer's sidecar sends every block
+// unconditionally, so production is unaffected.
+//
+// TODO: switch the testnode to hybridx once fabrictest streams empty blocks.
 func NewDelivery(protocol string, db network.BlockHeightReader, channel, namespace string, committer network.PeerConf, signer sdk.Signer, logger sdk.Logger, handlers ...blocks.BlockHandler) (Synchronizer, error) {
 	protocol, err := common.NormalizeProtocol(protocol)
 	if err != nil {
