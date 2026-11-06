@@ -38,6 +38,14 @@ type BlockHandler interface {
 //  2. Assembles a blocks.Block from the remaining events.
 //  3. Dispatches the block to all registered BlockHandler.
 //
+// Every block is dispatched, including one left with no transactions at all — a block
+// that carried none for this namespace, or none that were EVM proposals. The handler
+// chain is entitled to a contiguous sequence: the delivery path forwards empty blocks
+// for exactly that reason (see synchronizer.nsFilter), the persistent stores take
+// ledger height from what they are handed (see storage.PebbleKVS.Handle), and a hole
+// in the sequence is indistinguishable downstream from a block that went missing.
+// An empty block is unambiguous; a gap is not.
+//
 // Decoding the wire format is the SDK's job, not ours: each CommittedTxEvent embeds a
 // blocks.Transaction that the network boundary has already populated with the same
 // DecodeMetadata/DecodeNamespaces pair the block parser uses on the delivery path. A
@@ -56,6 +64,23 @@ func NewAllTxBatchDispatcher(handlers ...BlockHandler) *AllTxBatchDispatcher {
 // HandleBatch implements notification.AllTxHandler.
 func (d *AllTxBatchDispatcher) HandleBatch(ctx context.Context, batch notification.AllTxBatch) error {
 	notifLogger.Debugf("[BLOCK] block=%d total_events=%d", batch.BlockNumber, len(batch.Events))
+
+	// The SDK derives Hash from the block header and leaves it empty when the
+	// committer sent no header, or one too partial to hash (see
+	// fabricx.convertBlockEvent).  Such a batch cannot be placed in the chain at all:
+	// its BlockNumber is 0 rather than unknown, so dispatching it would apply a
+	// counterfeit block 0 over real state, and dropping it would leave the hole this
+	// dispatcher exists to avoid.  Neither is recoverable, and a header is not
+	// optional in any committer we support, so this is a broken peer or a broken
+	// decode rather than a block we are entitled to interpret.
+	//
+	// ParentHash is deliberately not checked: genesis legitimately has none.
+	if len(batch.Hash) == 0 {
+		panic(fmt.Errorf(
+			"hybridx: notification batch reported as block %d carries no block hash — "+
+				"the committer sent no usable block header, so the block cannot be identified",
+			batch.BlockNumber))
+	}
 
 	txs := make([]blocks.Transaction, 0, len(batch.Events))
 	// ethHashes collects the Ethereum tx hashes for every EVM event in this
@@ -98,10 +123,6 @@ func (d *AllTxBatchDispatcher) HandleBatch(ctx context.Context, batch notificati
 		}
 
 		txs = append(txs, event.Transaction)
-	}
-
-	if len(txs) == 0 {
-		return nil
 	}
 
 	notifLogger.Debugf("[NOTIFY] block=%d dispatching=%d/%d txs", batch.BlockNumber, len(txs), len(batch.Events))

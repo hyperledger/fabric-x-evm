@@ -9,6 +9,7 @@ package hybridx
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -219,9 +220,13 @@ func (f *fakeNotifPeer) StreamAllTransactions(ctx context.Context, _ *notificati
 	}
 }
 
+// push sends a batch whose single event is not an EVM transaction, so the block
+// reaches the handler chain with no transactions in it.
 func (f *fakeNotifPeer) push(blockNum uint64, txID string) {
 	f.batches <- notification.AllTxBatch{
 		BlockNumber: blockNum,
+		Hash:        blockHash(blockNum),
+		ParentHash:  blockHash(blockNum - 1),
 		Events: []notification.CommittedTxEvent{
 			{
 				ID: txID, Status: blocks.StatusCommitted,
@@ -307,14 +312,17 @@ func newGate(h *HybridSynchronizer) (*notifGate, *bool) {
 	}, stopped
 }
 
-// evmBatch builds a batch the AllTxBatchDispatcher will actually forward: it drops
-// batches whose events carry no EVM proposal args. The SDK decodes the metadata
-// at the network boundary, so events arrive with InputArgs already populated and there
-// is no wire-format metadata to marshal here.
+// evmBatch builds a batch carrying one EVM transaction, as the SDK delivers it: the
+// metadata is decoded at the network boundary, so events arrive with InputArgs
+// already populated and there is no wire-format metadata to marshal here. The hash
+// stands in for the committer's own — the dispatcher requires one, since a batch
+// without it names no identifiable block.
 func evmBatch(t *testing.T, blockNum uint64) notification.AllTxBatch {
 	t.Helper()
 	return notification.AllTxBatch{
 		BlockNumber: blockNum,
+		Hash:        blockHash(blockNum),
+		ParentHash:  blockHash(blockNum - 1),
 		Events: []notification.CommittedTxEvent{{
 			ID:        "evm-tx",
 			Status:    blocks.StatusCommitted,
@@ -323,6 +331,22 @@ func evmBatch(t *testing.T, blockNum uint64) notification.AllTxBatch {
 			BlockNum:  blockNum,
 		}},
 	}
+}
+
+// emptyBatch builds a batch for a block that carried nothing for us — no EVM
+// transactions in this namespace. The dispatcher forwards it as an empty block
+// rather than dropping it, so the handler chain sees no gap.
+func emptyBatch(blockNum uint64) notification.AllTxBatch {
+	return notification.AllTxBatch{
+		BlockNumber: blockNum,
+		Hash:        blockHash(blockNum),
+		ParentHash:  blockHash(blockNum - 1),
+	}
+}
+
+// blockHash is a stand-in for the committer's block hash, distinct per block number.
+func blockHash(blockNum uint64) []byte {
+	return []byte(fmt.Sprintf("hash-%d", blockNum))
 }
 
 // blockingHandler signals when Handle is entered and stays there until release is
@@ -487,11 +511,21 @@ func TestGate_SwitchesAndForwardsWhenCaughtUp(t *testing.T) {
 		assert.Equal(t, []uint64{5, 6}, blockNumbers(recorder.received()),
 			"delivery's seed block and the switching batch must both be dispatched")
 
-		// Subsequent batches keep flowing without consulting the claim counter, so a
-		// gap in batch numbers (blocks with no EVM txs) does not stall the stream.
+		// Subsequent batches keep flowing without consulting the claim counter, and
+		// every block is dispatched whether or not it carried anything for us: blocks
+		// 7 and 8 hold no EVM transactions, so they arrive empty rather than not at
+		// all, and the handler chain sees an unbroken sequence.
+		peer.batches <- emptyBatch(7)
+		peer.batches <- emptyBatch(8)
 		peer.batches <- evmBatch(t, 9)
 		synctest.Wait()
-		assert.Equal(t, []uint64{5, 6, 9}, blockNumbers(recorder.received()))
+
+		got := recorder.received()
+		assert.Equal(t, []uint64{5, 6, 7, 8, 9}, blockNumbers(got),
+			"post-switch dispatch must have no gaps")
+		assert.Empty(t, got[2].Transactions, "block 7 carried nothing for us")
+		assert.Empty(t, got[3].Transactions, "block 8 carried nothing for us")
+		assert.Len(t, got[4].Transactions, 1, "block 9 carried an EVM transaction")
 	})
 }
 
