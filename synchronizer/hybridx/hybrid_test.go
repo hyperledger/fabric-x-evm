@@ -1129,6 +1129,93 @@ func TestStart_RestartOnNotificationLost(t *testing.T) {
 	})
 }
 
+// TestSwitched_NamesTheDispatchingPath verifies the guarantee Switched offers to a
+// block handler: read from inside Handle it names the path that is dispatching that
+// block, not just the phase the synchronizer happens to be in.
+//
+// The integration test for restart-after-notification-loss rests entirely on this.
+// Both paths are required to produce identical blocks, so nothing about a block
+// reveals how it arrived, and that test's central assertion — that the block missed
+// during an outage came back via delivery replay — has no other way to be made.
+//
+// The sequence is the restart sequence: delivery, switch, loss, delivery again,
+// switch again.  Each block records what Switched said while it was being
+// dispatched, and the result must match which path actually sent it.
+func TestSwitched_NamesTheDispatchingPath(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		factory := newDeliveryFactory()
+		cycle1Peer, cycle2Peer := newFakeNotifPeer(), newFakeNotifPeer()
+
+		var h *HybridSynchronizer
+		// Sampled inside the handler chain, which is the only place the answer is
+		// meaningful, and the way the integration test reads it.
+		observed := map[uint64]bool{}
+		observer := &funcHandler{fn: func(b blocks.Block) {
+			observed[b.Number] = h.Switched()
+		}}
+		h = newRestartHybrid(
+			&sequentialNotifPeer{peers: []notification.AllTxPeer{cycle1Peer, cycle2Peer}},
+			factory, observer)
+
+		require.False(t, h.Switched(), "delivery owns the chain before anything has started")
+
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		go func() { _ = h.Start(ctx) }()
+
+		// Cycle 1: delivery dispatches 5 and 6, notification takes over at 7 and also
+		// dispatches 8.
+		synctest.Wait()
+		c1 := factory.nextCycle(t)
+		c1.deliver(t, 5)
+		c1.deliver(t, 6)
+		synctest.Wait()
+		cycle1Peer.pushEVM(t, 7)
+		synctest.Wait()
+		<-c1.stopped
+		cycle1Peer.pushEVM(t, 8)
+		synctest.Wait()
+		require.True(t, h.Switched(), "notification owns the chain after the switch")
+
+		// The stream drops.  Between cycles nothing owns the chain, and reporting
+		// otherwise would mean a block replayed by the next delivery looked like a
+		// notification block.
+		cycle1Peer.disconnect()
+		synctest.Wait()
+		require.False(t, h.Switched(), "delivery is back in charge once the cycle ends")
+
+		// Cycle 2: delivery replays 9 — the block the restart exists to recover — then
+		// notification takes over again at 10.
+		time.Sleep(restartDelay)
+		synctest.Wait()
+		c2 := factory.nextCycle(t)
+		c2.deliver(t, 9)
+		synctest.Wait()
+		cycle2Peer.pushEVM(t, 10)
+		synctest.Wait()
+		<-c2.stopped
+		synctest.Wait()
+
+		// false = delivery, true = notification.
+		require.Equal(t, map[uint64]bool{
+			5: false, 6: false, // cycle 1 delivery
+			7: true, 8: true, // cycle 1 notification
+			9:  false, // cycle 2 delivery replay — the case the integration test asserts
+			10: true,  // cycle 2 notification
+		}, observed, "Switched must name the path that dispatched each block")
+	})
+}
+
+// funcHandler is a blocks.BlockHandler that calls fn for each block.  Unlike
+// recordingHandler it observes synchronizer state at dispatch time rather than
+// only the block itself.
+type funcHandler struct{ fn func(blocks.Block) }
+
+func (h *funcHandler) Handle(_ context.Context, b blocks.Block) error {
+	h.fn(b)
+	return nil
+}
+
 // TestStart_JoinsDeliveryBeforeRestart verifies that a cycle does not return while
 // its delivery synchronizer is still inside the handler chain.  Delivery is
 // cancelled by the switch, but its last ProcessBlock can still be running — the SDK

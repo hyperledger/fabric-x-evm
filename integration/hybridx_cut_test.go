@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/hyperledger/fabric-x-common/api/committerpb"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
@@ -24,6 +25,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
+	"github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/integration/tcpcut"
 )
 
@@ -189,4 +191,138 @@ func TestBlockSequenceChecker(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestBlockSequenceChecker_RecordsPath covers the per-block path recording that
+// testHybridRestartAfterNotificationLoss uses to assert the during-outage block was
+// replayed by delivery.  That assertion is the one thing tying the test to the
+// restart machinery, so the mechanism behind it should not be taken on trust: a
+// pathFor that reported pathDelivery regardless would make the test unfalsifiable.
+func TestBlockSequenceChecker_RecordsPath(t *testing.T) {
+	c := &blockSequenceChecker{}
+
+	// Before watchPaths the path is unknown rather than guessed — the checker is
+	// registered as a handler before a synchronizer exists to ask.
+	if err := c.Handle(t.Context(), blocks.Block{Number: 5}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if got, seen := c.pathFor(5); !seen || got != pathUnknown {
+		t.Errorf("block 5 recorded as (%q, seen=%v), want (%q, true)", got, seen, pathUnknown)
+	}
+
+	// Then the path follows whatever the source reports at the time of the call, so
+	// each block carries the path that dispatched it rather than the latest one.
+	path := pathDelivery
+	c.watchPaths(func() blockPath { return path })
+
+	if err := c.Handle(t.Context(), blocks.Block{Number: 6}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	path = pathNotification
+	if err := c.Handle(t.Context(), blocks.Block{Number: 7}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	for _, want := range []struct {
+		block uint64
+		path  blockPath
+	}{{6, pathDelivery}, {7, pathNotification}} {
+		if got, seen := c.pathFor(want.block); !seen || got != want.path {
+			t.Errorf("block %d recorded as (%q, seen=%v), want (%q, true)", want.block, got, seen, want.path)
+		}
+	}
+
+	// A block that was never dispatched must report as unseen, not as some default
+	// path: the test treats "never applied" as a distinct failure.
+	if got, seen := c.pathFor(99); seen {
+		t.Errorf("block 99 was never dispatched but pathFor reported (%q, seen=true)", got)
+	}
+}
+
+// TestTxWatcher covers the watcher testHybridRestartAfterNotificationLoss uses to
+// decide when the outage has lasted long enough.  It gates the whole point of that
+// test: signalling early would release the hold before the chain had moved on,
+// leaving no gap to replay and quietly removing the test's reason to exist.
+func TestTxWatcher(t *testing.T) {
+	// A committed EVM event for tx, in the shape the SDK hands to a handler: the
+	// network boundary has already decoded the metadata, so InputArgs carries the raw
+	// Ethereum transaction.
+	event := func(tx *types.Transaction, status blocks.Status) notification.CommittedTxEvent {
+		t.Helper()
+		raw, err := tx.MarshalBinary()
+		if err != nil {
+			t.Fatalf("marshal tx: %v", err)
+		}
+		return notification.CommittedTxEvent{
+			EventName: common.ProposalTypeEVMTx,
+			InputArgs: [][]byte{raw},
+			Status:    status}
+	}
+
+	want := types.NewTx(&types.LegacyTx{Nonce: 1, Gas: 21000})
+	other := types.NewTx(&types.LegacyTx{Nonce: 2, Gas: 21000})
+
+	t.Run("signals on the watched transaction committing", func(t *testing.T) {
+		w := &txWatcher{want: want.Hash(), committed: make(chan struct{})}
+
+		// Another transaction, and a non-EVM event, must not signal: releasing the
+		// outage on someone else's traffic is exactly the failure mode here.
+		if err := w.HandleBatch(t.Context(), notification.AllTxBatch{Events: []notification.CommittedTxEvent{
+			event(other, blocks.StatusCommitted),
+			{EventName: "not-an-evm-tx"},
+		}}); err != nil {
+			t.Fatalf("HandleBatch: %v", err)
+		}
+		select {
+		case <-w.committed:
+			t.Fatal("signalled on a block that did not carry the watched transaction")
+		default:
+		}
+
+		if err := w.HandleBatch(t.Context(), notification.AllTxBatch{
+			Events: []notification.CommittedTxEvent{event(want, blocks.StatusCommitted)},
+		}); err != nil {
+			t.Fatalf("HandleBatch: %v", err)
+		}
+		select {
+		case <-w.committed:
+		default:
+			t.Error("did not signal when the watched transaction committed")
+		}
+
+		// A repeat must not re-close the channel.
+		if err := w.HandleBatch(t.Context(), notification.AllTxBatch{
+			Events: []notification.CommittedTxEvent{event(want, blocks.StatusCommitted)},
+		}); err != nil {
+			t.Fatalf("HandleBatch on a repeated event: %v", err)
+		}
+	})
+
+	t.Run("does not signal on a rejected transaction", func(t *testing.T) {
+		// A rejection leaves the chain where it was, so there would be no gap to
+		// replay.  The watcher records it for the error message but must not release
+		// the hold.
+		w := &txWatcher{want: want.Hash(), committed: make(chan struct{})}
+		if err := w.HandleBatch(t.Context(), notification.AllTxBatch{
+			Events: []notification.CommittedTxEvent{event(want, blocks.StatusMVCCConflict)},
+		}); err != nil {
+			t.Fatalf("HandleBatch: %v", err)
+		}
+
+		select {
+		case <-w.committed:
+			t.Error("signalled on a rejected transaction; the chain never moved on, so there is no gap to replay")
+		default:
+		}
+		if status, seen := w.outcome(); !seen || status != blocks.StatusMVCCConflict {
+			t.Errorf("outcome() = (%v, %v), want (%v, true)", status, seen, blocks.StatusMVCCConflict)
+		}
+	})
+
+	t.Run("reports nothing seen before any event", func(t *testing.T) {
+		w := &txWatcher{want: want.Hash(), committed: make(chan struct{})}
+		if status, seen := w.outcome(); seen {
+			t.Errorf("outcome() = (%v, true) before any event, want seen=false", status)
+		}
+	})
 }

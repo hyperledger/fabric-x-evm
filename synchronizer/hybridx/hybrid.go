@@ -170,6 +170,23 @@ func (h *HybridSynchronizer) OnSwitch(fn func()) {
 	h.onSwitch = fn
 }
 
+// Switched reports whether notification currently owns the chain.  It is false
+// while delivery is in charge — before the first switch, and again from the moment a
+// cycle ends until the next one switches.
+//
+// Read from inside a block handler it names the path that is dispatching that block:
+// the flag is set before notification dispatches anything, and the claim protocol
+// means the two paths never dispatch at the same time.  That makes it the signal for
+// a test that has to distinguish "delivery replayed this block" from "notification
+// received it live" — a distinction no observable side effect of a block carries,
+// since both paths are required to produce identical blocks.
+//
+// Elsewhere it is a sample of a value that moves on its own, so it answers "who owns
+// the chain right now", not "who will own it when you act on this".
+func (h *HybridSynchronizer) Switched() bool {
+	return h.switched.Load()
+}
+
 // New constructs a HybridSynchronizer.
 // queueDepth controls the AllTxStreamer's internal channel depth; pass 0 for the default.
 // handlers is the initial handler chain fed by both phases.
