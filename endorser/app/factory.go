@@ -45,11 +45,10 @@ func NewEndorserCore(
 		return nil, nil, nil, err
 	}
 
-	// Zero means unset, not "no history": an in-memory KVS with a zero-length
-	// history window can't even serve the current tip. Test RPC needs a large
-	// window (loadFixture/snapshot stretches can commit far more than a small
-	// window between reverts; older snapshots are forgotten); production only
-	// needs a couple of snapshots for the synchronizer to redeliver into.
+	// Zero means unset, not "no history". Test RPC needs a large window
+	// (loadFixture/snapshot stretches can commit far more than a small window
+	// between reverts; older snapshots are forgotten); production only needs a
+	// couple of snapshots for the synchronizer to redeliver into.
 	if dbCfg.HistorySize == 0 {
 		if testImpl {
 			dbCfg.HistorySize = 16384
@@ -67,12 +66,7 @@ func NewEndorserCore(
 		}
 		kvs = storage.NewVersionedDBWrapper(writeDB)
 	case config.DBMemory:
-		baseLightKVS := storage.NewLightKVS(dbCfg.HistorySize)
-		if testImpl {
-			kvs = storage.NewRevertibleLightKVS(baseLightKVS)
-		} else {
-			kvs = baseLightKVS
-		}
+		kvs = storage.NewLightKVS(dbCfg.HistorySize)
 	case config.DBPebble:
 		pebbleKVS, err := storage.NewPebbleKVS(dbCfg.ConnString, dbCfg.HistorySize)
 		if err != nil {

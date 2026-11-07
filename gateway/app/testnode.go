@@ -67,9 +67,9 @@ func NewTestNode(ctx context.Context, tcfg TestNodeConfig) (*App, error) {
 		ChainConfig: common.BuildChainConfig(tcfg.ChainID),
 	}
 
-	// Large sequential history for the full OZ Hardhat suite: RevertibleLightKVS
-	// does not wrap, and loadFixture stretches can commit far more than 128 blocks
-	// between reverts. Undersizing panics or drops historical reads mid-suite.
+	// Large history for the full OZ Hardhat suite: loadFixture stretches can
+	// commit far more than 128 blocks between reverts. Undersizing makes
+	// reverts and historical reads fail mid-suite.
 	endorserDB := econfig.DB{Database: "memory", HistorySize: 16384}
 	endorser, endorserKVS, endorserBuilder, err := eapp.NewEndorserCore(endorserDB, testNodeChannel, testNodeNamespace, protocol, signer, evmConfig, true, econfig.Endorser{})
 	if err != nil {
