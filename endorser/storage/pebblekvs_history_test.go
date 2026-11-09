@@ -18,11 +18,14 @@ import (
 // countPrefix returns how many keys the store holds under prefix.
 func countPrefix(t *testing.T, kvs *PebbleKVS, prefix byte) int {
 	t.Helper()
-	it := kvs.db.NewIterator([]byte{prefix}, nil)
-	defer it.Release()
+	it, err := kvs.newIter([]byte{prefix}, nil)
+	if err != nil {
+		t.Fatalf("iterate prefix %q: %v", prefix, err)
+	}
+	defer it.Close()
 
 	n := 0
-	for it.Next() {
+	for valid := it.First(); valid; valid = it.Next() {
 		n++
 	}
 	if err := it.Error(); err != nil {
