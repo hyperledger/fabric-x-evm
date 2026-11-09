@@ -50,21 +50,33 @@ func ExecutionOutcome(tx blocks.Transaction) (succeeded bool, gasUsed uint64) {
 	return md.GetStatus() == endorsementpb.ExecutionStatus_EXECUTION_STATUS_SUCCESS, md.GetGasUsed()
 }
 
+// Log is an EVM log emitted by a transaction.
+type Log struct {
+	Address []byte
+	Topics  [][]byte
+	Data    []byte
+}
+
 // MarshalLogs encodes a transaction's logs for its Event. Encoding is
 // deterministic so every endorser produces the same bytes.
-func MarshalLogs(logs []*endorsementpb.Log) ([]byte, error) {
-	return proto.MarshalOptions{Deterministic: true}.Marshal(&endorsementpb.Logs{Logs: logs})
+func MarshalLogs(logs []Log) ([]byte, error) {
+	pb := &endorsementpb.Logs{Logs: make([]*endorsementpb.Log, len(logs))}
+	for i, l := range logs {
+		pb.Logs[i] = &endorsementpb.Log{Address: l.Address, Topics: l.Topics, Data: l.Data}
+	}
+	return proto.MarshalOptions{Deterministic: true}.Marshal(pb)
 }
 
 // UnmarshalLogs converts a transaction's event payload back to a list of logs.
 // Only a successful transaction carries logs.
-func UnmarshalLogs(event []byte) ([]*endorsementpb.Log, error) {
-	logs := &endorsementpb.Logs{}
-	if err := proto.Unmarshal(event, logs); err != nil {
+func UnmarshalLogs(event []byte) ([]Log, error) {
+	pb := &endorsementpb.Logs{}
+	if err := proto.Unmarshal(event, pb); err != nil {
 		return nil, err
 	}
-	if logs.Logs == nil {
-		return []*endorsementpb.Log{}, nil
+	logs := make([]Log, len(pb.GetLogs()))
+	for i, l := range pb.GetLogs() {
+		logs[i] = Log{Address: l.GetAddress(), Topics: l.GetTopics(), Data: l.GetData()}
 	}
-	return logs.Logs, nil
+	return logs, nil
 }

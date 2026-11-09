@@ -18,7 +18,7 @@ import (
 func TestUnmarshalEvents(t *testing.T) {
 	tests := []struct {
 		name string
-		logs []*endorsementpb.Log
+		logs []Log
 	}{
 		{
 			name: "empty input",
@@ -26,7 +26,7 @@ func TestUnmarshalEvents(t *testing.T) {
 		},
 		{
 			name: "single log",
-			logs: []*endorsementpb.Log{
+			logs: []Log{
 				{
 					Address: []byte{0x01, 0x02, 0x03},
 					Topics:  [][]byte{{0x0a, 0x0b}, {0x0c, 0x0d}},
@@ -36,7 +36,7 @@ func TestUnmarshalEvents(t *testing.T) {
 		},
 		{
 			name: "multiple logs",
-			logs: []*endorsementpb.Log{
+			logs: []Log{
 				{
 					Address: []byte{0x01},
 					Topics:  [][]byte{{0x0a}},
@@ -51,7 +51,7 @@ func TestUnmarshalEvents(t *testing.T) {
 		},
 		{
 			name: "log with empty fields",
-			logs: []*endorsementpb.Log{
+			logs: []Log{
 				{
 					Address: []byte{},
 					Topics:  [][]byte{},
@@ -61,7 +61,7 @@ func TestUnmarshalEvents(t *testing.T) {
 		},
 		{
 			name: "empty topic keeps its position",
-			logs: []*endorsementpb.Log{
+			logs: []Log{
 				{
 					Address: []byte{0x01},
 					Topics:  [][]byte{{0x0a}, {}, {0x0c}},
@@ -107,7 +107,7 @@ func TestUnmarshalEvents(t *testing.T) {
 }
 
 func TestUnmarshalEvents_InvalidInput(t *testing.T) {
-	valid, err := MarshalLogs([]*endorsementpb.Log{{Address: []byte{0x01}, Data: []byte{0x02, 0x03}}})
+	valid, err := MarshalLogs([]Log{{Address: []byte{0x01}, Data: []byte{0x02, 0x03}}})
 	if err != nil {
 		t.Fatal(err)
 	}

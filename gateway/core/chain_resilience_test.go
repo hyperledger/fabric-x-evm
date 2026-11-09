@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hyperledger/fabric-x-evm/api/endorsementpb"
 	fc "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
@@ -45,7 +44,7 @@ func resilienceNonceWrite(addr common.Address, nonce uint64) blocks.KVWrite {
 	}
 }
 
-func resilienceEvents(t *testing.T, txID string, logs []*endorsementpb.Log) []byte {
+func resilienceEvents(t *testing.T, txID string, logs []fc.Log) []byte {
 	t.Helper()
 
 	// A successful transaction's event bytes are the encoded logs themselves; the
@@ -72,7 +71,7 @@ func TestHandle_ReprocessingSameBlockKeepsIndexesAndTrieStable(t *testing.T) {
 	txBytes, err := ethTx.MarshalBinary()
 	require.NoError(t, err)
 
-	logs := []*endorsementpb.Log{{
+	logs := []fc.Log{{
 		Address: to.Bytes(),
 		Topics:  [][]byte{resilienceHash(0xAA)},
 		Data:    []byte{0x01, 0x02},

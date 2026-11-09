@@ -130,11 +130,7 @@ func NewResult(rws blocks.ReadWriteSet, logs []Log, md *endorsementpb.ExecutionM
 	var event []byte
 	if len(logs) > 0 {
 		var err error
-		pbLogs := make([]*endorsementpb.Log, len(logs))
-		for i, l := range logs {
-			pbLogs[i] = &endorsementpb.Log{Address: l.Address, Topics: l.Topics, Data: l.Data}
-		}
-		if event, err = fxcommon.MarshalLogs(pbLogs); err != nil {
+		if event, err = fxcommon.MarshalLogs(logs); err != nil {
 			return endorsement.ExecutionResult{}, fmt.Errorf("marshal logs: %w", err)
 		}
 	}

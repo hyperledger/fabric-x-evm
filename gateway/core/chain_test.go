@@ -124,7 +124,7 @@ func TestConvertToDomain_InvalidTxDropsLogs(t *testing.T) {
 	to := common.HexToAddress("0x1111111111111111111111111111111111111111")
 	ethb := marshaledEthTx(t, key, to, big.NewInt(100))
 
-	events := resilienceEvents(t, "tx-bad", []*endorsementpb.Log{{
+	events := resilienceEvents(t, "tx-bad", []co.Log{{
 		Address: to.Bytes(),
 		Topics:  [][]byte{resilienceHash(0xAA)},
 		Data:    []byte{0x01},

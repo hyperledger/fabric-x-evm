@@ -45,7 +45,7 @@ func mustEthTxBytes(t *testing.T) []byte {
 	return raw
 }
 
-func mustLogEvents(t *testing.T, logs []*endorsementpb.Log) []byte {
+func mustLogEvents(t *testing.T, logs []fc.Log) []byte {
 	t.Helper()
 	// The SDK carries the endorsement's event through verbatim, so a
 	// successful transaction's event bytes are the encoded logs themselves.
@@ -77,7 +77,7 @@ func TestLogsFromBlock_HappyAndSkips(t *testing.T) {
 	addr := common.HexToAddress("0x00000000000000000000000000000000000000aa")
 	topic := common.HexToHash("0xdead")
 	rawTx := mustEthTxBytes(t)
-	events := mustLogEvents(t, []*endorsementpb.Log{{
+	events := mustLogEvents(t, []fc.Log{{
 		Address: addr.Bytes(),
 		Topics:  [][]byte{topic.Bytes()},
 		Data:    []byte{0x01},
@@ -144,7 +144,7 @@ func TestLogsFromBlock_HappyAndSkips(t *testing.T) {
 // Only a successful execution emits logs, whatever the event carries.
 func TestLogsFromBlock_UnsuccessfulSkipped(t *testing.T) {
 	rawTx := mustEthTxBytes(t)
-	events := mustLogEvents(t, []*endorsementpb.Log{{Address: common.HexToAddress("0xaa").Bytes()}})
+	events := mustLogEvents(t, []fc.Log{{Address: common.HexToAddress("0xaa").Bytes()}})
 	for name, payload := range map[string][]byte{
 		"revert":       mustPayload(t, endorsementpb.ExecutionStatus_EXECUTION_STATUS_REVERTED),
 		"exec failure": mustPayload(t, endorsementpb.ExecutionStatus_EXECUTION_STATUS_EXEC_FAILED),
@@ -221,12 +221,12 @@ func TestLogFilter_LivePathViaHandle(t *testing.T) {
 	}
 
 	rawTx := mustEthTxBytes(t)
-	events := mustLogEvents(t, []*endorsementpb.Log{{
+	events := mustLogEvents(t, []fc.Log{{
 		Address: addr.Bytes(),
 		Topics:  [][]byte{common.HexToHash("0x01").Bytes()},
 		Data:    []byte{0xab},
 	}})
-	miss := mustLogEvents(t, []*endorsementpb.Log{{
+	miss := mustLogEvents(t, []fc.Log{{
 		Address: common.HexToAddress("0xbb").Bytes(),
 		Data:    []byte{0x00},
 	}})
