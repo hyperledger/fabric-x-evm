@@ -19,15 +19,10 @@ import (
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 )
 
-var (
-	// ErrKeyNotFound is returned when a key is not found in the store.
-	ErrKeyNotFound = errors.New("key not found")
+var lkvLogger = flogging.MustGetLogger("endorser.storage.lightkvs")
 
-	lkvLogger = flogging.MustGetLogger("endorser.storage.lightkvs")
-)
-
-// KVS is implemented by both LightKVS and VersionedDBWrapper.
-// It combines snapshot reads, block handling, and lifecycle management.
+// KVS is a versioned world-state store: snapshot reads, block handling, and
+// lifecycle management.
 // There is one read API per question a caller can ask. Get (from
 // blocks.RecordGetter) answers "what is the current value", and NewSnapshot (from
 // execution.KVSSnapshotter) answers "what was the value at block N" — note that its
@@ -192,11 +187,9 @@ func (r *Reader) Get(namespace, key string) (*blocks.WriteRecord, error) {
 			IsDelete:  vv.IsDelete,
 			TxID:      vv.TxID,
 		}
-		lkvLogger.Debugf("Reader.Get() ns=%s key=%s block=%d isDelete=%t valueLen=%d", namespace, key, record.BlockNum, record.IsDelete, len(record.Value))
 		return record, nil
 	}
 
-	lkvLogger.Debugf("Reader.Get() ns=%s key=%s not found", namespace, key)
 	return nil, nil
 }
 
