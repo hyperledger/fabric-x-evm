@@ -87,6 +87,16 @@ func (c *Chain) Handle(ctx context.Context, b blocks.Block) error {
 		return err
 	}
 
+	// An MVCC-rejected transaction wrote nothing, did not consume its nonce, and
+	// is about to be executed again, so storing a row would publish a status=0
+	// receipt for a transaction still in flight -- and the client would resubmit
+	// at a nonce that is still ours. Unstored, the hash keeps answering "pending"
+	// while the queue tracks it across retries.
+	//
+	// Only the row is dropped: later handlers still get the whole block, so
+	// DepGraphQueue sees the conflict and retries it.
+	ebl.Transactions = withoutRetriableConflicts(ebl.Transactions)
+
 	ebl.ParentHash = c.prevHash.Bytes()
 	if c.ts != nil {
 		stateRoot, err := c.ts.Commit(ctx, b)
@@ -107,6 +117,34 @@ func (c *Chain) Handle(ctx context.Context, b blocks.Block) error {
 	c.prevHash = common.BytesToHash(ebl.BlockHash)
 	logger.Debugf("Chain.Handle() block=%d committed prevHash=%s", b.Number, c.prevHash.Hex())
 	return nil
+}
+
+// withoutRetriableConflicts drops the transactions that will be retried, so no
+// receipt is published for an attempt that is about to be superseded.
+//
+// Only MVCC conflicts qualify: every other failure is final and the client is
+// entitled to its receipt. A conflict past the retry budget is final too, but
+// DepGraphQueue owns the budget so this cannot tell, and drops that row as well.
+// That one reads as unknown rather than pending: untrackOrRetry untracks it
+// while this same block is handled, and the nonce gate never held it (anything
+// the queue tracks was enqueued at the expected nonce, not parked). No row, no
+// entry, nothing parked — TransactionByHash finds nothing and the hash answers
+// null.
+//
+// The gate's reaper drops the sender's *later* transactions instead: the conflict
+// did not consume its nonce, so they stay parked behind a gap until a
+// resubmission at that nonce fills it, or defaultParkedTTL expires.
+func withoutRetriableConflicts(txs []domain.Transaction) []domain.Transaction {
+	kept := make([]domain.Transaction, 0, len(txs))
+	for _, tx := range txs {
+		if tx.FabricTxStatus == blocks.StatusMVCCConflict {
+			logger.Warnf("Chain.Handle() tx %s rejected by an MVCC conflict: not storing a receipt, it will be retried",
+				common.BytesToHash(tx.TxHash).Hex())
+			continue
+		}
+		kept = append(kept, tx)
+	}
+	return kept
 }
 
 // EnsureGenesisBlock inserts an empty block 0 if the store has no blocks yet, so

@@ -74,7 +74,11 @@ func NewExecutorWrapper(
 func (w *ExecutorWrapper) Execute(tx *types.Transaction) (endorsement.ExecutionResult, error) {
 	msg, err := w.Executor.PrepareMessage(tx)
 	if err != nil {
-		return endorsement.ExecutionResult{}, err
+		// Tag it the way production's Executor.Send does. Unwrapped, a nonce or
+		// signature rejection reaches the endorser as a bare go-ethereum error,
+		// which classify() can only read as StatusServerError -- so the gateway
+		// sees a server fault where it should see a rejected transaction.
+		return endorsement.ExecutionResult{}, execution.NewTxRejected(err)
 	}
 
 	_, usedGas, _, err := w.Executor.ApplyMessage(msg)

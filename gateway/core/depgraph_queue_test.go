@@ -552,9 +552,11 @@ func TestDepGraphQueue_NonPositiveConfigFallsBackToDefaults(t *testing.T) {
 		{"negative waiting limit", &config.DepGraphQueue{WaitingTxsLimit: -1}},
 		{"negative batch threshold", &config.DepGraphQueue{BatchThreshold: -1}},
 		{"negative batch timeout", &config.DepGraphQueue{BatchTimeout: -time.Millisecond}},
+		{"zero mvcc retries", &config.DepGraphQueue{MaxMVCCRetries: 0}},
+		{"negative mvcc retries", &config.DepGraphQueue{MaxMVCCRetries: -1}},
 		{"all at once", &config.DepGraphQueue{
 			EndorseWorkers: -1, ChanSize: 0, WaitingTxsLimit: 0,
-			BatchThreshold: -1, BatchTimeout: -time.Millisecond,
+			BatchThreshold: -1, BatchTimeout: -time.Millisecond, MaxMVCCRetries: -1,
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -565,6 +567,7 @@ func TestDepGraphQueue_NonPositiveConfigFallsBackToDefaults(t *testing.T) {
 			require.Equal(t, defaultBatchThreshold, q.batchThreshold)
 			require.Equal(t, defaultBatchTimeout, q.batchTimeout)
 			require.Equal(t, defaultChanSize, cap(q.admitted))
+			require.Equal(t, defaultMaxMVCCRetries, q.maxMVCCRetries)
 
 			// A defaulted WaitingTxsLimit is the one that cannot be read back off
 			// the struct, so drive a transaction through to prove Acquire is not
@@ -586,6 +589,7 @@ func TestDepGraphQueue_PositiveConfigIsHonoured(t *testing.T) {
 	q := NewDepGraphQueue(&config.DepGraphQueue{
 		EndorseWorkers: 2, ChanSize: 16,
 		WaitingTxsLimit: 32, BatchThreshold: 4, BatchTimeout: 5 * time.Millisecond,
+		MaxMVCCRetries: 7,
 	})
 	t.Cleanup(q.Close)
 
@@ -593,6 +597,7 @@ func TestDepGraphQueue_PositiveConfigIsHonoured(t *testing.T) {
 	require.Equal(t, 4, q.batchThreshold)
 	require.Equal(t, 5*time.Millisecond, q.batchTimeout)
 	require.Equal(t, 16, cap(q.admitted))
+	require.Equal(t, 7, q.maxMVCCRetries)
 }
 
 // fabricCommittedBlock builds a block whose transactions all committed on Fabric.
@@ -722,4 +727,379 @@ func TestProcessTx_ReusesQueueEndorsement(t *testing.T) {
 	require.NoError(t, g.processTx(context.Background(), fresh))
 	require.Equal(t, fresh.Hash(), (<-g.endorsementChan).Hash)
 	require.False(t, stub.lastTS.IsZero(), "an untracked tx is executed")
+}
+
+// mvccConflictBlockWithRaw is mvccConflictBlock with RawTx populated, as a real
+// block always has it. Without the raw bytes a transaction the queue does not
+// track cannot be reconstructed, so adoption needs them.
+func mvccConflictBlockWithRaw(t *testing.T, txs ...*types.Transaction) *domain.Block {
+	t.Helper()
+	b := mvccConflictBlock(txs...)
+	for i, tx := range txs {
+		raw, err := tx.MarshalBinary()
+		require.NoError(t, err)
+		b.Transactions[i].RawTx = raw
+	}
+	return b
+}
+
+// mvccConflictBlock builds a committed block whose transactions the committer
+// rejected with an MVCC conflict.
+func mvccConflictBlock(txs ...*types.Transaction) *domain.Block {
+	b := blockWith(0, txs...)
+	for i := range b.Transactions {
+		b.Transactions[i].FabricTxStatus = blocks.StatusMVCCConflict
+	}
+	return b
+}
+
+// fabricStatusBlock builds a committed block with an arbitrary Fabric status, for
+// the failure modes that must not be retried.
+func fabricStatusBlock(status blocks.Status, txs ...*types.Transaction) *domain.Block {
+	b := blockWith(0, txs...)
+	for i := range b.Transactions {
+		b.Transactions[i].FabricTxStatus = status
+	}
+	return b
+}
+
+// An MVCC conflict is not the transaction's fault, so it is executed again and
+// offered back to a worker rather than reported as failed.
+func TestDepGraphQueue_MVCCConflictIsRetried(t *testing.T) {
+	q, e := newDepQueue(t)
+	tx := txWithNonce(1)
+	e.touches(tx, "balance")
+
+	q.Enqueue(tx)
+	requireReady(t, q, 1)
+	_, ok := q.Dequeue()
+	require.True(t, ok)
+
+	require.NoError(t, q.Handle(context.Background(), mvccConflictBlock(tx)))
+
+	// Offered to a worker again rather than reported as failed.
+	requireReady(t, q, 1)
+	got, ok := q.Dequeue()
+	require.True(t, ok)
+	require.Equal(t, tx.Hash(), got.Hash())
+
+	// Still tracked across the retry, so IsPending keeps answering for it and the
+	// client never sees the transaction disappear.
+	require.NotNil(t, q.IsPending(tx.Hash()))
+
+	require.NoError(t, q.Handle(context.Background(), fabricCommittedBlock(tx)))
+	require.Nil(t, q.IsPending(tx.Hash()))
+}
+
+// The endorsement that conflicted must not be handed to the retry: it read state
+// that has since been written, which is what the conflict means. With nothing to
+// reuse, processTx falls through to executing the transaction again.
+func TestDepGraphQueue_ConflictDiscardsStaleEndorsement(t *testing.T) {
+	q, e := newDepQueue(t)
+	tx := txWithNonce(1)
+	e.touches(tx, "balance")
+
+	q.Enqueue(tx)
+	requireReady(t, q, 1)
+	_, ok := q.Dequeue()
+	require.True(t, ok)
+
+	// The first attempt had one to reuse.
+	_, reusable := q.ReusableEndorsement(tx.Hash())
+	require.True(t, reusable)
+
+	require.NoError(t, q.Handle(context.Background(), mvccConflictBlock(tx)))
+	requireReady(t, q, 1)
+	_, ok = q.Dequeue()
+	require.True(t, ok)
+
+	_, reusable = q.ReusableEndorsement(tx.Hash())
+	require.False(t, reusable, "the retry must execute again rather than reuse the endorsement that conflicted")
+}
+
+// A retry does not go back through the dependency manager. Re-entering it would
+// build a second node whose keys collide with the first — which the manager
+// still holds, since the queue keeps that node to protect the dependents — so
+// the retry would wait on a node that is deliberately never fed back.
+func TestDepGraphQueue_RetryDoesNotReEnterTheManager(t *testing.T) {
+	q, e := newDepQueue(t)
+	tx := txWithNonce(1)
+	e.touches(tx, "balance")
+
+	q.Enqueue(tx)
+	requireReady(t, q, 1)
+	_, ok := q.Dequeue()
+	require.True(t, ok)
+	endorsements := e.calls()
+
+	require.NoError(t, q.Handle(context.Background(), mvccConflictBlock(tx)))
+	requireReady(t, q, 1)
+
+	require.Equal(t, endorsements, e.calls(),
+		"a tracked retry must not be endorsed by the queue again; the worker re-executes it")
+}
+
+// The point of the whole design: a transaction being retried has not written
+// yet, so its dependents must keep waiting. Releasing its node would tell the
+// manager otherwise, and the dependent would endorse against state missing this
+// transaction's write and conflict in turn.
+func TestDepGraphQueue_RetryKeepsHoldingDependents(t *testing.T) {
+	q, e := newDepQueue(t)
+	first, second := txWithNonce(1), txWithNonce(2)
+	e.touches(first, "balance")
+	e.touches(second, "balance")
+
+	q.Enqueue(first)
+	requireReady(t, q, 1)
+	_, ok := q.Dequeue()
+	require.True(t, ok)
+
+	q.Enqueue(second)
+	require.Never(t, func() bool { return readyCount(q) > 0 }, 200*time.Millisecond, 10*time.Millisecond)
+
+	require.NoError(t, q.Handle(context.Background(), mvccConflictBlock(first)))
+
+	// The retry is served; the dependent is not. Exactly one transaction is
+	// ready, and it is the one being retried.
+	requireReady(t, q, 1)
+	got, ok := q.Dequeue()
+	require.True(t, ok)
+	require.Equal(t, first.Hash(), got.Hash(), "the retry is served, not the dependent")
+	require.Never(t, func() bool { return readyCount(q) > 0 }, 200*time.Millisecond, 10*time.Millisecond,
+		"the dependent must stay held while the transaction ahead of it is retried")
+
+	// Only once the retry reaches a final outcome does the dependent go.
+	require.NoError(t, q.Handle(context.Background(), fabricCommittedBlock(first)))
+	requireReady(t, q, 1)
+	got, ok = q.Dequeue()
+	require.True(t, ok)
+	require.Equal(t, second.Hash(), got.Hash())
+
+	require.NoError(t, q.Handle(context.Background(), fabricCommittedBlock(second)))
+	require.Zero(t, q.InFlight())
+}
+
+// Exhausting the budget should be unreachable: a retry re-executes while the
+// graph still holds every key it touches, so under the single-gateway assumption
+// nothing else can be writing them and the second attempt should commit. Getting
+// here means conflicts come from outside the graph, and releasing the node then
+// admits the dependents into a system that just failed this transaction
+// repeatedly. A debug build says so; a release build takes the lesser evil and
+// releases them rather than stranding them for good.
+func TestDepGraphQueue_ExhaustedRetryIsFatalInDebug(t *testing.T) {
+	e := newKeyedEndorser(t)
+	q := NewDepGraphQueue(&config.DepGraphQueue{MaxMVCCRetries: 1})
+	q.Bind(e)
+	t.Cleanup(q.Close)
+
+	first, second := txWithNonce(1), txWithNonce(2)
+	e.touches(first, "balance")
+	e.touches(second, "balance")
+
+	q.Enqueue(first)
+	requireReady(t, q, 1)
+	_, ok := q.Dequeue()
+	require.True(t, ok)
+	q.Enqueue(second)
+
+	// One retry, which is allowed and must not panic.
+	require.NoError(t, q.Handle(context.Background(), mvccConflictBlock(first)))
+	requireReady(t, q, 1)
+	got, ok := q.Dequeue()
+	require.True(t, ok)
+	require.Equal(t, first.Hash(), got.Hash())
+
+	// The next conflict is past the budget.
+	exhaust := func() { _ = q.Handle(context.Background(), mvccConflictBlock(first)) }
+	if fxcommon.DebugBuild {
+		require.Panics(t, exhaust, "a debug build must not quietly release the dependents of a tx it gave up on")
+		return
+	}
+	exhaust()
+	require.Never(t, func() bool { return q.IsPending(first.Hash()) != nil }, 100*time.Millisecond, 10*time.Millisecond,
+		"a transaction past its budget is untracked, not retried again")
+
+	// Release build: the dependent is let go rather than stranded, and is
+	// expected to conflict in turn — which is exactly why debug builds panic.
+	requireReady(t, q, 1)
+	got, ok = q.Dequeue()
+	require.True(t, ok)
+	require.Equal(t, second.Hash(), got.Hash())
+	require.Nil(t, q.IsPending(first.Hash()))
+}
+
+// Only an MVCC conflict is retried. The other failures are deterministic, so
+// another attempt would fail the same way and only delay the client's answer.
+func TestDepGraphQueue_DeterministicFailuresAreNotRetried(t *testing.T) {
+	for _, status := range []blocks.Status{
+		blocks.StatusInvalidSignature,
+		blocks.StatusMalformed,
+		blocks.StatusDuplicateTxID,
+	} {
+		t.Run(status.String(), func(t *testing.T) {
+			q, _ := newDepQueue(t)
+			tx := txWithNonce(1)
+
+			q.Enqueue(tx)
+			requireReady(t, q, 1)
+			_, ok := q.Dequeue()
+			require.True(t, ok)
+
+			require.NoError(t, q.Handle(context.Background(), fabricStatusBlock(status, tx)))
+			require.Never(t, func() bool { return readyCount(q) > 0 }, 200*time.Millisecond, 10*time.Millisecond)
+			require.Nil(t, q.IsPending(tx.Hash()))
+		})
+	}
+}
+
+// The crash case: a transaction that was in flight when the process died comes
+// back as an MVCC conflict with nothing tracking it. That is exactly what the
+// retry is for, so the queue adopts it rather than dropping it.
+func TestDepGraphQueue_UntrackedConflictIsAdopted(t *testing.T) {
+	q, e := newDepQueue(t)
+	tx := txWithNonce(1)
+	e.touches(tx, "balance")
+
+	// No Enqueue: as far as this queue is concerned the transaction is unknown,
+	// which is how a pre-crash submission looks after a restart.
+	require.NoError(t, q.Handle(context.Background(), mvccConflictBlockWithRaw(t, tx)))
+
+	requireReady(t, q, 1)
+	got, ok := q.Dequeue()
+	require.True(t, ok)
+	require.Equal(t, tx.Hash(), got.Hash())
+	require.NotNil(t, q.IsPending(tx.Hash()), "the adopted transaction is tracked like any other")
+
+	require.NoError(t, q.Handle(context.Background(), fabricCommittedBlock(tx)))
+	require.Zero(t, q.InFlight())
+}
+
+// An adopted transaction gets a budget too, so a key that is permanently
+// contended cannot make it cycle forever.
+func TestDepGraphQueue_AdoptedConflictHasABudget(t *testing.T) {
+	e := newKeyedEndorser(t)
+	q := NewDepGraphQueue(&config.DepGraphQueue{MaxMVCCRetries: 1})
+	q.Bind(e)
+	t.Cleanup(q.Close)
+
+	tx := txWithNonce(1)
+	e.touches(tx, "balance")
+
+	// Adoption consumes the first attempt, so with a budget of one the next
+	// conflict is the end of it.
+	require.NoError(t, q.Handle(context.Background(), mvccConflictBlockWithRaw(t, tx)))
+	requireReady(t, q, 1)
+	_, ok := q.Dequeue()
+	require.True(t, ok)
+
+	exhaust := func() { _ = q.Handle(context.Background(), mvccConflictBlockWithRaw(t, tx)) }
+	if fxcommon.DebugBuild {
+		require.Panics(t, exhaust, "an adopted transaction past its budget is as fatal as any other")
+		return
+	}
+	exhaust()
+	require.Never(t, func() bool { return readyCount(q) > 0 }, 300*time.Millisecond, 10*time.Millisecond,
+		"an adopted transaction past its budget must not be re-admitted")
+	require.Zero(t, q.InFlight())
+}
+
+// A conflict whose raw bytes will not decode cannot be retried at all: there is
+// nothing to execute. A committed block should never carry one, so a debug build
+// surfaces it; a release build drops it and stays up.
+func TestDepGraphQueue_UndecodableUntrackedConflictIsDropped(t *testing.T) {
+	q, _ := newDepQueue(t)
+	b := mvccConflictBlock(txWithNonce(99)) // blockWith leaves RawTx empty
+
+	if fxcommon.DebugBuild {
+		require.Panics(t, func() { _ = q.Handle(context.Background(), b) },
+			"a debug build surfaces a conflict it cannot reconstruct")
+	} else {
+		require.NoError(t, q.Handle(context.Background(), b))
+	}
+	require.Zero(t, q.InFlight())
+}
+
+// A committed transaction with nothing tracking it is just old news: it was
+// already completed, or it predates a restart. Nothing to do.
+func TestDepGraphQueue_UntrackedCommitIsIgnored(t *testing.T) {
+	q, _ := newDepQueue(t)
+	require.NoError(t, q.Handle(context.Background(), fabricCommittedBlock(txWithNonce(99))))
+	require.Zero(t, q.InFlight())
+}
+
+// Complete and Handle read an untracked hash differently, and must keep doing
+// so. In a committed block it means the entry was lost across a restart, which
+// is worth adopting; from Complete it means a submission failed for a
+// transaction that was already finished, which is worth nothing. Routing
+// Complete through the adoption path would have it resurrect transactions that
+// never reached the orderer.
+func TestDepGraphQueue_CompleteNeverAdopts(t *testing.T) {
+	e := newKeyedEndorser(t)
+	q := NewDepGraphQueue(nil)
+	q.Bind(e)
+	t.Cleanup(q.Close)
+
+	tx := txWithNonce(1)
+	q.Complete(tx.Hash())
+
+	require.Zero(t, q.InFlight(), "Complete must not create tracking for an unknown hash")
+	require.Nil(t, q.IsPending(tx.Hash()))
+	require.Never(t, func() bool { return readyCount(q) > 0 }, 300*time.Millisecond, 10*time.Millisecond,
+		"Complete must never schedule work")
+	require.Zero(t, e.calls(), "Complete must not cause an endorsement")
+}
+
+// An adopted transaction enters the manager as a new node, unlike a tracked
+// retry, so it has to be serialised against whatever currently holds its keys.
+// Post-restart that matters: the live transaction holding the key is exactly
+// what the adopted one conflicted with.
+func TestDepGraphQueue_AdoptedConflictWaitsForTheKeyHolder(t *testing.T) {
+	q, e := newDepQueue(t)
+	live, lost := txWithNonce(1), txWithNonce(2)
+	e.touches(live, "balance")
+	e.touches(lost, "balance")
+
+	// live is in flight and holding "balance".
+	q.Enqueue(live)
+	requireReady(t, q, 1)
+	_, ok := q.Dequeue()
+	require.True(t, ok)
+
+	// lost arrives as an untracked conflict (post-restart) on the same key.
+	require.NoError(t, q.Handle(context.Background(), mvccConflictBlockWithRaw(t, lost)))
+
+	// Must NOT be served while live still holds the key.
+	require.Never(t, func() bool { return readyCount(q) > 0 }, 400*time.Millisecond, 10*time.Millisecond,
+		"adopted tx must wait for the live tx holding the same key")
+	// Once live commits, the adopted one runs.
+	require.NoError(t, q.Handle(context.Background(), fabricCommittedBlock(live)))
+	requireReady(t, q, 1)
+	got, ok := q.Dequeue()
+	require.True(t, ok)
+	require.Equal(t, lost.Hash(), got.Hash())
+}
+
+// The retry path hits the same full-channel condition Enqueue does, so it gets
+// the same treatment. The consequence is worse here — Enqueue can report
+// ErrQueueFull to a caller that will retry, while an adopted transaction has no
+// caller left — so a debug build surfaces it rather than losing it quietly.
+func TestDepGraphQueue_FullChannelOnAdoptDebugPanics(t *testing.T) {
+	q := NewDepGraphQueue(nil)
+	t.Cleanup(q.Close)
+	// Never bound, so nothing drains admitted; fill it to the brim.
+	for i := range defaultChanSize {
+		require.NoError(t, q.Enqueue(txWithNonce(uint64(i))))
+	}
+
+	// An untracked conflict would be adopted, but there is no room to admit it.
+	lost := txWithNonce(uint64(defaultChanSize) + 1)
+	block := mvccConflictBlockWithRaw(t, lost)
+
+	if fxcommon.DebugBuild {
+		require.Panics(t, func() { _ = q.Handle(context.Background(), block) },
+			"a debug build panics when a retry cannot be admitted")
+	} else {
+		require.NoError(t, q.Handle(context.Background(), block))
+	}
+	require.Nil(t, q.IsPending(lost.Hash()), "a dropped retry must not stay tracked")
 }
