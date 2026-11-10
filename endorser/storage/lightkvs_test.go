@@ -8,6 +8,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -20,12 +21,13 @@ import (
 // only: nothing in production calls it (blocks only ever arrive as
 // blocks.Block, via Handle) — it exists so tests can drive applyBlock
 // directly with a flat batch instead of building a full blocks.Block.
-func (kvs *LightKVS) update(updates []KeyValueVersion) error {
+func (kvs *LightKVS) update(updates []keyValueVersion) error {
 	blockNum := uint64(0)
 	if len(updates) > 0 {
 		blockNum = updates[0].BlockNum
 	}
-	return kvs.applyBlock(blockNum, updates)
+	kvs.applyBlock(blockNum, updates)
+	return nil
 }
 
 // TestNewLightKVS tests the creation of a new LightKVS instance
@@ -36,7 +38,7 @@ func TestNewLightKVS(t *testing.T) {
 	}
 
 	// Verify initial snapshot exists and is empty
-	snapshot := kvs.Current.Load()
+	snapshot := kvs.current.Load()
 	if snapshot == nil {
 		t.Fatal("initial snapshot is nil")
 	}
@@ -56,7 +58,7 @@ func TestNewSnapshot_ExplicitZeroIsNotLatest(t *testing.T) {
 	key := "acc:0x1:bal"
 
 	// Genesis empty, then write at block 1 so tip != genesis.
-	if err := kvs.update([]KeyValueVersion{{
+	if err := kvs.update([]keyValueVersion{{
 		Key: ns + ":" + key, Value: []byte{0x2a}, BlockNum: 1, TxNum: 0, TxID: "tx1",
 	}}); err != nil {
 		t.Fatalf("Update: %v", err)
@@ -94,20 +96,20 @@ func TestNewSnapshot_ExplicitZeroIsNotLatest(t *testing.T) {
 // TestNewSnapshot tests creating a new snapshot reader
 func TestNewSnapshot(t *testing.T) {
 	kvs := NewLightKVS(1)
-	reader, err := kvs.NewSnapshot(nil)
+	rs, err := kvs.NewSnapshot(nil)
 	if err != nil {
 		t.Fatalf("NewSnapshot failed: %v", err)
 	}
-	if reader == nil {
+	if rs == nil {
 		t.Fatal("NewSnapshot returned nil")
 	}
 
 	// Verify reader is of correct type
-	r, ok := reader.(*Reader)
+	r, ok := rs.(*reader)
 	if !ok {
-		t.Fatal("NewSnapshot did not return a *Reader")
+		t.Fatal("NewSnapshot did not return a *reader")
 	}
-	if r.Snapshot == nil {
+	if r.snap == nil {
 		t.Error("reader snapshot is nil")
 	}
 }
@@ -117,7 +119,7 @@ func TestReaderGet(t *testing.T) {
 	kvs := NewLightKVS(1)
 
 	// Add some data
-	updates := []KeyValueVersion{
+	updates := []keyValueVersion{
 		{
 			Key:      "ns1:key1",
 			Value:    []byte("value1"),
@@ -192,7 +194,7 @@ func TestReaderGetNilValue(t *testing.T) {
 	kvs := NewLightKVS(1)
 
 	// Add a key with nil value
-	updates := []KeyValueVersion{
+	updates := []keyValueVersion{
 		{
 			Key:      "ns1:key1",
 			Value:    nil,
@@ -228,25 +230,25 @@ func TestReaderGetNilValue(t *testing.T) {
 // TestReaderClose tests closing a reader
 func TestReaderClose(t *testing.T) {
 	kvs := NewLightKVS(1)
-	reader, err := kvs.NewSnapshot(nil)
+	rs, err := kvs.NewSnapshot(nil)
 	if err != nil {
 		t.Fatalf("NewSnapshot failed: %v", err)
 	}
 
 	// Close the reader
-	err = reader.Close()
+	err = rs.Close()
 	if err != nil {
 		t.Fatalf("Close failed: %v", err)
 	}
 
 	// Verify snapshot is nil after close (need to type assert to access internal field)
-	r, ok := reader.(*Reader)
-	if ok && r.Snapshot != nil {
+	r, ok := rs.(*reader)
+	if ok && r.snap != nil {
 		t.Error("snapshot should be nil after Close")
 	}
 
 	// Verify Get returns error after close
-	_, err = reader.Get("ns1", "key1")
+	_, err = rs.Get("ns1", "key1")
 	if err == nil {
 		t.Error("expected error when calling Get on closed reader")
 	}
@@ -259,7 +261,7 @@ func TestReaderClose(t *testing.T) {
 func TestUpdate(t *testing.T) {
 	kvs := NewLightKVS(1)
 
-	updates := []KeyValueVersion{
+	updates := []keyValueVersion{
 		{
 			Key:      "ns1:key1",
 			Value:    []byte("value1"),
@@ -284,7 +286,7 @@ func TestUpdate(t *testing.T) {
 	}
 
 	// Verify data was updated
-	snapshot := kvs.Current.Load()
+	snapshot := kvs.current.Load()
 	if snapshot.BlockNumber != 1 {
 		t.Errorf("expected block number 1, got %d", snapshot.BlockNumber)
 	}
@@ -318,7 +320,7 @@ func TestUpdateVersionIncrement(t *testing.T) {
 	kvs := NewLightKVS(1)
 
 	// First update
-	updates1 := []KeyValueVersion{
+	updates1 := []keyValueVersion{
 		{
 			Key:      "ns1:key1",
 			Value:    []byte("value1"),
@@ -333,13 +335,13 @@ func TestUpdateVersionIncrement(t *testing.T) {
 		t.Fatalf("Update failed: %v", err)
 	}
 
-	snapshot := kvs.Current.Load()
+	snapshot := kvs.current.Load()
 	if snapshot.Data["ns1:key1"].Version != 0 {
 		t.Errorf("expected version 0, got %d", snapshot.Data["ns1:key1"].Version)
 	}
 
 	// Second update to same key
-	updates2 := []KeyValueVersion{
+	updates2 := []keyValueVersion{
 		{
 			Key:      "ns1:key1",
 			Value:    []byte("value2"),
@@ -354,13 +356,13 @@ func TestUpdateVersionIncrement(t *testing.T) {
 		t.Fatalf("Update failed: %v", err)
 	}
 
-	snapshot = kvs.Current.Load()
+	snapshot = kvs.current.Load()
 	if snapshot.Data["ns1:key1"].Version != 1 {
 		t.Errorf("expected version 1, got %d", snapshot.Data["ns1:key1"].Version)
 	}
 
 	// Third update
-	updates3 := []KeyValueVersion{
+	updates3 := []keyValueVersion{
 		{
 			Key:      "ns1:key1",
 			Value:    []byte("value3"),
@@ -375,7 +377,7 @@ func TestUpdateVersionIncrement(t *testing.T) {
 		t.Fatalf("Update failed: %v", err)
 	}
 
-	snapshot = kvs.Current.Load()
+	snapshot = kvs.current.Load()
 	if snapshot.Data["ns1:key1"].Version != 2 {
 		t.Errorf("expected version 2, got %d", snapshot.Data["ns1:key1"].Version)
 	}
@@ -386,7 +388,7 @@ func TestUpdateDelete(t *testing.T) {
 	kvs := NewLightKVS(1)
 
 	// Add a key
-	updates1 := []KeyValueVersion{
+	updates1 := []keyValueVersion{
 		{
 			Key:      "ns1:key1",
 			Value:    []byte("value1"),
@@ -402,13 +404,13 @@ func TestUpdateDelete(t *testing.T) {
 	}
 
 	// Verify key exists
-	snapshot := kvs.Current.Load()
+	snapshot := kvs.current.Load()
 	if _, ok := snapshot.Data["ns1:key1"]; !ok {
 		t.Fatal("key1 should exist")
 	}
 
 	// Delete the key
-	updates2 := []KeyValueVersion{
+	updates2 := []keyValueVersion{
 		{
 			Key:      "ns1:key1",
 			IsDelete: true,
@@ -423,7 +425,7 @@ func TestUpdateDelete(t *testing.T) {
 	}
 
 	// Verify key is deleted: stored as a tombstone, not removed.
-	snapshot = kvs.Current.Load()
+	snapshot = kvs.current.Load()
 	vv, ok := snapshot.Data["ns1:key1"]
 	if !ok || !vv.IsDelete {
 		t.Errorf("expected key1 to be a tombstone, got %+v (present=%v)", vv, ok)
@@ -434,12 +436,12 @@ func TestUpdateDelete(t *testing.T) {
 func TestUpdateEmptyBatch(t *testing.T) {
 	kvs := NewLightKVS(1)
 
-	err := kvs.update([]KeyValueVersion{})
+	err := kvs.update([]keyValueVersion{})
 	if err != nil {
 		t.Fatalf("Update with empty batch failed: %v", err)
 	}
 
-	snapshot := kvs.Current.Load()
+	snapshot := kvs.current.Load()
 	if snapshot.BlockNumber != 0 {
 		t.Errorf("expected block number 0, got %d", snapshot.BlockNumber)
 	}
@@ -450,7 +452,7 @@ func TestSnapshotIsolation(t *testing.T) {
 	kvs := NewLightKVS(1)
 
 	// Initial data
-	updates1 := []KeyValueVersion{
+	updates1 := []keyValueVersion{
 		{
 			Key:      "ns1:key1",
 			Value:    []byte("value1"),
@@ -473,7 +475,7 @@ func TestSnapshotIsolation(t *testing.T) {
 	defer reader1.Close()
 
 	// Update the store
-	updates2 := []KeyValueVersion{
+	updates2 := []keyValueVersion{
 		{
 			Key:      "ns1:key1",
 			Value:    []byte("value2"),
@@ -519,7 +521,7 @@ func TestConcurrentReaders(t *testing.T) {
 	kvs := NewLightKVS(1)
 
 	// Add initial data
-	updates := []KeyValueVersion{
+	updates := []keyValueVersion{
 		{
 			Key:      "ns1:key1",
 			Value:    []byte("value1"),
@@ -870,7 +872,7 @@ func TestHandleEmptyBlock(t *testing.T) {
 		t.Fatalf("Handle failed: %v", err)
 	}
 
-	snapshot := kvs.Current.Load()
+	snapshot := kvs.current.Load()
 	if snapshot.BlockNumber != 1 {
 		t.Errorf("expected block number 1, got %d", snapshot.BlockNumber)
 	}
@@ -891,7 +893,7 @@ func TestBlockNumber(t *testing.T) {
 	}
 
 	// Update with block 5
-	updates := []KeyValueVersion{
+	updates := []keyValueVersion{
 		{
 			Key:      "ns1:key1",
 			Value:    []byte("value1"),
@@ -931,7 +933,7 @@ func TestGetMethod(t *testing.T) {
 	kvs := NewLightKVS(1)
 
 	// Add data
-	updates := []KeyValueVersion{
+	updates := []keyValueVersion{
 		{
 			Key:      "ns1:key1",
 			Value:    []byte("value1"),
@@ -963,7 +965,7 @@ func TestGetMethod(t *testing.T) {
 func TestMultipleNamespaces(t *testing.T) {
 	kvs := NewLightKVS(1)
 
-	updates := []KeyValueVersion{
+	updates := []keyValueVersion{
 		{
 			Key:      "ns1:key1",
 			Value:    []byte("value1"),
@@ -1034,7 +1036,7 @@ func TestStructuralSharing(t *testing.T) {
 	kvs := NewLightKVS(1)
 
 	// Add initial data
-	updates1 := []KeyValueVersion{
+	updates1 := []keyValueVersion{
 		{
 			Key:      "ns1:key1",
 			Value:    []byte("value1"),
@@ -1057,11 +1059,11 @@ func TestStructuralSharing(t *testing.T) {
 		t.Fatalf("Update failed: %v", err)
 	}
 
-	snapshot1 := kvs.Current.Load()
+	snapshot1 := kvs.current.Load()
 	ptr1 := snapshot1.Data["ns1:key1"]
 
 	// Update only key2
-	updates2 := []KeyValueVersion{
+	updates2 := []keyValueVersion{
 		{
 			Key:      "ns1:key2",
 			Value:    []byte("value2-updated"),
@@ -1076,7 +1078,7 @@ func TestStructuralSharing(t *testing.T) {
 		t.Fatalf("Update failed: %v", err)
 	}
 
-	snapshot2 := kvs.Current.Load()
+	snapshot2 := kvs.current.Load()
 	ptr2 := snapshot2.Data["ns1:key1"]
 
 	// key1 should share the same pointer (structural sharing)
@@ -1097,7 +1099,7 @@ func TestConcurrentReadersWithUpdates(t *testing.T) {
 	kvs := NewLightKVS(1)
 
 	// Add initial data
-	updates := []KeyValueVersion{
+	updates := []keyValueVersion{
 		{
 			Key:      "ns1:key1",
 			Value:    []byte("value1"),
@@ -1149,7 +1151,7 @@ func TestConcurrentReadersWithUpdates(t *testing.T) {
 
 	// Perform updates concurrently (single writer, but testing atomicity)
 	for i := range numUpdates {
-		updates := []KeyValueVersion{
+		updates := []keyValueVersion{
 			{
 				Key:      "ns1:key1",
 				Value:    []byte("value2"),
@@ -1173,7 +1175,7 @@ func TestSnapshotByBlockNumber(t *testing.T) {
 	kvs := NewLightKVS(2)
 
 	// Add data at block 1
-	updates1 := []KeyValueVersion{
+	updates1 := []keyValueVersion{
 		{
 			Key:      "ns1:key1",
 			Value:    []byte("value_block1"),
@@ -1189,7 +1191,7 @@ func TestSnapshotByBlockNumber(t *testing.T) {
 	}
 
 	// Add data at block 2
-	updates2 := []KeyValueVersion{
+	updates2 := []keyValueVersion{
 		{
 			Key:      "ns1:key1",
 			Value:    []byte("value_block2"),
@@ -1257,7 +1259,7 @@ func TestSnapshotHistoryEviction(t *testing.T) {
 	// Create snapshots for blocks 1, 2, 3, 4
 	// History size is 2, so blocks 1 and 2 should eventually be evicted
 	for i := 1; i <= 4; i++ {
-		updates := []KeyValueVersion{
+		updates := []keyValueVersion{
 			{
 				Key:      "ns1:key1",
 				Value:    fmt.Appendf(nil, "value_block%d", i),
@@ -1320,12 +1322,8 @@ func TestSnapshotHistoryEviction(t *testing.T) {
 
 	// Block 1 should have been evicted (history only keeps 2 snapshots)
 	_, err = kvs.NewSnapshot(new(uint64(1)))
-	if err == nil {
-		t.Error("Expected error when requesting evicted block 1, got nil")
-	}
-	expectedErr := "snapshot not found for block number 1"
-	if err.Error() != expectedErr {
-		t.Errorf("Expected error '%s', got '%s'", expectedErr, err.Error())
+	if !errors.Is(err, ErrHistoryUnavailable) {
+		t.Errorf("Expected ErrHistoryUnavailable for evicted block 1, got %v", err)
 	}
 }
 
@@ -1334,7 +1332,7 @@ func TestSnapshotNonExistentBlock(t *testing.T) {
 	kvs := NewLightKVS(2)
 
 	// Add data at block 1
-	updates := []KeyValueVersion{
+	updates := []keyValueVersion{
 		{
 			Key:      "ns1:key1",
 			Value:    []byte("value1"),
@@ -1378,7 +1376,7 @@ func TestSnapshotIsolationAcrossBlocks(t *testing.T) {
 	kvs := NewLightKVS(2)
 
 	// Create block 1 with initial value
-	updates1 := []KeyValueVersion{
+	updates1 := []keyValueVersion{
 		{
 			Key:      "ns1:key1",
 			Value:    []byte("value1"),
@@ -1401,7 +1399,7 @@ func TestSnapshotIsolationAcrossBlocks(t *testing.T) {
 	defer reader1.Close()
 
 	// Create block 2 with updated value
-	updates2 := []KeyValueVersion{
+	updates2 := []keyValueVersion{
 		{
 			Key:      "ns1:key1",
 			Value:    []byte("value2"),
@@ -1442,7 +1440,7 @@ func TestSnapshotIsolationAcrossBlocks(t *testing.T) {
 	}
 
 	// Create block 3 with another update
-	updates3 := []KeyValueVersion{
+	updates3 := []keyValueVersion{
 		{
 			Key:      "ns1:key1",
 			Value:    []byte("value3"),

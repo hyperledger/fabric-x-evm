@@ -339,10 +339,9 @@ func balancePrimingEndorserFactory(balancePriming *testimpl.BalancePrimingConfig
 		// retained history slot pins one full-state map structure and costs GC tracing for
 		// the rest of the run.
 		//
-		// integration.NewEndorser passes testImpl=false, so NewEndorserCore builds a bare
-		// LightKVS rather than wrapping it in a RevertibleLightKVS with a 16384-slot
-		// history. Assert both, so a future refactor cannot silently reroute the perf
-		// harness through the testnode path or widen the window.
+		// integration.NewEndorser passes testImpl=false, so NewEndorserCore doesn't apply
+		// the testnode's 16384-snapshot default. Assert the window, so a future refactor
+		// cannot silently reroute the perf harness through the testnode path or widen it.
 		//
 		// With -db query-service the endorser keeps no state of its own; check that it
 		// really got the query-service store.
@@ -351,11 +350,9 @@ func balancePrimingEndorserFactory(balancePriming *testimpl.BalancePrimingConfig
 			if *endorserDB != econf.DBMemory {
 				t.Fatalf("perf endorser got the LightKVS store, but -db is %q", *endorserDB)
 			}
-			if got := len(kvs.History); got != 1 {
+			if got := kvs.HistorySize(); got != 1 {
 				t.Fatalf("perf endorser LightKVS history window is %d, want 1", got)
 			}
-		case *estorage.RevertibleLightKVS:
-			t.Fatalf("perf endorser got the testImpl RevertibleLightKVS; NewEndorserCore must be called with testImpl=false")
 		case *query.KVS:
 			if *endorserDB != econf.DBQueryService {
 				t.Fatalf("perf endorser got the query-service store, but -db is %q", *endorserDB)

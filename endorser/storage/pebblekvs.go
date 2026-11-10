@@ -317,7 +317,7 @@ func (p *PebbleKVS) readMeta(key []byte) (uint64, bool, error) {
 // identical content on resume, so an identical replay is a no-op and a differing
 // one a loud error. Anything older than the tip is skipped unverified — its
 // history may already be pruned, leaving nothing to check it against.
-func (p *PebbleKVS) commitBlock(blockNum uint64, updates []KeyValueVersion) error {
+func (p *PebbleKVS) commitBlock(blockNum uint64, updates []keyValueVersion) error {
 	p.writeMu.Lock()
 	defer p.writeMu.Unlock()
 	p.closeMu.RLock()
@@ -416,8 +416,8 @@ func (p *PebbleKVS) commitBlock(blockNum uint64, updates []KeyValueVersion) erro
 // key are superseded by it and are not stored separately, so that is the
 // granularity at which state can be checked. This walks the redelivery's keys,
 // so it does not notice a redelivery that *omits* a key the original block wrote.
-func (p *PebbleKVS) verifyTipReplay(updates []KeyValueVersion) error {
-	final := make(map[string]KeyValueVersion, len(updates))
+func (p *PebbleKVS) verifyTipReplay(updates []keyValueVersion) error {
+	final := make(map[string]keyValueVersion, len(updates))
 	for _, u := range updates {
 		final[u.Key] = u
 	}
@@ -577,7 +577,7 @@ func (p *PebbleKVS) NewSnapshot(blockNumber *uint64) (execution.ReadStore, error
 	}
 
 	if oldest := p.oldestRetained.Load(); bn < oldest {
-		return nil, fmt.Errorf("snapshot not found for block number %d (retained history starts at %d, head is %d)",
+		return nil, fmt.Errorf("%w: block %d (retained history starts at %d, head is %d)", ErrHistoryUnavailable,
 			bn, oldest, head)
 	}
 	p.openReaders[bn]++
@@ -611,7 +611,7 @@ func (p *PebbleKVS) Get(namespace, key string) (*blocks.WriteRecord, error) {
 // ledger height is what lets this KVS serve as the synchronizer's height reader.
 func (p *PebbleKVS) Handle(ctx context.Context, b blocks.Block) error {
 	pebbleLogger.Debugf("PebbleKVS.Handle() block=%d txs=%d", b.Number, len(b.Transactions))
-	var updates []KeyValueVersion
+	var updates []keyValueVersion
 	for _, tx := range b.Transactions {
 		if !tx.Valid() {
 			pebbleLogger.Warnf("PebbleKVS.Handle() block=%d txID=%s fabric-invalid status=%s reason=%q", b.Number, tx.ID, tx.Status, tx.Reason)

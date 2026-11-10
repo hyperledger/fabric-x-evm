@@ -15,7 +15,7 @@ import (
 // update is a test-only entry point into commitBlock for a raw batch of
 // writes, not carrying any guarantee of its own: production always goes
 // through Handle, which calls commitBlock directly.
-func (p *PebbleKVS) update(updates []KeyValueVersion) error {
+func (p *PebbleKVS) update(updates []keyValueVersion) error {
 	if len(updates) == 0 {
 		return nil
 	}
@@ -44,7 +44,7 @@ func TestPebbleUpdateRejectsMultiBlockBatch(t *testing.T) {
 	}
 	defer kvs.Close()
 
-	err = kvs.update([]KeyValueVersion{
+	err = kvs.update([]keyValueVersion{
 		{Key: "ns1:a", BlockNum: 1, TxNum: 0, Value: []byte("a")},
 		{Key: "ns1:b", BlockNum: 2, TxNum: 0, Value: []byte("b")},
 	})

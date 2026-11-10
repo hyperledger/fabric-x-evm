@@ -7,53 +7,33 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package storage
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 )
 
-// update (test only) atomically applies a batch of updates to the store, deriving the
-// block number from the batch's first entry (0 for an empty batch).
-func (kvs *RevertibleLightKVS) update(updates []KeyValueVersion) error {
-	blockNum := uint64(0)
-	if len(updates) > 0 {
-		blockNum = updates[0].BlockNum
-	}
-	return kvs.applyBlockSequential(blockNum, updates)
-}
-
-func TestNewRevertibleLightKVS(t *testing.T) {
-	base := NewLightKVS(2)
-	kvs := NewRevertibleLightKVS(base)
-	if kvs == nil {
-		t.Fatal("NewRevertibleLightKVS returned nil")
-	}
-	if kvs.NextIndex.Load() != 0 {
-		t.Errorf("expected NextIndex reset to 0, got %d", kvs.NextIndex.Load())
-	}
-}
-
-// TestRevertibleLightKVS_SatisfiesRevertible is a compile-time-ish check that the
+// TestLightKVS_SatisfiesRevertible is a compile-time-ish check that the
 // type gateway/app and gateway/testimpl rely on actually implements Revertible.
-func TestRevertibleLightKVS_SatisfiesRevertible(t *testing.T) {
-	var _ Revertible = NewRevertibleLightKVS(NewLightKVS(2))
+func TestLightKVS_SatisfiesRevertible(t *testing.T) {
+	var _ Revertible = NewLightKVS(2)
 }
 
-// TestRevertibleLightKVS_RevertToBlock exercises the same sequence Hardhat's
+// TestLightKVS_RevertToBlock exercises the same sequence Hardhat's
 // evm_snapshot/evm_revert drives: commit a couple of blocks, then roll back to an
 // earlier one and verify reads reflect the rolled-back state.
-func TestRevertibleLightKVS_RevertToBlock(t *testing.T) {
-	kvs := NewRevertibleLightKVS(NewLightKVS(4))
+func TestLightKVS_RevertToBlock(t *testing.T) {
+	kvs := NewLightKVS(4)
 
 	// Block 1: key1 = v1
-	if err := kvs.update([]KeyValueVersion{
+	if err := kvs.update([]keyValueVersion{
 		{Key: "ns1:key1", Value: []byte("v1"), BlockNum: 1, TxNum: 0, TxID: "tx1"},
 	}); err != nil {
 		t.Fatalf("Update block 1 failed: %v", err)
 	}
 
 	// Block 2: key1 = v2, key2 = vB (new key)
-	if err := kvs.update([]KeyValueVersion{
+	if err := kvs.update([]keyValueVersion{
 		{Key: "ns1:key1", Value: []byte("v2"), BlockNum: 2, TxNum: 0, TxID: "tx2"},
 		{Key: "ns1:key2", Value: []byte("vB"), BlockNum: 2, TxNum: 1, TxID: "tx2b"},
 	}); err != nil {
@@ -97,12 +77,12 @@ func TestRevertibleLightKVS_RevertToBlock(t *testing.T) {
 	}
 }
 
-// TestRevertibleLightKVS_RevertToBlock_NoOp reverting to the current block is a
+// TestLightKVS_RevertToBlock_NoOp reverting to the current block is a
 // successful no-op.
-func TestRevertibleLightKVS_RevertToBlock_NoOp(t *testing.T) {
-	kvs := NewRevertibleLightKVS(NewLightKVS(2))
+func TestLightKVS_RevertToBlock_NoOp(t *testing.T) {
+	kvs := NewLightKVS(2)
 
-	if err := kvs.update([]KeyValueVersion{
+	if err := kvs.update([]keyValueVersion{
 		{Key: "ns1:key1", Value: []byte("v1"), BlockNum: 1, TxNum: 0, TxID: "tx1"},
 	}); err != nil {
 		t.Fatalf("Update failed: %v", err)
@@ -113,11 +93,11 @@ func TestRevertibleLightKVS_RevertToBlock_NoOp(t *testing.T) {
 	}
 }
 
-// TestRevertibleLightKVS_RevertToBlock_NotFound reverting to an unknown block errors.
-func TestRevertibleLightKVS_RevertToBlock_NotFound(t *testing.T) {
-	kvs := NewRevertibleLightKVS(NewLightKVS(2))
+// TestLightKVS_RevertToBlock_NotFound reverting to an unknown block errors.
+func TestLightKVS_RevertToBlock_NotFound(t *testing.T) {
+	kvs := NewLightKVS(2)
 
-	if err := kvs.update([]KeyValueVersion{
+	if err := kvs.update([]keyValueVersion{
 		{Key: "ns1:key1", Value: []byte("v1"), BlockNum: 1, TxNum: 0, TxID: "tx1"},
 	}); err != nil {
 		t.Fatalf("Update failed: %v", err)
@@ -128,20 +108,20 @@ func TestRevertibleLightKVS_RevertToBlock_NotFound(t *testing.T) {
 	}
 }
 
-// TestRevertibleLightKVS_RevertToBlock_SkipsEmptyBlocks is the revert-path twin of
-// TestRevertibleLightKVS_NewSnapshot_SkipsEmptyBlocks: an empty block never calls
+// TestLightKVS_RevertToBlock_SkipsEmptyBlocks is the revert-path twin of
+// TestLightKVS_NewSnapshot_SkipsEmptyBlocks: an empty block never calls
 // update, so it never gets a history entry, but evm_revert to that exact block
 // number must still succeed by falling back to the nearest older snapshot.
-func TestRevertibleLightKVS_RevertToBlock_SkipsEmptyBlocks(t *testing.T) {
-	kvs := NewRevertibleLightKVS(NewLightKVS(8))
+func TestLightKVS_RevertToBlock_SkipsEmptyBlocks(t *testing.T) {
+	kvs := NewLightKVS(8)
 
 	// Blocks 1 and 5 wrote; 2-4 were empty (no update, so no history entry).
-	if err := kvs.update([]KeyValueVersion{
+	if err := kvs.update([]keyValueVersion{
 		{Key: "ns1:key1", Value: []byte("v1"), BlockNum: 1, TxNum: 0, TxID: "tx1"},
 	}); err != nil {
 		t.Fatalf("Update block 1: %v", err)
 	}
-	if err := kvs.update([]KeyValueVersion{
+	if err := kvs.update([]keyValueVersion{
 		{Key: "ns1:key1", Value: []byte("v5"), BlockNum: 5, TxNum: 0, TxID: "tx5"},
 	}); err != nil {
 		t.Fatalf("Update block 5: %v", err)
@@ -175,13 +155,13 @@ func TestRevertibleLightKVS_RevertToBlock_SkipsEmptyBlocks(t *testing.T) {
 	}
 }
 
-// TestRevertibleLightKVS_RevertThenContinue verifies that after a revert the store
+// TestLightKVS_RevertThenContinue verifies that after a revert the store
 // can keep accepting new blocks — the core interactive-testnode usage pattern.
-func TestRevertibleLightKVS_RevertThenContinue(t *testing.T) {
-	kvs := NewRevertibleLightKVS(NewLightKVS(4))
+func TestLightKVS_RevertThenContinue(t *testing.T) {
+	kvs := NewLightKVS(4)
 
 	for i, val := range []string{"v1", "v2", "v3"} {
-		if err := kvs.update([]KeyValueVersion{
+		if err := kvs.update([]keyValueVersion{
 			{Key: "ns1:key1", Value: []byte(val), BlockNum: uint64(i + 1), TxNum: 0, TxID: "tx"},
 		}); err != nil {
 			t.Fatalf("Update block %d failed: %v", i+1, err)
@@ -193,7 +173,7 @@ func TestRevertibleLightKVS_RevertThenContinue(t *testing.T) {
 	}
 
 	// Continue committing after the revert point.
-	if err := kvs.update([]KeyValueVersion{
+	if err := kvs.update([]keyValueVersion{
 		{Key: "ns1:key1", Value: []byte("v1-continued"), BlockNum: 5, TxNum: 0, TxID: "tx5"},
 	}); err != nil {
 		t.Fatalf("Update after revert failed: %v", err)
@@ -214,19 +194,19 @@ func TestRevertibleLightKVS_RevertThenContinue(t *testing.T) {
 	}
 }
 
-// TestRevertibleLightKVS_NewSnapshot_SkipsEmptyBlocks ensures historical reads
+// TestLightKVS_NewSnapshot_SkipsEmptyBlocks ensures historical reads
 // find state when Fabric block numbers advance without an update for empty blocks
 // (hop-by-distance lookup used to miss those snapshots).
-func TestRevertibleLightKVS_NewSnapshot_SkipsEmptyBlocks(t *testing.T) {
-	kvs := NewRevertibleLightKVS(NewLightKVS(8))
+func TestLightKVS_NewSnapshot_SkipsEmptyBlocks(t *testing.T) {
+	kvs := NewLightKVS(8)
 
 	// Blocks 1 and 5 wrote; 2–4 were empty (no update).
-	if err := kvs.update([]KeyValueVersion{
+	if err := kvs.update([]keyValueVersion{
 		{Key: "ns1:key1", Value: []byte("v1"), BlockNum: 1, TxNum: 0, TxID: "tx1"},
 	}); err != nil {
 		t.Fatalf("Update block 1: %v", err)
 	}
-	if err := kvs.update([]KeyValueVersion{
+	if err := kvs.update([]keyValueVersion{
 		{Key: "ns1:key1", Value: []byte("v5"), BlockNum: 5, TxNum: 0, TxID: "tx5"},
 	}); err != nil {
 		t.Fatalf("Update block 5: %v", err)
@@ -276,32 +256,29 @@ func TestRevertibleLightKVS_NewSnapshot_SkipsEmptyBlocks(t *testing.T) {
 	}
 }
 
-// TestRevertibleLightKVS_NewSnapshot_NotFound covers the error path when no
-// preserved snapshot is at or before the requested block (e.g. history slots
-// cleared while current has already advanced).
-func TestRevertibleLightKVS_NewSnapshot_NotFound(t *testing.T) {
-	kvs := NewRevertibleLightKVS(NewLightKVS(4))
+// TestLightKVS_NewSnapshot_NotFound covers the error path when no
+// retained snapshot is at or before the requested block: with no history, only
+// the current state can be read.
+func TestLightKVS_NewSnapshot_NotFound(t *testing.T) {
+	kvs := NewLightKVS(0)
 
-	if err := kvs.update([]KeyValueVersion{
+	if err := kvs.update([]keyValueVersion{
 		{Key: "ns1:key1", Value: []byte("v10"), BlockNum: 10, TxNum: 0, TxID: "tx10"},
 	}); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 
-	// Drop the only history entry (pre-update empty snapshot) so nothing
-	// older than current remains.
-	kvs.History[0].Store(nil)
-
-	if _, err := kvs.NewSnapshot(new(uint64(3))); err == nil {
-		t.Fatal("expected error when no history exists at or before block 3")
+	if _, err := kvs.NewSnapshot(new(uint64(3))); !errors.Is(err, ErrHistoryUnavailable) {
+		t.Fatalf("NewSnapshot(3): got %v, want ErrHistoryUnavailable", err)
 	}
+	wantValue(t, mustGetAsOf(t, kvs, "ns1", "key1", 10), "v10")
 }
 
-// TestRevertibleLightKVS_HistoryFullForgetsOldest verifies a full history
+// TestLightKVS_HistoryFullForgetsOldest verifies a full history
 // window drops its oldest snapshot instead of panicking, and that reads and
 // reverts to a forgotten block error while recent ones still work.
-func TestRevertibleLightKVS_HistoryFullForgetsOldest(t *testing.T) {
-	kvs := NewRevertibleLightKVS(NewLightKVS(2))
+func TestLightKVS_HistoryFullForgetsOldest(t *testing.T) {
+	kvs := NewLightKVS(2)
 	ctx := t.Context()
 
 	for i := uint64(1); i <= 5; i++ {
@@ -337,10 +314,10 @@ func TestRevertibleLightKVS_HistoryFullForgetsOldest(t *testing.T) {
 	}
 }
 
-// TestRevertibleLightKVS_RevertAfterForgetThenContinue reverts into a window
+// TestLightKVS_RevertAfterForgetThenContinue reverts into a window
 // that has already dropped entries, then commits past its size again.
-func TestRevertibleLightKVS_RevertAfterForgetThenContinue(t *testing.T) {
-	kvs := NewRevertibleLightKVS(NewLightKVS(2))
+func TestLightKVS_RevertAfterForgetThenContinue(t *testing.T) {
+	kvs := NewLightKVS(2)
 	ctx := t.Context()
 
 	for i := uint64(1); i <= 5; i++ {
@@ -372,7 +349,7 @@ func TestRevertibleLightKVS_RevertAfterForgetThenContinue(t *testing.T) {
 	}
 }
 
-// TestRevertibleLightKVS_RevertToBlock_DuplicateBlockNumber pins which snapshot
+// TestLightKVS_RevertToBlock_DuplicateBlockNumber pins which snapshot
 // wins when several carry the same block number.
 //
 // The testnode reaches this on every startup: FundTestAccounts seeds balances
@@ -381,17 +358,17 @@ func TestRevertibleLightKVS_RevertAfterForgetThenContinue(t *testing.T) {
 // then funded. History is oldest-first, so resolving a revert by first match
 // returns the state from before the funding and every test account reads back
 // at zero.
-func TestRevertibleLightKVS_RevertToBlock_DuplicateBlockNumber(t *testing.T) {
-	kvs := NewRevertibleLightKVS(NewLightKVS(4))
+func TestLightKVS_RevertToBlock_DuplicateBlockNumber(t *testing.T) {
+	kvs := NewLightKVS(4)
 
 	// Two writes both labelled block 0, the way startup funding lands on top of
 	// the initial state.
-	if err := kvs.update([]KeyValueVersion{
+	if err := kvs.update([]keyValueVersion{
 		{Key: "ns1:balance", Value: []byte("empty"), BlockNum: 0, TxNum: 0, TxID: "genesis"},
 	}); err != nil {
 		t.Fatalf("Update genesis failed: %v", err)
 	}
-	if err := kvs.update([]KeyValueVersion{
+	if err := kvs.update([]keyValueVersion{
 		{Key: "ns1:balance", Value: []byte("funded"), BlockNum: 0, TxNum: 0, TxID: "funding"},
 	}); err != nil {
 		t.Fatalf("Update funding failed: %v", err)
@@ -399,7 +376,7 @@ func TestRevertibleLightKVS_RevertToBlock_DuplicateBlockNumber(t *testing.T) {
 
 	// Then a real block, so the revert has to come out of history rather than
 	// being a no-op against current.
-	if err := kvs.update([]KeyValueVersion{
+	if err := kvs.update([]keyValueVersion{
 		{Key: "ns1:balance", Value: []byte("spent"), BlockNum: 1, TxNum: 0, TxID: "tx1"},
 	}); err != nil {
 		t.Fatalf("Update block 1 failed: %v", err)
@@ -424,20 +401,20 @@ func TestRevertibleLightKVS_RevertToBlock_DuplicateBlockNumber(t *testing.T) {
 	}
 }
 
-// TestRevertibleLightKVS_NewSnapshot_DuplicateBlockNumber is the read-path twin
+// TestLightKVS_NewSnapshot_DuplicateBlockNumber is the read-path twin
 // of the above: an as-of-block-0 read must see the same state a revert to block
 // 0 restores, not the earlier snapshot that shares the number.
-func TestRevertibleLightKVS_NewSnapshot_DuplicateBlockNumber(t *testing.T) {
-	kvs := NewRevertibleLightKVS(NewLightKVS(4))
+func TestLightKVS_NewSnapshot_DuplicateBlockNumber(t *testing.T) {
+	kvs := NewLightKVS(4)
 
 	for _, w := range []struct{ value, txID string }{{"empty", "genesis"}, {"funded", "funding"}} {
-		if err := kvs.update([]KeyValueVersion{
+		if err := kvs.update([]keyValueVersion{
 			{Key: "ns1:balance", Value: []byte(w.value), BlockNum: 0, TxNum: 0, TxID: w.txID},
 		}); err != nil {
 			t.Fatalf("Update %s failed: %v", w.txID, err)
 		}
 	}
-	if err := kvs.update([]KeyValueVersion{
+	if err := kvs.update([]keyValueVersion{
 		{Key: "ns1:balance", Value: []byte("spent"), BlockNum: 1, TxNum: 0, TxID: "tx1"},
 	}); err != nil {
 		t.Fatalf("Update block 1 failed: %v", err)
@@ -455,89 +432,5 @@ func TestRevertibleLightKVS_NewSnapshot_DuplicateBlockNumber(t *testing.T) {
 	}
 	if rec == nil || string(rec.Value) != "funded" {
 		t.Errorf("reading at block 0 should see the last state written at block 0 (%q), got %+v", "funded", rec)
-	}
-}
-
-// TestRevertibleLightKVS_Handle_EmptyBlockAdvancesHeight verifies a block with
-// no writes still advances height when delivered through Handle. update alone
-// cannot express this (it derives the block number from the batch's first
-// entry), which is why Handle passes it explicitly.
-func TestRevertibleLightKVS_Handle_EmptyBlockAdvancesHeight(t *testing.T) {
-	kvs := NewRevertibleLightKVS(NewLightKVS(4))
-	ctx := t.Context()
-
-	if err := kvs.Handle(ctx, mkBlock(1, 0, "tx1", true, "ns1",
-		blocks.KVWrite{Key: "k", Value: []byte("v1")})); err != nil {
-		t.Fatalf("Handle block 1: %v", err)
-	}
-	if err := kvs.Handle(ctx, blocks.Block{Number: 2, Transactions: nil}); err != nil {
-		t.Fatalf("Handle empty block 2: %v", err)
-	}
-
-	if n, err := kvs.BlockNumber(ctx); err != nil || n != 2 {
-		t.Errorf("expected height 2 after empty block, got %d (err %v)", n, err)
-	}
-}
-
-// TestRevertibleLightKVS_Handle_ReplayIsNoOp mirrors LightKVS's own replay
-// guard: re-delivering an already-applied block with identical content is a
-// no-op, and with differing content is a loud error — in both cases without
-// bumping versions again.
-func TestRevertibleLightKVS_Handle_ReplayIsNoOp(t *testing.T) {
-	kvs := NewRevertibleLightKVS(NewLightKVS(4))
-	ctx := t.Context()
-
-	if err := kvs.Handle(ctx, mkBlock(1, 0, "tx1", true, "ns1",
-		blocks.KVWrite{Key: "k", Value: []byte("v1")})); err != nil {
-		t.Fatalf("Handle block 1: %v", err)
-	}
-
-	if err := kvs.Handle(ctx, mkBlock(1, 0, "tx1", true, "ns1",
-		blocks.KVWrite{Key: "k", Value: []byte("v1")})); err != nil {
-		t.Fatalf("Handle identical replay of block 1: %v", err)
-	}
-	if rec := kvs.Current.Load().Data["ns1:k"]; rec == nil || string(rec.Value) != "v1" || rec.Version != 0 {
-		t.Errorf("identical replay changed state: expected v1 version 0, got %+v", rec)
-	}
-
-	if err := kvs.Handle(ctx, mkBlock(1, 0, "tx1-replay", true, "ns1",
-		blocks.KVWrite{Key: "k", Value: []byte("v2")})); err == nil {
-		t.Fatal("Handle differing replay of block 1: expected error, got nil")
-	}
-	if rec := kvs.Current.Load().Data["ns1:k"]; rec == nil || string(rec.Value) != "v1" || rec.Version != 0 {
-		t.Errorf("differing replay changed state: expected v1 version 0, got %+v", rec)
-	}
-}
-
-// TestRevertibleLightKVS_Handle_NewSnapshotFindsHistory verifies that blocks
-// delivered via Handle are findable through NewSnapshot within the history
-// window — the read side of the bug this type's Handle override closes: a
-// LightKVS.applyBlock-driven ring wrap and a NewSnapshot scan bounded by
-// NextIndex used to disagree about which slots held valid data.
-func TestRevertibleLightKVS_Handle_NewSnapshotFindsHistory(t *testing.T) {
-	kvs := NewRevertibleLightKVS(NewLightKVS(4))
-	ctx := t.Context()
-
-	for i := uint64(1); i <= 3; i++ {
-		if err := kvs.Handle(ctx, mkBlock(i, 0, "tx", true, "ns1",
-			blocks.KVWrite{Key: "k", Value: []byte{byte(i)}})); err != nil {
-			t.Fatalf("Handle block %d: %v", i, err)
-		}
-	}
-
-	for i := uint64(1); i <= 3; i++ {
-		bn := i
-		reader, err := kvs.NewSnapshot(&bn)
-		if err != nil {
-			t.Fatalf("NewSnapshot(%d): %v", i, err)
-		}
-		rec, err := reader.Get("ns1", "k")
-		reader.Close()
-		if err != nil {
-			t.Fatalf("Get at block %d: %v", i, err)
-		}
-		if rec == nil || rec.Value[0] != byte(i) {
-			t.Errorf("as of block %d: expected value %d, got %+v", i, i, rec)
-		}
 	}
 }

@@ -159,7 +159,7 @@ func newApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, enableT
 type testRPCDeps struct {
 	// kvs is the in-process endorser's KVS: the test RPC pre-funds accounts and primes
 	// state through it, and rewinds it for evm_revert. It must implement
-	// estorage.Revertible, which only the test-mode KVS does — hence the assertion in
+	// estorage.Revertible, which only the in-memory KVS does — hence the assertion in
 	// buildApp rather than a stricter field type, since NewEndorserCore hands back the
 	// plain estorage.KVS interface.
 	kvs estorage.KVS

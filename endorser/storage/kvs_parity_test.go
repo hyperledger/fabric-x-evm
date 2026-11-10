@@ -8,6 +8,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -45,15 +46,6 @@ func kvsBackends() []kvsBackend {
 			newLoc: func(t *testing.T) string { return "" },
 			open: func(t *testing.T, _ string, historySize int) KVS {
 				return NewLightKVS(historySize)
-			},
-			persistent:     false,
-			boundedHistory: true,
-		},
-		{
-			name:   "RevertibleLightKVS",
-			newLoc: func(t *testing.T) string { return "" },
-			open: func(t *testing.T, _ string, historySize int) KVS {
-				return NewRevertibleLightKVS(NewLightKVS(historySize))
 			},
 			persistent:     false,
 			boundedHistory: true,
@@ -402,14 +394,35 @@ func TestParityEvictedHistoryErrors(t *testing.T) {
 		// ...and anything below it is gone, not silently answered.
 		for _, evicted := range []uint64{1, head - window - 1} {
 			snap, err := kvs.NewSnapshot(&evicted)
-			if err != nil {
+			if errors.Is(err, ErrHistoryUnavailable) {
 				continue // the expected outcome
+			}
+			if err != nil {
+				t.Errorf("NewSnapshot(%d): got %v, want ErrHistoryUnavailable", evicted, err)
+				continue
 			}
 			rec, getErr := snap.Get("ns1", "k")
 			snap.Close()
 			t.Errorf("NewSnapshot(%d) succeeded for an evicted block: got record %+v (Get err %v)",
 				evicted, rec, getErr)
 		}
+	})
+}
+
+// TestParityHeightsBetweenAndPastBlocks pins how a height without a block of its
+// own is served: a height between two delivered blocks reads the state as of
+// the older one, and a height past the tip reads the tip.
+func TestParityHeightsBetweenAndPastBlocks(t *testing.T) {
+	forEachFreshKVS(t, 128, func(t *testing.T, kvs KVS) {
+		for _, i := range []uint64{1, 3, 5} {
+			mustHandle(t, kvs, mkBlock(i, 0, fmt.Sprintf("tx%d", i), true, "ns1",
+				blocks.KVWrite{Key: "k", Value: fmt.Appendf(nil, "v%d", i)}))
+		}
+
+		wantValue(t, mustGetAsOf(t, kvs, "ns1", "k", 2), "v1")
+		wantValue(t, mustGetAsOf(t, kvs, "ns1", "k", 4), "v3")
+		wantValue(t, mustGetAsOf(t, kvs, "ns1", "k", 5), "v5")
+		wantValue(t, mustGetAsOf(t, kvs, "ns1", "k", 100), "v5")
 	})
 }
 

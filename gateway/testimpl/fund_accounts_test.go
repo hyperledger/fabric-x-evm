@@ -20,7 +20,7 @@ import (
 const testNS = "basic"
 
 func TestFundTestAccounts_SeedsBalancesReadableViaStateDB(t *testing.T) {
-	kvs := estorage.NewRevertibleLightKVS(estorage.NewLightKVS(8))
+	kvs := estorage.NewLightKVS(8)
 	addrs := []common.Address{
 		common.HexToAddress("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
 		common.HexToAddress("0x70997970C51812dc3A010C7d01b50e0d17dc79C8"),
@@ -112,9 +112,8 @@ func TestFundTestAccounts_NoopOnZeroOrEmpty(t *testing.T) {
 		t.Fatalf("nil balance: %v", err)
 	}
 
-	snap := kvs.Current.Load()
-	if len(snap.Data) != 0 {
-		t.Fatalf("expected no keys written, got %d", len(snap.Data))
+	if rec, err := kvs.Get(testNS, "acc:"+addr.Hex()+":bal"); err != nil || rec != nil {
+		t.Fatalf("expected no balance written, got %+v (err %v)", rec, err)
 	}
 }
 
@@ -175,8 +174,8 @@ func TestFundTestAccounts_NegativeBalanceIsNoop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("negative balance: %v", err)
 	}
-	if len(kvs.Current.Load().Data) != 0 {
-		t.Fatal("expected no keys for negative balance")
+	if rec, err := kvs.Get(testNS, "acc:"+common.Address{1}.Hex()+":bal"); err != nil || rec != nil {
+		t.Fatalf("expected no balance for negative balance, got %+v (err %v)", rec, err)
 	}
 }
 
