@@ -93,12 +93,13 @@ require (
 	github.com/grafana/pyroscope-go v1.2.7 // indirect
 	github.com/grafana/pyroscope-go/godeltaprof v0.1.9 // indirect
 	github.com/graph-gophers/graphql-go v1.3.0 // indirect
+	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 // indirect
 	github.com/hashicorp/go-bexpr v0.1.10 // indirect
 	github.com/holiman/billy v0.0.0-20250707135307-f2f9b9aae7db // indirect
 	github.com/holiman/bloomfilter/v2 v2.0.3 // indirect
 	github.com/huin/goupnp v1.3.0 // indirect
-	github.com/hyperledger/SmartBFT v1.0.3-0.20261010195840-f44fcdf9f24f // indirect
+	github.com/hyperledger-labs/SmartBFT v1.0.1 // indirect
 	github.com/hyperledger/fabric-amcl v0.0.0-20230602173724-9e02669dceb2 // indirect
 	github.com/hyperledger/fabric-x v1.0.3 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
@@ -177,4 +178,10 @@ require (
 	modernc.org/libc v1.77.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
+)
+
+// Temporary: unreleased forest manager branch; fabric-x-common pinned to the version the SDK builds against.
+replace (
+	github.com/hyperledger/fabric-x-committer => github.com/cendhu/fabric-x-committer v0.0.0-20261008094612-52600af3236f
+	github.com/hyperledger/fabric-x-common => github.com/hyperledger/fabric-x-common v0.2.9-0.20260723091942-e43f1af10c7e
 )
