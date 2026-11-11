@@ -202,6 +202,93 @@ func TestDepGraphQueue_CompleteReleasesDependents(t *testing.T) {
 	requireReady(t, q, 1)
 }
 
+func newDepQueueWithTrackedTimeout(t *testing.T, timeout time.Duration) (*DepGraphQueue, *keyedEndorser) {
+	t.Helper()
+	e := newKeyedEndorser(t)
+	q := NewDepGraphQueue(&config.DepGraphQueue{TrackedTimeout: timeout})
+	q.Bind(e)
+	t.Cleanup(q.Close)
+	return q, e
+}
+
+// A dequeued transaction that never reaches Handle or Complete is reaped so
+// dependents are not stranded by silent orderer loss (#442).
+func TestDepGraphQueue_ReaperCompletesTimedOutDequeuedTx(t *testing.T) {
+	q, e := newDepQueueWithTrackedTimeout(t, 40*time.Millisecond)
+	first, second := txWithNonce(1), txWithNonce(2)
+	e.touches(first, "balance")
+	e.touches(second, "balance")
+
+	require.NoError(t, q.Enqueue(first))
+	requireReady(t, q, 1)
+	_, ok := q.Dequeue()
+	require.True(t, ok)
+
+	require.NoError(t, q.Enqueue(second))
+	require.Never(t, func() bool { return readyCount(q) > 0 }, 30*time.Millisecond, 5*time.Millisecond)
+
+	require.Eventually(t, func() bool { return q.IsPending(first.Hash()) == nil }, time.Second, 5*time.Millisecond,
+		"reaper should Complete the timed-out dequeued tx")
+	requireReady(t, q, 1)
+	require.Equal(t, 1, q.InFlight())
+	require.NotNil(t, q.IsPending(second.Hash()))
+}
+
+// Transactions that are still waiting to be dequeued are not reaped: the
+// timeout is keyed on the submit hand-off, not on enqueue.
+func TestDepGraphQueue_ReaperIgnoresNotYetDequeued(t *testing.T) {
+	q, _ := newDepQueueWithTrackedTimeout(t, 40*time.Millisecond)
+	tx := txWithNonce(1)
+
+	require.NoError(t, q.Enqueue(tx))
+	requireReady(t, q, 1)
+
+	require.Never(t, func() bool { return q.IsPending(tx.Hash()) == nil }, 150*time.Millisecond, 10*time.Millisecond)
+	require.Equal(t, 1, q.InFlight())
+}
+
+// Handle after a reaper Complete is a no-op: the node was already released.
+func TestDepGraphQueue_HandleAfterReaperIsNoop(t *testing.T) {
+	q, _ := newDepQueueWithTrackedTimeout(t, 40*time.Millisecond)
+	tx := txWithNonce(1)
+
+	require.NoError(t, q.Enqueue(tx))
+	requireReady(t, q, 1)
+	_, ok := q.Dequeue()
+	require.True(t, ok)
+
+	require.Eventually(t, func() bool { return q.IsPending(tx.Hash()) == nil }, time.Second, 5*time.Millisecond)
+	require.NoError(t, q.Handle(context.Background(), blockWith(1, tx)))
+	require.Zero(t, q.InFlight())
+}
+
+// A fresh re-enqueue of a hash that was just reaped must not be Completely
+// removed by a stale expiry decision (takeNodes under the same lock).
+func TestDepGraphQueue_ReaperDoesNotKillFreshReenqueue(t *testing.T) {
+	q, _ := newDepQueueWithTrackedTimeout(t, time.Hour) // reaper loop idle; call reapExpired directly
+	tx := txWithNonce(1)
+
+	require.NoError(t, q.Enqueue(tx))
+	requireReady(t, q, 1)
+	_, ok := q.Dequeue()
+	require.True(t, ok)
+
+	q.mu.Lock()
+	tTracked, ok := q.tracked[tx.Hash()]
+	require.True(t, ok)
+	tTracked.dequeuedAt = time.Now().Add(-time.Hour)
+	q.mu.Unlock()
+
+	q.reapExpired()
+	require.Nil(t, q.IsPending(tx.Hash()))
+
+	require.NoError(t, q.Enqueue(tx))
+	require.NotNil(t, q.IsPending(tx.Hash()))
+	q.reapExpired() // fresh entry has zero dequeuedAt; must survive
+	require.NotNil(t, q.IsPending(tx.Hash()))
+	require.Equal(t, 1, q.InFlight())
+}
+
 func TestDepGraphQueue_IsPendingAndInFlight(t *testing.T) {
 	q, _ := newDepQueue(t)
 	tx := txWithNonce(1)
@@ -547,6 +634,7 @@ func TestDepGraphQueue_NonPositiveConfigFallsBackToDefaults(t *testing.T) {
 		{"zero waiting limit", &config.DepGraphQueue{WaitingTxsLimit: 0}},
 		{"zero batch threshold", &config.DepGraphQueue{BatchThreshold: 0}},
 		{"zero batch timeout", &config.DepGraphQueue{BatchTimeout: 0}},
+		{"zero tracked timeout", &config.DepGraphQueue{TrackedTimeout: 0}},
 		{"negative workers", &config.DepGraphQueue{EndorseWorkers: -1}},
 		{"negative chan size", &config.DepGraphQueue{ChanSize: -1}},
 		{"negative waiting limit", &config.DepGraphQueue{WaitingTxsLimit: -1}},
@@ -565,6 +653,9 @@ func TestDepGraphQueue_NonPositiveConfigFallsBackToDefaults(t *testing.T) {
 			require.Equal(t, defaultBatchThreshold, q.batchThreshold)
 			require.Equal(t, defaultBatchTimeout, q.batchTimeout)
 			require.Equal(t, defaultChanSize, cap(q.admitted))
+			if tc.cfg.TrackedTimeout >= 0 {
+				require.Equal(t, defaultTrackedTimeout, q.trackedTimeout)
+			}
 
 			// A defaulted WaitingTxsLimit is the one that cannot be read back off
 			// the struct, so drive a transaction through to prove Acquire is not
@@ -586,6 +677,7 @@ func TestDepGraphQueue_PositiveConfigIsHonoured(t *testing.T) {
 	q := NewDepGraphQueue(&config.DepGraphQueue{
 		EndorseWorkers: 2, ChanSize: 16,
 		WaitingTxsLimit: 32, BatchThreshold: 4, BatchTimeout: 5 * time.Millisecond,
+		TrackedTimeout: 75 * time.Millisecond,
 	})
 	t.Cleanup(q.Close)
 
@@ -593,6 +685,15 @@ func TestDepGraphQueue_PositiveConfigIsHonoured(t *testing.T) {
 	require.Equal(t, 4, q.batchThreshold)
 	require.Equal(t, 5*time.Millisecond, q.batchTimeout)
 	require.Equal(t, 16, cap(q.admitted))
+	require.Equal(t, 75*time.Millisecond, q.trackedTimeout)
+	require.Equal(t, minReaperInterval, q.reaperInterval)
+}
+
+func TestDepGraphQueue_NegativeTrackedTimeoutDisablesReaper(t *testing.T) {
+	q := NewDepGraphQueue(&config.DepGraphQueue{TrackedTimeout: -time.Second})
+	t.Cleanup(q.Close)
+	require.Zero(t, q.trackedTimeout)
+	require.Zero(t, q.reaperInterval)
 }
 
 // fabricCommittedBlock builds a block whose transactions all committed on Fabric.
