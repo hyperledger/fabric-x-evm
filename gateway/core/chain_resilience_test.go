@@ -8,7 +8,6 @@ package core
 
 import (
 	"encoding/binary"
-	"encoding/json"
 	"math/big"
 	"path/filepath"
 	"testing"
@@ -16,7 +15,6 @@ import (
 	fc "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
-	sdkstate "github.com/hyperledger/fabric-x-sdk/state"
 	_ "modernc.org/sqlite"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -46,12 +44,12 @@ func resilienceNonceWrite(addr common.Address, nonce uint64) blocks.KVWrite {
 	}
 }
 
-func resilienceEvents(t *testing.T, txID string, logs []sdkstate.Log) []byte {
+func resilienceEvents(t *testing.T, txID string, logs []fc.Log) []byte {
 	t.Helper()
 
-	// A successful transaction's event bytes are the JSON logs themselves; the
+	// A successful transaction's event bytes are the encoded logs themselves; the
 	// SDK no longer wraps them in a ChaincodeEvent.
-	payload, err := json.Marshal(logs)
+	payload, err := fc.MarshalLogs(logs)
 	require.NoError(t, err)
 	return payload
 }
@@ -73,7 +71,7 @@ func TestHandle_ReprocessingSameBlockKeepsIndexesAndTrieStable(t *testing.T) {
 	txBytes, err := ethTx.MarshalBinary()
 	require.NoError(t, err)
 
-	logs := []sdkstate.Log{{
+	logs := []fc.Log{{
 		Address: to.Bytes(),
 		Topics:  [][]byte{resilienceHash(0xAA)},
 		Data:    []byte{0x01, 0x02},

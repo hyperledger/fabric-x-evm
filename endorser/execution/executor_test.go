@@ -432,7 +432,39 @@ func TestEVMEngineExecute_SuccessCarriesLogsAndGas(t *testing.T) {
 	}
 }
 
-// Two endorsers executing the same tx must produce identical Payload bytes.
+// NewResult stores every field of every log in the event, in order.
+func TestNewResult_LogsRoundTripThroughEvent(t *testing.T) {
+	logs := []Log{
+		{Address: []byte{0x01}, Topics: [][]byte{{0x0a}, {0x0b}}, Data: []byte{0xff}},
+		{Address: []byte{0x02}, Data: []byte{0xee, 0xdd}},
+	}
+	res, err := NewResult(blocks.ReadWriteSet{}, logs, &endorsementpb.ExecutionMetadata{
+		Status: endorsementpb.ExecutionStatus_EXECUTION_STATUS_SUCCESS,
+	}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := common.UnmarshalLogs(res.Event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != len(logs) {
+		t.Fatalf("got %d logs, want %d", len(got), len(logs))
+	}
+	for i, want := range logs {
+		if !bytes.Equal(got[i].Address, want.Address) || !bytes.Equal(got[i].Data, want.Data) || len(got[i].Topics) != len(want.Topics) {
+			t.Fatalf("log[%d] = %v, want %v", i, got[i], want)
+		}
+		for j := range want.Topics {
+			if !bytes.Equal(got[i].Topics[j], want.Topics[j]) {
+				t.Errorf("log[%d].Topics[%d] = %x, want %x", i, j, got[i].Topics[j], want.Topics[j])
+			}
+		}
+	}
+}
+
+// Two endorsers executing the same tx must produce identical Payload and Event bytes.
 func TestEVMEngineExecute_PayloadIsDeterministic(t *testing.T) {
 	eng := newTestEngine(newTestBackend(t, "exec_determinism"))
 	// LOG0 of 0 bytes, then STOP
@@ -448,5 +480,8 @@ func TestEVMEngineExecute_PayloadIsDeterministic(t *testing.T) {
 	}
 	if !bytes.Equal(a.Payload, b.Payload) {
 		t.Errorf("payloads differ: %x vs %x", a.Payload, b.Payload)
+	}
+	if !bytes.Equal(a.Event, b.Event) {
+		t.Errorf("events differ: %x vs %x", a.Event, b.Event)
 	}
 }

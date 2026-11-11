@@ -8,7 +8,6 @@ package execution
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -131,7 +130,7 @@ func NewResult(rws blocks.ReadWriteSet, logs []Log, md *endorsementpb.ExecutionM
 	var event []byte
 	if len(logs) > 0 {
 		var err error
-		if event, err = json.Marshal(logs); err != nil {
+		if event, err = fxcommon.MarshalLogs(logs); err != nil {
 			return endorsement.ExecutionResult{}, fmt.Errorf("marshal logs: %w", err)
 		}
 	}
