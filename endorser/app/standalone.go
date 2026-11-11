@@ -18,7 +18,6 @@ import (
 	"github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-evm/endorser/core"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
-	"github.com/hyperledger/fabric-x-evm/endorser/query"
 	"github.com/hyperledger/fabric-x-evm/endorser/server"
 	"github.com/hyperledger/fabric-x-evm/endorser/storage"
 	"github.com/hyperledger/fabric-x-evm/gateway/config"
@@ -63,7 +62,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 
 	// A query-service store keeps nothing from blocks, so there is nothing to
 	// replay: start at the committer's tip instead of block 0.
-	if q, ok := kvs.(*query.KVS); ok {
+	if q, ok := kvs.(storage.QueryServiceKVS); ok {
 		height, err := committerHeight(ctx, cfg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read committer height: %w", err)
