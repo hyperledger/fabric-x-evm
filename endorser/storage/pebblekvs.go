@@ -17,18 +17,16 @@ import (
 	"sync/atomic"
 
 	pebble "github.com/cockroachdb/pebble/v2"
-	"github.com/ethereum/go-ethereum/ethdb"
-	gethpebble "github.com/ethereum/go-ethereum/ethdb/pebble"
+	"github.com/cockroachdb/pebble/v2/bloom"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 )
 
 // PebbleKVS is a persistent, MVCC key-value store that implements the KVS
-// interface as a drop-in replacement for the in-memory LightKVS. Unlike
-// LightKVS it survives process restarts: every block's writes are committed
-// atomically alongside a persisted block-number checkpoint, so on reopen the
-// store resumes from the last committed block.
+// interface. Every block's writes are committed atomically alongside a
+// persisted block-number checkpoint, so on reopen the store resumes from the
+// last committed block.
 //
 // # Storage model
 //
@@ -47,11 +45,11 @@ import (
 //	'h' | be32(len(fullKey)) | fullKey | be64(^block) | be64(^tx)
 //
 // with ^x == math.MaxUint64-x. That descending suffix is what makes a read as of
-// block N a single Next(): a forward scan from be64(^N) lands on the highest
-// retained version at or below N. geth's iterator is forward-only.
+// block N a single seek: a forward scan from be64(^N) lands on the highest
+// retained version at or below N.
 //
-// Only historySize blocks of that history are kept, mirroring LightKVS's
-// snapshot ring — pruning it is what stops the store growing with every rewrite.
+// Only historySize blocks of that history are kept — pruning it is what stops
+// the store growing with every rewrite.
 // So a commit can find what aged out without scanning every key, each history
 // entry is also recorded under the block that created it:
 //
@@ -65,44 +63,36 @@ import (
 // # Durability
 //
 // Each block commits as one atomic pebble batch, so a crash leaves either the
-// whole block applied or none of it. Commits use geth's default (NoSync): the
-// data survives a process restart, but an OS crash or power loss can lose the
-// most recently committed blocks. Those are recoverable from the ledger — the
+// whole block applied or none of it. Commits use pebble.NoSync: the data
+// survives a process restart, but an OS crash or power loss can lose the most
+// recently committed blocks. Those are recoverable from the ledger — the
 // persisted checkpoint tells the synchronizer where to resume — so this is safe
 // for the endorser, whose state is always reconstructible from committed blocks.
 //
-// # Parity notes vs LightKVS
+// # Versions
 //
-//   - Time-travel reads: a snapshot at block N returns, for each key, the record
-//     with the highest version whose block <= N (mirroring the sqlite-backed
-//     VersionedDB, see fabric-x-sdk state.VersionedDB.Get), for any N in the
-//     retained window [head-historySize, head]. Outside it NewSnapshot errors,
-//     as LightKVS does for a block evicted from its ring. The window is that
-//     range of heights, not the set of heights a block was delivered at, so if
-//     block numbers skip, the two disagree at the heights in the gap: any height
-//     in the window is answerable here, where LightKVS's ring matches a delivered
-//     block number exactly. This follows the VersionedDB, which answers any
-//     height.
-//   - Deletes are stored as tombstone records (IsDelete=true), matching the
-//     VersionedDB. The execution layer already treats IsDelete=true records as
-//     absent (nil value, nil version in the read-set), so this is behaviorally
-//     equivalent for callers but preserves the version chain for MVCC validation.
-//   - Block height tracks the ledger exactly: a block that yields no writes still
-//     advances the persisted checkpoint, where LightKVS leaves its height at the
-//     last block that contained writes. See Handle.
-//   - Version numbers mirror the VersionedDB, not LightKVS: each write's Version
-//     is MAX(version)+1 for its key, so multiple writes to one key within a block
-//     get consecutive versions and the counter is monotonic across a tombstone
-//     (a rewrite after a delete does not reset to 0). LightKVS instead shares one
-//     version across a block's writes to a key and resets after a delete. Because
-//     the fabric-x read-set carries this Version to the committer for MVCC
-//     validation, matching the VersionedDB — the committer's own store — is the
-//     correct behavior; the two divergences from LightKVS are intentional.
+// Each write's Version is the key's previous version + 1, so several writes to
+// one key in a block get consecutive versions. Deletes are stored as tombstone
+// records (IsDelete=true), so the counter carries on across a delete. A block
+// that yields no writes still advances the height (see Handle).
+//
+// # Time-travel reads
+//
+// A snapshot at block N returns, for each key, the record with the highest
+// version whose block <= N, for any N in the retained window
+// [head-historySize, head]; a height past the head is served by the head, and a
+// height below the window is refused. The window is a range of heights, so a
+// height that no block was delivered at is answerable too.
 type PebbleKVS struct {
-	db *gethpebble.Database
+	db *pebble.DB
+
+	// closeMu makes Close safe against in-flight operations: they hold it shared
+	// and check closed, so use after Close is an error rather than a pebble panic.
+	closeMu sync.RWMutex
+	closed  bool
 
 	// historySize is how many blocks of superseded records are retained for
-	// time-travel reads, mirroring LightKVS's snapshot ring.
+	// time-travel reads.
 	historySize uint64
 
 	// writeMu serializes commits. The KVS contract already assumes a single
@@ -149,6 +139,14 @@ const (
 	// defaultHistorySize is the retained window when the caller does not ask for
 	// one. Callers normally pass endorser config's history_size.
 	defaultHistorySize = 128
+
+	// cacheSize is pebble's block cache in bytes, which also funds the memtables.
+	cacheSize = 128 << 20
+	// maxOpenFiles is the open-file budget.
+	maxOpenFiles = 512
+	// memTableCount memtables share half the cache, so writes flush in smaller
+	// steps without raising the memory budget.
+	memTableCount = 4
 )
 
 var (
@@ -167,8 +165,7 @@ var _ KVS = (*PebbleKVS)(nil)
 // NewPebbleKVS opens (or creates) a pebble-backed KVS rooted at dir.
 //
 // historySize is how many recent blocks of superseded records to retain for
-// time-travel reads, matching LightKVS's ring-buffer semantics. A non-positive
-// value falls back to defaultHistorySize.
+// time-travel reads. A non-positive value falls back to defaultHistorySize.
 func NewPebbleKVS(dir string, historySize int) (*PebbleKVS, error) {
 	if dir == "" {
 		return nil, errors.New("pebble kvs requires a non-empty data directory (connection-string)")
@@ -177,9 +174,7 @@ func NewPebbleKVS(dir string, historySize int) (*PebbleKVS, error) {
 		historySize = defaultHistorySize
 	}
 
-	// cache is in MB; handles is the max open-file budget. Modest defaults
-	// that keep the working set in memory without a large FD footprint.
-	db, err := gethpebble.New(dir, 128, 512, "endorser/pebblekvs", false)
+	db, err := openPebble(dir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open pebble db at %q: %w", dir, err)
 	}
@@ -215,6 +210,81 @@ func NewPebbleKVS(dir string, historySize int) (*PebbleKVS, error) {
 	return kvs, nil
 }
 
+// openPebble opens the database with modest defaults that keep the working set
+// in memory without a large file-descriptor footprint.
+func openPebble(dir string) (*pebble.DB, error) {
+	cache := pebble.NewCache(cacheSize)
+	defer cache.Unref() // Open takes its own reference
+
+	// Bloom filters let a point lookup skip tables that don't hold the key. The
+	// last level has none: that's where most keys live, so it would rarely help.
+	bloomed := pebble.LevelOptions{FilterPolicy: bloom.FilterPolicy(10)}
+
+	return pebble.Open(dir, &pebble.Options{
+		Cache:                       cache,
+		MaxOpenFiles:                maxOpenFiles,
+		MemTableSize:                cacheSize / 2 / memTableCount,
+		MemTableStopWritesThreshold: memTableCount * 2,
+		Levels:                      [7]pebble.LevelOptions{bloomed, bloomed, bloomed, bloomed, bloomed, bloomed, {}},
+		// Commits don't sync (see Durability), so sync the WAL in the background
+		// as it grows, rather than leaving an unbounded unsynced tail.
+		WALBytesPerSync: 512 << 10,
+		Logger:          pebbleLogAdapter{},
+	})
+}
+
+// pebbleLogAdapter routes pebble's internal logging to the store's logger, with
+// its chatty info messages demoted to debug.
+type pebbleLogAdapter struct{}
+
+func (pebbleLogAdapter) Infof(format string, args ...any)  { pebbleLogger.Debugf(format, args...) }
+func (pebbleLogAdapter) Errorf(format string, args ...any) { pebbleLogger.Errorf(format, args...) }
+func (pebbleLogAdapter) Fatalf(format string, args ...any) { pebbleLogger.Fatalf(format, args...) }
+
+// get returns a copy of the value stored under key, or pebble.ErrNotFound.
+func (p *PebbleKVS) get(key []byte) ([]byte, error) {
+	p.closeMu.RLock()
+	defer p.closeMu.RUnlock()
+	return p.getLocked(key)
+}
+
+// getLocked is get for a caller already holding closeMu shared.
+func (p *PebbleKVS) getLocked(key []byte) ([]byte, error) {
+	if p.closed {
+		return nil, pebble.ErrClosed
+	}
+	val, closer, err := p.db.Get(key)
+	if err != nil {
+		return nil, err
+	}
+	defer closer.Close()
+	return bytes.Clone(val), nil
+}
+
+// newIter returns an iterator over the keys starting with prefix, from start
+// onwards (start is appended to prefix). The caller must hold closeMu shared.
+func (p *PebbleKVS) newIter(prefix, start []byte) (*pebble.Iterator, error) {
+	if p.closed {
+		return nil, pebble.ErrClosed
+	}
+	upper := prefixEnd(prefix)
+	lower := append(prefix[:len(prefix):len(prefix)], start...)
+	return p.db.NewIter(&pebble.IterOptions{LowerBound: lower, UpperBound: upper})
+}
+
+// prefixEnd returns the smallest key greater than every key starting with
+// prefix, or nil if there is none.
+func prefixEnd(prefix []byte) []byte {
+	for i := len(prefix) - 1; i >= 0; i-- {
+		if prefix[i] != 0xff {
+			end := bytes.Clone(prefix[:i+1])
+			end[i]++
+			return end
+		}
+	}
+	return nil
+}
+
 // readMetaBlock returns the persisted last-committed block and whether a
 // checkpoint was found at all. The two are distinct: a fresh store and a store
 // whose last commit was block 0 both report block 0.
@@ -225,7 +295,7 @@ func (p *PebbleKVS) readMetaBlock() (uint64, bool, error) {
 // readMeta reads an 8-byte big-endian meta value, reporting whether it was
 // present. An absent value reads as 0.
 func (p *PebbleKVS) readMeta(key []byte) (uint64, bool, error) {
-	raw, err := p.db.Get(key)
+	raw, err := p.get(key)
 	if err != nil {
 		if errors.Is(err, pebble.ErrNotFound) {
 			return 0, false, nil
@@ -241,8 +311,7 @@ func (p *PebbleKVS) readMeta(key []byte) (uint64, bool, error) {
 // commitBlock applies a single block's writes (possibly none) and advances the
 // persisted checkpoint to blockNum, in one atomic pebble batch.
 //
-// Replays are handled as LightKVS handles them. A redelivery of the tip is
-// verified rather than skipped: versions are derived from current state, so
+// A redelivery of the tip is verified rather than skipped: versions are derived from current state, so
 // re-applying the block would double-bump them and the committer would reject
 // later transactions on those keys. A shared synchronizer always redelivers
 // identical content on resume, so an identical replay is a no-op and a differing
@@ -251,6 +320,11 @@ func (p *PebbleKVS) readMeta(key []byte) (uint64, bool, error) {
 func (p *PebbleKVS) commitBlock(blockNum uint64, updates []KeyValueVersion) error {
 	p.writeMu.Lock()
 	defer p.writeMu.Unlock()
+	p.closeMu.RLock()
+	defer p.closeMu.RUnlock()
+	if p.closed {
+		return pebble.ErrClosed
+	}
 
 	if head := p.currentBlock.Load(); p.hasCheckpoint.Load() && blockNum <= head {
 		if blockNum < head {
@@ -264,12 +338,10 @@ func (p *PebbleKVS) commitBlock(blockNum uint64, updates []KeyValueVersion) erro
 	defer batch.Close()
 
 	// nextVersion holds the version to assign to the *next* write of each key
-	// within this batch. VersionedDB computes COALESCE(MAX(version)+1, 0) live
-	// per insert, so successive writes to the same key in one block receive
-	// consecutive versions (fabric-x-sdk state.VersionedDB.UpdateWorldState).
-	// We mirror that exactly, so the highest-tx write wins the read with the
-	// highest version, matching the committer's worldstate that the fabric-x
-	// MVCC read-set is validated against.
+	// within this batch, so successive writes to the same key in one block get
+	// consecutive versions and the last one ends up with the highest. That is
+	// what the committer's worldstate holds, which the fabric-x MVCC read-set is
+	// validated against.
 	nextVersion := make(map[string]uint64, len(updates))
 
 	for i := range updates {
@@ -281,7 +353,7 @@ func (p *PebbleKVS) commitBlock(blockNum uint64, updates []KeyValueVersion) erro
 			// state and retain the record being superseded. Later writes in the same
 			// block supersede a record this block created, which no in-window read can
 			// ask for (time travel is block-granular), so they only bump the version.
-			prev, raw, err := currentRecord(p.db, u.Key)
+			prev, raw, err := p.currentRecord(u.Key)
 			if err != nil {
 				return fmt.Errorf("failed to read current record for %q: %w", u.Key, err)
 			}
@@ -303,7 +375,7 @@ func (p *PebbleKVS) commitBlock(blockNum uint64, updates []KeyValueVersion) erro
 			Value:    u.Value,
 		})
 
-		if err := batch.Put(dataKey(u.Key), value); err != nil {
+		if err := batch.Set(dataKey(u.Key), value, nil); err != nil {
 			return fmt.Errorf("failed to stage write for %q: %w", u.Key, err)
 		}
 	}
@@ -321,11 +393,11 @@ func (p *PebbleKVS) commitBlock(blockNum uint64, updates []KeyValueVersion) erro
 	}
 
 	// Checkpoint the block number in the same batch for an atomic commit.
-	if err := batch.Put(metaBlockKey, u64be(blockNum)); err != nil {
+	if err := batch.Set(metaBlockKey, u64be(blockNum), nil); err != nil {
 		return fmt.Errorf("failed to stage block checkpoint: %w", err)
 	}
 
-	if err := batch.Write(); err != nil {
+	if err := batch.Commit(pebble.NoSync); err != nil {
 		return fmt.Errorf("failed to commit block %d: %w", blockNum, err)
 	}
 
@@ -338,13 +410,12 @@ func (p *PebbleKVS) commitBlock(blockNum uint64, updates []KeyValueVersion) erro
 }
 
 // verifyTipReplay checks a redelivery of the tip against what is stored, erroring
-// if the net effect of updates differs from it.
+// if the net effect of updates differs from it. The caller must hold closeMu shared.
 //
-// Only the last write per key is compared, as LightKVS's verifyReplay does: a
-// block's earlier writes to the same key are superseded by it and are not stored
-// separately, so that is the granularity at which state can be checked. Like
-// LightKVS, this walks the redelivery's keys, so it does not notice a redelivery
-// that *omits* a key the original block wrote.
+// Only the last write per key is compared: a block's earlier writes to the same
+// key are superseded by it and are not stored separately, so that is the
+// granularity at which state can be checked. This walks the redelivery's keys,
+// so it does not notice a redelivery that *omits* a key the original block wrote.
 func (p *PebbleKVS) verifyTipReplay(updates []KeyValueVersion) error {
 	final := make(map[string]KeyValueVersion, len(updates))
 	for _, u := range updates {
@@ -352,7 +423,7 @@ func (p *PebbleKVS) verifyTipReplay(updates []KeyValueVersion) error {
 	}
 
 	for key, u := range final {
-		stored, _, err := currentRecord(p.db, key)
+		stored, _, err := p.currentRecord(key)
 		if err != nil {
 			return fmt.Errorf("failed to read stored record for %q: %w", key, err)
 		}
@@ -372,12 +443,12 @@ func (p *PebbleKVS) verifyTipReplay(updates []KeyValueVersion) error {
 
 // stageHistory retains the record a write supersedes and indexes it under the
 // block doing the superseding, so pruneLocked can later delete both.
-func stageHistory(batch ethdb.Batch, blockNum uint64, fullKey string, prev *blocks.WriteRecord, raw []byte) error {
+func stageHistory(batch *pebble.Batch, blockNum uint64, fullKey string, prev *blocks.WriteRecord, raw []byte) error {
 	histKey := historyKey(fullKey, prev.BlockNum, prev.TxNum)
-	if err := batch.Put(histKey, raw); err != nil {
+	if err := batch.Set(histKey, raw, nil); err != nil {
 		return fmt.Errorf("failed to stage history for %q: %w", fullKey, err)
 	}
-	if err := batch.Put(indexKey(blockNum, histKey), nil); err != nil {
+	if err := batch.Set(indexKey(blockNum, histKey), nil, nil); err != nil {
 		return fmt.Errorf("failed to stage history index for %q: %w", fullKey, err)
 	}
 	return nil
@@ -392,8 +463,8 @@ func stageHistory(batch ethdb.Batch, blockNum uint64, fullKey string, prev *bloc
 // [blockNum-historySize, blockNum] everything created at or below
 // blockNum-historySize-1 is unreachable and goes.
 //
-// The caller must hold readerMu.
-func (p *PebbleKVS) pruneLocked(batch ethdb.Batch, blockNum uint64) (uint64, error) {
+// The caller must hold readerMu, and closeMu shared.
+func (p *PebbleKVS) pruneLocked(batch *pebble.Batch, blockNum uint64) (uint64, error) {
 	if blockNum < p.historySize+1 {
 		return 0, nil // window not full yet; nothing has aged out
 	}
@@ -407,10 +478,13 @@ func (p *PebbleKVS) pruneLocked(batch ethdb.Batch, blockNum uint64) (uint64, err
 	// Walk the index in block order — its keys are prefixIndex|be64(block)|..., so
 	// key order is block order — rather than probing the cutoff alone: delivered
 	// block numbers are not guaranteed contiguous, and a gap would leak entries.
-	it := p.db.NewIterator([]byte{prefixIndex}, nil)
-	defer it.Release()
+	it, err := p.newIter([]byte{prefixIndex}, nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to scan history index: %w", err)
+	}
+	defer it.Close()
 
-	for it.Next() {
+	for valid := it.First(); valid; valid = it.Next() {
 		block, histKey, err := parseIndexKey(it.Key())
 		if err != nil {
 			return 0, err
@@ -420,10 +494,10 @@ func (p *PebbleKVS) pruneLocked(batch ethdb.Batch, blockNum uint64) (uint64, err
 		}
 		// Both deletes copy the key into the batch, so advancing the iterator after
 		// is safe.
-		if err := batch.Delete(histKey); err != nil {
+		if err := batch.Delete(histKey, nil); err != nil {
 			return 0, fmt.Errorf("failed to stage history delete for block %d: %w", block, err)
 		}
-		if err := batch.Delete(it.Key()); err != nil {
+		if err := batch.Delete(it.Key(), nil); err != nil {
 			return 0, fmt.Errorf("failed to stage index delete for block %d: %w", block, err)
 		}
 	}
@@ -439,7 +513,7 @@ func (p *PebbleKVS) pruneLocked(batch ethdb.Batch, blockNum uint64) (uint64, err
 	if oldest <= p.oldestRetained.Load() {
 		return 0, nil
 	}
-	if err := batch.Put(metaOldestKey, u64be(oldest)); err != nil {
+	if err := batch.Set(metaOldestKey, u64be(oldest), nil); err != nil {
 		return 0, fmt.Errorf("failed to stage oldest-retained marker: %w", err)
 	}
 	return oldest, nil
@@ -472,17 +546,28 @@ func (p *PebbleKVS) releaseReader(bn uint64) {
 // latest committed block at call time, pinning the view so later commits are
 // excluded. A non-nil value is that exact height (including 0 for genesis), and
 // must be inside the retained window: an older block is refused rather than
-// answered with a newer value, as LightKVS refuses a block evicted from its ring.
+// answered with a newer value.
 //
 // The view holds history back at its height until Close, so readers must close.
 func (p *PebbleKVS) NewSnapshot(blockNumber *uint64) (execution.ReadStore, error) {
 	// Resolve the height and register the pin under the lock a commit holds from
 	// its prune through publishing its checkpoint. Sampling head outside it would
 	// let a commit prune the history this view needs before the pin is in place.
+	//
+	// The closed check comes first and isn't held: a commit takes closeMu before
+	// readerMu, so taking them the other way round here could deadlock with a
+	// pending Close. A view that races Close fails on its first Get instead.
+	p.closeMu.RLock()
+	closed := p.closed
+	p.closeMu.RUnlock()
+	if closed {
+		return nil, pebble.ErrClosed
+	}
+
 	p.readerMu.Lock()
 	defer p.readerMu.Unlock()
 
-	// A height at or past the tip is served by the tip, matching LightKVS. Pinning
+	// A height at or past the tip is served by the tip. Pinning
 	// the requested height instead would leave the view open to later commits,
 	// since isolation is re-derived per read from the pinned height.
 	head := p.currentBlock.Load()
@@ -498,7 +583,6 @@ func (p *PebbleKVS) NewSnapshot(blockNumber *uint64) (execution.ReadStore, error
 	p.openReaders[bn]++
 
 	return &pebbleSnapshot{
-		db:        p.db,
 		owner:     p,
 		lastBlock: bn,
 	}, nil
@@ -520,10 +604,8 @@ func (p *PebbleKVS) Get(namespace, key string) (*blocks.WriteRecord, error) {
 // writes from a block and applies them atomically. Called by the synchronizer.
 //
 // A block that yields no writes — empty, config-only, or carrying nothing but
-// invalid transactions — still advances the persisted checkpoint. LightKVS can
-// leave its height behind in that case because its state does not outlive the
-// process, but for a persistent store the checkpoint is the resume point: were
-// it to lag, a restart would re-deliver every block since the last one that
+// invalid transactions — still advances the persisted checkpoint, which is the
+// resume point: were it to lag, a restart would re-deliver every block since the last one that
 // happened to contain writes, and the store's reported height would disagree
 // with the block DB's, which does log empty blocks. Keeping height equal to
 // ledger height is what lets this KVS serve as the synchronizer's height reader.
@@ -548,8 +630,14 @@ func (p *PebbleKVS) BlockNumber(ctx context.Context) (uint64, error) {
 	return p.currentBlock.Load(), nil
 }
 
-// Close closes the underlying pebble database.
+// Close closes the underlying pebble database. Closing twice is a no-op.
 func (p *PebbleKVS) Close() error {
+	p.closeMu.Lock()
+	defer p.closeMu.Unlock()
+	if p.closed {
+		return nil
+	}
+	p.closed = true
 	return p.db.Close()
 }
 
@@ -561,8 +649,8 @@ func (p *PebbleKVS) Close() error {
 // to is held at this view's height by the pin NewSnapshot took and Close drops,
 // so a reader that is never closed holds history back.
 type pebbleSnapshot struct {
-	db *gethpebble.Database
-	// owner is notified on Close so pruning can resume below this view's height.
+	// owner holds the database, and is notified on Close so pruning can resume
+	// below this view's height.
 	owner *PebbleKVS
 	// lastBlock is the height this view is pinned to.
 	lastBlock uint64
@@ -579,36 +667,42 @@ func (s *pebbleSnapshot) Get(namespace, key string) (*blocks.WriteRecord, error)
 		return nil, errors.New("reader is closed")
 	}
 
+	p := s.owner
+	p.closeMu.RLock()
+	defer p.closeMu.RUnlock()
+
 	fullKey := namespace + ":" + key
 
 	// The common case is one point lookup. The block check is not an optimisation:
 	// the current record is overwritten in place, so it can belong to a block
 	// committed after this view was pinned, and the read-set built here is
 	// MVCC-validated by the committer.
-	rec, _, err := currentRecord(s.db, fullKey)
+	rec, _, err := p.currentRecord(fullKey)
 	if err != nil {
 		pebbleLogger.Warnf("pebbleSnapshot.Get() ns=%s key=%s error reading current record: %v", namespace, key, err)
 		return nil, err
 	}
 	if rec != nil && rec.BlockNum <= s.lastBlock {
 		rec.Namespace, rec.Key = namespace, key
-		pebbleLogger.Debugf("pebbleSnapshot.Get() ns=%s key=%s block=%d (current hit) isDelete=%t valueLen=%d", namespace, key, rec.BlockNum, rec.IsDelete, len(rec.Value))
 		return rec, nil
 	}
 
 	// The current record is newer than this view, or absent. Whichever block
 	// superseded the one we want retained it in the same batch.
-	it := s.db.NewIterator(historyPrefix(fullKey), u64be(^s.lastBlock))
-	defer it.Release()
+	it, err := p.newIter(historyPrefix(fullKey), u64be(^s.lastBlock))
+	if err != nil {
+		pebbleLogger.Warnf("pebbleSnapshot.Get() ns=%s key=%s iterator error: %v", namespace, key, err)
+		return nil, err
+	}
+	defer it.Close()
 
-	if it.Next() {
+	if it.First() {
 		hrec, err := decodeRecord(it.Value())
 		if err != nil {
 			pebbleLogger.Warnf("pebbleSnapshot.Get() ns=%s key=%s error decoding history record: %v", namespace, key, err)
 			return nil, err
 		}
 		hrec.Namespace, hrec.Key = namespace, key
-		pebbleLogger.Debugf("pebbleSnapshot.Get() ns=%s key=%s block=%d (history hit) isDelete=%t valueLen=%d", namespace, key, hrec.BlockNum, hrec.IsDelete, len(hrec.Value))
 		return hrec, nil
 	}
 	if err := it.Error(); err != nil {
@@ -616,7 +710,6 @@ func (s *pebbleSnapshot) Get(namespace, key string) (*blocks.WriteRecord, error)
 		return nil, err
 	}
 	// Nothing at or below lastBlock: the key did not exist yet at that height.
-	pebbleLogger.Debugf("pebbleSnapshot.Get() ns=%s key=%s not found (lastBlock=%d)", namespace, key, s.lastBlock)
 	return nil, nil
 }
 
@@ -644,9 +737,10 @@ type record struct {
 
 // currentRecord returns the record stored for fullKey together with the raw bytes
 // it was decoded from (which history retains verbatim), or nils if the key has
-// never been written. One point lookup: a key holds exactly one record.
-func currentRecord(db *gethpebble.Database, fullKey string) (*blocks.WriteRecord, []byte, error) {
-	raw, err := db.Get(dataKey(fullKey))
+// never been written. One point lookup: a key holds exactly one record. The
+// caller must hold closeMu shared.
+func (p *PebbleKVS) currentRecord(fullKey string) (*blocks.WriteRecord, []byte, error) {
+	raw, err := p.getLocked(dataKey(fullKey))
 	if err != nil {
 		if errors.Is(err, pebble.ErrNotFound) {
 			return nil, nil, nil
@@ -670,9 +764,7 @@ func historyPrefix(fullKey string) []byte {
 	return keyForState(prefixHistory, fullKey)
 }
 
-// keyForState builds prefix | be32(len(fullKey)) | fullKey. The returned slice has
-// len == cap so geth's NewIterator, which does append(prefix, start...),
-// reallocates instead of clobbering our buffer.
+// keyForState builds prefix | be32(len(fullKey)) | fullKey.
 func keyForState(prefix byte, fullKey string) []byte {
 	b := make([]byte, 0, 1+4+len(fullKey))
 	b = append(b, prefix)

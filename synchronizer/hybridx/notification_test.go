@@ -66,18 +66,57 @@ func TestNewAllTxBatchDispatcher_MultipleHandlers(t *testing.T) {
 
 // ---- HandleBatch ----
 
-func TestHandleBatch_EmptyBatchDoesNothing(t *testing.T) {
+// TestHandleBatch_EmptyBatchStillDispatchesTheBlock covers the case the handler
+// chain most depends on: a committed block that carried nothing for us. The block
+// must still reach the handlers, because a missing block number downstream reads as
+// a block that went astray, while an empty one is simply empty.
+func TestHandleBatch_EmptyBatchStillDispatchesTheBlock(t *testing.T) {
 	h := &stubHandler{}
 	d := NewAllTxBatchDispatcher(h)
-	err := d.HandleBatch(context.Background(), notification.AllTxBatch{BlockNumber: 1})
+	err := d.HandleBatch(context.Background(), notification.AllTxBatch{
+		BlockNumber: 1,
+		Hash:        []byte("hash-1"),
+		ParentHash:  []byte("hash-0"),
+	})
 	require.NoError(t, err)
-	assert.Empty(t, h.seen, "no events → no dispatch")
+	require.Len(t, h.seen, 1, "a block with no events is still a block")
+	assert.Equal(t, uint64(1), h.seen[0].Number)
+	assert.Equal(t, []byte("hash-1"), h.seen[0].Hash)
+	assert.Equal(t, []byte("hash-0"), h.seen[0].ParentHash)
+	assert.Empty(t, h.seen[0].Transactions, "no events means no transactions")
+}
+
+// TestHandleBatch_PanicsWithoutBlockHash covers the one batch that cannot be
+// interpreted at all. The SDK leaves Hash empty when the committer sent no usable
+// header, and then BlockNumber is 0 by default rather than by report — so the batch
+// can be neither dispatched nor dropped safely.
+func TestHandleBatch_PanicsWithoutBlockHash(t *testing.T) {
+	h := &stubHandler{}
+	d := NewAllTxBatchDispatcher(h)
+
+	defer func() {
+		r := recover()
+		require.NotNil(t, r, "a batch with no block hash must panic")
+		err, ok := r.(error)
+		require.True(t, ok, "panic value must be an error, got %T", r)
+		assert.Contains(t, err.Error(), "carries no block hash")
+		assert.Empty(t, h.seen, "nothing may be dispatched from an unidentifiable batch")
+	}()
+
+	_ = d.HandleBatch(context.Background(), notification.AllTxBatch{
+		BlockNumber: 7,
+		Events:      []notification.CommittedTxEvent{committedEVMEvent("evm-1")},
+	})
+	t.Fatal("expected panic, HandleBatch returned normally")
 }
 
 // TestHandleBatch_SkipsEventWithoutEthTx covers every way an event can fail to carry
 // an ethereum transaction. Metadata that was absent, or that carried no args,
 // both reach us from the SDK as an event with no InputArgs at all: the
 // dispatcher sees only that outcome, never the wire format behind it.
+//
+// The events are dropped, the block is not: filtering out every transaction leaves
+// an empty block, which still belongs in the sequence.
 func TestHandleBatch_SkipsEventWithoutEthTx(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -92,12 +131,15 @@ func TestHandleBatch_SkipsEventWithoutEthTx(t *testing.T) {
 			d := NewAllTxBatchDispatcher(h)
 			err := d.HandleBatch(context.Background(), notification.AllTxBatch{
 				BlockNumber: 1,
+				Hash:        []byte("hash-1"),
 				Events: []notification.CommittedTxEvent{{
 					ID: "tx-no-eth", EventName: common.ProposalTypeEVMTx, InputArgs: tc.args,
 				}},
 			})
 			require.NoError(t, err)
-			assert.Empty(t, h.seen)
+			require.Len(t, h.seen, 1, "the block is still dispatched")
+			assert.Equal(t, uint64(1), h.seen[0].Number)
+			assert.Empty(t, h.seen[0].Transactions, "the unusable event is filtered out")
 		})
 	}
 }
@@ -108,12 +150,15 @@ func TestHandleBatch_SkipsNonEVMTx(t *testing.T) {
 	d := NewAllTxBatchDispatcher(h)
 	err := d.HandleBatch(context.Background(), notification.AllTxBatch{
 		BlockNumber: 1,
+		Hash:        []byte("hash-1"),
 		Events: []notification.CommittedTxEvent{
 			evmEvent("tx-not-evm", 0, blocks.StatusCommitted, "event", []byte{0xde, 0xad}),
 		},
 	})
 	require.NoError(t, err)
-	assert.Empty(t, h.seen)
+	require.Len(t, h.seen, 1, "a block whose only transaction is not ours is still a block")
+	assert.Equal(t, uint64(1), h.seen[0].Number)
+	assert.Empty(t, h.seen[0].Transactions)
 }
 
 func TestHandleBatch_DispatchesOnlyEVMTxsFromMixedBatch(t *testing.T) {
@@ -151,10 +196,11 @@ func TestHandleBatch_DispatchesOnlyEVMTxsFromMixedBatch(t *testing.T) {
 }
 
 func TestHandleBatch_GenesisHashesPassThrough(t *testing.T) {
-	// Block 0 realistically never reaches here (genesis has no EVM txs, so the
-	// len(txs)==0 guard returns early), but nothing may synthesise a parent hash
-	// for it: the committer reports none, and an invented one would not match the
-	// delivery path's view of the same block.
+	// Genesis does reach here — every block is dispatched, and genesis carries no EVM
+	// transactions — so its missing parent hash is a real case rather than a
+	// hypothetical one. Nothing may synthesise one: the committer reports none, and an
+	// invented one would not match the delivery path's view of the same block. This is
+	// also why the no-header guard keys on Hash and not on ParentHash.
 	h := &stubHandler{}
 	d := NewAllTxBatchDispatcher(h)
 	err := d.HandleBatch(context.Background(), notification.AllTxBatch{
@@ -175,6 +221,7 @@ func TestHandleBatch_MultipleHandlersAllReceive(t *testing.T) {
 	d := NewAllTxBatchDispatcher(h1, h2)
 	err := d.HandleBatch(context.Background(), notification.AllTxBatch{
 		BlockNumber: 7,
+		Hash:        []byte("hash-7"),
 		Events: []notification.CommittedTxEvent{
 			committedEVMEvent("evm-1"),
 		},
@@ -200,6 +247,7 @@ func TestHandleBatch_ForwardsEvents(t *testing.T) {
 	d := NewAllTxBatchDispatcher(h)
 	err := d.HandleBatch(context.Background(), notification.AllTxBatch{
 		BlockNumber: 5,
+		Hash:        []byte("hash-5"),
 		Events: []notification.CommittedTxEvent{
 			withEvent,
 			committedEVMEvent("evm-no-event"), // no event emitted
@@ -230,6 +278,7 @@ func TestHandleBatch_HandlerErrorPanics(t *testing.T) {
 
 	_ = d.HandleBatch(context.Background(), notification.AllTxBatch{
 		BlockNumber: 1,
+		Hash:        []byte("hash-1"),
 		Events: []notification.CommittedTxEvent{
 			committedEVMEvent("evm-1"),
 		},
