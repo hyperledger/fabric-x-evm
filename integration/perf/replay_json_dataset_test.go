@@ -30,7 +30,6 @@ import (
 	eapi "github.com/hyperledger/fabric-x-evm/endorser/api"
 	econf "github.com/hyperledger/fabric-x-evm/endorser/config"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
-	"github.com/hyperledger/fabric-x-evm/endorser/query"
 	estorage "github.com/hyperledger/fabric-x-evm/endorser/storage"
 	"github.com/hyperledger/fabric-x-evm/endorser/testimpl"
 	"github.com/hyperledger/fabric-x-evm/gateway/app"
@@ -356,7 +355,7 @@ func balancePrimingEndorserFactory(balancePriming *testimpl.BalancePrimingConfig
 			}
 		case *estorage.RevertibleLightKVS:
 			t.Fatalf("perf endorser got the testImpl RevertibleLightKVS; NewEndorserCore must be called with testImpl=false")
-		case *query.KVS:
+		case estorage.QueryServiceKVS:
 			if *endorserDB != econf.DBQueryService {
 				t.Fatalf("perf endorser got the query-service store, but -db is %q", *endorserDB)
 			}
