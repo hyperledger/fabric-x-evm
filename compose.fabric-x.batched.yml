@@ -1,0 +1,32 @@
+# Overlay for compose.fabric-x.yml that batches several transactions into each
+# block, by raising the mock orderer's block size.
+#
+# The default cuts one transaction per block, so a block carrying transactions
+# from two namespaces — and the transactionIndex holes that come with it —
+# cannot occur. The namespace-isolation matrix in
+# integration/namespace_isolation_test.go needs them.
+#
+# Both values are environment variables rather than a second config file,
+# because that is where the base fixture sets them: the mock orderer reads its
+# YAML through viper with AutomaticEnv under the SC_ORDERER prefix, so an
+# environment variable wins over the mounted file. Mounting a batched YAML over
+# mock-orderer.yaml looks like it should work and does nothing, which is how
+# this overlay was first written.
+#
+# Compose merges `environment` by key, with the later file winning, so these
+# replace the base values without the base file having to change.
+#
+# Usage (what start-x-batched runs):
+#   docker compose -f compose.fabric-x.yml -f compose.fabric-x.batched.yml up -d
+
+name: fabric-x
+
+services:
+  test-committer:
+    environment:
+      # 4 so a pair of transactions never fills a batch on its own: the matrix
+      # submits two and relies on block-timeout to cut them together.
+      SC_ORDERER_BLOCK_SIZE: "4"
+      # Short so a partial batch still cuts promptly — a test that submits two
+      # transactions and waits must not sit out the base fixture's 30s window.
+      SC_ORDERER_BLOCK_TIMEOUT: "250ms"

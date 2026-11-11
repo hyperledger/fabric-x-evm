@@ -87,6 +87,13 @@
       "lang": "golang",
       "channel": "mychannel",
       "directory": "./chaincode"
+    },
+    {
+      "name": "basic2",
+      "version": "0",
+      "lang": "golang",
+      "channel": "mychannel",
+      "directory": "./chaincode"
     }
   ],
   "hooks": {}

@@ -59,8 +59,13 @@ services:
       SC_QUERY_DATABASE_USERNAME: "postgres"
       SC_QUERY_DATABASE_PASSWORD: "postgres"
       SC_QUERY_DATABASE_DATABASE: "postgres"
+      # Block cutting lives here, not in mock-orderer.yaml. The mock orderer reads
+      # its config with viper's AutomaticEnv under the SC_ORDERER prefix, so these
+      # override the YAML rather than the other way round; setting them in both
+      # places would mean the file says one thing and the orderer does another.
+      # compose.fabric-x.batched.yml overrides them for the namespace matrix.
       SC_ORDERER_BLOCK_SIZE: "1"
-      # SC_ORDERER_BLOCK_TIMEOUT: "100ms"
+      SC_ORDERER_BLOCK_TIMEOUT: "30s"
     healthcheck:
       test: ["CMD-SHELL", "nc -z localhost 7001"]
       interval: 2s

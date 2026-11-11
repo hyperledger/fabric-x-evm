@@ -57,7 +57,12 @@ func serveEndorser(t *testing.T, svc eapi.Service, ecfg econf.Endorser) string {
 //
 // No synchronizer is started here: the caller registers the returned KVS as a
 // block handler on the gateway's synchronizer, the same as an embedded endorser.
-func startServedEndorser(t *testing.T, configFile string, evmConfig execution.EVMConfig, dialCfg *common.ClientConfig) (estorage.KVS, endorsement.Builder, *eclient.Client) {
+//
+// namespace, when non-empty, overrides the one in configFile. An endorser builds
+// its read-write sets under the namespace it was constructed with, so it has to
+// agree with the gateway it serves; a caller that overrides the gateway's
+// namespace must override its endorsers' too.
+func startServedEndorser(t *testing.T, configFile string, evmConfig execution.EVMConfig, dialCfg *common.ClientConfig, namespace string) (estorage.KVS, endorsement.Builder, *eclient.Client) {
 	t.Helper()
 
 	cfg, err := config.Load(configFile)
@@ -70,6 +75,9 @@ func startServedEndorser(t *testing.T, configFile string, evmConfig execution.EV
 	ecfg := *cfg.Endorser
 	if ecfg.Database.HistorySize == 0 {
 		ecfg.Database.HistorySize = 1
+	}
+	if namespace != "" {
+		cfg.Network.Namespace = namespace
 	}
 
 	db, builder, end := NewEndorser(t, ecfg, cfg.Network.Channel, cfg.Network.Namespace, evmConfig, cfg.Network.Protocol)

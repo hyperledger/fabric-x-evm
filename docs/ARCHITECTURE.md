@@ -20,6 +20,7 @@
     - [SnapshotDB: The EVM-Fabric Bridge](#snapshotdb-the-evm-fabric-bridge)
     - [Synchronization Architecture](#synchronization-architecture)
     - [Storage Layer](#storage-layer)
+    - [Namespace Scoping](#namespace-scoping)
   - [Performance, Throughput, and Concurrency Management](#performance-throughput-and-concurrency-management)
     - [Overview](#overview)
     - [Concurrency Challenges](#concurrency-challenges)
@@ -272,6 +273,22 @@ The gateway maintains a local SQLite database that serves as the query backend f
 - **Logs Table**: Indexes EVM event logs with separate columns for up to 4 topics, enabling efficient filtering by event signature and indexed parameters
 
 This separation of concerns—VersionedDB for execution, SQLite for queries—allows each component to optimize for its specific workload without compromise.
+
+### Namespace Scoping
+
+A Fabric channel can carry many applications, each writing to its own namespace. A gateway is configured with exactly one namespace (`network.namespace`) and commits every transaction to it, but the committed blocks it receives contain *all* of the channel's transactions. Everything that keeps one deployment's data separate from another's therefore depends on filtering those blocks on the way in.
+
+**One filter, applied once**: filtering happens in a single place — `nsFilter` in `synchronizer/synchronizer.go`. It wraps the entire handler list, and that wrapped handler is what gets registered with the protocol-specific synchronizer, so every handler downstream of it (endorser KVS, chain store, filter API, gateway) sees only the configured namespace. For each block it keeps the transactions whose read-write set touches that namespace and trims each one's `NsRWS` to that namespace alone.
+
+Both Fabric-X delivery phases are covered by that one wrapper: `HybridSynchronizer` receives the filter as its only handler, and both the delivery shim and the notification gate dispatch through the same `dispatch` call. On the notification path the committer additionally filters server-side (`FilterNamespaces` in the stream request), so that path is filtered twice; the delivery path, which fetches whole blocks, relies on `nsFilter` alone.
+
+None of the downstream handlers re-check the namespace. `collectWrites` in the endorser stores iterates whatever `NsRWS` it is handed, and the state trie's `applyWrite` discriminates only on key prefix. They are correct because the filter has already run — which makes it a load-bearing invariant rather than a defence in depth. The endorser's *reads* are independently namespace-scoped: `StateDB` always reads through `store.Get(namespace, key)` with its configured namespace, and the stores key their records by `namespace + ":" + key`.
+
+**Blocks are forwarded even when empty**: a block whose transactions all belong to other namespaces is still passed to the handlers, with an empty transaction list. This is deliberate. The stores take their resume height from the blocks they are handed — `PebbleKVS` and `LightKVS` advance their checkpoint on every block, and the gateway's `Chain` is the synchronizer's `BlockHeightReader` — so a gap in the sequence would be indistinguishable downstream from a block that went missing. An empty block is unambiguous; a hole is not.
+
+This is also why Ethereum block numbers are Fabric block numbers rather than a private, namespace-local sequence. The correspondence is relied on directly: a historical state query (`eth_getBalance` and friends at a block number) passes that number through to the endorser as a ledger height for the state snapshot. Renumbering would require a persistent mapping between the two.
+
+**Consequences visible at the RPC surface**: block numbers advance because of other applications' activity, and `eth_getBlockByNumber` can return an empty block for one of theirs. More sharply, a transaction's `transactionIndex` is its position within the *Fabric* block — counting other namespaces' transactions, non-EVM transactions, and transactions dropped as MVCC conflicts — so it is not a dense index into the block's `transactions` array. `cumulativeGasUsed` and `logIndex`, by contrast, are counted only over the namespace's own transactions. See `docs/COMPATIBILITY.md` (Block and Receipt representation) for what this means for clients and indexers.
 
 ## Performance, Throughput, and Concurrency Management
 
