@@ -32,9 +32,6 @@ type kvsBackend struct {
 	open func(t *testing.T, loc string, historySize int) KVS
 	// persistent reports whether state survives close and reopen.
 	persistent bool
-	// mvccVersions reports per-key MAX(version)+1 numbering, mirroring the
-	// committer's worldstate. See TestParityVersionSemantics.
-	mvccVersions bool
 	// boundedHistory reports that only historySize blocks of history are kept and
 	// that an older height is refused rather than answered. See
 	// TestParityEvictedHistoryErrors.
@@ -50,7 +47,6 @@ func kvsBackends() []kvsBackend {
 				return NewLightKVS(historySize)
 			},
 			persistent:     false,
-			mvccVersions:   false,
 			boundedHistory: true,
 		},
 		{
@@ -73,7 +69,6 @@ func kvsBackends() []kvsBackend {
 				return kvs
 			},
 			persistent:     true,
-			mvccVersions:   true,
 			boundedHistory: true,
 		},
 		{
