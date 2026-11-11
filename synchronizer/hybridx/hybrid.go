@@ -92,12 +92,6 @@ var hybridLogger = flogging.MustGetLogger("synchronizer.hybridx")
 // via errors.Is.
 var ErrNotificationLost = errors.New("hybridx: notification stream lost after switch")
 
-// errStreamClosed is the cause recorded when the peer ends the stream without an
-// error of its own — a clean server-side close, which the SDK reports as a nil
-// error.  Post-switch it leaves the same gap as a failure, so it is treated the
-// same way; pre-switch it is simply retried.
-var errStreamClosed = errors.New("notification stream closed by peer")
-
 const (
 	// retryDelay is how long the notification path waits before reopening a stream
 	// that ended before the switch, while delivery still covers the chain.
@@ -316,19 +310,14 @@ func (h *HybridSynchronizer) start(ctx context.Context) error {
 				return
 			}
 
-			// Stream returns a handler error, a stream error, or nil when the peer
-			// closed the stream cleanly.  Handler errors panic inside
-			// AllTxBatchDispatcher before they can reach here, so in practice this is
-			// either a stream error or a clean close — and post-switch both leave the
-			// same gap, so the nil case gets a cause of its own rather than being
-			// mistaken for "keep going".
+			// Stream returns a handler error, a stream error, or ErrStreamClosed when
+			// the peer closed the stream cleanly.  Handler errors panic inside
+			// AllTxBatchDispatcher before they can reach here, and post-switch both
+			// remaining cases leave the same gap.
 			streamErr := streamer.Stream(ctx, h.notifReq)
 			if ctx.Err() != nil {
 				notifErrCh <- nil
 				return
-			}
-			if streamErr == nil {
-				streamErr = errStreamClosed
 			}
 
 			// Post-switch the chain is notification's alone: blocks missed while the

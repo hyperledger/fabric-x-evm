@@ -889,7 +889,7 @@ func TestStart_NotificationCleanClosePostSwitch(t *testing.T) {
 
 		err := <-errCh
 		require.ErrorIs(t, err, ErrNotificationLost)
-		require.ErrorIs(t, err, errStreamClosed)
+		require.ErrorIs(t, err, notification.ErrStreamClosed)
 	})
 }
 

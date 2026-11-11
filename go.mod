@@ -20,7 +20,7 @@ require (
 	github.com/hyperledger/fabric-protos-go-apiv2 v0.3.7
 	github.com/hyperledger/fabric-x-committer v1.0.7
 	github.com/hyperledger/fabric-x-common v0.2.12
-	github.com/hyperledger/fabric-x-sdk v0.2.0
+	github.com/hyperledger/fabric-x-sdk v0.2.2-0.20261110183015-5ae6e69c96e7
 	github.com/prometheus/client_golang v1.25.0
 	github.com/prometheus/client_model v0.6.3
 	github.com/spf13/cobra v1.10.2

@@ -241,11 +241,8 @@ func buildApp(ctx context.Context, cfg config.Config, gwSigner sdk.Signer, logge
 	var syncer synchronizer.Synchronizer
 	var errSync error
 	if test != nil && test.cutter != nil {
-		// Self contained testnode (fabrictest + CutBlock): use delivery sync so empty
-		// blocks reach handlers. hybridx itself forwards them now, but fabrictest's
-		// StreamBlocks never sends a block whose events all filter out, so after the
-		// switch to notification a CutBlock block would not arrive and hardhat_mine
-		// would never advance eth_blockNumber. See synchronizer.NewDelivery.
+		// Self contained testnode (fabrictest + CutBlock): delivery sync, so a rewound
+		// ledger can be followed. See synchronizer.NewDelivery.
 		syncer, errSync = synchronizer.NewDelivery(cfg.Network.Protocol, chain, cfg.Network.Channel, cfg.Network.Namespace, cfg.Committer.ToPeerConf(), gwSigner, logger, handlers...)
 	} else {
 		syncer, errSync = synchronizer.New(cfg.Network.Protocol, chain, cfg.Network.Channel, cfg.Network.Namespace, cfg.Committer.ToPeerConf(), gwSigner, logger, cfg.Synchronizer.AllTxQueueDepth, handlers...)

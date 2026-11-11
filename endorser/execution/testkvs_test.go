@@ -41,7 +41,7 @@ type testVersionedDBReader struct {
 }
 
 func (r *testVersionedDBReader) Get(namespace, key string) (*blocks.WriteRecord, error) {
-	return r.db.Get(namespace, key, r.blockNumber)
+	return r.db.GetAt(namespace, key, r.blockNumber)
 }
 
 func (r *testVersionedDBReader) Close() error { return nil }
