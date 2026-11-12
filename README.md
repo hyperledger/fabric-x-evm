@@ -50,6 +50,7 @@ source](#building-and-running-from-source) or the samples for that.
 - [Architecture](docs/ARCHITECTURE.md) — how the gateway, EVM, and Fabric fit together
 - [Compatibility](docs/COMPATIBILITY.md) — which Ethereum/EVM guarantees hold, and the caveats
 - [JSON-RPC errors](docs/JSON_RPC_ERRORS.md) — error codes the gateway returns
+- [Transaction failures](docs/TRANSACTION_FAILURES.md) - what happens to a transaction when a stage fails, and the error-handling rules
 
 ## Building and running from source
 
