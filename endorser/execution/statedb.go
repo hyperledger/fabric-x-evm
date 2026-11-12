@@ -51,15 +51,12 @@ import (
 	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/ethereum/go-ethereum/triedb/hashdb"
 	"github.com/holiman/uint256"
+	fxcommon "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 )
 
 // Log is a type of event.
-type Log struct {
-	Address []byte
-	Topics  [][]byte
-	Data    []byte
-}
+type Log = fxcommon.Log
 
 // ReadStore is the read interface required to back a StateDB.
 type ReadStore interface {

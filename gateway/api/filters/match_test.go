@@ -8,7 +8,6 @@ package filters
 
 import (
 	"context"
-	"encoding/json"
 	"math/big"
 	"testing"
 
@@ -19,7 +18,6 @@ import (
 	"github.com/hyperledger/fabric-x-evm/api/endorsementpb"
 	fc "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
-	"github.com/hyperledger/fabric-x-sdk/state"
 )
 
 func mustEthTxBytes(t *testing.T) []byte {
@@ -47,11 +45,11 @@ func mustEthTxBytes(t *testing.T) []byte {
 	return raw
 }
 
-func mustLogEvents(t *testing.T, logs []state.Log) []byte {
+func mustLogEvents(t *testing.T, logs []fc.Log) []byte {
 	t.Helper()
 	// The SDK carries the endorsement's event through verbatim, so a
-	// successful transaction's event bytes are the JSON logs themselves.
-	payload, err := json.Marshal(logs)
+	// successful transaction's event bytes are the encoded logs themselves.
+	payload, err := fc.MarshalLogs(logs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +77,7 @@ func TestLogsFromBlock_HappyAndSkips(t *testing.T) {
 	addr := common.HexToAddress("0x00000000000000000000000000000000000000aa")
 	topic := common.HexToHash("0xdead")
 	rawTx := mustEthTxBytes(t)
-	events := mustLogEvents(t, []state.Log{{
+	events := mustLogEvents(t, []fc.Log{{
 		Address: addr.Bytes(),
 		Topics:  [][]byte{topic.Bytes()},
 		Data:    []byte{0x01},
@@ -207,7 +205,7 @@ func TestLogsFromBlock_DenseTransactionIndex(t *testing.T) {
 // Only a successful execution emits logs, whatever the event carries.
 func TestLogsFromBlock_UnsuccessfulSkipped(t *testing.T) {
 	rawTx := mustEthTxBytes(t)
-	events := mustLogEvents(t, []state.Log{{Address: common.HexToAddress("0xaa").Bytes()}})
+	events := mustLogEvents(t, []fc.Log{{Address: common.HexToAddress("0xaa").Bytes()}})
 	for name, payload := range map[string][]byte{
 		"revert":       mustPayload(t, endorsementpb.ExecutionStatus_EXECUTION_STATUS_REVERTED),
 		"exec failure": mustPayload(t, endorsementpb.ExecutionStatus_EXECUTION_STATUS_EXEC_FAILED),
@@ -284,12 +282,12 @@ func TestLogFilter_LivePathViaHandle(t *testing.T) {
 	}
 
 	rawTx := mustEthTxBytes(t)
-	events := mustLogEvents(t, []state.Log{{
+	events := mustLogEvents(t, []fc.Log{{
 		Address: addr.Bytes(),
 		Topics:  [][]byte{common.HexToHash("0x01").Bytes()},
 		Data:    []byte{0xab},
 	}})
-	miss := mustLogEvents(t, []state.Log{{
+	miss := mustLogEvents(t, []fc.Log{{
 		Address: common.HexToAddress("0xbb").Bytes(),
 		Data:    []byte{0x00},
 	}})
