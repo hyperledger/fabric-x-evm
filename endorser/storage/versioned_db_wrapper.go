@@ -68,7 +68,7 @@ type VersionedDBSnapshot struct {
 // The snapshot's block number is automatically appended as the lastBlock
 // parameter when calling the underlying VersionedDB.Get method.
 func (s *VersionedDBSnapshot) Get(namespace, key string) (*blocks.WriteRecord, error) {
-	rec, err := s.db.Get(namespace, key, s.blockNumber)
+	rec, err := s.db.GetAt(namespace, key, s.blockNumber)
 	if err != nil {
 		vdbLogger.Warnf("VersionedDBSnapshot.Get() ns=%s key=%s error: %v", namespace, key, err)
 		return nil, err
@@ -89,7 +89,7 @@ func (s *VersionedDBSnapshot) Close() error {
 
 // Get implements blocks.RecordGetter, reading the latest committed state
 func (w *VersionedDBWrapper) Get(namespace, key string) (*blocks.WriteRecord, error) {
-	return w.db.GetCurrent(namespace, key)
+	return w.db.Get(namespace, key)
 }
 
 // Handle implements blocks.BlockHandler by delegating to the underlying VersionedDB.

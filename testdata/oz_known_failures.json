@@ -5,6 +5,12 @@
     "note": "block.timestamp is hardcoded (COMPATIBILITY.md); manifests as timestamp diffs, delay/schedule assertions, or vote undercounts since checkpoints never advance."
   },
   {
+    "id": "AccessControlDefaultAdminRules begins a default admin transfer when there is a pending admin transfer should be able to begin a transfer again before acceptSchedule passes",
+    "cause": "hardhat-time-rpc",
+    "note": "Wall-clock timing flake: block.timestamp is real wall-clock at second resolution (evm_increaseTime/evm_setNextBlockTimestamp are no-ops, COMPATIBILITY.md), so the asserted timestamp is off by one when consecutive txs straddle a second boundary. Observed flipping pass/fail across unrelated PR runs (Nov 2026).",
+    "flaky": true
+  },
+  {
     "id": "AccessControlDefaultAdminRules begins a default admin transfer when there is a pending admin transfer should not emit a cancellation event if the new default admin accepted",
     "cause": "fixed-timestamp",
     "note": "block.timestamp is hardcoded (COMPATIBILITY.md); manifests as timestamp diffs, delay/schedule assertions, or vote undercounts since checkpoints never advance."
@@ -12,7 +18,8 @@
   {
     "id": "AccessControlDefaultAdminRules begins a default admin transfer when there is a pending delay should set the new delay and apply it to next default admin transfer schedule after effectSchedule passed",
     "cause": "fixed-timestamp",
-    "note": "block.timestamp is hardcoded (COMPATIBILITY.md); manifests as timestamp diffs, delay/schedule assertions, or vote undercounts since checkpoints never advance."
+    "note": "block.timestamp is hardcoded (COMPATIBILITY.md); manifests as timestamp diffs, delay/schedule assertions, or vote undercounts since checkpoints never advance.",
+    "flaky": true
   },
   {
     "id": "AccessControlDefaultAdminRules begins a default admin transfer when there is a pending delay should set the old delay and apply it to next default admin transfer schedule before effectSchedule passed",
@@ -1358,7 +1365,8 @@
   {
     "id": "ERC20Votes vote with timestamp set delegation call delegation with balance",
     "cause": "fixed-timestamp",
-    "note": "block.timestamp is hardcoded (COMPATIBILITY.md); manifests as timestamp diffs, delay/schedule assertions, or vote undercounts since checkpoints never advance."
+    "note": "block.timestamp is hardcoded (COMPATIBILITY.md); manifests as timestamp diffs, delay/schedule assertions, or vote undercounts since checkpoints never advance.",
+    "flaky": true
   },
   {
     "id": "ERC20Votes vote with timestamp set delegation with signature accept signed delegation",
@@ -1368,7 +1376,15 @@
   },
   {
     "id": "ERC20Votes vote with timestamp transfers \"after each\" hook for \"no delegation\"",
-    "cause": "execution reverted"
+    "cause": "execution reverted",
+    "note": "Mocha names a failing afterEach hook after whichever test it ran behind; observed both as \"no delegation\" and \"sender delegation\" on unrelated PR runs, and passing in others.",
+    "flaky": true
+  },
+  {
+    "id": "ERC20Votes vote with timestamp transfers \"after each\" hook for \"sender delegation\"",
+    "cause": "execution reverted",
+    "note": "Mocha names a failing afterEach hook after whichever test it ran behind; observed both as \"no delegation\" and \"sender delegation\" on unrelated PR runs, and passing in others.",
+    "flaky": true
   },
   {
     "id": "ERC2771Context when receiving a relayed call msgSender returns the original sender when calldata length is less than 20 bytes (address length)",
@@ -2061,6 +2077,12 @@
     "flaky": true
   },
   {
+    "id": "Governor using $ERC20VotesTimestampMock frontrun protection using description suffix without protection with proposer suffix but bad address part proposer can propose",
+    "cause": "hardhat-time-rpc",
+    "note": "Timestamp-clock variant of the $ERC20Votes/$ERC20VotesLegacyMock entries: ProposalCreated's voteStart comes from real wall-clock time, so it is off by one when propose and the expected-value read straddle a second boundary.",
+    "flaky": true
+  },
+  {
     "id": "Governor using $ERC20VotesTimestampMock nominal workflow",
     "cause": "execution reverted",
     "note": "Cascades from a confirmed racy \"before each\" hook in this same describe block (GovernorHelper.delegate()'s Promise.all race, or a no-op-time-RPC wait race): when the hook races, mocha skips the rest of the block and this test never runs this invocation -- indistinguishable from \"now passing\" to the baseline tool (see Diff's doc comment). When the hook doesn't race, this test runs on its own merits independent of the hook.",
@@ -2529,9 +2551,6 @@
     "flaky": true
   },
   {
-    "id": "GovernorPreventLateQuorum using $ERC20Votes protection against large lateQuorumVoteExtension"
-  },
-  {
     "id": "GovernorPreventLateQuorum using $ERC20VotesTimestampMock \"before each\" hook for \"deployment check\"",
     "cause": "concurrent-tx-race",
     "note": "Predicted, not yet observed failing: this fixture uses the same vulnerable pattern confirmed racy elsewhere (GovernorHelper.delegate()'s Promise.all of dependent writes, no confirmation wait -- the endorsement-time read snapshot goes stale before commit).",
@@ -2554,9 +2573,6 @@
     "cause": "hardhat-time-rpc",
     "note": "Timing-sensitive: propose->vote->queue->execute needs real wall-clock time for votingDelay/votingPeriod/timelock-delay, but evm_increaseTime/evm_setNextBlockTimestamp are no-ops (COMPATIBILITY.md). Fast execution reaches the next step too soon and reverts, but passes if the run is slow enough for real time to catch up -- confirmed flipping under a CPU-throttled run.",
     "flaky": true
-  },
-  {
-    "id": "GovernorPreventLateQuorum using $ERC20VotesTimestampMock protection against large lateQuorumVoteExtension"
   },
   {
     "id": "GovernorProposalGuardian using $ERC20Votes cancel proposal during active state \"before each\" hook for \"from proposal guardian\""
@@ -3507,6 +3523,12 @@
     "id": "MerkleTree push pushing to a full tree reverts"
   },
   {
+    "id": "RateLimiter RefillingBucket with some capacity consume consume all capacity at once",
+    "cause": "hardhat-time-rpc",
+    "note": "Bucket/window state depends on real elapsed wall-clock time between txs (evm_increaseTime/evm_setNextBlockTimestamp are no-ops, COMPATIBILITY.md); tests assuming zero/exact elapsed time pick up unintended refill/decay.",
+    "flaky": true
+  },
+  {
     "id": "RateLimiter RefillingBucket with some capacity consume consume one key does not affect another key",
     "cause": "hardhat-time-rpc",
     "note": "Bucket/window state depends on real elapsed wall-clock time between txs (evm_increaseTime/evm_setNextBlockTimestamp are no-ops, COMPATIBILITY.md); tests assuming zero/exact elapsed time pick up unintended refill/decay.",
@@ -3550,6 +3572,12 @@
   },
   {
     "id": "RateLimiter RefillingBucket with some capacity tryConsume tryConsume one key does not affect another key",
+    "cause": "hardhat-time-rpc",
+    "note": "Bucket/window state depends on real elapsed wall-clock time between txs (evm_increaseTime/evm_setNextBlockTimestamp are no-ops, COMPATIBILITY.md); tests assuming zero/exact elapsed time pick up unintended refill/decay.",
+    "flaky": true
+  },
+  {
+    "id": "RateLimiter RefillingBucket with some capacity tryConsume tryConsume reduces available and increases used",
     "cause": "hardhat-time-rpc",
     "note": "Bucket/window state depends on real elapsed wall-clock time between txs (evm_increaseTime/evm_setNextBlockTimestamp are no-ops, COMPATIBILITY.md); tests assuming zero/exact elapsed time pick up unintended refill/decay.",
     "flaky": true
@@ -3613,13 +3641,13 @@
     "flaky": true
   },
   {
-    "id": "RateLimiter SlidingWindow with some capacity updateSettings with window=0 collapses window to a single second",
+    "id": "RateLimiter SlidingWindow with some capacity tryConsume multiple tryConsume accumulate within the window",
     "cause": "hardhat-time-rpc",
     "note": "Bucket/window state depends on real elapsed wall-clock time between txs (evm_increaseTime/evm_setNextBlockTimestamp are no-ops, COMPATIBILITY.md); tests assuming zero/exact elapsed time pick up unintended refill/decay.",
     "flaky": true
   },
   {
-    "id": "RateLimiter SlidingWindow with some capacity tryConsume multiple tryConsume accumulate within the window",
+    "id": "RateLimiter SlidingWindow with some capacity updateSettings with window=0 collapses window to a single second",
     "cause": "hardhat-time-rpc",
     "note": "Bucket/window state depends on real elapsed wall-clock time between txs (evm_increaseTime/evm_setNextBlockTimestamp are no-ops, COMPATIBILITY.md); tests assuming zero/exact elapsed time pick up unintended refill/decay.",
     "flaky": true
