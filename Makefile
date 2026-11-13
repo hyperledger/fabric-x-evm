@@ -84,6 +84,12 @@ NS2         ?= synthetic
 POLICY      ?= AND('Org1MSP.member')
 NETWORK     ?= fabric-x
 
+# Second namespace for the namespace-isolation matrix
+# (integration/namespace_isolation_test.go). It carries the same single-org
+# policy as NS, so a difference between the two gateways is attributable to namespace
+# handling rather than to endorsement policy — which is why it is not NS_2OF2.
+NS_B        ?= basic2
+
 # Second namespace with a 2-of-2 policy. Separate from NS/POLICY so the
 # stricter policy here doesn't affect the existing single-org test-x cases.
 NS_2OF2     ?= basic2of2
@@ -170,6 +176,49 @@ start-x:  ## Start the fabric-x test network (docker)
 .PHONY: test-x
 test-x: ## Integration cases against a running fabric-x network
 	@go test -timeout 60s -v -run ^TestFabricX$$ ./integration
+
+# start-x with a second application namespace and a mock orderer that batches
+# several transactions per block, for the namespace-isolation matrix
+# (integration/namespace_isolation_test.go).
+#
+# Both differences from start-x matter: without the second namespace there is
+# nothing to isolate from, and without batching every block holds one
+# transaction, so a block carrying both namespaces — and the transactionIndex
+# holes that come with it — cannot occur.
+#
+# Uses the same container name and ports as start-x, so run only one at a time.
+# `make stop-x` tears this down too: the overlay adds no new service, it only
+# changes environment variables on test-committer, which the base compose file
+# declares.
+.PHONY: start-x-batched
+start-x-batched:
+	@if nc -z localhost 7050 2>/dev/null; then echo "Error: port 7050 is already in use — stop any running Fabric orderer before starting."; exit 1; fi
+	@$(COMPOSE) -f compose.fabric-x.yml -f compose.fabric-x.batched.yml up -d
+	@echo "Waiting for test committer to be ready..."
+	@while ! nc -z localhost 7001 2>/dev/null; do sleep 1; done
+	$(call create-namespace,$(NS),$(POLICY))
+	$(call create-namespace,$(NS_B),$(POLICY))
+
+# The namespace-isolation matrix against the fabric-x test committer.
+# Requires `make start-x-batched` (not plain start-x — see above). Verbose
+# because the output is the deliverable: the test records what the gateways
+# report rather than asserting it.
+.PHONY: test-ns-x
+test-ns-x:
+	@go test -timeout 120s -v -count=1 -run ^TestNamespaceIsolationFabricX$$ ./integration
+
+# The namespace-isolation matrix against a running Fablo network (classic
+# fabric). Requires `make start-fablo` with a second chaincode declared in
+# testdata/fablo/fablo-config.json.
+.PHONY: test-ns-fablo
+test-ns-fablo:
+	@go test -timeout 360s -v -count=1 -run ^TestNamespaceIsolationFablo$$ ./integration
+
+# The namespace-isolation matrix against the in-process mocks. Needs no network,
+# so this is the fast loop and the baseline the real backends are compared with.
+.PHONY: test-ns-local
+test-ns-local:
+	@go test -timeout 120s -v -count=1 -run '^TestNamespaceIsolationLocal(X)?$$' ./integration
 
 .PHONY: perf-smoke
 perf-smoke:  ## Short perf replay against a running fabric-x network

@@ -72,6 +72,14 @@ start_network_and_deploy_chaincode() {
         rm -rf "$FABLO_TARGET"
     fi
 
+    # Removing fablo-target is what clears the stored config snapshot Fablo
+    # compares against, so a changed fablo-config.json (a chaincode added, say)
+    # regenerates instead of failing with "configuration has changed".
+    # Also drop any network snapshot archive, matching `make clean-fablo`:
+    # `fablo up` never restores one by itself, but leaving it behind means a
+    # later `fablo restore` would resurrect a network built from stale config.
+    rm -f "$FABLO_DIR/snapshot.fablo.tar.gz"
+
     # Bring up the network (generates artifacts, creates channel, deploys chaincode)
     echo "Bringing up network with Fablo..."
     

@@ -21,5 +21,12 @@ start_network_and_deploy_chaincode
 # Run integration tests
 # Keep this configurable so callers can centralize timeout values and ensure
 # any outer wall timeout is greater than or equal to the Go test timeout.
-GO_TEST_TIMEOUT="${GO_TEST_TIMEOUT:-360s}"
-go test -timeout "$GO_TEST_TIMEOUT" $VERBOSE_FLAG -run '^TestFablo$' ./integration/
+GO_TEST_TIMEOUT="${GO_TEST_TIMEOUT:-600s}"
+
+# Both suites run against the one network started above rather than in separate
+# invocations: bringing Fablo up costs a prune, a channel, and now two chaincode
+# deploys, which is far more than the tests themselves. TestNamespaceIsolationFablo
+# needs the second chaincode ("basic2" in testdata/fablo/fablo-config.json) to be
+# present, which it is as of that network coming up.
+go test -timeout "$GO_TEST_TIMEOUT" $VERBOSE_FLAG \
+    -run '^TestFablo$|^TestNamespaceIsolationFablo$' ./integration/

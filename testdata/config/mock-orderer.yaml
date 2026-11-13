@@ -21,8 +21,11 @@ servers:
       ca-cert-paths:
         - /orderer-org1-tls-ca.pem
 
-block-size: 1
-block-timeout: 30s
+# block-size and block-timeout are deliberately absent: they are set through
+# SC_ORDERER_BLOCK_SIZE / SC_ORDERER_BLOCK_TIMEOUT in compose.fabric-x.yml. The
+# mock orderer builds its viper with AutomaticEnv and the SC_ORDERER prefix, so
+# an environment variable silently outranks anything written here — keeping the
+# values in one place stops this file from claiming a block size it does not get.
 out-block-capacity: 1024
 payload-cache-size: 1024
 send-genesis-block: true

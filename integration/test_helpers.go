@@ -425,8 +425,35 @@ func NewLocalTestHarness(t *testing.T, logger sdk.Logger, evmConfig execution.EV
 	return NewLocalTestHarnessWithFactory(t, logger, evmConfig, primeDbPath, networkType, configOverrides, defaultEndorserFactory)
 }
 
+// localHarnessOpts tunes the fabrictest-backed harness for callers that need
+// more than the default of one namespace on a network of its own.
+type localHarnessOpts struct {
+	// Network, when non-nil, is an already-running fabrictest network to join
+	// rather than starting a fresh one. That is what lets two harnesses with
+	// different namespaces share one ledger, which the namespace-isolation
+	// matrix needs (see namespace_isolation.go). fabrictest is namespace-
+	// agnostic — Start ignores its namespace argument entirely — so one network
+	// serves any number of them.
+	Network *fabrictest.Network
+
+	// NetworkConfig is handed to fabrictest.Start when Network is nil. The zero
+	// value cuts a block per transaction (BlockCutTime 0 = cut immediately);
+	// set MaxTxPerBlock and BlockCutTime to batch, which is what makes a block
+	// carrying transactions from two namespaces reachable.
+	NetworkConfig fabrictest.Config
+}
+
 // NewLocalTestHarnessWithFactory is like NewLocalTestHarness but allows a custom endorser factory.
 func NewLocalTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig execution.EVMConfig, primeDbPath, networkType string, configOverrides map[string]any, factory EndorserFactory) (*TestHarness, error) {
+	th, _, err := newLocalHarness(t, logger, evmConfig, primeDbPath, networkType, configOverrides, factory, localHarnessOpts{})
+	return th, err
+}
+
+// newLocalHarness is NewLocalTestHarnessWithFactory with the network under the
+// caller's control. It also returns the fabrictest network it used (nil in
+// bypass mode), so a second harness can join the same one via
+// localHarnessOpts.Network.
+func newLocalHarness(t *testing.T, logger sdk.Logger, evmConfig execution.EVMConfig, primeDbPath, networkType string, configOverrides map[string]any, factory EndorserFactory, opts localHarnessOpts) (*TestHarness, *fabrictest.Network, error) {
 	bypass := networkType == "bypass"
 
 	orderer := &common.Endpoint{Host: "127.0.0.1", Port: 1337}
@@ -469,25 +496,28 @@ func NewLocalTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig e
 	}
 	endorsers, err := prepareHarnessConfig(t, &cfg, &evmConfig, configOverrides, factory)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
+	nw := opts.Network
 	if !bypass {
-		nw, err := fabrictest.Start(t.Context(), cfg.Network.Namespace, networkType, fabrictest.Config{}, endorsers[0].KVS)
-		if err != nil {
-			t.Fatalf("fabrictest.Start: %v", err)
+		if nw == nil {
+			nw, err = fabrictest.Start(t.Context(), cfg.Network.Namespace, networkType, opts.NetworkConfig, endorsers[0].KVS)
+			if err != nil {
+				t.Fatalf("fabrictest.Start: %v", err)
+			}
+			// Don't register cleanup for nw.Stop - fabrictest.Start already registers its own cleanup internally
 		}
-		// Don't register cleanup for nw.Stop - fabrictest.Start already registers its own cleanup internally
 		orderer.Port = nw.OrdererPort
 		peer.Port = nw.PeerPort
 	}
 
 	th, _, err := buildTestHarness(t, logger, cfg, evmConfig, primeDbPath, bypass, endorsers, nil, nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return th, nil
+	return th, nw, nil
 }
 
 // newFileConfigHarness loads configFile (e.g. "fablo.yaml" for Fablo, "fabx.yaml" for
@@ -553,7 +583,11 @@ func newSplitFileConfigHarness(t *testing.T, logger sdk.Logger, evmConfig execut
 
 	endorsers := make([]EndorserComponents, len(endorserConfigFiles))
 	for i, ecfgFile := range endorserConfigFiles {
-		db, builder, client := startServedEndorser(t, ecfgFile, evmConfig, &cfg.Gateway.Endorsers[i])
+		// The gateway's namespace wins over each endorser config's own: an
+		// endorser endorses into the namespace it was built with, so a caller
+		// that overrode Network.Namespace here (the namespace-isolation matrix
+		// does) would otherwise get endorsements for the wrong one.
+		db, builder, client := startServedEndorser(t, ecfgFile, evmConfig, &cfg.Gateway.Endorsers[i], cfg.Network.Namespace)
 		endorsers[i] = EndorserComponents{KVS: db, Builder: builder, Service: client}
 	}
 
