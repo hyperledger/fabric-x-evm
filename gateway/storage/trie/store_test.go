@@ -68,7 +68,7 @@ func codeWrite(hexAddr string, code []byte) blocks.KVWrite {
 }
 
 func storageWrite(hexAddr, hexSlot, hexValue string) blocks.KVWrite {
-	return blocks.KVWrite{Key: "str:" + hexAddr + ":" + hexSlot, Value: []byte(hexValue)}
+	return blocks.KVWrite{Key: "str:" + hexAddr + ":" + hexSlot, Value: common.HexToHash(hexValue).Bytes()} // raw 32 bytes
 }
 
 func deleteWrite(key string) blocks.KVWrite {

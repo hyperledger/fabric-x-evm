@@ -35,21 +35,17 @@ package execution
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
-	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/rawdb"
 	ethstate "github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/stateless"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/types/bal"
+	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/triedb"
-	"github.com/ethereum/go-ethereum/triedb/hashdb"
 	"github.com/holiman/uint256"
 	fxcommon "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
@@ -57,6 +53,17 @@ import (
 
 // Log is a type of event.
 type Log = fxcommon.Log
+
+// ExtendedStateDB extends vm.StateDB with additional methods specific to
+// the endorser implementation (Result, Logs).
+type ExtendedStateDB interface {
+	vm.StateDB
+	// GetStorageRoot is not part of vm.StateDB but the logging wrapper still
+	// needs to expose it.
+	GetStorageRoot(addr common.Address) common.Hash
+	Result() blocks.ReadWriteSet
+	Logs() []Log
+}
 
 // ReadStore is the read interface required to back a StateDB.
 type ReadStore interface {
@@ -236,42 +243,7 @@ func NewStateDB(ctx context.Context, store ReadStore, namespace string, monotoni
 	}, nil
 }
 
-// NewStateDBWithDualState creates a StateDB and wraps it with a DualStateDB for testing.
-// This allows tracking both Fabric state and Ethereum trie state evolution.
-// If ethStateDB is nil, a new in-memory ethStateDB is created.
-func NewStateDBWithDualState(ctx context.Context, store ReadStore, namespace string, monotonicVersions bool, ethStateDB *ethstate.StateDB) (ExtendedStateDB, error) {
-	fabricStateDB, err := NewStateDB(ctx, store, namespace, monotonicVersions)
-	if err != nil {
-		return nil, err
-	}
-
-	// Create an in-memory ethStateDB if not provided
-	if ethStateDB == nil {
-		memDB := rawdb.NewMemoryDatabase()
-		tconf := &triedb.Config{
-			Preimages: true,
-			HashDB:    hashdb.Defaults,
-		}
-		trieDB := triedb.NewDatabase(memDB, tconf)
-		stateDB := ethstate.NewDatabase(trieDB, nil)
-		ethStateDB, err = ethstate.New(types.EmptyRootHash, stateDB)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create eth StateDB: %w", err)
-		}
-	}
-
-	return NewDualStateDB(ethStateDB, fabricStateDB), nil
-}
-
 // Helper functions for key generation
-func accKey(addr common.Address, typ string) string {
-	return "acc:" + addr.Hex() + ":" + typ
-}
-
-func storeKey(addr common.Address, slot common.Hash) string {
-	return "str:" + addr.Hex() + ":" + slot.Hex()
-}
-
 // -------------------- Internal state query helpers --------------------
 
 // getStateFromJournal finds the latest write for a key in the journal, through an index from key to
@@ -363,14 +335,14 @@ func (s *StateDB) putState(key string, value []byte) {
 
 // CreateAccount creates an account with zero balance and nonce.
 func (s *StateDB) CreateAccount(addr common.Address) {
-	s.putState(accKey(addr, "bal"), uint256ToBytes(uint256.NewInt(0)))
-	s.putState(accKey(addr, "nonce"), uint64ToBytes(0))
+	s.putState(fxcommon.AccountKey(addr, fxcommon.FieldBalance), fxcommon.EncodeBalance(uint256.NewInt(0)))
+	s.putState(fxcommon.AccountKey(addr, fxcommon.FieldNonce), fxcommon.EncodeNonce(0))
 	s.markNewContract(addr)
 }
 
 // CreateContract creates a contract account with empty code.
 func (s *StateDB) CreateContract(addr common.Address) {
-	s.putState(accKey(addr, "code"), []byte{})
+	s.putState(fxcommon.AccountKey(addr, fxcommon.FieldCode), []byte{})
 	s.markNewContract(addr)
 }
 
@@ -385,11 +357,11 @@ func (s *StateDB) markNewContract(addr common.Address) {
 
 // GetBalance returns the balance of an account.
 func (s *StateDB) GetBalance(addr common.Address) *uint256.Int {
-	val, err := s.getState(accKey(addr, "bal"))
+	val, err := s.getState(fxcommon.AccountKey(addr, fxcommon.FieldBalance))
 	if err != nil {
 		panic(fmt.Errorf("GetBalance failed: %w", err))
 	}
-	return bytesToUint256(val)
+	return fxcommon.DecodeBalance(val)
 }
 
 // AddBalance adds balance to an account.
@@ -399,7 +371,7 @@ func (s *StateDB) AddBalance(addr common.Address, amount *uint256.Int, reason tr
 	}
 	prev := s.GetBalance(addr)
 	newBal := new(uint256.Int).Add(prev, amount)
-	s.putState(accKey(addr, "bal"), uint256ToBytes(newBal))
+	s.putState(fxcommon.AccountKey(addr, fxcommon.FieldBalance), fxcommon.EncodeBalance(newBal))
 	return *prev
 }
 
@@ -410,27 +382,27 @@ func (s *StateDB) SubBalance(addr common.Address, amount *uint256.Int, reason tr
 	}
 	prev := s.GetBalance(addr)
 	newBal := new(uint256.Int).Sub(prev, amount)
-	s.putState(accKey(addr, "bal"), uint256ToBytes(newBal))
+	s.putState(fxcommon.AccountKey(addr, fxcommon.FieldBalance), fxcommon.EncodeBalance(newBal))
 	return *prev
 }
 
 // GetNonce returns the nonce of an account.
 func (s *StateDB) GetNonce(addr common.Address) uint64 {
-	val, err := s.getState(accKey(addr, "nonce"))
+	val, err := s.getState(fxcommon.AccountKey(addr, fxcommon.FieldNonce))
 	if err != nil {
 		panic(fmt.Errorf("GetNonce failed: %w", err))
 	}
-	return bytesToUint64(val)
+	return fxcommon.DecodeNonce(val)
 }
 
 // SetNonce sets the nonce of an account.
 func (s *StateDB) SetNonce(addr common.Address, nonce uint64, reason tracing.NonceChangeReason) {
-	s.putState(accKey(addr, "nonce"), uint64ToBytes(nonce))
+	s.putState(fxcommon.AccountKey(addr, fxcommon.FieldNonce), fxcommon.EncodeNonce(nonce))
 }
 
 // GetCode returns the code of an account.
 func (s *StateDB) GetCode(addr common.Address) []byte {
-	val, err := s.getState(accKey(addr, "code"))
+	val, err := s.getState(fxcommon.AccountKey(addr, fxcommon.FieldCode))
 	if err != nil {
 		panic(fmt.Errorf("GetCode failed: %w", err))
 	}
@@ -458,35 +430,29 @@ func (s *StateDB) GetCodeSize(addr common.Address) int {
 // SetCode sets the code of an account.
 func (s *StateDB) SetCode(addr common.Address, code []byte, reason tracing.CodeChangeReason) []byte {
 	prev := s.GetCode(addr)
-	s.putState(accKey(addr, "code"), code)
+	s.putState(fxcommon.AccountKey(addr, fxcommon.FieldCode), code)
 	return prev
 }
 
 // GetState returns the current storage value for a slot.
 func (s *StateDB) GetState(addr common.Address, slot common.Hash) common.Hash {
-	key := storeKey(addr, slot)
+	key := fxcommon.StorageKey(addr, slot)
 	val, err := s.getState(key)
 	if err != nil {
 		panic(fmt.Errorf("GetState failed: %w", err))
 	}
-	if len(val) == 0 {
-		return common.Hash{}
-	}
-	return common.BytesToHash(val)
+	return fxcommon.DecodeStorage(val)
 }
 
 // GetStateAndCommittedState returns both current and committed state.
 // Current state is from the journal, committed state is from the ReadStore.
 // This DOES create a read dependency for the committed state.
 func (s *StateDB) GetStateAndCommittedState(addr common.Address, slot common.Hash) (common.Hash, common.Hash) {
-	key := storeKey(addr, slot)
+	key := fxcommon.StorageKey(addr, slot)
 
 	// Get current state from journal (no store read)
 	currentVal, found := s.getStateFromJournal(key)
-	var current common.Hash
-	if found && len(currentVal) > 0 {
-		current = common.BytesToHash(currentVal)
-	}
+	current := fxcommon.DecodeStorage(currentVal)
 
 	// Get committed state from store and journal the read (creates MVCC dependency)
 	committedVal, err := s.getStateFromStore(key)
@@ -494,10 +460,7 @@ func (s *StateDB) GetStateAndCommittedState(addr common.Address, slot common.Has
 		panic(fmt.Errorf("GetStateAndCommittedState failed: %w", err))
 	}
 
-	var committed common.Hash
-	if len(committedVal) > 0 {
-		committed = common.BytesToHash(committedVal)
-	}
+	committed := fxcommon.DecodeStorage(committedVal)
 
 	// If not found in journal, current equals committed
 	if !found {
@@ -511,33 +474,26 @@ func (s *StateDB) GetStateAndCommittedState(addr common.Address, slot common.Has
 // This is a blind write - it does NOT create a read dependency.
 // The previous value is returned from the journal if it exists, otherwise from the store.
 func (s *StateDB) SetState(addr common.Address, slot common.Hash, value common.Hash) common.Hash {
-	key := storeKey(addr, slot)
+	key := fxcommon.StorageKey(addr, slot)
 
 	// Get previous value from journal first (no read dependency)
 	prevVal, found := s.getStateFromJournal(key)
 	var prev common.Hash
 	if found {
-		if len(prevVal) > 0 {
-			prev = common.BytesToHash(prevVal)
-		}
+		prev = fxcommon.DecodeStorage(prevVal)
 	} else {
 		// Not in journal, read directly from store WITHOUT creating a read dependency
 		record, err := s.store.Get(s.namespace, key)
 		if err != nil {
 			panic(fmt.Errorf("SetState failed to get previous value: %w", err))
 		}
-		if record != nil && !record.IsDelete && len(record.Value) > 0 {
-			prev = common.BytesToHash(record.Value)
+		if record != nil && !record.IsDelete {
+			prev = fxcommon.DecodeStorage(record.Value)
 		}
 	}
 
-	// Write new value
-	// If value is zero, write empty bytes to trigger deletion
-	if value == (common.Hash{}) {
-		s.putState(key, nil)
-	} else {
-		s.putState(key, value.Bytes())
-	}
+	// A zero value encodes as nil, which the write set records as a delete.
+	s.putState(key, fxcommon.EncodeStorage(value))
 
 	return prev
 }
@@ -551,7 +507,7 @@ func (s *StateDB) GetStorageRoot(addr common.Address) common.Hash {
 // destroys the account if it was created in the current transaction.
 func (s *StateDB) SelfDestruct(addr common.Address) {
 	if prevBalance := s.GetBalance(addr); !prevBalance.IsZero() {
-		s.putState(accKey(addr, "bal"), uint256ToBytes(uint256.NewInt(0)))
+		s.putState(fxcommon.AccountKey(addr, fxcommon.FieldBalance), fxcommon.EncodeBalance(uint256.NewInt(0)))
 	}
 	if _, isNew := s.newContracts[addr]; isNew {
 		s.journal = append(s.journal, selfDestructEntry{addr: addr})
@@ -568,13 +524,13 @@ func (s *StateDB) HasSelfDestructed(addr common.Address) bool {
 // Exist checks if an account exists.
 func (s *StateDB) Exist(addr common.Address) bool {
 	// Check if any account field exists
-	if val, err := s.getState(accKey(addr, "bal")); err == nil && val != nil {
+	if val, err := s.getState(fxcommon.AccountKey(addr, fxcommon.FieldBalance)); err == nil && val != nil {
 		return true
 	}
-	if val, err := s.getState(accKey(addr, "nonce")); err == nil && val != nil {
+	if val, err := s.getState(fxcommon.AccountKey(addr, fxcommon.FieldNonce)); err == nil && val != nil {
 		return true
 	}
-	if val, err := s.getState(accKey(addr, "code")); err == nil && val != nil {
+	if val, err := s.getState(fxcommon.AccountKey(addr, fxcommon.FieldCode)); err == nil && val != nil {
 		return true
 	}
 	return false
@@ -835,33 +791,5 @@ func (s *StateDB) IsNewContract(addr common.Address) bool {
 func (s *StateDB) LogsForBurnAccounts() []*types.Log { return nil }
 
 // -------------------- Helper functions --------------------
-
-func uint256ToBytes(u *uint256.Int) []byte {
-	if u == nil {
-		return nil
-	}
-	return u.ToBig().Bytes()
-}
-
-func bytesToUint256(b []byte) *uint256.Int {
-	if len(b) == 0 {
-		return new(uint256.Int)
-	}
-	u, _ := uint256.FromBig(new(big.Int).SetBytes(b))
-	return u
-}
-
-func uint64ToBytes(val uint64) []byte {
-	b := make([]byte, 8)
-	binary.BigEndian.PutUint64(b, val)
-	return b
-}
-
-func bytesToUint64(b []byte) uint64 {
-	if len(b) == 0 {
-		return 0
-	}
-	return binary.BigEndian.Uint64(b)
-}
 
 func (s *StateDB) SetTxContext(common.Hash, int, uint32) {}

@@ -244,20 +244,17 @@ blocks re-deployment there. The only other way to write storage without code, `h
 direct injection, is in-process test-harness code, never reachable over the network.
 Revisit this if that changes — e.g. a production state-import or migration path ever ships.
 
-**How these surface in equivalence tests**: the conformance harness runs the EVM against our
-StateDB while mirroring every write to a reference go-ethereum StateDB, then compares the state
-root against each fixture's expected root. The only fixtures that diverge on the final root are the
-EIP-7610 create-collision cases above — and that divergence comes from go-ethereum's create path,
-not from our StateDB (the always-on EIP-6780 SELFDESTRUCT semantics differ in behavior but do not
-currently cause any fixture to diverge). This is deliberate and inherited from upstream, not a
-regression.
+**How these surface in equivalence tests**: the conformance harness runs each fixture's transaction
+on the production engine and replays the read-write set it would commit into a state trie, whose
+root must match the fixture's. The fixtures that diverge are the SELFDESTRUCT ones described above:
+an account created and destroyed in the same transaction stays in our write set, where Ethereum
+deletes it. The EIP-7610 create-collision divergence no longer shows up: since tests@v21.0.0 the
+fixtures stop exercising the storage-collision check from Cancun onward.
 
 These known-divergent cases are recorded as expected failures in
-`testdata/eth_known_failures.json` — the EIP-7610 create-collision fixtures above, an inherited
-go-ethereum divergence. They still run; the baseline asserts they keep failing and flags it if one
-starts passing. (`testdata/eth_tests.skip` is a separate, much smaller list, reserved for fixtures
-that *panic* and would otherwise destroy the whole run's results.) All other Osaka-forward state
-tests pass.
+`testdata/eth_known_failures.json` (cause `selfdestruct-partial`). They still run; the baseline
+asserts they keep failing and flags it if one starts passing. All other Osaka-forward state tests
+pass.
 
 **Native ETH balances not funded**: balances are implemented but unused. Accounts have zero ETH 
 balance by default. Value transfers inside the EVM (`CALL` with value, `SELFDESTRUCT` beneficiary, 

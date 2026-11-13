@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"io"
 	"math/big"
-	"math/rand"
 	"os"
 	"path/filepath"
 	"sort"
@@ -23,18 +22,17 @@ import (
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
-	"github.com/ethereum/go-ethereum/params"
 	"github.com/hyperledger/fabric-protos-go-apiv2/ledger/rwset"
 	"github.com/hyperledger/fabric-protos-go-apiv2/ledger/rwset/kvrwset"
+	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-common/protoutil"
+	fc "github.com/hyperledger/fabric-x-evm/common"
 	econf "github.com/hyperledger/fabric-x-evm/endorser/config"
 	"github.com/hyperledger/fabric-x-evm/endorser/execution"
-	"github.com/hyperledger/fabric-x-evm/endorser/testimpl"
 	"github.com/hyperledger/fabric-x-evm/gateway/core"
 	"github.com/hyperledger/fabric-x-evm/gateway/storage/trie"
 	sdk "github.com/hyperledger/fabric-x-sdk"
@@ -43,20 +41,11 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// verify_root is false by default, because many tests are konwn to fail.
-// Set it to true to fix the tests one by one.
-var verify_root = flag.Bool("verify_root", false, "Verify trie root computed by committer")
-
 // want_very_slow is set when we want to run the tests that we typically skip because they are too slow
 var want_very_slow = flag.Bool("very_slow", false, "Run the very slow tests that are otherwise blacklisted")
 
 // loadSlow loads the test cases that are typically skipped because they are slow
 func loadSlow(path string) (map[string]struct{}, error) {
-	return loadList(path)
-}
-
-// loadSkip loads the test cases that are unsupported and should never run.
-func loadSkip(path string) (map[string]struct{}, error) {
 	return loadList(path)
 }
 
@@ -126,19 +115,6 @@ func filterSlowTests(files []string, slow map[string]struct{}, want_very_slow bo
 	return filtered
 }
 
-// filterSkippedTests removes always-skip files from the list.
-func filterSkippedTests(files []string, skip map[string]struct{}) []string {
-	var filtered []string
-
-	for _, file := range files {
-		if _, isSkip := skip[file]; !isSkip {
-			filtered = append(filtered, file)
-		}
-	}
-
-	return filtered
-}
-
 // executionSpecForks limits the suite to Osaka-forward, plus Prague/Cancun as cheap regression.
 var executionSpecForks = map[string]struct{}{
 	"Osaka":  {},
@@ -155,16 +131,16 @@ var executionSpecForks = map[string]struct{}{
 func TestEthereumTests(t *testing.T) {
 	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr)) // disable grpc logging
 
+	// The suite has known failures, which only the baseline check knows to expect
+	// (make eth-tests), so a plain short run would fail on them.
+	if testing.Short() {
+		t.Skip("skipping in short mode; run make eth-tests")
+	}
+
 	testsDir := filepath.Join("..", "testdata", "execution-specs-tests", "fixtures", "state_tests")
 	if _, err := os.Stat(testsDir); os.IsNotExist(err) {
 		t.Skipf("execution-specs fixtures not found at %s; run `make fetch-execution-specs-tests`", testsDir)
 	}
-
-	skip, err := loadSkip(filepath.Join("..", "testdata", "eth_tests.skip"))
-	if err != nil {
-		t.Fatalf("Failed to load skip list: %v", err)
-	}
-	t.Logf("Loaded skip list with %d entries", len(skip))
 
 	slow, err := loadSlow(filepath.Join("..", "testdata", "eth_tests.slow"))
 	if err != nil {
@@ -176,7 +152,6 @@ func TestEthereumTests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to find test files: %v", err)
 	}
-	allFiles = filterSkippedTests(allFiles, skip)
 	testFiles := filterSlowTests(allFiles, slow, *want_very_slow)
 	t.Logf("Running %d state_tests files after filtering", len(testFiles))
 
@@ -225,35 +200,25 @@ func runStateTestSubtests(t *testing.T, stateTest *StateTest, forkAllowlist map[
 		}
 		key := fmt.Sprintf("%s/%d", subtest.Fork, subtest.Index)
 
-		if testing.Short() && rand.Intn(2) > 0 {
-			t.Skip("skipping in short mode")
-		}
-
-		// Test with hash scheme and trie (no snapshotter)
 		t.Run(key, func(t *testing.T) {
-			runEthereumTestConfig(t, stateTest, subtest, false, rawdb.HashScheme)
+			runEthereumTestConfig(t, stateTest, subtest)
 		})
 	}
 }
 
 // runEthereumTestConfig executes a specific test configuration
-func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubtest, snapshotter bool, scheme string) {
+func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubtest) {
 	// Get the post-state to extract the correct indices and expected results
 	post := stateTest.json.Post[subtest.Fork][subtest.Index]
 	dataIndex := post.Indexes.Data
 	gasIndex := post.Indexes.Gas
 	valueIndex := post.Indexes.Value
 
-	// Call prepareTestEnvironment to get context, config, block, and msg.
-	// The returned StateTestState holds a TrieDB and optional Snapshots that must
-	// be closed to stop the background snapshot-generator goroutine.
-	st, config, block, _, context, prepareErr := stateTest.prepareTestEnvironment(subtest.Fork, subtest.Index, vm.Config{}, snapshotter, scheme)
+	config, block, context, prepareErr := stateTest.prepareTestEnvironment(subtest.Fork, subtest.Index)
 
 	// Check if the error from prepareTestEnvironment is expected (e.g., blob count exceeded).
 	// We must check this BEFORE trying to access block.Number() or block.Time().
 	if prepareErr != nil {
-		// Close the state before returning
-		st.Close()
 		if post.ExpectException != "" {
 			// Error was expected, test passes
 			t.Logf("WANTED: %s\n   GOT: %s\n", post.ExpectException, prepareErr.Error())
@@ -267,14 +232,8 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 	// This must come AFTER the prepareErr check because block may be nil on error
 	tx, err := buildTransaction(&stateTest.json.Tx, dataIndex, gasIndex, valueIndex, config, block.Number(), block.Time())
 	if err != nil {
-		st.Close()
 		t.Fatalf("Failed to build transaction: %v", err)
 	}
-
-	// Close immediately: config/block/msg/context are plain values that don't reference the
-	// StateDB/TrieDB/Snapshots, so we can stop the snapshot-generator goroutine right here
-	// rather than relying on a defer that won't run if this goroutine later gets stuck.
-	st.Close()
 
 	// Create EVMConfig to pass to test harness
 	evmConfig := execution.EVMConfig{
@@ -293,28 +252,6 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 
 	// Execute transaction through gateway
 	env, execErr := th.Gateways[0].ExecuteEthTx(t.Context(), tx)
-
-	// Get expected root from post-state
-	expectedRoot := common.Hash(post.Root)
-
-	var actualRoot common.Hash
-	// After execution, extract the ethStateDB and commit the ethereum state
-	if len(th.endorsers) > 0 {
-		ethStateDB := th.endorsers[0].(*testimpl.EndorserWrapper).GetEthStateDB()
-		if ethStateDB != nil {
-			// Commit the ethereum state
-			root, err := ethStateDB.Commit(params.Rules{
-				IsEIP158:    config.IsEIP158(block.Number()),
-				IsCancun:    config.IsCancun(block.Number(), block.Time()),
-				IsAmsterdam: config.IsAmsterdam(block.Number(), block.Time()),
-			}, block.Number().Uint64())
-			if err != nil {
-				t.Fatalf("Failed to commit ethereum state: %v", err)
-			}
-
-			actualRoot = root
-		}
-	}
 
 	if tx.Type() != types.BlobTxType && // our pre-execution validation doesn't support blob txes yet
 		tx.Type() != types.SetCodeTxType && // nor set-code (EIP-7702) txes yet
@@ -341,47 +278,46 @@ func runEthereumTestConfig(t *testing.T, stateTest *StateTest, subtest StateSubt
 		t.Fatalf("unexpected transaction execution error: %v", execErr)
 	}
 
-	// Verify root hash
-	if expectedRoot != actualRoot {
-		t.Fatalf("post state root mismatch: got %s, want %s", actualRoot.Hex(), expectedRoot.Hex())
+	// What Fabric commits is the endorsement: its write set replayed onto the
+	// primed pre-state must reach the fixture's root, and its logs must hash the same.
+	txRWS, logs, err := endorsementResult(env)
+	if err != nil {
+		t.Fatalf("read endorsement: %v", err)
 	}
-	if *verify_root {
-		// Also verify via trie.Store (Chain path)
-		txRWS, err := endorsementToRWS(env)
-		if err != nil {
-			t.Fatalf("extract tx RWS from endorsement: %v", err)
-		}
-		verifyTrieRoot(t, th.Primer.Writes(), txRWS, block.Number().Uint64(), expectedRoot)
+	verifyWriteSetRoot(t, th.Primer.Writes(), txRWS, block.Number().Uint64(), common.Hash(post.Root), post.State)
+	if got := rlpHash(logs); got != common.Hash(post.Logs) {
+		t.Fatalf("logs hash mismatch: got %s, want %s (%d logs)", got.Hex(), common.Hash(post.Logs).Hex(), len(logs))
 	}
 }
 
-// endorsementToRWS extracts the blocks.ReadWriteSet from the first ProposalResponse
-// in an sdk.Endorsement. It reverses the encoding done by endorsement/fabric.EndorsementBuilder.
-func endorsementToRWS(env sdk.Endorsement) (blocks.ReadWriteSet, error) {
+// endorsementResult extracts the write set and the logs from the first
+// ProposalResponse in an sdk.Endorsement. It reverses the encoding done by
+// endorsement/fabric.EndorsementBuilder.
+func endorsementResult(env sdk.Endorsement) (blocks.ReadWriteSet, []*types.Log, error) {
 	if len(env.Responses) == 0 {
-		return blocks.ReadWriteSet{}, nil
+		return blocks.ReadWriteSet{}, nil, nil
 	}
 
 	prp, err := protoutil.UnmarshalProposalResponsePayload(env.Responses[0].Payload)
 	if err != nil {
-		return blocks.ReadWriteSet{}, fmt.Errorf("unmarshal proposal response payload: %w", err)
+		return blocks.ReadWriteSet{}, nil, fmt.Errorf("unmarshal proposal response payload: %w", err)
 	}
 
 	ca, err := protoutil.UnmarshalChaincodeAction(prp.Extension)
 	if err != nil {
-		return blocks.ReadWriteSet{}, fmt.Errorf("unmarshal chaincode action: %w", err)
+		return blocks.ReadWriteSet{}, nil, fmt.Errorf("unmarshal chaincode action: %w", err)
 	}
 
 	txrws := &rwset.TxReadWriteSet{}
 	if err := proto.Unmarshal(ca.Results, txrws); err != nil {
-		return blocks.ReadWriteSet{}, fmt.Errorf("unmarshal tx rws: %w", err)
+		return blocks.ReadWriteSet{}, nil, fmt.Errorf("unmarshal tx rws: %w", err)
 	}
 
 	var rws blocks.ReadWriteSet
 	for _, ns := range txrws.NsRwset {
 		kvRws := &kvrwset.KVRWSet{}
 		if err := proto.Unmarshal(ns.Rwset, kvRws); err != nil {
-			return blocks.ReadWriteSet{}, fmt.Errorf("unmarshal kv rws for ns %s: %w", ns.Namespace, err)
+			return blocks.ReadWriteSet{}, nil, fmt.Errorf("unmarshal kv rws for ns %s: %w", ns.Namespace, err)
 		}
 		for _, w := range kvRws.Writes {
 			rws.Writes = append(rws.Writes, blocks.KVWrite{
@@ -392,26 +328,35 @@ func endorsementToRWS(env sdk.Endorsement) (blocks.ReadWriteSet, error) {
 		}
 	}
 
-	return rws, nil
+	var logs []*types.Log
+	if len(ca.Events) > 0 {
+		event := &peer.ChaincodeEvent{}
+		if err := proto.Unmarshal(ca.Events, event); err != nil {
+			return blocks.ReadWriteSet{}, nil, fmt.Errorf("unmarshal chaincode event: %w", err)
+		}
+		if len(event.Payload) > 0 {
+			raw, err := fc.UnmarshalLogs(event.Payload)
+			if err != nil {
+				return blocks.ReadWriteSet{}, nil, fmt.Errorf("unmarshal logs: %w", err)
+			}
+			for _, l := range raw {
+				topics := make([]common.Hash, len(l.Topics))
+				for i, topic := range l.Topics {
+					topics[i] = common.BytesToHash(topic)
+				}
+				logs = append(logs, &types.Log{Address: common.BytesToAddress(l.Address), Topics: topics, Data: l.Data})
+			}
+		}
+	}
+
+	return rws, logs, nil
 }
 
-// verifyTrieRoot validates that trie.Store produces the same state root as the
-// ethStateDB path. Genesis and tx writes are combined into one block at blockNum
-// to mirror the single ethStateDB.Commit call (preserving EIP-158 semantics).
-func verifyTrieRoot(t *testing.T, genesisRWS, txRWS blocks.ReadWriteSet, blockNum uint64, expectedRoot common.Hash) {
+// verifyWriteSetRoot replays the primed pre-state as genesis and the
+// transaction's write set as the next block, and fails the test with a
+// per-account diff against the fixture's post-state unless the root is want.
+func verifyWriteSetRoot(t *testing.T, genesisRWS, txRWS blocks.ReadWriteSet, blockNum uint64, want common.Hash, post types.GenesisAlloc) {
 	t.Helper()
-
-	txns := make([]blocks.Transaction, 0, 2)
-	if len(genesisRWS.Writes) > 0 {
-		txns = append(txns, blocks.Transaction{
-			Status: blocks.StatusCommitted,
-			NsRWS:  []blocks.NsReadWriteSet{{Namespace: "basic", RWS: genesisRWS}},
-		})
-	}
-	txns = append(txns, blocks.Transaction{
-		Status: blocks.StatusCommitted,
-		NsRWS:  []blocks.NsReadWriteSet{{Namespace: "basic", RWS: txRWS}},
-	})
 
 	ts, err := trie.New("", types.EmptyRootHash)
 	if err != nil {
@@ -419,71 +364,146 @@ func verifyTrieRoot(t *testing.T, genesisRWS, txRWS blocks.ReadWriteSet, blockNu
 	}
 	defer ts.Close()
 
-	trieRoot, err := ts.Commit(t.Context(), blocks.Block{Number: blockNum, Transactions: txns})
+	if _, err := ts.CommitGenesis(genesisRWS.Writes); err != nil {
+		t.Fatalf("trie commit pre-state: %v", err)
+	}
+	root, err := ts.Commit(t.Context(), blocks.Block{Number: blockNum, Transactions: []blocks.Transaction{{
+		Status: blocks.StatusCommitted,
+		NsRWS:  []blocks.NsReadWriteSet{{Namespace: "basic", RWS: txRWS}},
+	}}})
 	if err != nil {
-		t.Fatalf("trie commit: %v", err)
+		t.Fatalf("trie commit tx: %v", err)
+	}
+	if root == want {
+		return
 	}
 
-	if trieRoot != expectedRoot {
-		t.Fatalf("trie root mismatch: got %s, want %s", trieRoot.Hex(), expectedRoot.Hex())
+	got, err := ts.State()
+	if err != nil {
+		t.Fatalf("write-set root mismatch: got %s, want %s (open state: %v)", root.Hex(), want.Hex(), err)
 	}
-	t.Logf("trie root verified: %s", trieRoot.Hex())
+	t.Fatalf("write-set root mismatch: got %s, want %s\n%s", root.Hex(), want.Hex(),
+		diffState(got, post, append(genesisRWS.Writes, txRWS.Writes...)))
 }
 
-// ethereumTestHarness wraps TestHarness with endorser wrappers for ethereum state tracking
+// maxDiffLines caps diffState's output; one wrong field usually explains the rest.
+const maxDiffLines = 20
+
+// diffState lists the accounts and storage slots where got differs from want.
+// It checks every account in want, plus every account and slot the writes touched.
+func diffState(got *state.StateDB, want types.GenesisAlloc, writes []blocks.KVWrite) string {
+	slots := map[common.Address]map[common.Hash]struct{}{}
+	for addr, acc := range want {
+		slots[addr] = map[common.Hash]struct{}{}
+		for slot := range acc.Storage {
+			slots[addr][slot] = struct{}{}
+		}
+	}
+	for _, w := range writes {
+		key, ok := fc.ParseStateKey(w.Key)
+		if !ok {
+			continue
+		}
+		if slots[key.Address] == nil {
+			slots[key.Address] = map[common.Hash]struct{}{}
+		}
+		if key.Storage {
+			slots[key.Address][key.Slot] = struct{}{}
+		}
+	}
+	addrs := make([]common.Address, 0, len(slots))
+	for addr := range slots {
+		addrs = append(addrs, addr)
+	}
+	sort.Slice(addrs, func(i, j int) bool { return bytes.Compare(addrs[i][:], addrs[j][:]) < 0 })
+
+	var lines []string
+	for _, addr := range addrs {
+		acc, ok := want[addr]
+		if !ok {
+			if got.Exist(addr) {
+				lines = append(lines, fmt.Sprintf("%s: account exists, want none", addr.Hex()))
+			}
+			continue
+		}
+		if !got.Exist(addr) {
+			lines = append(lines, fmt.Sprintf("%s: account missing", addr.Hex()))
+			continue
+		}
+		wantBal := new(big.Int)
+		if acc.Balance != nil {
+			wantBal = acc.Balance
+		}
+		if gotBal := got.GetBalance(addr).ToBig(); gotBal.Cmp(wantBal) != 0 {
+			lines = append(lines, fmt.Sprintf("%s: balance %s, want %s", addr.Hex(), gotBal, wantBal))
+		}
+		if gotNonce := got.GetNonce(addr); gotNonce != acc.Nonce {
+			lines = append(lines, fmt.Sprintf("%s: nonce %d, want %d", addr.Hex(), gotNonce, acc.Nonce))
+		}
+		if gotCode := got.GetCode(addr); !bytes.Equal(gotCode, acc.Code) {
+			lines = append(lines, fmt.Sprintf("%s: code %d bytes, want %d", addr.Hex(), len(gotCode), len(acc.Code)))
+		}
+		for slot := range slots[addr] {
+			if gotVal, wantVal := got.GetState(addr, slot), acc.Storage[slot]; gotVal != wantVal {
+				lines = append(lines, fmt.Sprintf("%s: slot %s = %s, want %s", addr.Hex(), slot.Hex(), gotVal.Hex(), wantVal.Hex()))
+			}
+		}
+	}
+	if len(lines) > maxDiffLines {
+		lines = append(lines[:maxDiffLines], fmt.Sprintf("... and %d more", len(lines)-maxDiffLines))
+	}
+	if len(lines) == 0 {
+		return "no account or slot differs; the difference is outside what the fixture lists"
+	}
+	return strings.Join(lines, "\n")
+}
+
+// ethereumTestHarness is a TestHarness whose endorsers run a fixture's block context.
 type ethereumTestHarness struct {
 	*TestHarness
 }
 
-// wrappedEndorserFactory creates endorsers wrapped with testimpl wrappers for ethStateDB tracking.
-// blockCtx injects the test-specific EVM block context (fork rules, coinbase, difficulty, etc.).
-func wrappedEndorserFactory(blockCtx *vm.BlockContext) EndorserFactory {
+// fixtureEndorserFactory creates production endorsers whose engine runs every
+// transaction in blockCtx, the fixture's block context (fork rules, coinbase,
+// base fee, ...), and charges gas like Ethereum does instead of executing for free.
+func fixtureEndorserFactory(blockCtx *vm.BlockContext) EndorserFactory {
 	return func(t *testing.T, ecfg econf.Endorser, channel, namespace string, evmConfig execution.EVMConfig, protocol string) EndorserComponents {
 		db, builder, end := NewEndorser(t, ecfg, channel, namespace, evmConfig, protocol)
-
-		engine := execution.NewEVMEngine(namespace, db, evmConfig, protocol == "fabric-x")
-		engineWrapper := testimpl.NewEVMEngineWrapper(namespace, db, evmConfig, protocol == "fabric-x", engine)
-		engineWrapper.SetBlockContext(blockCtx)
-
-		wrapper := testimpl.NewEndorserWrapper(end, engineWrapper)
-		return EndorserComponents{KVS: db, Builder: builder, Service: wrapper}
+		end.Engine.(*execution.EVMEngine).SetExecutorHook(func(ex *execution.Executor) {
+			ex.BlockCtx = *blockCtx
+			ex.FreeGas = false
+		})
+		return EndorserComponents{KVS: db, Builder: builder, Service: end}
 	}
 }
 
 // newEthereumTestHarness creates a test harness with pre-state primed from ethereum test format.
-// blockCtx provides the test-specific EVM block context injected into the engine wrapper.
+// blockCtx is the fixture's block context the endorsers execute in.
 func newEthereumTestHarness(t *testing.T, evmConfig execution.EVMConfig, pre types.GenesisAlloc, blockCtx *vm.BlockContext) (*ethereumTestHarness, error) {
 	t.Helper()
 
-	th, err := NewLocalTestHarnessWithFactory(t, TestLogger{T: t}, evmConfig, "", "bypass", nil, wrappedEndorserFactory(blockCtx))
+	th, err := NewLocalTestHarnessWithFactory(t, TestLogger{T: t}, evmConfig, "", "bypass", nil, fixtureEndorserFactory(blockCtx))
 	if err != nil {
 		return nil, err
 	}
 
 	eth := &ethereumTestHarness{th}
-
-	// Prime the state using our custom method that works with wrappers
-	if err := eth.primeGenesisAlloc(t.Context(), pre, false); err != nil {
+	if err := eth.primeGenesisAlloc(t.Context(), pre); err != nil {
 		th.Stop()
 		return nil, err
 	}
-
 	return eth, nil
 }
 
-// primeGenesisAlloc primes the state from ethereum genesis format and sets up ethStateDB for wrappers
-func (eth *ethereumTestHarness) primeGenesisAlloc(ctx context.Context, pre types.GenesisAlloc, wait bool) error {
-	// Even with an empty pre-state we must build and set an eth StateDB: the
-	// pre-validation nonceReader and the post-execution root commit both read it,
-	// and a fixture with no pre-accounts (e.g. a CREATE from a non-existent sender)
-	// would otherwise leave it nil and panic in GetNonce.
+// primeGenesisAlloc commits the fixture's pre-state to the ledger.
+func (eth *ethereumTestHarness) primeGenesisAlloc(ctx context.Context, pre types.GenesisAlloc) error {
 	primer, err := eth.NewStatePrimer()
 	if err != nil {
 		return err
 	}
 
 	// Sort addresses to ensure deterministic account creation order
-	var addresses []common.Address
+	addresses := make([]common.Address, 0, len(pre))
 	for addr := range pre {
 		addresses = append(addresses, addr)
 	}
@@ -491,55 +511,19 @@ func (eth *ethereumTestHarness) primeGenesisAlloc(ctx context.Context, pre types
 		return bytes.Compare(addresses[i].Bytes(), addresses[j].Bytes()) < 0
 	})
 
-	// Convert each test account to StatePrimer operations in sorted order
 	for _, addr := range addresses {
 		account := pre[addr]
-		n := account.Nonce
-		nonce := &n
-
-		var balance *big.Int
-		if account.Balance != nil {
-			balance = account.Balance
-		}
-
+		nonce := account.Nonce
 		var code []byte
 		if len(account.Code) > 0 {
 			code = account.Code
 		}
-
 		var storage map[common.Hash]common.Hash
 		if len(account.Storage) > 0 {
 			storage = account.Storage
 		}
-
-		primer.SetAccount(addr, nonce, code, balance, storage)
+		primer.SetAccount(addr, &nonce, code, account.Balance, storage)
 	}
 
-	// Extract the ethStateDB before committing
-	ethStateDB := primer.GetEthStateDB()
-
-	// Commit the ethStateDB to finalize the primed state
-	root, err := ethStateDB.Commit(params.Rules{}, 0)
-	if err != nil {
-		return fmt.Errorf("failed to commit primed ethStateDB: %w", err)
-	}
-
-	// Create a new ethStateDB from the committed root
-	stateDB := ethStateDB.Database()
-	ethStateDB, err = state.New(root, stateDB)
-	if err != nil {
-		return fmt.Errorf("failed to create new ethStateDB from committed root: %w", err)
-	}
-
-	// Commit all state changes to the Fabric ledger
-	if err := primer.Commit(ctx, wait); err != nil {
-		return err
-	}
-
-	// Set the ethStateDB on all wrappers
-	for _, end := range eth.endorsers {
-		end.(*testimpl.EndorserWrapper).SetEthStateDB(ethStateDB)
-	}
-
-	return nil
+	return primer.Commit(ctx, false)
 }

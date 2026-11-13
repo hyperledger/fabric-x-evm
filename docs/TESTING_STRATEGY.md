@@ -45,12 +45,20 @@ exceptions are recorded.
 
 | Claim | Oracle | Level | Suite | Backend | Known exceptions |
 | ----- | ------ | ----- | ----- | ------- | ---------------- |
-| EVM execution matches Ethereum at Cancun / Prague / Osaka+ | EEST canonical post-state root | system | `TestEthereumTests` | bypass | `testdata/eth_known_failures.json`; causes in [`COMPATIBILITY.md`](COMPATIBILITY.md#evm-execution-differences) |
+| EVM execution, and the read-write set it commits, match Ethereum at Cancun / Prague / Osaka+ | EEST canonical post-state root and logs hash | system | `TestEthereumTests` | bypass | `testdata/eth_known_failures.json`; causes in [`COMPATIBILITY.md`](COMPATIBILITY.md#evm-execution-differences) |
 | Raw-transaction admission accepts/rejects as the spec says | EEST `transaction_tests` verdicts | system | `TestTransactionTests` | bypass | as above |
 
 The oracle is the execution-spec-tests corpus, maintained by the spec authors and shared with every
 other client — the strongest available ground truth, and the reason we write no hand-rolled EVM
 semantics tests.
+
+Each transaction runs on the production endorser and engine, with only the fixture's block context
+and real gas pricing switched in (production executes for free). The check is on what Fabric would
+commit: the pre-state's and the transaction's read-write sets are replayed into a state trie
+(`gateway/storage/trie`), whose root must equal the fixture's, and the logs carried in the
+endorsement must hash to the fixture's. That covers our state translation in both directions — a
+wrong read changes execution, a wrong or missing write changes the replayed root. On a mismatch the
+test prints a per-account diff against the fixture's post-state.
 
 ### Ecosystem compatibility
 
@@ -98,8 +106,6 @@ Ongoing and possible future steps towards more complete test coverage.
 
 - **Drive the trie check through the production ingestion path**, so a mismatch identifies a real
   translation bug rather than a harness artifact.
-- **Make the RWS-replayed state root the conformance oracle**, turning the corpus into a differential
-  test of our write-set translation.
 - **A long-running soak test** — run the network under sustained load for hours to days, to catch
   failure modes a short replay can't: resource leaks, unbounded log/disk growth, slow degradation.
 - **Crash-consistency and restart coverage** across the three persistence surfaces — block store,
@@ -138,9 +144,8 @@ confidence cheaply, and it is used at several levels:
 | Pair                                                    | Where                                 |
 | ------------------------------------------------------- | ------------------------------------- |
 | `LightKVS` ↔ `PebbleKVS` ↔ `VersionedDB`                | `endorser/storage/kvs_parity_test.go` |
-| fabric snapshot StateDB ↔ reference go-ethereum StateDB | `endorser/execution/dual_statedb.go`  |
 | in-process endorser ↔ endorser over gRPC                | `TestGRPCEndorsement_Parity`          |
-| RWS-replayed trie root ↔ canonical fixture root         | trie oracle (to be added)             |
+| RWS-replayed trie root ↔ canonical fixture root         | `TestEthereumTests`                   |
 
 It also answers a question that otherwise has no good answer: when two storage backends both look
 plausible, parity against a common contract enforces the right behaviour.
