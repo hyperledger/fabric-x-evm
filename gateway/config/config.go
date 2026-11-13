@@ -90,7 +90,6 @@ type Logging struct {
 // DB holds the database paths for the gateway.
 type DB struct {
 	ConnString string `mapstructure:"connection-string" yaml:"connection-string"` // SQLite connection string for blocks, transactions, and logs
-	TriePath   string `mapstructure:"trie-path"         yaml:"trie-path"`         // PebbleDB directory for state root trie; empty = in-memory
 }
 
 // Gateway contains configuration for the gateway component.
