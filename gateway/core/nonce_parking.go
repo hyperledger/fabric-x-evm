@@ -274,6 +274,9 @@ func (g *nonceGate) Observe(committed []domain.Transaction) {
 	highest := make(map[common.Address]uint64)
 	for i := range committed {
 		if !committed[i].FabricTxStatus.Valid() {
+			// Not advancing here is what lets DepGraphQueue retry: the nonce is
+			// still the sender's next, so the successor stays parked instead of
+			// racing the retry for the same nonce.
 			continue // invalidated: nonce not consumed
 		}
 		tx := committed[i].ToEthTx()

@@ -60,16 +60,40 @@ func NewEndorsementClient(local api.Service, remotes []api.Service, invBuilder e
 	}, nil
 }
 
+// ExecuteTransaction asks every configured endorser to execute tx and collects
+// their signed responses into one endorsement. All must agree: the endorsement
+// is returned only if each answered with a committable status (see the switch
+// below), and otherwise the call fails with nothing partial kept. The failure
+// categories, and which are worth retrying, are in
+// docs/TODO_ENDORSEMENT_ERROR_MODEL.md; the two with no recovery path are logged
+// and debug-panicked here, where the cause is still known.
+//
+// Each endorser writes into its own slot and the first error in slice order
+// wins, so the same disagreement always yields the same error however the
+// goroutines were scheduled. The first failure cancels the calls still in
+// flight, which is why the error slice is scanned twice -- see that loop.
+//
+// Every endorser gets the same timestamp, since block.timestamp has to match for
+// their read-write sets to match.
 func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Transaction) (sdk.Endorsement, error) {
-	// Marshal the transaction for the invocation args
+	// Marshal for the invocation args. A transaction that arrived over RPC and
+	// parsed cannot fail this, and no retry would help.
 	ethTxBytes, err := tx.MarshalBinary()
 	if err != nil {
+		err = fmt.Errorf("marshal tx %s: %w", tx.Hash().Hex(), err)
+		logger.Error(err)
+		common.DebugPanic(err.Error())
 		return sdk.Endorsement{}, err
 	}
 
-	// Create invocation
+	// Reads configuration only -- channel, namespace, nsVersion -- so a failure
+	// is not about this transaction: it fails every one identically until the
+	// deployment is fixed.
 	inv, err := e.createInvocation([][]byte{ethTxBytes})
 	if err != nil {
+		err = fmt.Errorf("build invocation for tx %s: %w", tx.Hash().Hex(), err)
+		logger.Error(err)
+		common.DebugPanic(err.Error())
 		return sdk.Endorsement{}, err
 	}
 
@@ -105,8 +129,24 @@ func (e EndorsementClient) ExecuteTransaction(ctx context.Context, tx *types.Tra
 			switch pResp.Response.Status {
 			case common.StatusOK, common.StatusEVMRevert, common.StatusExecFailure:
 				res[index] = pResp
-			default:
+			case common.StatusTxRejected:
+				// Invalid before execution; the client resubmits at the nonce it
+				// now reads. Not panicked: this status covers both a real client
+				// error (two transactions at one nonce, which pre-flight cannot
+				// catch) and a skewed gateway clock, which should never happen,
+				// and nothing here can yet tell them apart.
 				errs[index] = fmt.Errorf("process EVM transaction: %s", pResp.Response.Message)
+				cancel()
+			default:
+				// Server fault (common.StatusServerError) or an unknown status:
+				// the endorser failed to sign, failed to read state, or speaks a
+				// protocol we do not. None is the transaction's fault and none
+				// has a recovery path here, so be loud.
+				err := fmt.Errorf("endorser fault on tx %s (status %d): %s",
+					tx.Hash().Hex(), pResp.Response.Status, pResp.Response.Message)
+				logger.Error(err)
+				common.DebugPanic(err.Error())
+				errs[index] = err
 				cancel()
 			}
 		}

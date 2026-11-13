@@ -73,6 +73,17 @@ type Metrics struct {
 	TxOtherFailure prometheus.Counter
 	// EndorseErrors counts endorsement call errors (transport / delivery failures).
 	EndorseErrors prometheus.Counter
+	// TxMVCCRetried counts re-enqueues of transactions the committer rejected
+	// with an MVCC conflict; one retried twice counts twice. It never exceeds
+	// TxMVCCConflict: every retry has a conflict behind it, but a conflict past
+	// the budget has no retry.
+	TxMVCCRetried prometheus.Counter
+	// TxMVCCRetriesExhausted counts transactions given up on after using up their
+	// retry budget. No receipt is stored and the queue untracks it, so the client
+	// sees the hash go from pending to unknown rather than failing. Non-zero
+	// should be unreachable at any budget (see DepGraphQueue.giveUp): it means a
+	// client silently lost a transaction, and why is worth finding out.
+	TxMVCCRetriesExhausted prometheus.Counter
 
 	// ── Histograms ────────────────────────────────────────────────────────────
 
@@ -135,6 +146,14 @@ func New() *Metrics {
 			Name: "evm_gateway_endorse_errors_total",
 			Help: "Total endorsement transport/delivery errors.",
 		}),
+		TxMVCCRetried: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "evm_gateway_tx_mvcc_retried_total",
+			Help: "Total re-enqueues of transactions rejected by an MVCC conflict (counts each attempt).",
+		}),
+		TxMVCCRetriesExhausted: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "evm_gateway_tx_mvcc_retries_exhausted_total",
+			Help: "Total transactions given up on after using up their MVCC retry budget (no receipt is stored, so the hash reads as unknown).",
+		}),
 
 		StepLatency: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "evm_gateway_step_latency_seconds",
@@ -156,6 +175,8 @@ func New() *Metrics {
 		m.TxInvalidSignature,
 		m.TxOtherFailure,
 		m.EndorseErrors,
+		m.TxMVCCRetried,
+		m.TxMVCCRetriesExhausted,
 		m.StepLatency,
 		m.QueueDepth,
 	)

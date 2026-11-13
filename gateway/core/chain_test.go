@@ -399,3 +399,98 @@ func TestConvertTransaction_FabricStatuses(t *testing.T) {
 		})
 	}
 }
+
+// An MVCC-rejected transaction gets no stored receipt: the gateway is about to
+// execute it again, and a status-0 receipt would tell a client the transaction
+// failed when its nonce is still ours and an attempt is still in flight.
+func TestChain_Handle_MVCCConflictIsNotStored(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "gateway.db")
+	chain, err := NewChain(dbPath, "", false)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = chain.Close() })
+
+	key := newKey(t)
+	conflicted := marshaledEthTx(t, key, common.HexToAddress("0x1111111111111111111111111111111111111111"), big.NewInt(100))
+	committed := marshaledEthTx(t, key, common.HexToAddress("0x2222222222222222222222222222222222222222"), big.NewInt(200))
+
+	b := blocks.Block{
+		Number: 1,
+		Hash:   make([]byte, 32),
+		Transactions: []blocks.Transaction{
+			{
+				ID:        "tx-conflicted",
+				Number:    0,
+				Status:    blocks.StatusMVCCConflict,
+				EventName: co.ProposalTypeEVMTx,
+				InputArgs: [][]byte{conflicted},
+				Payload:   succeededPayload(t),
+			},
+			{
+				ID:        "tx-committed",
+				Number:    1,
+				Status:    blocks.StatusCommitted,
+				EventName: co.ProposalTypeEVMTx,
+				InputArgs: [][]byte{committed},
+				Payload:   succeededPayload(t),
+			},
+		},
+	}
+	require.NoError(t, chain.Handle(context.Background(), b))
+
+	conflictedHash := ethTxHash(t, conflicted)
+	got, err := chain.Store.GetTransactionByHash(context.Background(), conflictedHash.Bytes())
+	require.NoError(t, err)
+	require.Nil(t, got, "a transaction that will be retried must not have a receipt yet")
+
+	// The rest of the block is stored as usual: only the conflict is held back.
+	committedHash := ethTxHash(t, committed)
+	got, err = chain.Store.GetTransactionByHash(context.Background(), committedHash.Bytes())
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, blocks.StatusCommitted, got.FabricTxStatus)
+}
+
+// Every other failure is final, so its receipt is stored: the client is entitled
+// to learn that the transaction will never succeed.
+func TestChain_Handle_OtherFailuresAreStored(t *testing.T) {
+	for _, status := range []blocks.Status{
+		blocks.StatusInvalidSignature,
+		blocks.StatusMalformed,
+		blocks.StatusDuplicateTxID,
+	} {
+		t.Run(status.String(), func(t *testing.T) {
+			dbPath := filepath.Join(t.TempDir(), "gateway.db")
+			chain, err := NewChain(dbPath, "", false)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = chain.Close() })
+
+			key := newKey(t)
+			ethb := marshaledEthTx(t, key, common.HexToAddress("0x1111111111111111111111111111111111111111"), big.NewInt(100))
+			require.NoError(t, chain.Handle(context.Background(), blocks.Block{
+				Number: 1,
+				Hash:   make([]byte, 32),
+				Transactions: []blocks.Transaction{{
+					ID:        "tx-failed",
+					Status:    status,
+					EventName: co.ProposalTypeEVMTx,
+					InputArgs: [][]byte{ethb},
+					Payload:   succeededPayload(t),
+				}},
+			}))
+
+			got, err := chain.Store.GetTransactionByHash(context.Background(), ethTxHash(t, ethb).Bytes())
+			require.NoError(t, err)
+			require.NotNil(t, got, "a final failure must be reported to the client")
+			assert.Equal(t, uint8(0), got.Status)
+			assert.Equal(t, status, got.FabricTxStatus)
+		})
+	}
+}
+
+// ethTxHash recovers the Ethereum hash from marshalled transaction bytes.
+func ethTxHash(t *testing.T, raw []byte) common.Hash {
+	t.Helper()
+	tx := new(types.Transaction)
+	require.NoError(t, tx.UnmarshalBinary(raw))
+	return tx.Hash()
+}
