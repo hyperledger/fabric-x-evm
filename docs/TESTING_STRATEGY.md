@@ -96,14 +96,15 @@ load. It also includes a quick smoke test as an indicator that runs on each PR.
 
 Ongoing and possible future steps towards more complete test coverage.
 
-- **Drive the trie check through the production ingestion path**, so a mismatch identifies a real
-  translation bug rather than a harness artifact.
+- **Drive the trie check through the production ingestion path**, as a block handler on the same
+  delivery path as `Chain`, so a mismatch identifies a real translation bug rather than a harness
+  artifact.
 - **Make the RWS-replayed state root the conformance oracle**, turning the corpus into a differential
   test of our write-set translation.
 - **A long-running soak test** — run the network under sustained load for hours to days, to catch
   failure modes a short replay can't: resource leaks, unbounded log/disk growth, slow degradation.
-- **Crash-consistency and restart coverage** across the three persistence surfaces — block store,
-  endorser state DB, and trie are updated non-atomically by different components.
+- **Crash-consistency and restart coverage** across the two persistence surfaces — the block store
+  and the endorser state DB are updated non-atomically by different components.
 - **RPC shape conformance** against the OpenRPC schema. `rpc-compat` is expected to be too much effort
   for what we gain from it, but this is to be decided.
 - **Security scanning** — dependency-vulnerability scanning and static analysis.

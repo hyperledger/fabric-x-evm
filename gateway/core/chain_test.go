@@ -258,7 +258,7 @@ func TestConvertToDomain_InvalidEthPayloadReturnsError(t *testing.T) {
 // Call sites follow the #407 pattern: log, DebugPanic, then return the error.
 func TestChain_Handle_InvalidEthPayloadUsesDebugPanic(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "gateway.db")
-	chain, err := NewChain(dbPath, "", false)
+	chain, err := NewChain(dbPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = chain.Close() })
 
@@ -405,7 +405,7 @@ func TestConvertTransaction_FabricStatuses(t *testing.T) {
 // failed when its nonce is still ours and an attempt is still in flight.
 func TestChain_Handle_MVCCConflictIsNotStored(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "gateway.db")
-	chain, err := NewChain(dbPath, "", false)
+	chain, err := NewChain(dbPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = chain.Close() })
 
@@ -460,7 +460,7 @@ func TestChain_Handle_OtherFailuresAreStored(t *testing.T) {
 	} {
 		t.Run(status.String(), func(t *testing.T) {
 			dbPath := filepath.Join(t.TempDir(), "gateway.db")
-			chain, err := NewChain(dbPath, "", false)
+			chain, err := NewChain(dbPath)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = chain.Close() })
 

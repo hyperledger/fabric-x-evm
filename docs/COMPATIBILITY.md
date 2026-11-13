@@ -29,9 +29,8 @@ transaction does appear on-chain, but with a failure status and no state changes
 ## Design choices / priorities
 
 For now, we have chosen to defer gas pricing. The priority is equivalence in contract execution
-and API compatibility. State root computation via a Merkle Patricia Trie (MPT) is partly implemented
-and disabled for now (see Block representation → `stateRoot`); the log bloom filter
-is still left as the empty bloom.
+and API compatibility. Blocks carry no real state root (see Block representation → `stateRoot`),
+and the log bloom filter is still left as the empty bloom.
 
 > [!NOTE]
 > This document describes the **current state** and not the **planned state**. It is subject
@@ -385,10 +384,8 @@ not use block timestamps for precise time ordering.
 
 **State and transaction roots**: `transactionsRoot` is the canonical empty-txs hash for empty
 blocks and the zero hash for blocks that contain transactions — it is never a real per-block MPT
-root, and `receiptsRoot` is always the empty-trie root. `stateRoot` is a real MPT root over the
-world state **only when the trie is enabled** (otherwise it is the empty-trie root). Even when
-enabled, it will not match an Ethereum node's state root: storage values are stored as ASCII hex
-strings rather than raw 32-byte values, so the trie's leaf encoding differs.
+root, and `receiptsRoot` is always the empty-trie root. `stateRoot` is always the empty-trie root:
+the gateway computes no state trie.
 
 **Block number tags**: there are two resolvers, and they behave differently:
 - Block lookups (`eth_getBlockByNumber`, `eth_getBlockTransactionCountByNumber`,

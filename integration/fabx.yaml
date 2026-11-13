@@ -40,7 +40,6 @@ gateway:
 
   database:
     connection-string: "file:gateway.db?mode=memory&cache=shared"
-    # trie-path: "" # trie db is temporarily disabled
 
   orderers:
     - endpoint:

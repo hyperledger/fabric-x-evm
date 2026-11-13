@@ -18,6 +18,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/stretchr/testify/require"
 )
@@ -54,11 +55,10 @@ func resilienceEvents(t *testing.T, txID string, logs []fc.Log) []byte {
 	return payload
 }
 
-func TestHandle_ReprocessingSameBlockKeepsIndexesAndTrieStable(t *testing.T) {
+func TestHandle_ReprocessingSameBlockKeepsIndexesStable(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "gateway.db")
-	triePath := filepath.Join(t.TempDir(), "trie")
 
-	chain, err := NewChain(dbPath, triePath, true)
+	chain, err := NewChain(dbPath)
 	require.NoError(t, err)
 	defer chain.Close()
 
@@ -102,19 +102,14 @@ func TestHandle_ReprocessingSameBlockKeepsIndexesAndTrieStable(t *testing.T) {
 	}
 
 	require.NoError(t, chain.Handle(t.Context(), block))
-	firstRoot := chain.ts.Root()
-
 	require.NoError(t, chain.Handle(t.Context(), block))
-	secondRoot := chain.ts.Root()
-
-	require.Equal(t, firstRoot, secondRoot)
 
 	latest, err := chain.LatestBlock(t.Context(), false)
 	require.NoError(t, err)
 	require.NotNil(t, latest)
 	require.Equal(t, uint64(1), latest.BlockNumber)
 	require.Equal(t, block.Hash, latest.BlockHash)
-	require.Equal(t, firstRoot.Bytes(), latest.StateRoot)
+	require.Equal(t, types.EmptyRootHash.Bytes(), latest.StateRoot)
 	require.Len(t, latest.Transactions, 1)
 	require.Equal(t, ethTx.Hash().Bytes(), latest.Transactions[0].TxHash)
 
@@ -132,7 +127,7 @@ func TestHandle_ReprocessingSameBlockKeepsIndexesAndTrieStable(t *testing.T) {
 // the published tip moves exactly once per durable block.
 func TestHandle_PrevHashAdvancesOnlyAfterSuccessfulInsert(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "gateway.db")
-	chain, err := NewChain(dbPath, "", false)
+	chain, err := NewChain(dbPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = chain.Close() })
 
@@ -153,20 +148,6 @@ func TestHandle_PrevHashAdvancesOnlyAfterSuccessfulInsert(t *testing.T) {
 	require.Equal(t, block1.Hash, latest.ParentHash)
 }
 
-// TestHandle_PrevHashNotAdvancedOnInsertFailure is the regression for #304
-// without the trie (production withTrie=false path).
-func TestHandle_PrevHashNotAdvancedOnInsertFailure(t *testing.T) {
-	testPrevHashNotAdvancedOnInsertFailure(t, false)
-}
-
-// TestHandle_PrevHashNotAdvancedOnInsertFailure_WithTrie covers the same tip
-// invariant when the MPT is enabled. Trie commit may still run before SQL
-// (intentional; replay is idempotent). Only the published prevHash tip is gated
-// on InsertBlock success.
-func TestHandle_PrevHashNotAdvancedOnInsertFailure_WithTrie(t *testing.T) {
-	testPrevHashNotAdvancedOnInsertFailure(t, true)
-}
-
 func emptyResilienceBlock(number uint64, hashPrefix byte, ts int64) blocks.Block {
 	return blocks.Block{
 		Number:     number,
@@ -176,16 +157,11 @@ func emptyResilienceBlock(number uint64, hashPrefix byte, ts int64) blocks.Block
 	}
 }
 
-func testPrevHashNotAdvancedOnInsertFailure(t *testing.T, withTrie bool) {
-	t.Helper()
-
+// TestHandle_PrevHashNotAdvancedOnInsertFailure is the regression for #304.
+func TestHandle_PrevHashNotAdvancedOnInsertFailure(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "gateway.db")
-	triePath := ""
-	if withTrie {
-		triePath = filepath.Join(t.TempDir(), "trie")
-	}
 
-	chain, err := NewChain(dbPath, triePath, withTrie)
+	chain, err := NewChain(dbPath)
 	require.NoError(t, err)
 	// Close may return an error after we deliberately close the DB below.
 	t.Cleanup(func() { _ = chain.Close() })
@@ -225,7 +201,7 @@ func testPrevHashNotAdvancedOnInsertFailure(t *testing.T, withTrie bool) {
 	prevHashAfterBlock1 := chain.prevHash
 	require.Equal(t, common.BytesToHash(block1.Hash), prevHashAfterBlock1)
 
-	// Force InsertBlock to fail after any trie work by closing the SQL handle.
+	// Force InsertBlock to fail by closing the SQL handle.
 	require.NoError(t, chain.db.Close())
 
 	block2 := blocks.Block{

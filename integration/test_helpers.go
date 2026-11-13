@@ -153,8 +153,8 @@ type HandlerChainFactory func(
 //
 //  2. FilterAPI: update eth_*Filter state synchronously for the committed block.
 //
-//  3. Chain: persist the block and its Ethereum transactions to the SQLite store and
-//     update the state-root trie. Must run before the gateway so that eth_getBlockBy*
+//  3. Chain: persist the block and its Ethereum transactions to the SQLite store.
+//     Must run before the gateway so that eth_getBlockBy*
 //     and eth_getTransactionReceipt are answerable the moment the gateway marks a
 //     transaction complete.
 //
@@ -164,7 +164,7 @@ type HandlerChainFactory func(
 //  5. Extra handlers: any caller-supplied handlers that observe committed blocks for
 //     their own purposes.
 func defaultHandlerChain(t *testing.T, ctx context.Context, cfg config.Config, ends []eapi.Service, gwSigner sdk.Signer, submitters []core.Submitter, txQueue core.TxQueueInterface, dbs []storage.KVS) (*core.Gateway, []blocks.BlockHandler, network.BlockHeightReader) {
-	chain, err := core.NewChain(cfg.Gateway.Database.ConnString, cfg.Gateway.Database.TriePath, false)
+	chain, err := core.NewChain(cfg.Gateway.Database.ConnString)
 	if err != nil {
 		t.Fatalf("open chain: %v", err)
 	}
@@ -452,7 +452,6 @@ func NewLocalTestHarnessWithFactory(t *testing.T, logger sdk.Logger, evmConfig e
 		Gateway: &config.Gateway{
 			Database: config.DB{
 				ConnString: filepath.Join(dir, "gateway.db"),
-				TriePath:   filepath.Join(dir, "triedb.db"),
 			},
 			Orderers: []common.ClientConfig{
 				{Endpoint: orderer},
