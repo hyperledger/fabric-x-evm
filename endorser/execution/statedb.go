@@ -163,9 +163,12 @@ type readEntry struct {
 	read blocks.KVRead
 }
 
-// writeEntry records a write operation.
+// writeEntry records a write operation. prev is the journal index of the
+// previous write to the same key, or -1, so that a revert can restore writeIdx
+// from the entries it undoes alone.
 type writeEntry struct {
 	write blocks.KVWrite
+	prev  int
 }
 
 // refundEntry records a gas refund change.
@@ -204,7 +207,7 @@ type accessListAddSlotEntry struct {
 // StateDB implements ExtendedStateDB by combining ledger state management
 // with EVM-specific state tracking using a single unified journal.
 type StateDB struct {
-	// writeIdx maps a key to the journal index of its latest write (nil: rebuild on demand).
+	// writeIdx maps a key to the journal index of its latest write.
 	writeIdx          map[string]int
 	namespace         string
 	store             ReadStore
@@ -238,6 +241,7 @@ func NewStateDB(ctx context.Context, store ReadStore, namespace string, monotoni
 		accessList:        newAccessList(),
 		transientStorage:  make(map[common.Address]map[common.Hash]common.Hash),
 		journal:           make([]any, 0),
+		writeIdx:          make(map[string]int),
 		validRevisions:    make([]revision, 0),
 		nextRevisionId:    0,
 	}, nil
@@ -247,18 +251,11 @@ func NewStateDB(ctx context.Context, store ReadStore, namespace string, monotoni
 // -------------------- Internal state query helpers --------------------
 
 // getStateFromJournal finds the latest write for a key in the journal, through an index from key to
-// journal position that putState maintains and that is rebuilt after a revert truncates the journal
-// (a backward scan per lookup made writing n keys into one StateDB quadratic).
+// journal position that putState maintains and RevertToSnapshot restores. A backward scan per lookup
+// made writing n keys into one StateDB quadratic; rebuilding the index after every revert made a
+// transaction with many reverting calls quadratic in the same way.
 // Returns the value and true if found, or nil and false if not found.
 func (s *StateDB) getStateFromJournal(key string) ([]byte, bool) {
-	if s.writeIdx == nil {
-		s.writeIdx = make(map[string]int)
-		for i, v := range s.journal {
-			if w, ok := v.(writeEntry); ok {
-				s.writeIdx[w.write.Key] = i
-			}
-		}
-	}
 	i, ok := s.writeIdx[key]
 	if !ok {
 		return nil, false
@@ -325,10 +322,12 @@ func (s *StateDB) putState(key string, value []byte) {
 	} else {
 		write.Value = value
 	}
-	if s.writeIdx != nil {
-		s.writeIdx[key] = len(s.journal)
+	prev, ok := s.writeIdx[key]
+	if !ok {
+		prev = -1
 	}
-	s.journal = append(s.journal, writeEntry{write: write})
+	s.writeIdx[key] = len(s.journal)
+	s.journal = append(s.journal, writeEntry{write: write, prev: prev})
 }
 
 // -------------------- vm.StateDB interface implementation --------------------
@@ -614,6 +613,13 @@ func (s *StateDB) RevertToSnapshot(revid int) {
 	// Revert in-memory state by replaying journal entries in reverse
 	for i := len(s.journal) - 1; i >= snapshot.journalIndex; i-- {
 		switch e := s.journal[i].(type) {
+		case writeEntry:
+			// Undone newest first, so prev is the write that is latest once this one is gone.
+			if e.prev >= 0 {
+				s.writeIdx[e.write.Key] = e.prev
+			} else {
+				delete(s.writeIdx, e.write.Key)
+			}
 		case refundEntry:
 			s.refund = e.prevRefund
 		case selfDestructEntry:
@@ -637,7 +643,6 @@ func (s *StateDB) RevertToSnapshot(revid int) {
 
 	// Truncate journal, logs, and revisions
 	s.journal = s.journal[:snapshot.journalIndex]
-	s.writeIdx = nil // rebuilt lazily from the truncated journal
 	s.logs = s.logs[:snapshot.logIndex]
 	s.validRevisions = s.validRevisions[:idx]
 }

@@ -22,11 +22,7 @@ Two suites are wired up today, one per `--format`:
   (`TestEthereumTests`, run via `make eth-tests` / [`run_eth_tests.sh`](../../scripts/run_eth_tests.sh)),
   gated by the `eth-tests` job in [`tests.yml`](../../.github/workflows/tests.yml), at per-subtest
   granularity (`fork/index`) — a bug's blast radius is visible instead of a whole file being silently
-  excluded. One other list remains, for what the baseline can't cover: `testdata/eth_tests.slow`, for
-  tests excluded purely for *runtime cost*, not correctness.
-
-The result model and CLI stayed format-agnostic from the start specifically so a second adapter would
-be "write a parser," not "redesign the tool" — `go-test-json` is the proof.
+  excluded.
 
 ## After bumping `testdata/openzeppelin-contracts`
 

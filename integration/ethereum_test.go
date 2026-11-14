@@ -7,11 +7,9 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 package integration
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"math/big"
@@ -41,43 +39,6 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// want_very_slow is set when we want to run the tests that we typically skip because they are too slow
-var want_very_slow = flag.Bool("very_slow", false, "Run the very slow tests that are otherwise blacklisted")
-
-// loadSlow loads the test cases that are typically skipped because they are slow
-func loadSlow(path string) (map[string]struct{}, error) {
-	return loadList(path)
-}
-
-// loadList reads a newline-delimited list of paths into a set, ignoring blank
-// lines and lines starting with '#'. A missing file is treated as an empty list.
-func loadList(path string) (map[string]struct{}, error) {
-	set := make(map[string]struct{})
-
-	file, err := os.Open(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return set, nil
-		}
-		return nil, err
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line != "" && !strings.HasPrefix(line, "#") {
-			set[line] = struct{}{}
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
-
-	return set, nil
-}
-
 // findJSONFiles recursively finds all .json files in the given directory
 func findJSONFiles(root string) ([]string, error) {
 	var files []string
@@ -99,20 +60,6 @@ func findJSONFiles(root string) ([]string, error) {
 	}
 
 	return files, nil
-}
-
-// filterSlowTests removes blacklisted files from the list
-func filterSlowTests(files []string, slow map[string]struct{}, want_very_slow bool) []string {
-	var filtered []string
-
-	for _, file := range files {
-		// Check if we want this test case
-		if _, isSlow := slow[file]; isSlow == want_very_slow {
-			filtered = append(filtered, file)
-		}
-	}
-
-	return filtered
 }
 
 // executionSpecForks limits the suite to Osaka-forward, plus Prague/Cancun as cheap regression.
@@ -142,18 +89,11 @@ func TestEthereumTests(t *testing.T) {
 		t.Skipf("execution-specs fixtures not found at %s; run `make fetch-execution-specs-tests`", testsDir)
 	}
 
-	slow, err := loadSlow(filepath.Join("..", "testdata", "eth_tests.slow"))
-	if err != nil {
-		t.Fatalf("Failed to load slow list: %v", err)
-	}
-	t.Logf("Loaded slow list with %d entries", len(slow))
-
-	allFiles, err := findJSONFiles(testsDir)
+	testFiles, err := findJSONFiles(testsDir)
 	if err != nil {
 		t.Fatalf("Failed to find test files: %v", err)
 	}
-	testFiles := filterSlowTests(allFiles, slow, *want_very_slow)
-	t.Logf("Running %d state_tests files after filtering", len(testFiles))
+	t.Logf("Running %d state_tests files", len(testFiles))
 
 	for _, testPath := range testFiles {
 		t.Run(filepath.Base(testPath), func(t *testing.T) {
