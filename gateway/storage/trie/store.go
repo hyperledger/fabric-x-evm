@@ -8,10 +8,7 @@ package trie
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
-	"math/big"
-	"strings"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -22,7 +19,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb/pebble"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/triedb"
-	"github.com/holiman/uint256"
+	fc "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 )
 
@@ -71,6 +68,28 @@ func New(dbPath string, initialRoot common.Hash) (*Store, error) {
 // Commit applies the write sets of all valid transactions in the block to the MPT
 // and returns the resulting StateRoot.
 func (s *Store) Commit(ctx context.Context, block blocks.Block) (common.Hash, error) {
+	var writes []blocks.KVWrite
+	for _, tx := range block.Transactions {
+		if !tx.Valid() {
+			// MVCC-rejected: Fabric did not apply this transaction's write set.
+			continue
+		}
+		for _, nsRWS := range tx.NsRWS {
+			writes = append(writes, nsRWS.RWS.Writes...)
+		}
+	}
+	return s.apply(writes, params.Rules{IsEIP158: true, IsCancun: true}, block.Number)
+}
+
+// CommitGenesis applies writes as the pre-state of block 0 and returns the
+// resulting StateRoot. Unlike Commit it does not remove empty accounts (EIP-158):
+// like an Ethereum genesis allocation, an empty pre-state account stays until a
+// later block touches it.
+func (s *Store) CommitGenesis(writes []blocks.KVWrite) (common.Hash, error) {
+	return s.apply(writes, params.Rules{}, 0)
+}
+
+func (s *Store) apply(writes []blocks.KVWrite, rules params.Rules, number uint64) (common.Hash, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -78,30 +97,28 @@ func (s *Store) Commit(ctx context.Context, block blocks.Block) (common.Hash, er
 	if err != nil {
 		return common.Hash{}, fmt.Errorf("open state at root %s: %w", s.root, err)
 	}
-
-	for _, tx := range block.Transactions {
-		if !tx.Valid() {
-			// MVCC-rejected: Fabric did not apply this transaction's write set.
-			continue
-		}
-		for _, nsRWS := range tx.NsRWS {
-			for _, w := range nsRWS.RWS.Writes {
-				applyWrite(sdb, w)
-			}
-		}
+	for _, w := range writes {
+		applyWrite(sdb, w)
 	}
 
-	newRoot, err := sdb.Commit(params.Rules{IsEIP158: true, IsCancun: true}, block.Number)
+	newRoot, err := sdb.Commit(rules, number)
 	if err != nil {
-		return common.Hash{}, fmt.Errorf("state commit block %d: %w", block.Number, err)
+		return common.Hash{}, fmt.Errorf("state commit block %d: %w", number, err)
 	}
 	if s.persistent {
 		if err := s.db.TrieDB().Commit(newRoot, false); err != nil {
-			return common.Hash{}, fmt.Errorf("flush trie block %d: %w", block.Number, err)
+			return common.Hash{}, fmt.Errorf("flush trie block %d: %w", number, err)
 		}
 	}
 	s.root = newRoot
 	return newRoot, nil
+}
+
+// State opens the world state at the current root, for reading.
+func (s *Store) State() (*state.StateDB, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return state.New(s.root, s.db)
 }
 
 // Root returns the current committed state root.
@@ -119,70 +136,30 @@ func (s *Store) Close() {
 	s.diskdb.Close()
 }
 
-// applyWrite interprets a Fabric KVWrite and applies it to the StateDB.
-// Keys with unknown prefixes are silently ignored.
+// applyWrite interprets a Fabric KVWrite and applies it to the StateDB, decoding
+// it with the same codec the endorser encodes it with (fc.ParseStateKey and the
+// fc.Decode functions). Keys that are not state keys are ignored.
 func applyWrite(sdb *state.StateDB, w blocks.KVWrite) {
-	switch {
-	case strings.HasPrefix(w.Key, "acc:"):
-		applyAccountWrite(sdb, w)
-	case strings.HasPrefix(w.Key, "str:"):
-		applyStorageWrite(sdb, w)
-	}
-}
-
-// applyAccountWrite handles keys of the form "acc:<hexAddr>:<field>".
-// Fields: "bal" (balance), "nonce", "code".
-//
-// Encoding mirrors endorser/state.go SnapshotDB:
-//   - bal:   big.Int.Bytes() — empty slice means zero
-//   - nonce: 8-byte big-endian uint64
-//   - code:  raw bytecode bytes
-func applyAccountWrite(sdb *state.StateDB, w blocks.KVWrite) {
-	parts := strings.SplitN(w.Key, ":", 3)
-	if len(parts) != 3 {
+	key, ok := fc.ParseStateKey(w.Key)
+	if !ok {
 		return
 	}
-	addr := common.HexToAddress(parts[1])
-
-	switch parts[2] {
-	case "bal":
-		if w.IsDelete || len(w.Value) == 0 {
-			sdb.SetBalance(addr, new(uint256.Int), tracing.BalanceChangeUnspecified)
-		} else {
-			bal := new(big.Int).SetBytes(w.Value)
-			u, _ := uint256.FromBig(bal)
-			sdb.SetBalance(addr, u, tracing.BalanceChangeUnspecified)
-		}
-	case "nonce":
-		if w.IsDelete {
-			sdb.SetNonce(addr, 0, tracing.NonceChangeUnspecified)
-		} else if len(w.Value) == 8 {
-			sdb.SetNonce(addr, binary.BigEndian.Uint64(w.Value), tracing.NonceChangeUnspecified)
-		}
-	case "code":
-		if w.IsDelete {
-			sdb.SetCode(addr, nil, tracing.CodeChangeUnspecified)
-		} else {
-			sdb.SetCode(addr, w.Value, tracing.CodeChangeUnspecified)
-		}
-	}
-}
-
-// applyStorageWrite handles keys of the form "str:<hexAddr>:<hexSlot>".
-//
-// Encoding mirrors endorser/state.go SnapshotDB:
-// the value is []byte(value.Hex()), i.e. the ASCII hex string of a common.Hash.
-func applyStorageWrite(sdb *state.StateDB, w blocks.KVWrite) {
-	parts := strings.SplitN(w.Key, ":", 3)
-	if len(parts) != 3 {
-		return
-	}
-	addr := common.HexToAddress(parts[1])
-	slot := common.HexToHash(parts[2])
-
+	// A delete decodes like an empty value: zero, or no code.
+	value := w.Value
 	if w.IsDelete {
-		sdb.SetState(addr, slot, common.Hash{})
-	} else {
-		sdb.SetState(addr, slot, common.HexToHash(string(w.Value)))
+		value = nil
+	}
+
+	if key.Storage {
+		sdb.SetState(key.Address, key.Slot, fc.DecodeStorage(value))
+		return
+	}
+	switch key.Field {
+	case fc.FieldBalance:
+		sdb.SetBalance(key.Address, fc.DecodeBalance(value), tracing.BalanceChangeUnspecified)
+	case fc.FieldNonce:
+		sdb.SetNonce(key.Address, fc.DecodeNonce(value), tracing.NonceChangeUnspecified)
+	case fc.FieldCode:
+		sdb.SetCode(key.Address, value, tracing.CodeChangeUnspecified)
 	}
 }

@@ -15,7 +15,6 @@ import (
 	"os"
 
 	"github.com/ethereum/go-ethereum/common"
-	ethstate "github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -52,7 +51,7 @@ type StatePrimer struct {
 	nsVersion         string
 	monotonicVersions bool
 
-	// DualStateDB that tracks both Fabric and Ethereum state
+	// stateDB records the primed state as a Fabric write set
 	stateDB execution.ExtendedStateDB
 
 	priv *ecdsa.PrivateKey
@@ -73,12 +72,11 @@ func NewStatePrimer(
 	nsVersion string,
 	monotonicVersions bool,
 ) (*StatePrimer, error) {
-	// Create a DualStateDB with both Fabric and Ethereum state tracking
 	store, err := db.NewSnapshot(nil)
 	if err != nil {
 		return nil, err
 	}
-	stateDB, err := execution.NewStateDBWithDualState(context.TODO(), store, namespace, monotonicVersions, nil)
+	stateDB, err := execution.NewStateDB(context.TODO(), store, namespace, monotonicVersions)
 	if err != nil {
 		return nil, err
 	}
@@ -303,7 +301,7 @@ func (sp *StatePrimer) Writes() blocks.ReadWriteSet {
 	return sp.stateDB.Result()
 }
 
-// Reset creates a new DualStateDB, discarding all uncommitted changes.
+// Reset creates a new StateDB, discarding all uncommitted changes.
 func (sp *StatePrimer) Reset() (*StatePrimer, error) {
 	sp.reader.Close() // just in case
 	reader, err := sp.kvs.NewSnapshot(nil)
@@ -311,22 +309,13 @@ func (sp *StatePrimer) Reset() (*StatePrimer, error) {
 		return nil, err
 	}
 	sp.reader = reader
-	stateDB, err := execution.NewStateDBWithDualState(context.TODO(), sp.reader, sp.namespace, sp.monotonicVersions, nil)
+	stateDB, err := execution.NewStateDB(context.TODO(), sp.reader, sp.namespace, sp.monotonicVersions)
 	if err != nil {
 		return nil, err
 	}
 
 	sp.stateDB = stateDB
 	return sp, nil
-}
-
-// GetEthStateDB extracts the ethStateDB from the underlying DualStateDB.
-// This allows the primed state to be reused in subsequent operations.
-func (sp *StatePrimer) GetEthStateDB() *ethstate.StateDB {
-	if dualDB, ok := sp.stateDB.(*execution.DualStateDB); ok {
-		return dualDB.EthStateDB()
-	}
-	return nil
 }
 
 func (sp *StatePrimer) fakeEthTx() (*types.Transaction, []byte, error) {
