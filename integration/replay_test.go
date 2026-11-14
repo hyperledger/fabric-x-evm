@@ -338,7 +338,7 @@ func testTetherTokenReplay(t *testing.T, th *TestHarness) {
 			const balancesMappingPosition = 2
 
 			// Get the read-write set from the endorsement
-			rws, err := endorsementToRWS(env)
+			rws, _, err := endorsementResult(env)
 			if err != nil {
 				t.Fatalf("Tx #%d: Failed to extract RWS: %v", i+1, err)
 			}

@@ -15,6 +15,7 @@ import (
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/holiman/uint256"
+	fxcommon "github.com/hyperledger/fabric-x-evm/common"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/state"
 	_ "modernc.org/sqlite"
@@ -282,7 +283,7 @@ func TestSnapshotRevertRWS(t *testing.T) {
 		if len(rws.Reads) != 1 {
 			t.Fatalf("expected 1 read, got %d: %v", len(rws.Reads), rws.Reads)
 		}
-		expectedReadKey := storeKey(addr1, slot1)
+		expectedReadKey := fxcommon.StorageKey(addr1, slot1)
 		if rws.Reads[0].Key != expectedReadKey {
 			t.Errorf("expected read key %s, got %s", expectedReadKey, rws.Reads[0].Key)
 		}
@@ -337,8 +338,8 @@ func TestSnapshotRevertRWS(t *testing.T) {
 		}
 
 		// Verify addr1:slot1 has final value 0xEEEE
-		key1 := storeKey(addr1, slot1)
-		key2 := storeKey(addr2, slot2)
+		key1 := fxcommon.StorageKey(addr1, slot1)
+		key2 := fxcommon.StorageKey(addr2, slot2)
 		foundKey1, foundKey2 := false, false
 		for _, w := range rws.Writes {
 			if w.Key == key1 {

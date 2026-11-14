@@ -58,6 +58,17 @@ type EVMEngine struct {
 	// kvs provides versioned storage with snapshot isolation
 	kvs       KVSSnapshotter
 	evmConfig EVMConfig
+
+	// executorHook, if set, adjusts every Executor before it runs; see SetExecutorHook.
+	executorHook func(*Executor)
+}
+
+// SetExecutorHook makes hook adjust every Executor this engine creates, after its
+// defaults are set and before it runs. It exists for the conformance tests, which
+// run the production engine but need a fixture's block context and real gas
+// pricing (see Executor.FreeGas). Set it before the engine is used.
+func (e *EVMEngine) SetExecutorHook(hook func(*Executor)) {
+	e.executorHook = hook
 }
 
 // NewEVMEngine creates a new EVMEngine.
@@ -251,6 +262,9 @@ func (e *EVMEngine) newExecutor(blockNumber *big.Int, blockTime uint64) (*Execut
 		reader.Close()
 		return nil, err
 	}
+	if e.executorHook != nil {
+		e.executorHook(ex)
+	}
 	return ex, nil
 }
 
@@ -282,6 +296,11 @@ type Executor struct {
 	ChainCfg *params.ChainConfig
 	BlockCtx vm.BlockContext
 	maxTxGas uint64
+
+	// FreeGas zeroes every gas price before execution, so no transaction needs a
+	// balance to pay for gas. NewExecutor sets it; only conformance tests, which
+	// check fee accounting against Ethereum, turn it off.
+	FreeGas bool
 }
 
 // NewExecutor creates an Executor with the provided StateDB and reader.
@@ -289,7 +308,6 @@ type Executor struct {
 // blockTime is the Unix second for block.timestamp and must be non-zero.
 // evmConfig.ChainConfig must be set.
 // The caller is responsible for closing the reader when done with the Executor.
-// The stateDB parameter accepts ExtendedStateDB interface to allow DualStateDB for testing.
 func NewExecutor(stateDB ExtendedStateDB, reader ReadStore, blockNumber *big.Int, blockTime uint64, evmConfig EVMConfig) (*Executor, error) {
 	if evmConfig.ChainConfig == nil {
 		return nil, fmt.Errorf("evmConfig.ChainConfig must be set")
@@ -329,6 +347,7 @@ func NewExecutor(stateDB ExtendedStateDB, reader ReadStore, blockNumber *big.Int
 		ChainCfg: evmConfig.ChainConfig,
 		BlockCtx: blockCtx,
 		maxTxGas: evmConfig.MaxTxGas,
+		FreeGas:  true,
 	}, nil
 }
 
@@ -478,7 +497,7 @@ func (h *Executor) Send(tx *types.Transaction) (ret []byte, usedGas uint64, err 
 }
 
 // execute applies production defaults then runs the EVM via ApplyMessage.
-// Gas prices are always zeroed (free gas) so buyGas never requires ETH balance.
+// Gas prices are zeroed (free gas, unless FreeGas is off) so buyGas never requires ETH balance.
 // If MaxTxGas is set, msg.GasLimit is capped before execution.
 func (h *Executor) execute(msg *core.Message) (ret []byte, usedGas, maxUsedGas uint64, err error) {
 	if msg.GasLimit == 0 {
@@ -486,9 +505,11 @@ func (h *Executor) execute(msg *core.Message) (ret []byte, usedGas, maxUsedGas u
 	}
 
 	// Free gas: zero all prices so buyGas never requires ETH balance from the sender.
-	msg.GasPrice = new(uint256.Int)
-	msg.GasFeeCap = new(uint256.Int)
-	msg.GasTipCap = new(uint256.Int)
+	if h.FreeGas {
+		msg.GasPrice = new(uint256.Int)
+		msg.GasFeeCap = new(uint256.Int)
+		msg.GasTipCap = new(uint256.Int)
+	}
 
 	// Cap gas limit for DoS protection.
 	if h.maxTxGas > 0 && msg.GasLimit > h.maxTxGas {
