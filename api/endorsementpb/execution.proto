@@ -37,3 +37,15 @@ message ExecutionMetadata {
     // Unix seconds the transaction executed at (EVM block.timestamp).
     uint64 timestamp = 4;
 }
+
+// Log is an EVM log emitted during execution.
+message Log {
+    bytes address = 1;
+    repeated bytes topics = 2;
+    bytes data = 3;
+}
+
+// Logs is the list of logs a successful transaction stores in its Event.
+message Logs {
+    repeated Log logs = 1;
+}

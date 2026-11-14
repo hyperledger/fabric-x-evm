@@ -27,6 +27,7 @@ import (
 	"github.com/hyperledger/fabric-x-evm/gateway/domain"
 	"github.com/hyperledger/fabric-x-evm/gateway/metrics"
 	sdk "github.com/hyperledger/fabric-x-sdk"
+	"github.com/hyperledger/fabric-x-sdk/blocks"
 )
 
 var depGraphLogger = flogging.MustGetLogger("gateway.core.depgraph_queue")
@@ -49,6 +50,11 @@ const (
 	// Both are guesses pending guidance from the committer side.
 	defaultBatchThreshold = 64
 	defaultBatchTimeout   = 10 * time.Millisecond
+	// defaultMaxMVCCRetries is how many extra attempts a transaction gets after
+	// an MVCC conflict. Small on purpose: the retries must finish before the
+	// nonce gate's reaper drops the sender's later nonces, which stay parked
+	// behind it the whole time (see config.DepGraphQueue.MaxMVCCRetries).
+	defaultMaxMVCCRetries = 3
 )
 
 // positiveOrDefault resolves one optional override. A zero value is the
@@ -93,6 +99,17 @@ func hashFromTxRefID(id string) (common.Hash, bool) {
 }
 
 // txEndorser produces the read-write set the manager schedules on.
+//
+// ExecuteTransaction returns an endorsement or fails outright, with no partial
+// result and one endorser's failure failing the whole call. "Endorsement" is
+// wider than "success": a success, an EVM revert and a failed EVM execution all
+// come back as endorsements and all reach a block, the last two with a status=0
+// receipt.
+//
+// A failure drops the transaction (see submitToManager), because the error value
+// does not say which kind it was -- all are flat fmt.Errorf strings. The
+// categories and what each should do instead are in
+// docs/TODO_ENDORSEMENT_ERROR_MODEL.md.
 type txEndorser interface {
 	ExecuteTransaction(ctx context.Context, tx *types.Transaction) (sdk.Endorsement, error)
 }
@@ -100,9 +117,16 @@ type txEndorser interface {
 // admittedTx pairs a transaction with the timestamp from when it entered the
 // pipeline (STEP 5), so the timestamp can be propagated lock-free through the
 // endorsed channel all the way to batchLoop.
+//
+// retry marks a transaction adopted after an MVCC conflict, which enters here
+// rather than on the ready list because the queue has no node for it. Its per-tx
+// metrics timestamps restart on the endorse worker, not at admit time: the
+// conflicting block only reaches ObserveTxComplete — which deletes them — once
+// every handler has returned, which is after Handle admitted it.
 type admittedTx struct {
 	tx         *types.Transaction
 	enqueuedAt time.Time
+	retry      bool
 }
 
 // endorsedTx carries a transaction's proto payload together with the timestamp
@@ -131,6 +155,16 @@ type trackedTx struct {
 	readSeq  uint64
 	reads    []string
 	writes   []string
+
+	// retries counts the MVCC conflicts this transaction has been re-executed
+	// for. It survives because the tracked entry does: a retried transaction is
+	// never untracked, which also keeps IsPending answering across attempts.
+	retries int
+
+	// restartMetrics asks Dequeue to start a fresh per-tx metrics window: the
+	// conflicted attempt already went through ObserveTxComplete, which deletes
+	// the timestamps, so without this a retry records no latency at all.
+	restartMetrics bool
 }
 
 // DepGraphQueue is a TxQueueInterface backed by the committer's dependency
@@ -166,6 +200,7 @@ type DepGraphQueue struct {
 	endorseWorkers int
 	batchThreshold int
 	batchTimeout   time.Duration
+	maxMVCCRetries int
 
 	mu      sync.RWMutex
 	cond    *sync.Cond
@@ -209,6 +244,7 @@ func NewDepGraphQueue(cfg *config.DepGraphQueue) *DepGraphQueue {
 	waitingTxsLimit := positiveOrDefault("WaitingTxsLimit", cfg.WaitingTxsLimit, defaultWaitingTxsLimit)
 	batchThreshold := positiveOrDefault("BatchThreshold", cfg.BatchThreshold, defaultBatchThreshold)
 	batchTimeout := positiveOrDefault("BatchTimeout", cfg.BatchTimeout, defaultBatchTimeout)
+	maxMVCCRetries := positiveOrDefault("MaxMVCCRetries", cfg.MaxMVCCRetries, defaultMaxMVCCRetries)
 
 	// Legal but slow, so it is worth saying out loud rather than validating away:
 	// the manager takes a batch once one slot is free and then subtracts the whole
@@ -231,6 +267,7 @@ func NewDepGraphQueue(cfg *config.DepGraphQueue) *DepGraphQueue {
 		endorseWorkers: endorseWorkers,
 		batchThreshold: batchThreshold,
 		batchTimeout:   batchTimeout,
+		maxMVCCRetries: maxMVCCRetries,
 	}
 	q.cond = sync.NewCond(&q.mu)
 	q.ctx, q.cancel = context.WithCancel(context.Background())
@@ -295,11 +332,7 @@ func (q *DepGraphQueue) Enqueue(tx *types.Transaction) error {
 
 	// STEP 5: tx lands in the admitted channel – stamp the ingress time on the
 	// admittedTx so it flows lock-free to batchLoop without ever re-reading q.tracked.
-	enqueuedAt := time.Now()
-	metrics.Default().SetQueue(metrics.QueueDepgraphAdmitted, len(q.admitted))
-	select {
-	case q.admitted <- admittedTx{tx: tx, enqueuedAt: enqueuedAt}:
-	default:
+	if !q.admit(tx, &trackedTx{tx: tx}, false) {
 		// Blocking is not an option: the nonce gate holds its own lock while
 		// calling us. The caller reports it, and the client can retry.
 		msg := fmt.Sprintf("DepGraphQueue.Enqueue() tx %s rejected: admitted channel full", hash.Hex())
@@ -307,8 +340,44 @@ func (q *DepGraphQueue) Enqueue(tx *types.Transaction) error {
 		fc.DebugPanic(msg)
 		return domain.ErrQueueFull
 	}
-	q.tracked[hash] = &trackedTx{tx: tx}
 	return nil
+}
+
+// admit starts a transaction down the pipeline: tracked under t, then handed to
+// the endorse workers — the same two steps whether the queue is seeing it for the
+// first time (Enqueue) or re-admitting one whose entry was lost (adopt). retry
+// asks the worker to restart the per-tx metrics window that a previous attempt's
+// ObserveTxComplete consumed.
+//
+// It never blocks, and reports whether the channel had room: neither caller can
+// wait on a channel it is not draining, Enqueue holding the nonce gate's lock
+// and adopt running on the block-handler goroutine. Both surface a refusal, but
+// only Enqueue can tell the client (domain.ErrQueueFull); adopt's transaction
+// has no caller left, so it can only log and debug-panic.
+//
+// Tracking before the hand-off is safe only because the caller holds q.mu: an
+// endorse worker can pick the transaction up the moment it is sent, and
+// keepEndorsement takes q.mu to store what it produces, discarding it silently
+// for a transaction the queue does not track. The lock keeps the worker out
+// until the entry is there.
+//
+// A failed send removes the entry again, because nothing reaps q.tracked: an
+// entry never handed over would answer IsPending for the life of the process and
+// count against InFlight, with nothing ever going to execute it.
+//
+// Caller must hold q.mu.
+func (q *DepGraphQueue) admit(tx *types.Transaction, t *trackedTx, retry bool) bool {
+	hash := tx.Hash()
+	q.tracked[hash] = t
+
+	metrics.Default().SetQueue(metrics.QueueDepgraphAdmitted, len(q.admitted))
+	select {
+	case q.admitted <- admittedTx{tx: tx, enqueuedAt: time.Now(), retry: retry}:
+		return true
+	default:
+		delete(q.tracked, hash)
+		return false
+	}
 }
 
 // endorseLoop endorses admitted transactions and hands them to the manager.
@@ -323,6 +392,12 @@ func (q *DepGraphQueue) endorseLoop() {
 				return
 			}
 			metrics.Default().SetQueue(metrics.QueueDepgraphAdmitted, len(q.admitted))
+			if atx.retry {
+				// Restart the per-tx latency window: the attempt that conflicted
+				// has already been through ObserveTxComplete, which consumed the
+				// timestamps this transaction started with.
+				metrics.Default().TrackTxStart(atx.tx.Hash())
+			}
 			q.submitToManager(atx)
 		}
 	}
@@ -488,6 +563,13 @@ func (q *DepGraphQueue) markReady(nodes dependencygraph.TxNodeBatch) {
 }
 
 // Dequeue blocks until the manager releases a transaction, or the queue closes.
+//
+// Taking the transaction off the ready list here is what keeps that list free of
+// duplicates, so nothing has to guard against them. Only processTx submits, and
+// it runs after Dequeue, so one still on the list has not been submitted — and
+// under the single-gateway assumption a block only carries transactions this
+// gateway submitted. So no commit or conflict can arrive for a transaction
+// waiting on the list, and markReady and reschedule cannot find one present.
 func (q *DepGraphQueue) Dequeue() (*types.Transaction, bool) {
 	depGraphLogger.Debugf("DepGraphQueue.Dequeue() called")
 
@@ -508,8 +590,14 @@ func (q *DepGraphQueue) Dequeue() (*types.Transaction, bool) {
 
 	// STEP 10 (DepGraphQueue): measure how long the tx waited in the ready list
 	// after the dep manager released it (STEP 9→10), and report ready-list depth.
-	if t, ok := q.tracked[tx.Hash()]; ok && !t.readyAt.IsZero() {
-		metrics.Default().ObserveStep(metrics.StepDepgraphPostRelease, time.Since(t.readyAt))
+	if t, ok := q.tracked[tx.Hash()]; ok {
+		if !t.readyAt.IsZero() {
+			metrics.Default().ObserveStep(metrics.StepDepgraphPostRelease, time.Since(t.readyAt))
+		}
+		if t.restartMetrics {
+			t.restartMetrics = false
+			metrics.Default().TrackTxStart(tx.Hash())
+		}
 	}
 	metrics.Default().SetQueue(metrics.QueueTxReady, len(q.ready))
 
@@ -540,38 +628,306 @@ func (q *DepGraphQueue) InFlight() int {
 func (q *DepGraphQueue) Complete(hash common.Hash) {
 	depGraphLogger.Debugf("DepGraphQueue.Complete() called with tx %s", hash.Hex())
 	q.mu.Lock()
-	nodes := q.takeNodes([]common.Hash{hash})
+	nodes := q.untrack(hash)
 	q.mu.Unlock()
 	q.release(nodes)
+}
+
+// untrack forgets one transaction and returns the node it still owes the
+// manager, which is what releases whatever queued behind it. Clearing the node
+// is what makes a second call a no-op.
+//
+// An untracked hash is normal on both paths, so do not make this an error or a
+// debug-panic. Complete is documented to accept one, and reaches it when a
+// submission fails for a transaction already committed or completed. A committed
+// block can carry one whose entry is already gone, or one this queue never
+// submitted at all: every block in the namespace comes through untrackOrRetry,
+// including those the hardhat state RPCs produce (setBalance, setCode,
+// setStorageAt), which write state directly instead of calling Enqueue -- which
+// alone makes this branch routine in the gateway/app tests.
+//
+// Caller must hold q.mu.
+func (q *DepGraphQueue) untrack(hash common.Hash) dependencygraph.TxNodeBatch {
+	t, ok := q.tracked[hash]
+	if !ok {
+		depGraphLogger.Debugf("DepGraphQueue.untrack() tx %s is not tracked", hash.Hex())
+		return nil
+	}
+	delete(q.tracked, hash)
+	if t.node == nil {
+		return nil
+	}
+	node := t.node
+	t.node = nil
+	return dependencygraph.TxNodeBatch{node}
 }
 
 // Handle tells the manager which transactions committed. Rejected ones go back
 // too: either way they are no longer in flight, and holding one back strands
 // everything behind it. The whole block goes in one pass, under one lock.
+//
+// An MVCC-rejected transaction is the one exception: another writer reached one
+// of its keys first, so instead of being untracked it is executed again, up to
+// maxMVCCRetries times. Its node still goes back to the manager, since the
+// attempt that conflicted is no longer in flight and whatever queued behind it
+// must be let go.
 func (q *DepGraphQueue) Handle(_ context.Context, block *domain.Block) error {
 	depGraphLogger.Debugf("DepGraphQueue.Handle() called with block containing %d txs", len(block.Transactions))
 	if len(block.Transactions) == 0 {
 		return nil
 	}
 
-	hashes := make([]common.Hash, 0, len(block.Transactions))
+	outcomes := make([]txOutcome, 0, len(block.Transactions))
 	for _, tx := range block.Transactions {
+		// Counts attempts, not transactions: a retried one is counted again when
+		// its next attempt commits. Stats is a benchmarking aid (see its TODO),
+		// and an attempt is the thing the committer actually saw.
 		q.total++
 		if tx.Status == 0 {
 			q.invalid++
 		}
-
-		hashes = append(hashes, common.BytesToHash(tx.TxHash))
+		outcomes = append(outcomes, txOutcome{
+			hash: common.BytesToHash(tx.TxHash),
+			// Only an MVCC conflict is worth another attempt. A bad signature, a
+			// malformed envelope or a duplicate id would fail the same way again.
+			conflicted: tx.FabricTxStatus == blocks.StatusMVCCConflict,
+			tx:         tx.ToEthTx(),
+			from:       common.BytesToAddress(tx.FromAddress),
+		})
 	}
 
+	// Each error is a state that should not arise: a conflict this queue can no
+	// longer do anything useful about. Panicking here rather than inside keeps
+	// q.mu out of it, the way markReady does.
+	for _, err := range q.untrackOrRetry(block.Transactions, outcomes, block.BlockNumber) {
+		fc.DebugPanic(err.Error())
+	}
+	return nil
+}
+
+// txOutcome is one transaction's fate in a committed block, as Handle reads it
+// off the block before taking the lock. tx is the decoded Ethereum transaction,
+// needed to retry one this queue has no record of, and is nil if the raw bytes
+// would not decode. from comes off the block rather than a signer recovery, so
+// giveUp can report it even then.
+type txOutcome struct {
+	hash       common.Hash
+	conflicted bool
+	tx         *types.Transaction
+	from       common.Address
+}
+
+// untrackOrRetry resolves every transaction in a committed block: each is either
+// finished — untracked, with its node handed back so its dependents go — or put
+// up for another attempt. It owns both, the lock they need, and the two ways a
+// retry is scheduled, so Handle has nothing left to decide.
+//
+// committed is the block as it arrived, which recordCommitted needs: it reads the
+// write sets of the entries this pass is about to forget, so it runs first and
+// under the same lock.
+//
+// It returns one error per state that should not have arisen, for the caller to
+// debug-panic on once it is off the lock. Takes q.mu itself.
+func (q *DepGraphQueue) untrackOrRetry(
+	committed []domain.Transaction, outcomes []txOutcome, blockNum uint64,
+) []error {
+	var nodes dependencygraph.TxNodeBatch
+	var errs []error
+
 	q.mu.Lock()
-	q.recordCommitted(block.Transactions)
-	nodes := q.takeNodes(hashes)
+	q.recordCommitted(committed)
+	for _, o := range outcomes {
+		// Each case answers one question: is this transaction still ours after
+		// this block? A transaction awaiting another attempt is, and keeps its
+		// node so its dependents stay held. Anything else is untracked, handing
+		// the node back to free whatever queued behind it. err is non-nil only
+		// for a state that should not have arisen.
+		var pending bool
+		var err error
+		switch {
+		case !o.conflicted:
+			// Finished: committed, or failed in a way another attempt cannot fix.
+		case q.done:
+			// Shutting down; starting an attempt nothing will finish is pointless.
+		case q.tracked[o.hash] == nil:
+			// Conflicted with no entry behind it (a nil value is a missing key),
+			// so there is nothing to retry from and adopt builds one.
+			pending, err = q.adopt(o)
+		default:
+			// Conflicted and tracked: another attempt if the budget allows.
+			pending = q.retry(o.hash)
+			if !pending {
+				err = q.giveUp(o, blockNum)
+			}
+		}
+
+		if err != nil {
+			errs = append(errs, err)
+		}
+		if !pending {
+			nodes = append(nodes, q.untrack(o.hash)...)
+		}
+	}
 	q.mu.Unlock()
 
-	depGraphLogger.Debugf("DepGraphQueue.Handle() releasing %d nodes (total txs=%d)", len(nodes), len(hashes))
+	depGraphLogger.Debugf("DepGraphQueue.untrackOrRetry() releasing %d nodes (block txs=%d)", len(nodes), len(outcomes))
 	q.release(nodes)
-	return nil
+	return errs
+}
+
+// retry puts a tracked transaction that conflicted back up for another attempt,
+// reporting whether it had the budget for one. Only a conflict reaches it, and
+// only while the queue is running.
+//
+// It goes straight back on the ready list and keeps the node it already has.
+// Both halves matter:
+//
+//   - The node is what holds the transaction's dependents. Feeding it back would
+//     run freeDependents and release everything queued behind this key, but the
+//     transaction has not written yet — that is what the conflict means — so a
+//     dependent endorsed now would read state missing this write and conflict in
+//     turn. The node goes back only at a final outcome, via untrack.
+//
+//   - Not re-entering the manager is what makes that safe. A transaction sent
+//     back through the admitted channel becomes a second node, while the
+//     detector still holds the first node's keys (dropped only when it is fed
+//     back), so the new node would wait on the held one forever.
+//
+// This is sound only while the second execution touches the first's keys, which
+// are what the graph is still protecting — the assumption ReusableEndorsement
+// documents: a key only a re-execution touches is neither protected nor recorded.
+//
+// No duplicate check is needed when appending: the conflicted attempt left the
+// ready list when Dequeue served it (see Dequeue). It does not untrack either,
+// so untrackOrRetry stays the only caller of untrack. Caller must hold q.mu.
+func (q *DepGraphQueue) retry(hash common.Hash) bool {
+	t := q.tracked[hash]
+	if t.retries >= q.maxMVCCRetries {
+		return false
+	}
+	t.retries++
+	// Clearing the endorsement is what makes the worker execute again: with
+	// nothing to reuse, processTx falls through to ExecuteEthTx. The stored one
+	// read state that has since been written, so it must not be submitted.
+	t.end, t.endorsed = sdk.Endorsement{}, false
+	// Restart the ready-list clock and ask Dequeue to restart the per-tx metrics
+	// window, which the finished attempt's ObserveTxComplete has consumed.
+	t.readyAt = time.Now()
+	t.restartMetrics = true
+	q.ready = append(q.ready, t.tx)
+	q.cond.Broadcast()
+	metrics.Default().SetQueue(metrics.QueueTxReady, len(q.ready))
+	metrics.Default().TxMVCCRetried.Inc()
+	depGraphLogger.Warnf(
+		"[MVCC-RETRY] tx %s conflicted and is being executed again (attempt %d of %d); "+
+			"it keeps its graph node, so its dependents stay held",
+		hash.Hex(), t.retries+1, q.maxMVCCRetries+1)
+	return true
+}
+
+// giveUp reports that a conflicted transaction gets no further attempt,
+// returning the error the caller should debug-panic on. The caller untracks it,
+// which releases its node.
+//
+// This should be unreachable at any budget: the conflict is the problem, not the
+// number of attempts spent on it, and neither cause below is fixed by retrying.
+// A budget of zero makes us blind to them rather than immune, so even that lands
+// here as a diagnosis rather than a configured outcome.
+//
+// Either a writer the graph cannot see is reaching these keys — a second gateway
+// on the namespace, or a test writing state directly, both breaking the
+// single-gateway assumption — or the keys moved under us. The graph holds the
+// *first* execution's keys and a retry re-executes, so a contract branching on
+// state can touch a key the first execution did not, which is then neither
+// protected nor recorded (the assumption ReusableEndorsement documents) and a
+// transaction from this very queue can conflict with the retry. The message
+// names both, since nothing here can tell which.
+//
+// Releasing the node makes things worse rather than containing them: the
+// dependents go out to face whatever refused this transaction and may fail the
+// same way. Holding it would strand them for good, so there is no good option
+// here — only a loud one.
+//
+// Caller must hold q.mu.
+func (q *DepGraphQueue) giveUp(o txOutcome, blockNum uint64) error {
+	metrics.Default().TxMVCCRetriesExhausted.Inc()
+
+	var nonce uint64
+	if t := q.tracked[o.hash]; t != nil && t.tx != nil {
+		nonce = t.tx.Nonce()
+	}
+
+	err := fmt.Errorf(
+		"[MVCC-GIVEUP] tx %s dropped after %d write-conflict attempts: from=%s nonce=%d block=%d\n"+
+			"  None of its writes were applied, so it has no receipt and eth_getTransactionByHash "+
+			"now answers null for it.\n"+
+			"  Its nonce was not consumed, so this sender's later transactions stay parked until "+
+			"nonce %d is resubmitted, and are dropped %s after they were parked.\n"+
+			"  Likely causes: (1) a writer outside this gateway is writing these keys — a second "+
+			"gateway on the namespace, or a test writing state directly; (2) re-executing this "+
+			"transaction touched keys its first execution did not, which the dependency graph does "+
+			"not protect, so another transaction from this same gateway conflicted with it.\n"+
+			"  Action: the client must resubmit nonce %d. Check that only this gateway submits to "+
+			"the namespace, and whether this contract varies the keys it touches depending on state",
+		o.hash.Hex(), q.maxMVCCRetries+1, o.from.Hex(), nonce, blockNum,
+		nonce, defaultParkedTTL, nonce)
+	depGraphLogger.Error(err)
+	return err
+}
+
+// adopt takes on an MVCC-conflicted transaction this queue has no entry for,
+// giving it one and submitting it for another attempt. Called only for a
+// conflict: that is the one outcome a missing entry has to be rebuilt for.
+//
+// Under the single-gateway assumption this queue sees every transaction in the
+// namespace, so an untracked one means the entry is gone rather than never
+// there: the process restarted mid-flight, or Complete already took it after an
+// ambiguous submit failure. (A test RPC's direct write also arrives this way.)
+//
+// A conflict in that state is what the retry exists for. The pre-crash attempt
+// collided with an in-flight write the restarted queue could not know about, so
+// it gets an entry and the full budget; dropping it would be the worst outcome
+// available, since the nonce was not consumed and the sender's later
+// transactions are stuck behind the gap.
+//
+// Unlike a tracked retry it has no node, so the manager has never heard of it
+// and it goes back through the admitted channel rather than onto the ready list.
+// It reports whether another attempt is pending, with the error the caller
+// should debug-panic on — nil unless a transaction that should have been adopted
+// could not be.
+//
+// Caller must hold q.mu.
+func (q *DepGraphQueue) adopt(o txOutcome) (bool, error) {
+	if o.tx == nil {
+		// Without the raw bytes there is nothing to execute: the transaction
+		// cannot be reconstructed from a hash alone.
+		err := fmt.Errorf(
+			"[MVCC-ORPHAN] tx %s conflicted, is not tracked, and its raw bytes would not decode, "+
+				"so it cannot be executed again; the client must resubmit",
+			o.hash.Hex())
+		depGraphLogger.Error(err)
+		return false, err
+	}
+	// retries starts at 1: the attempt that just conflicted was the first.
+	if !q.admit(o.tx, &trackedTx{tx: o.tx, retries: 1}, true) {
+		// Same condition Enqueue debug-panics on, but worse: Enqueue can at least
+		// tell its caller, while this transaction has no caller left to resubmit
+		// it. Blocking is no answer either, since this runs under q.mu, which the
+		// endorse workers draining the channel need. So say so loudly.
+		metrics.Default().ForgetTx(o.hash)
+		err := fmt.Errorf(
+			"[MVCC-ORPHAN] tx %s conflicted and is not tracked, but the admitted channel is full, "+
+				"so it cannot be executed again; the client must resubmit",
+			o.hash.Hex())
+		depGraphLogger.Error(err)
+		return false, err
+	}
+	metrics.Default().TxMVCCRetried.Inc()
+	depGraphLogger.Warnf(
+		"[MVCC-ADOPT] tx %s conflicted but was not tracked, most likely in flight across a restart; "+
+			"adopting it with a fresh entry and executing it again (attempt 2 of %d)",
+		o.hash.Hex(), q.maxMVCCRetries+1)
+	return true, nil
 }
 
 // reuseWindow is how many blocks an endorsement can be reused across. One that
@@ -597,7 +953,7 @@ func (q *DepGraphQueue) keepEndorsement(hash common.Hash, seq uint64, end sdk.En
 
 // recordCommitted counts one block and notes the keys its valid tracked
 // transactions wrote, dropping those of the block that falls out of the reuse
-// window. It must run before takeNodes, which forgets their write sets. Caller
+// window. It must run before settle, which forgets their write sets. Caller
 // must hold q.mu.
 //
 // Only transactions this queue still tracks are seen: a domain.Block carries no
@@ -659,26 +1015,6 @@ func (q *DepGraphQueue) ReusableEndorsement(hash common.Hash) (sdk.Endorsement, 
 		}
 	}
 	return end, true
-}
-
-// takeNodes untracks each hash and collects their nodes that still need
-// feeding back. Clearing a node is what makes a second Complete a no-op.
-// Caller must hold q.mu.
-func (q *DepGraphQueue) takeNodes(hashes []common.Hash) dependencygraph.TxNodeBatch {
-	var nodes dependencygraph.TxNodeBatch
-	for _, hash := range hashes {
-		t, ok := q.tracked[hash]
-		if !ok {
-			depGraphLogger.Warnf("DepGraphQueue.takeNodesLocked() tx %s not tracked", hash.Hex())
-			continue
-		}
-		if t.node != nil {
-			nodes = append(nodes, t.node)
-			t.node = nil
-		}
-		delete(q.tracked, hash)
-	}
-	return nodes
 }
 
 // release hands finished transactions back to the manager, which is what frees
